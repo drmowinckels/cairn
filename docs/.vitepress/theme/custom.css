@@ -1,0 +1,90 @@
+:root {
+  --cairn-eggshell: #f4f1de;
+  --cairn-burnt-peach: #e07a5f;
+  --cairn-burnt-peach-hover: #d36649;
+  --cairn-burnt-peach-deep: #b85339;
+  --cairn-twilight-indigo: #3d405b;
+  --cairn-twilight-indigo-soft: #5a5d7a;
+  --cairn-muted-teal: #81b29a;
+  --cairn-muted-teal-deep: #5c8c75;
+  --cairn-apricot-cream: #f2cc8f;
+
+  --cairn-gradient: linear-gradient(
+    135deg,
+    var(--cairn-burnt-peach),
+    var(--cairn-apricot-cream),
+    var(--cairn-muted-teal),
+    var(--cairn-twilight-indigo)
+  );
+
+  --vp-c-brand-1: var(--cairn-burnt-peach);
+  --vp-c-brand-2: var(--cairn-burnt-peach-hover);
+  --vp-c-brand-3: var(--cairn-burnt-peach-deep);
+  --vp-c-brand-soft: rgba(224, 122, 95, 0.14);
+
+  --vp-button-brand-border: var(--cairn-burnt-peach);
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-bg: var(--cairn-burnt-peach);
+  --vp-button-brand-hover-border: var(--cairn-burnt-peach-hover);
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-hover-bg: var(--cairn-burnt-peach-hover);
+  --vp-button-brand-active-border: var(--cairn-burnt-peach-deep);
+  --vp-button-brand-active-text: #ffffff;
+  --vp-button-brand-active-bg: var(--cairn-burnt-peach-deep);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle at center,
+    rgba(224, 122, 95, 0.55),
+    rgba(242, 204, 143, 0.3) 55%,
+    rgba(129, 178, 154, 0) 80%
+  );
+  --vp-home-hero-image-filter: blur(56px);
+
+  --vp-custom-block-tip-border: var(--cairn-muted-teal);
+  --vp-custom-block-tip-text: var(--cairn-muted-teal-deep);
+  --vp-custom-block-tip-bg: rgba(129, 178, 154, 0.14);
+
+  --vp-custom-block-info-border: var(--cairn-twilight-indigo-soft);
+  --vp-custom-block-info-text: var(--cairn-twilight-indigo);
+  --vp-custom-block-info-bg: rgba(61, 64, 91, 0.08);
+
+  --vp-custom-block-warning-border: var(--cairn-apricot-cream);
+  --vp-custom-block-warning-text: #8a6a2e;
+  --vp-custom-block-warning-bg: rgba(242, 204, 143, 0.22);
+}
+
+.dark {
+  --vp-c-brand-1: var(--cairn-apricot-cream);
+  --vp-c-brand-2: #f7d9a4;
+  --vp-c-brand-3: var(--cairn-burnt-peach);
+  --vp-c-brand-soft: rgba(242, 204, 143, 0.16);
+
+  --vp-button-brand-text: var(--cairn-twilight-indigo);
+  --vp-button-brand-bg: var(--cairn-apricot-cream);
+  --vp-button-brand-hover-bg: #f7d9a4;
+  --vp-button-brand-active-bg: var(--cairn-burnt-peach);
+
+  --vp-custom-block-tip-border: var(--cairn-muted-teal);
+  --vp-custom-block-tip-text: #b9d4c4;
+  --vp-custom-block-tip-bg: rgba(129, 178, 154, 0.22);
+
+  --vp-custom-block-info-border: var(--cairn-twilight-indigo-soft);
+  --vp-custom-block-info-text: #c8cae0;
+  --vp-custom-block-info-bg: rgba(90, 93, 122, 0.22);
+
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle at center,
+    rgba(224, 122, 95, 0.4),
+    rgba(242, 204, 143, 0) 70%
+  );
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.VPHero .name {
+  background: var(--cairn-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
