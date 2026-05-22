@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../../lib/icon";
-import { ProjectChip, Tag } from "../../lib/components";
+import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { fmtClock, fmtHm, fmtRange } from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
-import type { Density, LayoutVariant } from "../../lib/types";
+import type { Density, DetectionPrompts, LayoutVariant } from "../../lib/types";
 import {
   NOW_MIN,
   PROJECT_BY_ID,
@@ -21,6 +21,8 @@ interface Props {
   setSuggestionDismissed: (v: boolean) => void;
   showIdleModal: boolean;
   setShowIdleModal: (v: boolean) => void;
+  detectionPrompts?: DetectionPrompts;
+  announce?: boolean;
 }
 
 export function TodayView({
@@ -31,6 +33,8 @@ export function TodayView({
   setSuggestionDismissed,
   showIdleModal,
   setShowIdleModal,
+  detectionPrompts = "subtle",
+  announce = true,
 }: Props) {
   const compact = density === "compact";
   const timer = useTimer();
@@ -65,8 +69,13 @@ export function TodayView({
 
   return (
     <div className="view view-today" data-density={density}>
-      {!suggestionDismissed && (
-        <section className="suggest" aria-label="Auto-detected work">
+      {!suggestionDismissed && detectionPrompts !== "off" && (
+        <section
+          className={`suggest suggest--${detectionPrompts}`}
+          aria-label="Auto-detected work"
+          aria-live={announce ? "polite" : "off"}
+          role={detectionPrompts === "modal" ? "alertdialog" : undefined}
+        >
           <div className="suggest-head">
             <Icon name="sparkle" size={13} />
             <span>Detected</span>
@@ -119,21 +128,32 @@ export function TodayView({
         </section>
       )}
 
-      <section className="now" aria-label="Current timer">
+      {timer.error && (
+        <ErrorBanner
+          message={`Couldn't reach the local timer service — ${timer.error}`}
+          onRetry={() => timer.refresh()}
+        />
+      )}
+
+      <section className="now" aria-label="Current timer" aria-busy={timer.loading}>
         <div className="now-meta">
-          <span className="now-label">Now · running</span>
-          <span
-            className="now-source"
-            title={
-              runningSource === "rule"
-                ? "Started automatically by a rule"
-                : "Started manually"
-            }
-          >
-            <Icon name="sparkle" size={11} /> {runningSource}
+          <span className="now-label">
+            {timer.loading ? "Connecting…" : "Now · running"}
           </span>
+          {!timer.loading && (
+            <span
+              className="now-source"
+              title={
+                runningSource === "rule"
+                  ? "Started automatically by a rule"
+                  : "Started manually"
+              }
+            >
+              <Icon name="sparkle" size={11} /> {runningSource}
+            </span>
+          )}
         </div>
-        <div className="now-time" aria-live="polite">
+        <div className="now-time" aria-live={announce ? "polite" : "off"}>
           <span className="t-hms">
             {hh}
             <span className="t-sep">:</span>
@@ -217,21 +237,28 @@ export function TodayView({
             <span>Recent</span>
             <button className="link-btn">Edit…</button>
           </div>
-          <ul className="entries">
-            {[...TODAY].reverse().slice(0, 4).map((e, i) => (
-              <li key={i} className="entry">
-                <span className="entry-time">{fmtClock(e.start)}</span>
-                <span
-                  className="proj-dot"
-                  style={{ background: PROJECT_BY_ID[e.project].color }}
-                />
-                <span className="entry-task">{e.task}</span>
-                <span className="entry-dur">{fmtHm(e.end - e.start)}</span>
-                {e.source.startsWith("rule") && <Icon name="sparkle" size={10} className="entry-src" />}
-                {e.source === "calendar" && <Icon name="calendar" size={10} className="entry-src" />}
-              </li>
-            ))}
-          </ul>
+          {TODAY.length === 0 ? (
+            <Empty
+              title="No entries yet today"
+              body="Start a timer or let a rule catch what you're doing."
+            />
+          ) : (
+            <ul className="entries">
+              {[...TODAY].reverse().slice(0, 4).map((e, i) => (
+                <li key={i} className="entry">
+                  <span className="entry-time">{fmtClock(e.start)}</span>
+                  <span
+                    className="proj-dot"
+                    style={{ background: PROJECT_BY_ID[e.project].color }}
+                  />
+                  <span className="entry-task">{e.task}</span>
+                  <span className="entry-dur">{fmtHm(e.end - e.start)}</span>
+                  {e.source.startsWith("rule") && <Icon name="sparkle" size={10} className="entry-src" />}
+                  {e.source === "calendar" && <Icon name="calendar" size={10} className="entry-src" />}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 
@@ -239,15 +266,23 @@ export function TodayView({
         <div className="sect-label">
           <span>Up next</span>
         </div>
-        <ul className="up-list">
-          {UPCOMING.map((u, i) => (
-            <li key={i} className="up-item">
-              <span className="up-time">{fmtClock(u.at)}</span>
-              <span className="up-label">{u.label}</span>
-              <span className="up-dur">{u.duration}m</span>
-            </li>
-          ))}
-        </ul>
+        {UPCOMING.length === 0 ? (
+          <Empty
+            title="Nothing scheduled"
+            body="Calendar events show up here as they approach."
+            tone="soft"
+          />
+        ) : (
+          <ul className="up-list">
+            {UPCOMING.map((u, i) => (
+              <li key={i} className="up-item">
+                <span className="up-time">{fmtClock(u.at)}</span>
+                <span className="up-label">{u.label}</span>
+                <span className="up-dur">{u.duration}m</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );

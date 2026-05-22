@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
-import { ProjectChip, Tag } from "../../lib/components";
+import { Empty, ProjectChip, Tag } from "../../lib/components";
 import type {
   Density,
   Rule,
@@ -64,22 +64,35 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
         </section>
       )}
 
-      <ul className="rule-list" role="list">
-        {RULES.map((r, idx) => (
-          <RuleRow
-            key={r.id}
-            rule={r}
-            index={idx}
-            expanded={expanded === r.id}
-            onToggle={() => {
-              const next = expanded === r.id ? null : r.id;
-              setExpanded(next);
-              onOpenRule(next);
-            }}
-            complexity={complexity}
-          />
-        ))}
-      </ul>
+      {RULES.length === 0 ? (
+        <Empty
+          title="No rules yet"
+          body="Rules pair an OS signal (folder, branch, calendar event) with a project. Cairn never auto-logs without one."
+          tone="soft"
+          action={
+            <button className="btn btn--primary btn--sm">
+              <Icon name="plus" size={13} /> Create your first rule
+            </button>
+          }
+        />
+      ) : (
+        <ul className="rule-list" role="list">
+          {RULES.map((r, idx) => (
+            <RuleRow
+              key={r.id}
+              rule={r}
+              index={idx}
+              expanded={expanded === r.id}
+              onToggle={() => {
+                const next = expanded === r.id ? null : r.id;
+                setExpanded(next);
+                onOpenRule(next);
+              }}
+              complexity={complexity}
+            />
+          ))}
+        </ul>
+      )}
 
       {complexity === "heavy" && (
         <section className="test-bench" aria-label="Test bench">
