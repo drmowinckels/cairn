@@ -1,0 +1,287 @@
+# Cairn — Design Spec
+
+This is the implementer's reference. Every screen, component, token, and interaction the engineer needs is described here. The HTML in `design/Cairn.html` is the visual source of truth — when in doubt, open it and inspect.
+
+## Fidelity
+
+**Hi-fi.** Final palette, typography, spacing, and interactions. Recreate pixel-accurately in the Tauri + React build using the codebase's existing patterns. Treat the HTML as a spec, not as code to copy.
+
+---
+
+## 1. Design tokens
+
+### 1.1 Color (brand)
+
+| Token | Hex | Use |
+|---|---|---|
+| `--eggshell` | `#f4f1de` | Soft light surface |
+| `--burnt-peach` | `#e07a5f` | Accent: running timer, primary action, rule highlights |
+| `--twilight-indigo` | `#3d405b` | Ink / primary text in light mode |
+| `--muted-teal` | `#81b29a` | "Local only" / privacy / positive states |
+| `--apricot-cream` | `#f2cc8f` | Auto-detect suggestion banner |
+
+### 1.2 Color (semantic — light theme)
+
+| Token | Value |
+|---|---|
+| `--bg` | `#ece8d3` (desktop background) |
+| `--bg-soft` | `#f4f1de` (nested surfaces) |
+| `--surface` | `#fbf9ee` (the popover) |
+| `--surface-2` | `#f4f1de` (kbd, segmented controls) |
+| `--ink` | `#3d405b` |
+| `--ink-soft` | `rgba(61, 64, 91, .66)` |
+| `--ink-mute` | `rgba(61, 64, 91, .42)` |
+| `--ink-faint` | `rgba(61, 64, 91, .18)` |
+| `--hairline` | `rgba(61, 64, 91, .12)` |
+| `--hairline-strong` | `rgba(61, 64, 91, .22)` |
+| `--accent` | `#e07a5f` |
+| `--accent-soft` | `rgba(224, 122, 95, .14)` |
+| `--teal-soft` | `rgba(129, 178, 154, .18)` |
+| `--apricot-soft` | `rgba(242, 204, 143, .35)` |
+| `--indigo-soft` | `rgba(61, 64, 91, .08)` |
+
+### 1.3 Color (semantic — dark theme)
+
+| Token | Value |
+|---|---|
+| `--bg` | `#1b1d29` |
+| `--bg-soft` | `#232636` |
+| `--surface` | `#262a3c` |
+| `--surface-2` | `#2e3245` |
+| `--ink` | `#f4f1de` |
+| `--ink-soft` | `rgba(244, 241, 222, .72)` |
+| `--ink-mute` | `rgba(244, 241, 222, .46)` |
+| `--ink-faint` | `rgba(244, 241, 222, .18)` |
+| `--hairline` | `rgba(244, 241, 222, .10)` |
+| `--hairline-strong` | `rgba(244, 241, 222, .20)` |
+
+Light/dark are toggled with `data-theme="light|dark"` on the document. Default = follow system (`prefers-color-scheme`).
+
+### 1.4 Type system
+
+- **Serif** — `Newsreader` (Google Fonts, 6..72 optical size, weights 400/500/600). Use for: app name, view titles, running timer numeric, suggestion-banner body, idle modal body, settings section titles, privacy card title.
+- **Sans** — `Geist` (Google Fonts, 300–700). Default UI font.
+- **Mono** — `Geist Mono` (Google Fonts, 400–600). Use for: timestamps, durations, tags, kbd, code snippets in rules, signal values.
+
+### 1.5 Density scale
+
+The popover has a `data-density` attribute (`compact` or `comfy`). Comfy is the default.
+
+| Variable | Comfy | Compact |
+|---|---|---|
+| `--pad-x` | 24px | 18px |
+| `--pad-y` | 22px | 16px |
+| `--gap` | 22px | 16px |
+| `--font-base` | 16px | 14.5px |
+| `--font-small` | 14px | 13px |
+| `--font-tiny` | 12.5px | 11.5px |
+| `--font-display` | 42px | 34px |
+| `--line-base` | 1.55 | 1.5 |
+| popover width | 500px | 420px |
+
+### 1.6 Radii, shadows, hairlines
+
+- `--radius-lg: 16px` — popover, large cards
+- `--radius-md: 10px` — inner cards (suggest, now, idle, privacy)
+- `--radius-sm: 6px` — chips, kbd, small buttons
+- Hairlines: `.5px solid var(--hairline)` (subtle) and `var(--hairline-strong)` (defined)
+- Popover shadow: `0 1px 0 rgba(255,255,255,.6) inset, 0 14px 40px -16px rgba(34,28,50,.35), 0 4px 14px -8px rgba(34,28,50,.2)`
+
+---
+
+## 2. Surface — the popover
+
+A floating panel anchored under the macOS tray icon. 500×variable, max-height `calc(100vh - 56px)`. It has a tail (a 14×14 rotated square) at the top pointing up to the tray icon, positioned 38px from the right edge.
+
+Structure (top → bottom):
+
+1. **Header** — `.pop-head`: brand mark + "Cairn" wordmark + `LocalBadge` + spacer + icon buttons (search ⌘K, plus = new manual entry).
+2. **Nav tabs** — `.pop-nav`: Today / Reports / Rules / Settings, with hairline underline indicator on active. Right-aligned hint shows the open/hide shortcut `⌃⌥T`.
+3. **Body** — `.pop-body`: scrollable container, the active view renders here.
+4. **Footer** — `.pop-foot`: status strip with "4h 12m today · 3 rules active" and `⌃⌥␣ stop` hint.
+
+Open / close: triggered by the tray icon (`⌃⌥T`). Closes on `Esc` and on focus loss. Window: borderless, no traffic lights, transparent.
+
+---
+
+## 3. Views
+
+### 3.1 Today
+
+The default view. Top-to-bottom:
+
+#### a. Auto-detect suggestion (`.suggest`)
+
+Shown when a rule has matched at non-strict confidence and the user hasn't confirmed yet.
+
+- Background: `linear-gradient(180deg, var(--apricot-soft) 0%, rgba(242,204,143,.12) 100%)`
+- Border: `.5px solid rgba(242, 204, 143, .55)`
+- Header label: `DETECTED` (12.5px, 600 weight, .08em letter-spacing, uppercase) with a 13px sparkle icon in `var(--accent)` and a small × dismiss button top-right.
+- Body: serif 19px, e.g. `Working on [Cairn chip] — *Rule preview UI*?`
+- "Why" line: small text `because feat/rules-ui · folder ~/code/cairn`, where the values are in mono inside a faint code chip (`rgba(61,64,91,.06)` background, 1px 5px padding, 3px radius). On the right, a `view rule` link button (`--accent`, underline) that jumps to Rules and expands the rule.
+- Actions row: a primary "Confirm" button (✓ icon + label) and a ghost "Change…" button.
+- Keyboard: `↵` confirms, `Esc` or × dismisses.
+
+#### b. Idle modal (`.idle`)
+
+Shown when idle detected on resume.
+
+- Body: `No input detected from <strong>14:50</strong> to <strong>15:02</strong>`, with `12 min` mono right-aligned.
+- Actions: primary "Keep", ghost "Discard idle", ghost "Move to break".
+
+#### c. Running timer (`.now`)
+
+- Wrapper card: `--bg-soft` background, hairline border.
+- `now-meta` row: "NOW · RUNNING" eyebrow + "✦ rule" badge in `--accent` indicating the timer was started by a rule.
+- `now-time` — the elapsed running time, serif 42px (comfy), tabular numerals, colons in `--ink-mute`.
+- `now-task` — editable task description input. Borderless except for a dashed underline that becomes solid `--accent` on focus.
+- `now-row` — project chip + tags on the left, "Stop" button (`--accent` filled, white text, square icon) on the right.
+
+#### d. Quick start (`.quick`, only in `layoutVariant: "projects-first"`)
+
+A 2×2 grid of quick-start cards, each with a project color dot + name.
+
+#### e. Today timeline (`.timeline`)
+
+- Section label: "TODAY'S PATH" + meta on the right: "4h 12m logged · 18h 34m this week"
+- Horizontal track 26px tall, light gradient background. Each entry is a segment positioned by start/end (08:00–19:00 spans the full width). The running entry has a diagonal-stripe animated background (respects `prefers-reduced-motion`).
+- A vertical "now" needle with a dot at top and a small mono label showing the current time, drawn above the entries.
+- Axis row beneath: tick marks at hours 8, 10, 12, 14, 16, 18.
+- Legend below: project dot + name for each project that appears today.
+
+#### f. Recent (hidden in compact density and in `projects-first` layout)
+
+List of last 4 entries: time, project dot, task, duration, source icon (✦ for rule, 📅 for calendar).
+
+#### g. Upcoming (`.upcoming`)
+
+A small list of the next 2–3 calendar items / focus blocks. Each row: time · label · duration.
+
+### 3.2 Reports
+
+- **Header**: serif 28px "This week" + below it the big number (`rep-big`, serif 30px tabular) + "h" suffix + delta in `--teal` ("+2.4h vs last"). Right side: segmented control Day / Week / Month.
+- **Chart**: 160px tall. 7 vertical bars, one per weekday, each a stacked column of project-colored segments. Today's bar has a 1.5px inset ring in `--ink`. Future days are 35% opacity. Horizontal gridlines at 0/2/4/6/8 hours with mono numeric labels.
+- **By project**: list of rows, each `[dot + name] [horizontal bar with fill] [hours] [%]`. Sorted by descending hours.
+- **Honesty meter**: a single 8px horizontal stacked bar showing the share of time logged by rule (`--burnt-peach`) / calendar (`--muted-teal`) / manual (`--twilight-indigo` 60% opacity). Legend below.
+
+### 3.3 Rules
+
+- **Header**: "Rules" serif title + sub "Tried in order from top. First match wins. Each rule may combine multiple signals." (last clause hidden in `light` complexity). "New" button top-right.
+- **Live signals** (medium / heavy only): a card listing the four currently observed signals (IDE folder, git branch, window title, browser domain) with their values in mono and the source app on the right. These are clickable affordances to use them as conditions (future).
+- **Rule list**: each row is `.rule`, collapsed by default. Header row shows:
+  - drag handle (visible on hover)
+  - rule number (mono)
+  - rule name (semibold 500)
+  - condition summary pill (or "N conditions" badge if >1)
+  - "→" arrow
+  - project chip OR "+ tags" italic label
+  - "N× today" mono counter
+  - toggle switch (teal when on)
+  - chevron-right (right when closed, down when open)
+- **Expanded rule body**:
+  - **When** section listing conditions. Each condition: signal icon + label + op `<select>` + value `<input>` + × button (medium/heavy). For 2+ conditions, an "AND" or "OR" join label sits above each subsequent row. "+ add condition" link at bottom (medium/heavy).
+  - **Then** section: Project select + Tags row with chips and "+ tag" button. Show "from calendar attendees" italic note for the calendar rule.
+  - **Confidence + Ambiguity** (heavy only): two rows — "Confidence threshold: strict" and "If ambiguous: prompt me".
+  - **Foot**: "Duplicate" + "Delete" link buttons.
+- **Test bench** (heavy only): three input fields (IDE folder, git branch, window title) prefilled with sample values, and a result row "→ matches **Cairn dev work** → assigns [chip] [#dev #feature]".
+
+### 3.4 Settings
+
+Ordered to put the most important things first.
+
+1. **Privacy card** — large card, teal tint, shield icon + "Your data stays here" serif title, 4-bullet list of guarantees, three actions: "Export all data…", "View what's stored", "Delete everything…".
+2. **Never track these** — exclusion list. Each row: lock icon + value in mono code + kind label (app/domain/window) + × remove. Last row is an inline add input. Below: checkbox "Pause tracking on private/incognito browser windows" (default on).
+3. **Accessibility** — toggles for text size (4-position segmented), high contrast, reduce motion, colorblind-safe palette, screen reader announcements, focus rings always visible, detection prompts (segmented: Off / Subtle / Modal).
+4. **Shortcuts** — list of keyboard shortcuts with `<Kbd>` chips.
+5. **Integrations** — Calendar / Git / Browsers, each with a status line and a "Configure…" / "Manage…" / "Install…" action.
+6. **Foot** — version, Apache-2.0, GitHub link.
+
+---
+
+## 4. Components reference
+
+### 4.1 `ProjectChip`
+
+Inline pill with a colored dot + project name. Two sizes: `sm` (default, 12px dot 6px) and `lg` (13.5px). Background: `rgba(61,64,91,.06)`. Made interactive when used in the running timer.
+
+### 4.2 `Tag`
+
+Mono 12px, `--ink-mute`, prefixed with `#`. No background.
+
+### 4.3 `Kbd`
+
+Mono 12px, surface-2 background, hairline-strong border, 4px radius, 1px 5px padding.
+
+### 4.4 `LocalBadge`
+
+Teal-tinted pill, 12px text. A small teal dot with a soft glow ring (no animation). Tooltip: "All data stays on your machine. No telemetry, no accounts."
+
+### 4.5 `Icon`
+
+Hairline 1.5 stroke SVG, 24×24 viewBox. Sized via `size` prop. Names used in the design:
+
+play, stop, pause, today, reports, rules, settings, check, x, plus, edit, chevron-right, chevron-down, lock, branch, folder, globe, calendar, sparkle, shield, moon, type, drag, info, search, command, keyboard, list, grid, arrow-right.
+
+### 4.6 `Toggle`
+
+iOS-style switch. 32×18px. `--accent` when on. Focus ring: 2px `--accent` 2px offset.
+
+### 4.7 Buttons
+
+- `.btn--primary` — ink background, eggshell text. Dark theme: eggshell bg, indigo text.
+- `.btn--ghost` — transparent, hairline-strong border, ink-soft text. Hover: `indigo-soft` background.
+- `.btn--stop` — accent background, white text. Used only on the running timer.
+- `.icon-btn` — 26×26 circle/square, transparent. Hover: `indigo-soft`.
+
+All buttons: focus-visible outline `2px solid var(--accent)`, offset 1px.
+
+---
+
+## 5. Interactions
+
+| Action | Trigger | Result |
+|---|---|---|
+| Show / hide popover | Tray click; `⌃⌥T` | Anchored under tray icon; fade-in 80ms |
+| Switch view | Click tab or press `1`–`4` | Body re-renders; tab indicator slides |
+| Start timer | Click project chip in quick-start or `⌃⌥␣` | Running timer card appears |
+| Stop timer | Stop button or `⌃⌥␣` | Entry committed to today's timeline |
+| Confirm suggestion | `↵` or click ✓ Confirm | Timer auto-starts with rule's project + tags |
+| Change suggestion | Click "Change…" | Opens project picker (`⌘K` command palette) |
+| Dismiss suggestion | × or `Esc` | Banner hides; next match won't re-trigger within 5 min |
+| Idle: keep / discard / move | Click button | Entry trimmed accordingly; resumes timer |
+| Toggle rule on/off | Click switch | Rule enters/leaves the matching pool immediately |
+| Reorder rules | Drag handle | Persisted; matching order updates |
+| Open rule detail from suggestion | Click "view rule" link | Switches to Rules tab, expands matching rule |
+| Reduce motion | OS setting or accessibility toggle | Disables tray pulse + running-timer stripe shift |
+
+---
+
+## 6. Animations
+
+All ≤200ms unless noted. All respect `prefers-reduced-motion`.
+
+- Tray icon pulse: 2s ease-in-out infinite (box-shadow ring)
+- Running entry stripes: 6s linear infinite background-position shift
+- Tab switch: 120ms ease
+- Toggle slide: 150ms ease
+- Suggestion fade-in: 200ms ease
+
+---
+
+## 7. Accessibility checklist
+
+- All interactive elements reach via `Tab`; visible focus rings (`2px solid var(--accent)`).
+- `role="dialog"` on the popover; `aria-label="Cairn time tracker"`.
+- Tabs: `role="tablist"` / `role="tab"` / `aria-selected`.
+- Timer time announced via `aria-live="polite"` on the elapsed-time wrapper.
+- Idle modal: `role="alertdialog"`, `aria-labelledby="idle-h"`.
+- Toggles: `role="switch"`, `aria-checked`.
+- Color is never the only signal: source icons accompany the source-color on entries; honesty meter has a textual legend; today's bar in the chart has a ring outline in addition to color contrast.
+- Minimum body text 16px in comfy, 14.5px in compact. Tertiary labels ≥12px.
+- All accessibility toggles in Settings must be wired to real CSS/JS effects:
+  - **Text size** → multiplies all `--font-*` variables.
+  - **High contrast** → swaps `--ink-soft`/`--ink-mute`/`--hairline` for darker variants; bumps `--hairline` opacity.
+  - **Reduce motion** → adds `[data-reduce-motion]` to body that disables all `animation` and `transition` declarations.
+  - **Colorblind-safe palette** → swaps project colors for Okabe–Ito set.
+  - **Screen reader announcements** → adds aria-live status messages on timer events.
+  - **Focus rings always visible** → adds `[data-always-focus]` that turns `:focus-visible` into `:focus`.

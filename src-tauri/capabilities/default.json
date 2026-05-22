@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the popover window",
+  "windows": ["popover"],
+  "permissions": [
+    "core:default",
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-position",
+    "core:window:allow-set-focus",
+    "opener:default",
+    "opener:allow-reveal-item-in-dir",
+    "autostart:default",
+    "log:default",
+    "dialog:allow-message",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "positioner:default",
+    "global-shortcut:default"
+  ]
+}

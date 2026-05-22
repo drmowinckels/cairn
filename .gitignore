@@ -1,0 +1,38 @@
+# Build artifacts
+/target/
+/dist/
+/build/
+*.app
+*.dmg
+*.msi
+*.deb
+*.AppImage
+
+# Node
+node_modules/
+.pnpm-store/
+.pnp.*
+.yarn/
+
+# Rust
+**/*.rs.bk
+Cargo.lock.bak
+
+# Tauri
+/src-tauri/target/
+/src-tauri/gen/schemas/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs / local data
+*.log
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
+/.cairn/
