@@ -24,13 +24,20 @@ pub async fn build(calendar: &CalendarRegistry, at: DateTime<Utc>) -> SignalSnap
         .collect();
 
     let front = crate::signals::window::current();
-    let (app_name, window_title) = match front {
-        Some(w) => (Some(w.app_name), w.title),
-        None => (None, None),
+    let (app_name, window_title, ide_folder) = match front {
+        Some(w) => {
+            let folder = w
+                .title
+                .as_deref()
+                .and_then(|t| crate::signals::window::derive_ide_folder(&w.app_name, t))
+                .map(|p| p.to_string_lossy().into_owned());
+            (Some(w.app_name), w.title, folder)
+        }
+        None => (None, None, None),
     };
 
     SignalSnapshot {
-        ide_folder: None,
+        ide_folder,
         git_branch: None,
         window_title,
         app_name,
