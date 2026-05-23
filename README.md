@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/img/logo-mark-dark.svg" />
+    <img src="docs/public/img/logo-mark-light.svg" alt="Cairn logo" width="160" />
+  </picture>
+</p>
+
 # Cairn
 
 > A quiet, local-first time tracker that watches your work signals so you don't have to.

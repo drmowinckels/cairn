@@ -1,13 +1,33 @@
+/* Cairn brand applied to VitePress.
+   Palette and rules per design/Cairn - Brand Guidelines.html:
+   - Indigo is the voice (type, primary buttons).
+   - Peach is the accent — sparingly, never a button background.
+   - Teal is decorative-only — never carries text.
+   - Apricot is the gentle nudge — never a warning.
+   - Eggshell is the room; on dark, indigo-black takes its place. */
+
 :root {
   --cairn-eggshell: #f4f1de;
   --cairn-burnt-peach: #e07a5f;
-  --cairn-burnt-peach-hover: #d36649;
-  --cairn-burnt-peach-deep: #b85339;
+  --cairn-burnt-peach-deep: #b8553a;
   --cairn-twilight-indigo: #3d405b;
-  --cairn-twilight-indigo-soft: #5a5d7a;
+  --cairn-twilight-indigo-deep: #2d3046;
+  --cairn-twilight-indigo-deeper: #1f2233;
   --cairn-muted-teal: #81b29a;
   --cairn-muted-teal-deep: #5c8c75;
   --cairn-apricot-cream: #f2cc8f;
+  --cairn-apricot-deep: #8a6a2e;
+
+  --cairn-surface-light: #fbf9ee;
+  --cairn-bg-light: #ece8d3;
+  --cairn-bg-dark: #1b1d29;
+  --cairn-surface-dark: #262a3c;
+  --cairn-surface-dark-2: #2e3245;
+
+  --cairn-serif: "Newsreader", ui-serif, Georgia, serif;
+  --cairn-sans:
+    "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --cairn-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --cairn-gradient: linear-gradient(
     135deg,
@@ -17,74 +37,243 @@
     var(--cairn-twilight-indigo)
   );
 
-  --vp-c-brand-1: var(--cairn-burnt-peach);
-  --vp-c-brand-2: var(--cairn-burnt-peach-hover);
+  /* VitePress typography */
+  --vp-font-family-base: var(--cairn-sans);
+  --vp-font-family-mono: var(--cairn-mono);
+
+  /* Light surfaces */
+  --vp-c-bg: var(--cairn-surface-light);
+  --vp-c-bg-alt: var(--cairn-bg-light);
+  --vp-c-bg-soft: var(--cairn-eggshell);
+  --vp-c-bg-elv: #ffffff;
+
+  /* Light text — indigo is the voice */
+  --vp-c-text-1: var(--cairn-twilight-indigo);
+  --vp-c-text-2: rgba(61, 64, 91, 0.82);
+  --vp-c-text-3: rgba(61, 64, 91, 0.62);
+
+  --vp-c-divider: rgba(61, 64, 91, 0.14);
+  --vp-c-border: rgba(61, 64, 91, 0.28);
+  --vp-c-gutter: rgba(61, 64, 91, 0.06);
+
+  /* Brand color: peach (deep) for non-button accents — links, icons.
+     Peach has documented 3.4:1 contrast on eggshell; underlines on links
+     pull it back to AA territory (color is not the only affordance). */
+  --vp-c-brand-1: var(--cairn-burnt-peach-deep);
+  --vp-c-brand-2: var(--cairn-burnt-peach);
   --vp-c-brand-3: var(--cairn-burnt-peach-deep);
   --vp-c-brand-soft: rgba(224, 122, 95, 0.14);
 
-  --vp-button-brand-border: var(--cairn-burnt-peach);
-  --vp-button-brand-text: #ffffff;
-  --vp-button-brand-bg: var(--cairn-burnt-peach);
-  --vp-button-brand-hover-border: var(--cairn-burnt-peach-hover);
-  --vp-button-brand-hover-text: #ffffff;
-  --vp-button-brand-hover-bg: var(--cairn-burnt-peach-hover);
-  --vp-button-brand-active-border: var(--cairn-burnt-peach-deep);
-  --vp-button-brand-active-text: #ffffff;
-  --vp-button-brand-active-bg: var(--cairn-burnt-peach-deep);
+  /* Buttons: indigo — peach never sits behind text. */
+  --vp-button-brand-border: var(--cairn-twilight-indigo);
+  --vp-button-brand-text: var(--cairn-eggshell);
+  --vp-button-brand-bg: var(--cairn-twilight-indigo);
+  --vp-button-brand-hover-border: var(--cairn-twilight-indigo-deep);
+  --vp-button-brand-hover-text: var(--cairn-eggshell);
+  --vp-button-brand-hover-bg: var(--cairn-twilight-indigo-deep);
+  --vp-button-brand-active-border: var(--cairn-twilight-indigo-deeper);
+  --vp-button-brand-active-text: var(--cairn-eggshell);
+  --vp-button-brand-active-bg: var(--cairn-twilight-indigo-deeper);
 
-  --vp-home-hero-name-color: transparent;
+  --vp-button-alt-border: rgba(61, 64, 91, 0.28);
+  --vp-button-alt-text: var(--cairn-twilight-indigo);
+  --vp-button-alt-bg: transparent;
+  --vp-button-alt-hover-border: var(--cairn-twilight-indigo);
+  --vp-button-alt-hover-text: var(--cairn-twilight-indigo);
+  --vp-button-alt-hover-bg: rgba(61, 64, 91, 0.06);
+  --vp-button-alt-active-border: var(--cairn-twilight-indigo);
+  --vp-button-alt-active-text: var(--cairn-twilight-indigo);
+  --vp-button-alt-active-bg: rgba(61, 64, 91, 0.1);
+
+  /* Hero — solid ink, weight does the work, no gradient on a 5-letter word. */
+  --vp-home-hero-name-color: var(--cairn-twilight-indigo);
   --vp-home-hero-image-background-image: radial-gradient(
     circle at center,
-    rgba(224, 122, 95, 0.55),
-    rgba(242, 204, 143, 0.3) 55%,
-    rgba(129, 178, 154, 0) 80%
+    rgba(224, 122, 95, 0.45),
+    rgba(242, 204, 143, 0.3) 50%,
+    rgba(129, 178, 154, 0.12) 75%,
+    rgba(61, 64, 91, 0) 90%
   );
   --vp-home-hero-image-filter: blur(56px);
 
-  --vp-custom-block-tip-border: var(--cairn-muted-teal);
+  /* Custom blocks — each pinned to its brand role.
+     tip → teal (positive/safe)
+     info → indigo (voice)
+     warning → apricot (gentle nudge)
+     danger → peach (the alert) */
+  --vp-custom-block-tip-border: var(--cairn-muted-teal-deep);
   --vp-custom-block-tip-text: var(--cairn-muted-teal-deep);
   --vp-custom-block-tip-bg: rgba(129, 178, 154, 0.14);
 
-  --vp-custom-block-info-border: var(--cairn-twilight-indigo-soft);
+  --vp-custom-block-info-border: rgba(61, 64, 91, 0.4);
   --vp-custom-block-info-text: var(--cairn-twilight-indigo);
-  --vp-custom-block-info-bg: rgba(61, 64, 91, 0.08);
+  --vp-custom-block-info-bg: rgba(61, 64, 91, 0.06);
 
-  --vp-custom-block-warning-border: var(--cairn-apricot-cream);
-  --vp-custom-block-warning-text: #8a6a2e;
-  --vp-custom-block-warning-bg: rgba(242, 204, 143, 0.22);
+  --vp-custom-block-warning-border: var(--cairn-apricot-deep);
+  --vp-custom-block-warning-text: var(--cairn-apricot-deep);
+  --vp-custom-block-warning-bg: rgba(242, 204, 143, 0.28);
+
+  --vp-custom-block-danger-border: var(--cairn-burnt-peach-deep);
+  --vp-custom-block-danger-text: var(--cairn-burnt-peach-deep);
+  --vp-custom-block-danger-bg: rgba(224, 122, 95, 0.14);
+
+  --vp-code-color: var(--cairn-burnt-peach-deep);
+  --vp-code-bg: rgba(61, 64, 91, 0.06);
 }
 
 .dark {
-  --vp-c-brand-1: var(--cairn-apricot-cream);
-  --vp-c-brand-2: #f7d9a4;
-  --vp-c-brand-3: var(--cairn-burnt-peach);
-  --vp-c-brand-soft: rgba(242, 204, 143, 0.16);
+  --vp-c-bg: var(--cairn-bg-dark);
+  --vp-c-bg-alt: #15171f;
+  --vp-c-bg-soft: var(--cairn-surface-dark);
+  --vp-c-bg-elv: var(--cairn-surface-dark-2);
 
+  --vp-c-text-1: var(--cairn-eggshell);
+  --vp-c-text-2: rgba(244, 241, 222, 0.82);
+  --vp-c-text-3: rgba(244, 241, 222, 0.62);
+
+  --vp-c-divider: rgba(244, 241, 222, 0.14);
+  --vp-c-border: rgba(244, 241, 222, 0.26);
+  --vp-c-gutter: rgba(244, 241, 222, 0.04);
+
+  /* On dark, peach has enough contrast for short link spans (4.4:1
+     against the indigo-black surface). Hover lifts to lighter peach. */
+  --vp-c-brand-1: var(--cairn-burnt-peach);
+  --vp-c-brand-2: #ee9379;
+  --vp-c-brand-3: var(--cairn-burnt-peach);
+  --vp-c-brand-soft: rgba(224, 122, 95, 0.22);
+
+  /* Buttons on dark — apricot fill with indigo text. Apricot is the
+     "gentle nudge" so it stays welcoming; indigo text gives clean
+     contrast. Still no peach behind text. */
+  --vp-button-brand-border: var(--cairn-apricot-cream);
   --vp-button-brand-text: var(--cairn-twilight-indigo);
   --vp-button-brand-bg: var(--cairn-apricot-cream);
+  --vp-button-brand-hover-border: #f7d9a4;
+  --vp-button-brand-hover-text: var(--cairn-twilight-indigo);
   --vp-button-brand-hover-bg: #f7d9a4;
-  --vp-button-brand-active-bg: var(--cairn-burnt-peach);
+  --vp-button-brand-active-border: #f2cc8f;
+  --vp-button-brand-active-text: var(--cairn-twilight-indigo);
+  --vp-button-brand-active-bg: #f2cc8f;
+
+  --vp-button-alt-border: rgba(244, 241, 222, 0.26);
+  --vp-button-alt-text: var(--cairn-eggshell);
+  --vp-button-alt-bg: transparent;
+  --vp-button-alt-hover-border: var(--cairn-eggshell);
+  --vp-button-alt-hover-text: var(--cairn-eggshell);
+  --vp-button-alt-hover-bg: rgba(244, 241, 222, 0.06);
+  --vp-button-alt-active-border: var(--cairn-eggshell);
+  --vp-button-alt-active-text: var(--cairn-eggshell);
+  --vp-button-alt-active-bg: rgba(244, 241, 222, 0.1);
+
+  --vp-home-hero-name-color: var(--cairn-eggshell);
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle at center,
+    rgba(224, 122, 95, 0.35),
+    rgba(242, 204, 143, 0.18) 55%,
+    rgba(129, 178, 154, 0) 80%
+  );
+  --vp-home-hero-image-filter: blur(48px);
 
   --vp-custom-block-tip-border: var(--cairn-muted-teal);
   --vp-custom-block-tip-text: #b9d4c4;
-  --vp-custom-block-tip-bg: rgba(129, 178, 154, 0.22);
+  --vp-custom-block-tip-bg: rgba(129, 178, 154, 0.18);
 
-  --vp-custom-block-info-border: var(--cairn-twilight-indigo-soft);
-  --vp-custom-block-info-text: #c8cae0;
-  --vp-custom-block-info-bg: rgba(90, 93, 122, 0.22);
+  --vp-custom-block-info-border: rgba(244, 241, 222, 0.35);
+  --vp-custom-block-info-text: rgba(244, 241, 222, 0.9);
+  --vp-custom-block-info-bg: rgba(244, 241, 222, 0.05);
 
-  --vp-home-hero-image-background-image: radial-gradient(
-    circle at center,
-    rgba(224, 122, 95, 0.4),
-    rgba(242, 204, 143, 0) 70%
-  );
-  --vp-home-hero-image-filter: blur(48px);
+  --vp-custom-block-warning-border: var(--cairn-apricot-cream);
+  --vp-custom-block-warning-text: var(--cairn-apricot-cream);
+  --vp-custom-block-warning-bg: rgba(242, 204, 143, 0.14);
+
+  --vp-custom-block-danger-border: var(--cairn-burnt-peach);
+  --vp-custom-block-danger-text: var(--cairn-burnt-peach);
+  --vp-custom-block-danger-bg: rgba(224, 122, 95, 0.18);
+
+  --vp-code-color: var(--cairn-apricot-cream);
+  --vp-code-bg: rgba(244, 241, 222, 0.06);
 }
 
+/* Headings in Newsreader — "the human voice" per brand guidelines. */
+.VPDoc h1,
+.VPDoc h2,
+.VPDoc h3,
+.VPDoc h4,
+.VPHero .name,
+.VPHero .text,
+.VPFeature .title {
+  font-family: var(--cairn-serif);
+  letter-spacing: 0;
+}
+
+.VPDoc h1,
+.VPDoc h2,
+.VPDoc h3,
+.VPDoc h4,
+.VPFeature .title {
+  font-weight: 500;
+}
+
+.VPHero .tagline {
+  font-family: var(--cairn-sans);
+}
+
+/* Hero stack — weight, italic, and a size step do the work, not color.
+   Name: heaviest Newsreader cut, slightly tighter.
+   Text: regular weight, italic — the supporting voice, distinctly lighter.
+   !important is necessary because VitePress sets the sizes via media-query
+   rules with the same specificity, and source-order doesn't always win. */
 .VPHero .name {
-  background: var(--cairn-gradient);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em;
+  font-size: 80px !important;
+  line-height: 1 !important;
+}
+
+.VPHero .text {
+  font-weight: 400 !important;
+  font-style: italic;
+  font-size: 30px !important;
+  line-height: 1.2 !important;
+}
+
+@media (max-width: 640px) {
+  .VPHero .name {
+    font-size: 56px !important;
+  }
+  .VPHero .text {
+    font-size: 24px !important;
+  }
+}
+
+/* Larger hero icon — the wordmark earns more presence on the canvas.
+   The source SVGs have explicit width/height attributes so we set
+   width directly; max-width alone can't force them larger. */
+.VPHero .image-bg {
+  width: 360px !important;
+  height: 360px !important;
+}
+.VPHero .image-src {
+  width: 260px !important;
+  height: 260px !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+@media (max-width: 640px) {
+  .VPHero .image-bg {
+    width: 240px !important;
+    height: 240px !important;
+  }
+  .VPHero .image-src {
+    width: 180px !important;
+    height: 180px !important;
+  }
+}
+
+/* Underline links — color alone is not the only affordance. */
+.VPDoc a.vp-link,
+.VPDoc .vp-doc a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
