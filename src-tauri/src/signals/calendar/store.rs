@@ -167,3 +167,169 @@ fn parse_kind(s: &str) -> CalendarKind {
         _ => CalendarKind::Url,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::test_db;
+
+    fn sample(id: &str, kind: CalendarKind, label: &str) -> CalendarSource {
+        CalendarSource {
+            id: id.into(),
+            kind,
+            label: label.into(),
+            location: match kind {
+                CalendarKind::Url => "https://cal.example/…".into(),
+                CalendarKind::File => "/tmp/cal.ics".into(),
+            },
+            poll_seconds: 900,
+            enabled: true,
+            last_synced_at: None,
+            last_etag: None,
+            last_modified: None,
+            last_error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_is_empty_on_fresh_db() {
+        let (_dir, db) = test_db().await;
+        let out = list(&db.pool).await.unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn insert_and_get_round_trip_a_url_source() {
+        let (_dir, db) = test_db().await;
+        let src = sample("src-url", CalendarKind::Url, "Work");
+        insert(&db.pool, &src).await.unwrap();
+
+        let fetched = get(&db.pool, "src-url").await.unwrap().unwrap();
+        assert_eq!(fetched.id, src.id);
+        assert!(matches!(fetched.kind, CalendarKind::Url));
+        assert_eq!(fetched.label, "Work");
+        assert_eq!(fetched.location, src.location);
+        assert_eq!(fetched.poll_seconds, 900);
+        assert!(fetched.enabled);
+        assert!(fetched.last_synced_at.is_none());
+        assert!(fetched.last_etag.is_none());
+        assert!(fetched.last_modified.is_none());
+        assert!(fetched.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn insert_round_trips_a_file_source() {
+        let (_dir, db) = test_db().await;
+        let mut src = sample("src-file", CalendarKind::File, "Local");
+        src.poll_seconds = 60;
+        src.enabled = false;
+        insert(&db.pool, &src).await.unwrap();
+        let fetched = get(&db.pool, "src-file").await.unwrap().unwrap();
+        assert!(matches!(fetched.kind, CalendarKind::File));
+        assert_eq!(fetched.poll_seconds, 60);
+        assert!(!fetched.enabled);
+    }
+
+    #[tokio::test]
+    async fn get_returns_none_for_missing_id() {
+        let (_dir, db) = test_db().await;
+        let out = get(&db.pool, "nope").await.unwrap();
+        assert!(out.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_meta_changes_label_poll_enabled() {
+        let (_dir, db) = test_db().await;
+        let src = sample("src-1", CalendarKind::File, "Original");
+        insert(&db.pool, &src).await.unwrap();
+
+        let mut next = src.clone();
+        next.label = "Renamed".into();
+        next.poll_seconds = 120;
+        next.enabled = false;
+        update_meta(&db.pool, &next).await.unwrap();
+
+        let fetched = get(&db.pool, "src-1").await.unwrap().unwrap();
+        assert_eq!(fetched.label, "Renamed");
+        assert_eq!(fetched.poll_seconds, 120);
+        assert!(!fetched.enabled);
+    }
+
+    #[tokio::test]
+    async fn record_sync_ok_sets_etag_last_modified_and_clears_error() {
+        let (_dir, db) = test_db().await;
+        let src = sample("src-1", CalendarKind::File, "Plan");
+        insert(&db.pool, &src).await.unwrap();
+        record_sync_err(&db.pool, "src-1", "network down")
+            .await
+            .unwrap();
+        let with_err = get(&db.pool, "src-1").await.unwrap().unwrap();
+        assert_eq!(with_err.last_error.as_deref(), Some("network down"));
+
+        record_sync_ok(
+            &db.pool,
+            "src-1",
+            Some("etag-abc"),
+            Some("Mon, 01 Jan 2026 00:00:00 GMT"),
+        )
+        .await
+        .unwrap();
+        let after = get(&db.pool, "src-1").await.unwrap().unwrap();
+        assert_eq!(after.last_etag.as_deref(), Some("etag-abc"));
+        assert_eq!(
+            after.last_modified.as_deref(),
+            Some("Mon, 01 Jan 2026 00:00:00 GMT")
+        );
+        assert!(after.last_error.is_none(), "ok clears last_error");
+        assert!(after.last_synced_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn record_sync_err_writes_last_error() {
+        let (_dir, db) = test_db().await;
+        let src = sample("src-1", CalendarKind::Url, "Work");
+        insert(&db.pool, &src).await.unwrap();
+        record_sync_err(&db.pool, "src-1", "timeout").await.unwrap();
+        let after = get(&db.pool, "src-1").await.unwrap().unwrap();
+        assert_eq!(after.last_error.as_deref(), Some("timeout"));
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_row() {
+        let (_dir, db) = test_db().await;
+        let src = sample("src-1", CalendarKind::File, "Doomed");
+        insert(&db.pool, &src).await.unwrap();
+        delete(&db.pool, "src-1").await.unwrap();
+        assert!(get(&db.pool, "src-1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_orders_sources_by_label() {
+        let (_dir, db) = test_db().await;
+        insert(&db.pool, &sample("a", CalendarKind::File, "Zeta"))
+            .await
+            .unwrap();
+        insert(&db.pool, &sample("b", CalendarKind::File, "Alpha"))
+            .await
+            .unwrap();
+        let out = list(&db.pool).await.unwrap();
+        assert_eq!(out[0].label, "Alpha");
+        assert_eq!(out[1].label, "Zeta");
+    }
+
+    #[test]
+    fn parse_kind_recognises_known_values_and_defaults_to_url() {
+        assert!(matches!(parse_kind("file"), CalendarKind::File));
+        assert!(matches!(parse_kind("url"), CalendarKind::Url));
+        assert!(
+            matches!(parse_kind("???"), CalendarKind::Url),
+            "unknown kind defaults to Url for forward-compat"
+        );
+    }
+
+    #[test]
+    fn kind_str_matches_db_check_constraint() {
+        assert_eq!(kind_str(CalendarKind::Url), "url");
+        assert_eq!(kind_str(CalendarKind::File), "file");
+    }
+}

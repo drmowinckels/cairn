@@ -45,3 +45,36 @@ pub async fn build(calendar: &CalendarRegistry, at: DateTime<Utc>) -> SignalSnap
         calendar,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::test_db;
+
+    #[tokio::test]
+    async fn build_returns_empty_signals_for_empty_registry() {
+        let (_dir, db) = test_db().await;
+        let registry = CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds");
+        let snap = build(&registry, Utc::now()).await;
+        // ide / git / browser collectors are stubbed today — every
+        // snapshot lands with them as None until M1 lands the cross-
+        // platform collectors. Pin that contract.
+        assert!(snap.ide_folder.is_none());
+        assert!(snap.git_branch.is_none());
+        assert!(snap.browser_domain.is_none());
+        // No calendar sources registered → no events.
+        assert!(snap.calendar.is_empty());
+        // window_title / app_name come from `signals::window::current()`,
+        // whose return value depends on the host. The contract we pin
+        // here is: a window_title is only ever returned alongside an
+        // app_name (the macOS collector emits `app_name` with
+        // `title: None`, so the inverse — `Some(title), None(app)` —
+        // is not a valid shape).
+        if snap.window_title.is_some() {
+            assert!(
+                snap.app_name.is_some(),
+                "window_title without app_name is not a valid front-window shape"
+            );
+        }
+    }
+}

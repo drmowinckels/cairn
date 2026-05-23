@@ -994,6 +994,830 @@ mod tests {
     fn parse_ts_rejects_garbage() {
         assert!(parse_ts("not a date").is_err());
     }
+
+    // ---------------- client CRUD ----------------
+
+    fn client_input(id: Option<&str>, name: &str, color: Option<&str>) -> ClientInput {
+        ClientInput {
+            id: id.map(|s| s.into()),
+            name: name.into(),
+            color: color.map(|s| s.into()),
+            archived: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_clients_returns_seeded_clients() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let clients = list_clients(state).await.unwrap();
+        assert!(!clients.is_empty(), "seed must insert default clients");
+        assert!(clients.iter().any(|c| c.name == "ACME Co."));
+    }
+
+    #[tokio::test]
+    async fn save_client_inserts_when_id_missing() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let saved = save_client(
+            state.clone(),
+            client_input(None, "New Client", Some("#abcdef")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved.name, "New Client");
+        assert_eq!(saved.color.as_deref(), Some("#abcdef"));
+        assert!(!saved.archived);
+        // Returned id should be a non-empty UUID-style string.
+        assert!(!saved.id.is_empty());
+
+        let after = list_clients(state).await.unwrap();
+        assert!(after.iter().any(|c| c.id == saved.id));
+    }
+
+    #[tokio::test]
+    async fn save_client_updates_existing_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let first = save_client(state.clone(), client_input(None, "Initial", None))
+            .await
+            .unwrap();
+        let updated = save_client(
+            state.clone(),
+            client_input(Some(&first.id), "Renamed", Some("#111111")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.id, first.id);
+        assert_eq!(updated.name, "Renamed");
+        assert_eq!(updated.color.as_deref(), Some("#111111"));
+
+        let after = list_clients(state).await.unwrap();
+        let same = after.iter().find(|c| c.id == first.id).unwrap();
+        assert_eq!(same.name, "Renamed");
+    }
+
+    #[tokio::test]
+    async fn delete_client_removes_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_client(state.clone(), client_input(None, "Doomed", None))
+            .await
+            .unwrap();
+        delete_client(state.clone(), made.id.clone()).await.unwrap();
+        let after = list_clients(state).await.unwrap();
+        assert!(after.iter().all(|c| c.id != made.id));
+    }
+
+    // ---------------- project CRUD ----------------
+
+    fn project_input(
+        id: Option<&str>,
+        name: &str,
+        color: &str,
+        client_id: Option<&str>,
+    ) -> ProjectInput {
+        ProjectInput {
+            id: id.map(|s| s.into()),
+            name: name.into(),
+            client_id: client_id.map(|s| s.into()),
+            color: color.into(),
+            archived: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn save_project_inserts_when_id_missing() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let saved = save_project(
+            state.clone(),
+            project_input(None, "Side project", "#abcdef", None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved.name, "Side project");
+        assert!(!saved.id.is_empty());
+
+        let after = list_projects(state).await.unwrap();
+        assert!(after.iter().any(|p| p.id == saved.id));
+    }
+
+    #[tokio::test]
+    async fn save_project_updates_existing_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let first = save_project(state.clone(), project_input(None, "Old", "#000000", None))
+            .await
+            .unwrap();
+        let updated = save_project(
+            state.clone(),
+            project_input(Some(&first.id), "New", "#ffffff", Some("client-acme")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.id, first.id);
+        assert_eq!(updated.name, "New");
+        assert_eq!(updated.color, "#ffffff");
+        assert_eq!(updated.client_id.as_deref(), Some("client-acme"));
+    }
+
+    #[tokio::test]
+    async fn delete_project_removes_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_project(
+            state.clone(),
+            project_input(None, "Doomed", "#abc123", None),
+        )
+        .await
+        .unwrap();
+        delete_project(state.clone(), made.id.clone())
+            .await
+            .unwrap();
+        let after = list_projects(state).await.unwrap();
+        assert!(after.iter().all(|p| p.id != made.id));
+    }
+
+    // ---------------- task CRUD ----------------
+
+    fn task_input(id: Option<&str>, project_id: &str, name: &str) -> TaskInput {
+        TaskInput {
+            id: id.map(|s| s.into()),
+            project_id: project_id.into(),
+            name: name.into(),
+            archived: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_tasks_is_empty_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let tasks = list_tasks(state, None).await.unwrap();
+        assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn save_task_inserts_and_list_tasks_filters_by_project() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let _t1 = save_task(state.clone(), task_input(None, "cairn", "Rules engine"))
+            .await
+            .unwrap();
+        let _t2 = save_task(state.clone(), task_input(None, "cairn", "Reports UI"))
+            .await
+            .unwrap();
+        let _t3 = save_task(state.clone(), task_input(None, "site", "Blog post"))
+            .await
+            .unwrap();
+
+        let all = list_tasks(state.clone(), None).await.unwrap();
+        assert_eq!(all.len(), 3);
+        let just_cairn = list_tasks(state.clone(), Some("cairn".into()))
+            .await
+            .unwrap();
+        assert_eq!(just_cairn.len(), 2);
+        assert!(just_cairn.iter().all(|t| t.project_id == "cairn"));
+        let just_site = list_tasks(state, Some("site".into())).await.unwrap();
+        assert_eq!(just_site.len(), 1);
+        assert_eq!(just_site[0].name, "Blog post");
+    }
+
+    #[tokio::test]
+    async fn save_task_updates_existing_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_task(state.clone(), task_input(None, "cairn", "Old name"))
+            .await
+            .unwrap();
+        let updated = save_task(
+            state.clone(),
+            task_input(Some(&made.id), "cairn", "New name"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.id, made.id);
+        assert_eq!(updated.name, "New name");
+    }
+
+    #[tokio::test]
+    async fn delete_task_removes_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_task(state.clone(), task_input(None, "cairn", "Doomed"))
+            .await
+            .unwrap();
+        delete_task(state.clone(), made.id.clone()).await.unwrap();
+        let after = list_tasks(state, None).await.unwrap();
+        assert!(after.iter().all(|t| t.id != made.id));
+    }
+
+    // ---------------- rules CRUD ----------------
+
+    fn rule_body() -> serde_json::Value {
+        serde_json::json!({
+            "when": [],
+            "then": { "project": "cairn", "tags": [], "tagsFromCalendar": false }
+        })
+    }
+
+    fn rule_input(id: Option<&str>, name: &str) -> RuleInput {
+        RuleInput {
+            id: id.map(|s| s.into()),
+            name: name.into(),
+            enabled: true,
+            priority: 10,
+            body: rule_body(),
+        }
+    }
+
+    #[tokio::test]
+    async fn save_rule_inserts_when_id_missing() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let saved = save_rule(state.clone(), rule_input(None, "First rule"))
+            .await
+            .unwrap();
+        assert_eq!(saved.name, "First rule");
+        assert!(saved.enabled);
+        assert_eq!(saved.priority, 10);
+        // Body round-trips JSON.
+        assert_eq!(saved.body, rule_body());
+        let after = list_rules(state).await.unwrap();
+        assert!(after.iter().any(|r| r.id == saved.id));
+    }
+
+    #[tokio::test]
+    async fn save_rule_updates_existing_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_rule(state.clone(), rule_input(None, "Original"))
+            .await
+            .unwrap();
+        let mut renamed = rule_input(Some(&made.id), "Renamed");
+        renamed.enabled = false;
+        renamed.priority = 99;
+        let updated = save_rule(state.clone(), renamed).await.unwrap();
+        assert_eq!(updated.id, made.id);
+        assert_eq!(updated.name, "Renamed");
+        assert!(!updated.enabled);
+        assert_eq!(updated.priority, 99);
+    }
+
+    #[tokio::test]
+    async fn delete_rule_removes_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_rule(state.clone(), rule_input(None, "Doomed"))
+            .await
+            .unwrap();
+        delete_rule(state.clone(), made.id.clone()).await.unwrap();
+        let after = list_rules(state).await.unwrap();
+        assert!(after.iter().all(|r| r.id != made.id));
+    }
+
+    // ---------------- exclusions CRUD ----------------
+
+    fn exclusion_input(kind: &str, value: &str) -> ExclusionInput {
+        ExclusionInput {
+            kind: kind.into(),
+            value: value.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_exclusions_is_empty_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let exclusions = list_exclusions(state).await.unwrap();
+        assert!(exclusions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn save_exclusion_inserts_for_each_valid_kind() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        for (kind, value) in [
+            ("app", "Slack"),
+            ("domain", "facebook.com"),
+            ("window", "Private"),
+        ] {
+            let saved = save_exclusion(state.clone(), exclusion_input(kind, value))
+                .await
+                .unwrap();
+            assert_eq!(saved.kind, kind);
+            assert_eq!(saved.value, value);
+            assert!(!saved.id.is_empty());
+        }
+        let after = list_exclusions(state).await.unwrap();
+        assert_eq!(after.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn save_exclusion_rejects_empty_value() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = save_exclusion(state, exclusion_input("app", "   "))
+            .await
+            .unwrap_err();
+        assert!(err.contains("empty"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn save_exclusion_rejects_unknown_kind() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = save_exclusion(state, exclusion_input("garbage", "x"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("garbage"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn delete_exclusion_removes_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_exclusion(state.clone(), exclusion_input("app", "Mail"))
+            .await
+            .unwrap();
+        delete_exclusion(state.clone(), made.id.clone())
+            .await
+            .unwrap();
+        let after = list_exclusions(state).await.unwrap();
+        assert!(after.is_empty());
+    }
+
+    // ---------------- entry update / delete ----------------
+
+    #[tokio::test]
+    async fn update_entry_modifies_individual_fields() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let entry = start_entry(state.clone(), start_input(Some("cairn"), "Initial desc"))
+            .await
+            .unwrap();
+        let task = save_task(state.clone(), task_input(None, "cairn", "Bugs"))
+            .await
+            .unwrap();
+
+        // Patch description + task.
+        let patched = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: Some(Some(task.id.clone())),
+                description: Some("Updated desc".into()),
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(patched.description, "Updated desc");
+        assert_eq!(patched.task_id.as_deref(), Some(task.id.as_str()));
+        assert_eq!(patched.project_id.as_deref(), Some("cairn"));
+    }
+
+    #[tokio::test]
+    async fn update_entry_changing_project_clears_task() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let entry = start_entry(state.clone(), start_input(Some("cairn"), "x"))
+            .await
+            .unwrap();
+        let task = save_task(state.clone(), task_input(None, "cairn", "Refactor"))
+            .await
+            .unwrap();
+        // Attach task.
+        update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: Some(Some(task.id.clone())),
+                description: None,
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Change project — task must reset to None.
+        let after = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: Some(Some("site".into())),
+                task_id: None,
+                description: None,
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(after.project_id.as_deref(), Some("site"));
+        assert!(after.task_id.is_none(), "changing project must clear task");
+    }
+
+    #[tokio::test]
+    async fn update_entry_can_set_started_and_ended() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let entry = start_entry(state.clone(), start_input(Some("cairn"), "x"))
+            .await
+            .unwrap();
+        let started_at = "2026-05-23T08:00:00+00:00".to_string();
+        let ended_at = "2026-05-23T09:30:00+00:00".to_string();
+        let patched = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: Some(started_at.clone()),
+                ended_at: Some(Some(ended_at.clone())),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(patched.started_at.to_rfc3339(), started_at);
+        assert_eq!(patched.ended_at.map(|t| t.to_rfc3339()), Some(ended_at));
+    }
+
+    #[tokio::test]
+    async fn delete_entry_removes_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = start_entry(state.clone(), start_input(None, "doomed"))
+            .await
+            .unwrap();
+        delete_entry(state.clone(), entry.id.clone()).await.unwrap();
+        let today = list_today(state).await.unwrap();
+        assert!(today.iter().all(|e| e.id != entry.id));
+    }
+
+    // ---------------- list_week aggregation ----------------
+
+    #[tokio::test]
+    async fn list_week_returns_seven_days_starting_on_monday() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let week = list_week(state).await.unwrap();
+        assert_eq!(week.len(), 7);
+        assert_eq!(week[0].day, "Mon");
+        assert_eq!(week[6].day, "Sun");
+        // One of the days is today.
+        assert_eq!(week.iter().filter(|d| d.today).count(), 1);
+        // Saturday + Sunday flagged weekend.
+        assert!(week[5].weekend);
+        assert!(week[6].weekend);
+        // Nothing in the DB → all zero hours.
+        assert!(week.iter().all(|d| d.hours == 0.0));
+    }
+
+    #[tokio::test]
+    async fn list_week_counts_open_entry_against_now() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Open entry started 1h ago, no ended_at — list_week must
+        // close it against "now" and count ~1h on today's bucket.
+        let id = uuid::Uuid::new_v4().to_string();
+        let started = (Utc::now() - Duration::minutes(60)).to_rfc3339();
+        let now_str = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO entries
+                (id, project_id, task_id, description, started_at, ended_at,
+                 source, rule_id, created_at, updated_at)
+            VALUES (?1, ?2, NULL, '', ?3, NULL, 'manual', NULL, ?3, ?3)
+            "#,
+        )
+        .bind(&id)
+        .bind("cairn")
+        .bind(&started)
+        .execute(&app.state::<crate::AppState>().db.pool)
+        .await
+        .unwrap();
+        // Mark updated_at to satisfy the schema (the query above sets it).
+        let _ = now_str;
+
+        let week = list_week(state).await.unwrap();
+        let today = week.iter().find(|d| d.today).expect("today bucket");
+        assert!(
+            today.hours >= 0.9 && today.hours <= 1.1,
+            "open entry should contribute ~1h on today; got {}",
+            today.hours
+        );
+    }
+
+    #[tokio::test]
+    async fn list_week_includes_entry_crossing_midnight() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Put a closed entry firmly inside this week: starts 2h after
+        // Monday-local-midnight, ends 1h later. Should land on Monday's
+        // bucket regardless of system tz.
+        let monday_local = monday_of(Local::now().date_naive());
+        let start_utc = local_midnight_utc(monday_local) + Duration::hours(2);
+        let end_utc = start_utc + Duration::hours(1);
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO entries
+                (id, project_id, task_id, description, started_at, ended_at,
+                 source, rule_id, created_at, updated_at)
+            VALUES (?1, 'cairn', NULL, '', ?2, ?3, 'manual', NULL, ?2, ?2)
+            "#,
+        )
+        .bind(&id)
+        .bind(start_utc.to_rfc3339())
+        .bind(end_utc.to_rfc3339())
+        .execute(&app.state::<crate::AppState>().db.pool)
+        .await
+        .unwrap();
+
+        let week = list_week(state).await.unwrap();
+        let monday = week.iter().find(|d| d.day == "Mon").unwrap();
+        assert!(monday.hours >= 0.99 && monday.hours <= 1.01);
+        assert_eq!(monday.segments.len(), 1);
+        assert_eq!(monday.segments[0].0, "cairn");
+    }
+
+    // ---------------- pure helpers ----------------
+
+    #[test]
+    fn monday_of_returns_same_date_when_input_is_monday() {
+        let mon = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap(); // Mon
+        assert_eq!(monday_of(mon), mon);
+    }
+
+    #[test]
+    fn monday_of_walks_back_from_sunday() {
+        let sun = NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(); // Sun
+        let mon = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
+        assert_eq!(monday_of(sun), mon);
+    }
+
+    #[test]
+    fn monday_of_walks_back_from_wednesday() {
+        let wed = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        let mon = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
+        assert_eq!(monday_of(wed), mon);
+    }
+
+    #[test]
+    fn local_midnight_utc_returns_a_value_on_a_normal_day() {
+        let d = NaiveDate::from_ymd_opt(2026, 5, 23).unwrap();
+        let utc = local_midnight_utc(d);
+        // The result must be the same calendar date in local time.
+        let local = utc.with_timezone(&Local);
+        assert_eq!(local.date_naive(), d);
+        assert_eq!(
+            local.time(),
+            chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn round2_truncates_to_two_decimals() {
+        assert_eq!(round2(1.005), 1.0); // banker's rounding via f64 — half-even
+        assert_eq!(round2(1.234), 1.23);
+        assert_eq!(round2(1.235999), 1.24);
+        assert_eq!(round2(0.0), 0.0);
+    }
+
+    // ---------------- calendar IPC ----------------
+
+    #[tokio::test]
+    async fn list_calendar_sources_is_empty_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let sources = list_calendar_sources(state).await.unwrap();
+        assert!(sources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_calendar_source_rejects_empty_label() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = add_calendar_source(
+            state,
+            AddCalendarInput {
+                kind: CalendarKind::File,
+                label: "   ".into(),
+                raw: "/tmp/cal.ics".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "label cannot be empty");
+    }
+
+    #[tokio::test]
+    async fn add_calendar_source_rejects_empty_raw() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = add_calendar_source(
+            state,
+            AddCalendarInput {
+                kind: CalendarKind::File,
+                label: "Work".into(),
+                raw: "   ".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "URL or path cannot be empty");
+    }
+
+    #[tokio::test]
+    async fn add_calendar_source_file_kind_persists_to_store() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Use a non-existent path: registry kicks off an initial sync
+        // which will fail to read the file, but the source row must
+        // still be persisted (sync errors are recorded, not fatal).
+        let added = add_calendar_source(
+            state.clone(),
+            AddCalendarInput {
+                kind: CalendarKind::File,
+                label: "  Local ICS  ".into(),
+                raw: "/tmp/does-not-exist.ics".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(added.label, "Local ICS", "label is trimmed");
+        assert_eq!(added.location, "/tmp/does-not-exist.ics");
+        assert!(matches!(added.kind, CalendarKind::File));
+        assert!(added.enabled);
+
+        let after = list_calendar_sources(state).await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, added.id);
+    }
+
+    #[tokio::test]
+    async fn add_calendar_source_url_kind_redacts_location() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Use a deliberately invalid host so the post-add sync fails
+        // fast without making a network call to a real server.
+        let raw = "https://example.invalid/calendar/ical/SECRET-TOKEN/basic.ics";
+        let added = add_calendar_source(
+            state.clone(),
+            AddCalendarInput {
+                kind: CalendarKind::Url,
+                label: "Work".into(),
+                raw: raw.into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(added.kind, CalendarKind::Url));
+        // The stored location is the redacted form — host without path.
+        assert!(!added.location.contains("SECRET-TOKEN"));
+        assert!(added.location.contains("example.invalid"));
+        // Clean up the keychain entry the registry created so other
+        // test runs aren't polluted.
+        let _ = remove_calendar_source(state, added.id).await;
+    }
+
+    #[tokio::test]
+    async fn update_calendar_source_round_trips_fields() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let added = add_calendar_source(
+            state.clone(),
+            AddCalendarInput {
+                kind: CalendarKind::File,
+                label: "Old".into(),
+                raw: "/tmp/cal.ics".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let updated = update_calendar_source(
+            state.clone(),
+            UpdateCalendarInput {
+                id: added.id.clone(),
+                label: Some("Renamed".into()),
+                poll_seconds: Some(120),
+                enabled: Some(false),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.label, "Renamed");
+        assert_eq!(updated.poll_seconds, 120);
+        assert!(!updated.enabled);
+    }
+
+    #[tokio::test]
+    async fn remove_calendar_source_deletes_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let added = add_calendar_source(
+            state.clone(),
+            AddCalendarInput {
+                kind: CalendarKind::File,
+                label: "Doomed".into(),
+                raw: "/tmp/x.ics".into(),
+            },
+        )
+        .await
+        .unwrap();
+        remove_calendar_source(state.clone(), added.id.clone())
+            .await
+            .unwrap();
+        let after = list_calendar_sources(state).await.unwrap();
+        assert!(after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_calendar_source_fails_for_unknown_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = refresh_calendar_source(state, "does-not-exist".into())
+            .await
+            .unwrap_err();
+        assert!(err.contains("does-not-exist"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn current_calendar_events_is_empty_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let events = current_calendar_events(state).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn calendar_sync_status_lists_added_sources() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let added = add_calendar_source(
+            state.clone(),
+            AddCalendarInput {
+                kind: CalendarKind::File,
+                label: "Plan".into(),
+                raw: "/tmp/plan.ics".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let statuses = calendar_sync_status(state).await.unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].source_id, added.id);
+        // The initial sync against a non-existent file will have run;
+        // either way event_count is 0 (no parsed events buffered).
+        assert_eq!(statuses[0].event_count, 0);
+    }
+
+    #[tokio::test]
+    async fn current_snapshot_returns_empty_calendar_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let snap = current_snapshot(state).await.unwrap();
+        assert!(snap.calendar.is_empty());
+        assert!(snap.browser_domain.is_none());
+        assert!(snap.git_branch.is_none());
+        assert!(snap.ide_folder.is_none());
+    }
+
+    #[tokio::test]
+    async fn active_calendar_event_from_active_event_preserves_fields() {
+        // Construct the conversion through `From` so the field-by-field
+        // shape stays pinned. The IPC handler wraps `ActiveEvent`s the
+        // same way.
+        let active = ActiveEvent {
+            source_id: "src-1".into(),
+            source_label: "Work".into(),
+            event: crate::signals::calendar::parser::ParsedEvent {
+                uid: "u@x".into(),
+                summary: "Stand-up".into(),
+                start: Utc::now(),
+                end: Utc::now() + Duration::minutes(30),
+                all_day: false,
+                attendees: vec!["a@x".into()],
+            },
+        };
+        let wire: ActiveCalendarEvent = active.clone().into();
+        assert_eq!(wire.source_id, active.source_id);
+        assert_eq!(wire.source_label, active.source_label);
+        assert_eq!(wire.uid, active.event.uid);
+        assert_eq!(wire.summary, active.event.summary);
+        assert_eq!(wire.all_day, active.event.all_day);
+        assert_eq!(wire.attendees, active.event.attendees);
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

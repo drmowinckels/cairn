@@ -52,4 +52,36 @@ describe("useA11yPrefs", () => {
     const { result } = renderHook(() => useA11yPrefs());
     expect(result.current.textScale).toBe("md");
   });
+
+  it("setReduceMotion toggles the data attribute on the root", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    act(() => result.current.setReduceMotion(true));
+    expect(document.documentElement.dataset.reduceMotion).toBe("on");
+    act(() => result.current.setReduceMotion(false));
+    expect(document.documentElement.dataset.reduceMotion).toBe("off");
+  });
+
+  it("setColorblindSafe toggles the data attribute on the root", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    act(() => result.current.setColorblindSafe(true));
+    expect(document.documentElement.dataset.colorblind).toBe("on");
+    expect(result.current.colorblindSafe).toBe(true);
+  });
+
+  it("setAnnounce persists the change to localStorage", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    act(() => result.current.setAnnounce(false));
+    const stored = JSON.parse(localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}");
+    expect(stored.announce).toBe(false);
+    expect(result.current.announce).toBe(false);
+  });
+
+  it("setAlwaysFocusRing flips the root data attribute between kbd and always", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(document.documentElement.dataset.focusRing).toBe("kbd");
+    act(() => result.current.setAlwaysFocusRing(true));
+    expect(document.documentElement.dataset.focusRing).toBe("always");
+    act(() => result.current.setAlwaysFocusRing(false));
+    expect(document.documentElement.dataset.focusRing).toBe("kbd");
+  });
 });
