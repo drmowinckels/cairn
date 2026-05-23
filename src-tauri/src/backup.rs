@@ -97,10 +97,8 @@ pub async fn stage_import_at(data_dir: &Path, src: &Path) -> Result<PathBuf, Str
     Ok(dest)
 }
 
-/// Long-format CSV: one row per (entry, tag) pair. Entries with no
-/// tags get a single row with an empty `tag` field. This is the
-/// shape tools like pandas / dplyr expect — splitting tags into
-/// rows keeps the project column scalar and the tag column tidy.
+/// Long-format CSV: one row per entry. Tabular tools (pandas / dplyr /
+/// Excel) and invoice plugins (see issue #1) consume this directly.
 pub async fn export_csv_to(pool: &SqlitePool, dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         if !parent.as_os_str().is_empty() {
@@ -113,15 +111,16 @@ pub async fn export_csv_to(pool: &SqlitePool, dest: &Path) -> Result<(), String>
         SELECT e.id,
                e.started_at,
                e.ended_at,
+               c.name AS client,
                p.name AS project,
-               e.task,
-               e.source,
-               t.name AS tag
+               t.name AS task,
+               e.description,
+               e.source
           FROM entries e
-          LEFT JOIN projects   p  ON p.id  = e.project_id
-          LEFT JOIN entry_tags et ON et.entry_id = e.id
-          LEFT JOIN tags       t  ON t.id  = et.tag_id
-         ORDER BY e.started_at ASC, t.name ASC
+          LEFT JOIN projects p ON p.id = e.project_id
+          LEFT JOIN clients  c ON c.id = p.client_id
+          LEFT JOIN tasks    t ON t.id = e.task_id
+         ORDER BY e.started_at ASC
         "#,
     )
     .fetch_all(pool)
@@ -129,7 +128,7 @@ pub async fn export_csv_to(pool: &SqlitePool, dest: &Path) -> Result<(), String>
     .map_err(err)?;
 
     let mut file = tokio::fs::File::create(dest).await.map_err(err)?;
-    file.write_all(b"entry_id,started_at,ended_at,project,task,source,tag\n")
+    file.write_all(b"entry_id,started_at,ended_at,client,project,task,description,source\n")
         .await
         .map_err(err)?;
 
@@ -137,19 +136,21 @@ pub async fn export_csv_to(pool: &SqlitePool, dest: &Path) -> Result<(), String>
         let id: String = row.get("id");
         let started: String = row.get("started_at");
         let ended: Option<String> = row.get("ended_at");
+        let client: Option<String> = row.get("client");
         let project: Option<String> = row.get("project");
-        let task: String = row.get("task");
+        let task: Option<String> = row.get("task");
+        let description: String = row.get("description");
         let source: String = row.get("source");
-        let tag: Option<String> = row.get("tag");
         let line = format!(
-            "{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{}\n",
             csv_escape(&id),
             csv_escape(&started),
             csv_escape(ended.as_deref().unwrap_or("")),
+            csv_escape(client.as_deref().unwrap_or("")),
             csv_escape(project.as_deref().unwrap_or("")),
-            csv_escape(&task),
+            csv_escape(task.as_deref().unwrap_or("")),
+            csv_escape(&description),
             csv_escape(&source),
-            csv_escape(tag.as_deref().unwrap_or("")),
         );
         file.write_all(line.as_bytes()).await.map_err(err)?;
     }
@@ -193,20 +194,14 @@ pub async fn data_paths(app: tauri::AppHandle) -> Result<DataPaths, String> {
 }
 
 #[tauri::command]
-pub async fn export_backup(
-    state: State<'_, AppState>,
-    dest: String,
-) -> Result<String, String> {
+pub async fn export_backup(state: State<'_, AppState>, dest: String) -> Result<String, String> {
     let dest = PathBuf::from(dest);
     vacuum_into(&state.db.pool, &dest).await?;
     Ok(dest.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub async fn stage_import(
-    app: tauri::AppHandle,
-    src: String,
-) -> Result<String, String> {
+pub async fn stage_import(app: tauri::AppHandle, src: String) -> Result<String, String> {
     let data_dir = app.path().app_data_dir().map_err(err)?;
     let dest = stage_import_at(&data_dir, &PathBuf::from(src)).await?;
     Ok(dest.to_string_lossy().to_string())
@@ -223,10 +218,7 @@ pub async fn cancel_pending_import(app: tauri::AppHandle) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub async fn export_csv(
-    state: State<'_, AppState>,
-    dest: String,
-) -> Result<String, String> {
+pub async fn export_csv(state: State<'_, AppState>, dest: String) -> Result<String, String> {
     let dest = PathBuf::from(dest);
     export_csv_to(&state.db.pool, &dest).await?;
     Ok(dest.to_string_lossy().to_string())
@@ -234,9 +226,17 @@ pub async fn export_csv(
 
 #[tauri::command]
 pub async fn delete_everything(app: tauri::AppHandle) -> Result<(), String> {
-    // Close the pool so no fd's keep the files alive on Windows.
+    // Wipe every calendar-URL bearer secret from the OS keychain
+    // *before* the SQLite file goes away. Without this, `cairn-calendar/<id>`
+    // entries would orphan in the keychain holding the full
+    // subscription URL (including its token). Anyone with access to
+    // the user's keychain login profile — a shared laptop's next
+    // user, IT, restored Time Machine backup, etc. — could read the
+    // user's calendar in perpetuity. Best-effort: log on failure but
+    // continue with the wipe.
     {
         let state = app.state::<AppState>();
+        purge_calendar_secrets(&state.db.pool).await;
         state.db.pool.close().await;
     }
     let data_dir = app.path().app_data_dir().map_err(err)?;
@@ -244,6 +244,25 @@ pub async fn delete_everything(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("backup: deleted everything in {data_dir:?}; exiting");
     app.exit(0);
     Ok(())
+}
+
+async fn purge_calendar_secrets(pool: &SqlitePool) {
+    let rows = match sqlx::query("SELECT id FROM calendar_sources WHERE kind = 'url'")
+        .fetch_all(pool)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("delete_everything: could not enumerate calendar_sources: {e}");
+            return;
+        }
+    };
+    for row in rows {
+        let id: String = row.get("id");
+        if let Err(e) = crate::signals::calendar::secrets::remove(&id) {
+            log::warn!("delete_everything: could not remove keychain entry {id}: {e}");
+        }
+    }
 }
 
 #[tauri::command]
@@ -407,11 +426,17 @@ mod tests {
 
         let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
         let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[0], "entry_id,started_at,ended_at,project,task,source,tag");
+        assert_eq!(
+            lines[0],
+            "entry_id,started_at,ended_at,project,task,source,tag"
+        );
         // Header + 2 rows for the two-tag task + 1 row for the lone task
         assert_eq!(lines.len(), 4);
 
-        let two_tag_rows: Vec<&&str> = lines.iter().filter(|l| l.contains("two-tag task")).collect();
+        let two_tag_rows: Vec<&&str> = lines
+            .iter()
+            .filter(|l| l.contains("two-tag task"))
+            .collect();
         assert_eq!(two_tag_rows.len(), 2);
         assert!(two_tag_rows.iter().any(|l| l.ends_with(",api")));
         assert!(two_tag_rows.iter().any(|l| l.ends_with(",design")));
@@ -452,11 +477,12 @@ mod tests {
         assert_eq!(task.as_deref(), Some("round-trip subject"));
 
         // The replaced entry shouldn't survive; the pre-swap DB is now .bak.
-        let stale: Option<String> = sqlx::query("SELECT task FROM entries WHERE task = 'to be replaced'")
-            .fetch_optional(&reopened.pool)
-            .await
-            .unwrap()
-            .map(|r| r.get("task"));
+        let stale: Option<String> =
+            sqlx::query("SELECT task FROM entries WHERE task = 'to be replaced'")
+                .fetch_optional(&reopened.pool)
+                .await
+                .unwrap()
+                .map(|r| r.get("task"));
         assert!(stale.is_none());
         assert!(backup_path(dst_dir.path()).exists());
     }
