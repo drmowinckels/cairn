@@ -93,3 +93,16 @@ export type LayoutVariant = "default" | "projects-first";
 export type RulesComplexity = "light" | "medium" | "heavy";
 export type Theme = "light" | "dark";
 export type View = "today" | "reports" | "rules" | "settings";
+
+export type TextScale = "sm" | "md" | "lg" | "xl";
+export type DetectionPrompts = "off" | "subtle" | "modal";
+
+export interface A11yPrefs {
+  textScale: TextScale;
+  highContrast: boolean;
+  reduceMotion: boolean;
+  colorblindSafe: boolean;
+  announce: boolean;
+  alwaysFocusRing: boolean;
+  detectionPrompts: DetectionPrompts;
+}

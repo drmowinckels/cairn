@@ -1,14 +1,29 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
 import { useBackup } from "../../lib/use-backup";
-import type { Density } from "../../lib/types";
+import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
+import type { Density, DetectionPrompts, TextScale } from "../../lib/types";
 
 interface Props {
   density: Density;
+  a11y: UseA11yPrefs;
 }
 
-export function SettingsView({ density }: Props) {
+const TEXT_SCALES: Array<{ value: TextScale; label: string }> = [
+  { value: "sm", label: "A−" },
+  { value: "md", label: "Aa" },
+  { value: "lg", label: "A+" },
+  { value: "xl", label: "A++" },
+];
+
+const DETECTION_OPTIONS: Array<{ value: DetectionPrompts; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "subtle", label: "Subtle" },
+  { value: "modal", label: "Modal" },
+];
+
+export function SettingsView({ density, a11y }: Props) {
   const backup = useBackup();
   return (
     <div className="view view-settings" data-density={density}>
@@ -148,54 +163,93 @@ export function SettingsView({ density }: Props) {
         <p className="settings-sub">Cairn should be usable by everyone.</p>
 
         <SetRow label="Text size" hint="Scales the whole UI.">
-          <div className="seg seg--sm">
-            <button className="seg-btn">A−</button>
-            <button className="seg-btn is-on">Aa</button>
-            <button className="seg-btn">A+</button>
-            <button className="seg-btn">A++</button>
+          <div className="seg seg--sm" role="radiogroup" aria-label="Text size">
+            {TEXT_SCALES.map((opt) => (
+              <button
+                key={opt.value}
+                role="radio"
+                aria-checked={a11y.textScale === opt.value}
+                className={`seg-btn${a11y.textScale === opt.value ? " is-on" : ""}`}
+                onClick={() => a11y.setTextScale(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
         </SetRow>
 
         <SetRow label="High contrast" hint="Stronger borders and text contrast.">
-          <Toggle defaultOn={false} />
+          <Toggle
+            on={a11y.highContrast}
+            onChange={a11y.setHighContrast}
+            label="High contrast"
+          />
         </SetRow>
 
         <SetRow
           label="Reduce motion"
           hint="Disable timeline animations and idle pulse."
         >
-          <Toggle defaultOn />
+          <Toggle
+            on={a11y.reduceMotion}
+            onChange={a11y.setReduceMotion}
+            label="Reduce motion"
+          />
         </SetRow>
 
         <SetRow
           label="Colorblind-safe palette"
           hint="Swap project colors for an Okabe–Ito palette."
         >
-          <Toggle defaultOn={false} />
+          <Toggle
+            on={a11y.colorblindSafe}
+            onChange={a11y.setColorblindSafe}
+            label="Colorblind-safe palette"
+          />
         </SetRow>
 
         <SetRow
           label="Screen reader announcements"
           hint="Announce timer start/stop and detection prompts."
         >
-          <Toggle defaultOn />
+          <Toggle
+            on={a11y.announce}
+            onChange={a11y.setAnnounce}
+            label="Screen reader announcements"
+          />
         </SetRow>
 
         <SetRow
           label="Focus rings always visible"
           hint="Show focus indicators even when navigating with a mouse."
         >
-          <Toggle defaultOn={false} />
+          <Toggle
+            on={a11y.alwaysFocusRing}
+            onChange={a11y.setAlwaysFocusRing}
+            label="Focus rings always visible"
+          />
         </SetRow>
 
         <SetRow
           label="Detection prompts"
           hint="How insistent should auto-detection be?"
         >
-          <div className="seg seg--sm">
-            <button className="seg-btn">Off</button>
-            <button className="seg-btn is-on">Subtle</button>
-            <button className="seg-btn">Modal</button>
+          <div
+            className="seg seg--sm"
+            role="radiogroup"
+            aria-label="Detection prompts"
+          >
+            {DETECTION_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                role="radio"
+                aria-checked={a11y.detectionPrompts === opt.value}
+                className={`seg-btn${a11y.detectionPrompts === opt.value ? " is-on" : ""}`}
+                onClick={() => a11y.setDetectionPrompts(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
         </SetRow>
       </section>
@@ -293,14 +347,21 @@ function SetRow({ label, hint, children }: SetRowProps) {
   );
 }
 
-function Toggle({ defaultOn = false }: { defaultOn?: boolean }) {
-  const [on, setOn] = useState(defaultOn);
+interface ToggleProps {
+  on: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+}
+
+function Toggle({ on, onChange, label }: ToggleProps) {
   return (
     <button
+      type="button"
       className={`tgl${on ? " is-on" : ""}`}
       role="switch"
       aria-checked={on}
-      onClick={() => setOn(!on)}
+      aria-label={label}
+      onClick={() => onChange(!on)}
     >
       <span className="tgl-dot" />
     </button>

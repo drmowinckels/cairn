@@ -15,14 +15,15 @@ These four sentences appear verbatim in `Settings → Privacy`. If you change be
 
 ## What is stored
 
-| Stored                                                         | Reason                               |
-| -------------------------------------------------------------- | ------------------------------------ |
-| Time entries (start, end, project, tags, description, source)  | The app's purpose                    |
-| Projects and tags the user has created                         | The app's purpose                    |
-| Rules (conditions, actions)                                    | User configuration                   |
-| Exclusion list                                                 | User configuration                   |
-| Calendar event titles for entries created by the calendar rule | The user explicitly wanted this rule |
-| Idle periods (timestamps only)                                 | To compute idle prompts and reports  |
+| Stored                                                                | Reason                               |
+| --------------------------------------------------------------------- | ------------------------------------ |
+| Time entries (start, end, project, tags, description, source)         | The app's purpose                    |
+| Projects and tags the user has created                                | The app's purpose                    |
+| Rules (conditions, actions)                                           | User configuration                   |
+| Exclusion list                                                        | User configuration                   |
+| Calendar event titles for entries created by the calendar rule        | The user explicitly wanted this rule |
+| Calendar source list: label, redacted URL or file path, poll interval | So Cairn knows what to fetch         |
+| Idle periods (timestamps only)                                        | To compute idle prompts and reports  |
 
 ## What is **not** stored
 
@@ -54,10 +55,15 @@ Hidden in Settings → Advanced. Off by default, **sticky off** on every relaunc
 
 ## Calendar integration
 
-- **Read-only** access. Permission requested via the OS calendar API (EventKit on macOS, etc.).
-- Cairn never modifies the user's calendar.
-- Only event title + attendee emails are read, and only when actively matching a calendar rule.
-- Attendee emails are **not** stored unless the matching rule has `tags_from_calendar: true`, in which case they become tags on the time entry. The user can disable that per-rule.
+Cairn ingests calendars by fetching ICS subscription URLs the user has explicitly added (or reading local `.ics` files). It does not use cloud calendar APIs, OAuth, or per-OS calendar databases. The same code path works on macOS, Windows, and Linux.
+
+- **Read-only** by construction — only HTTP `GET` is ever issued. Cairn cannot modify the source calendar.
+- **No analytics, no metadata.** Each request is a plain `GET` with `If-None-Match` / `If-Modified-Since` so that most polls return 304. No query strings, no cookies, no referrer.
+- **Network destinations are user-supplied.** Cairn only contacts hosts whose URL the user pasted in Settings → Integrations → Calendar. There is no discovery, no central index, and no calendar provider sees anything other than a plain ICS download.
+- **Subscription URLs are bearer credentials and are stored in the OS keychain** (macOS Keychain / Windows Credential Manager / Secret Service), never in `cairn.sqlite`. The DB only holds a redacted display string (`https://calendar.google.com/…`).
+- **Event titles, attendees, and descriptions live in memory only.** They are parsed, evaluated against rules, and dropped on the next refresh. Only the _resulting time entry_ (project + tag + description, after the user accepts a suggestion) is persisted — the same contract that already applies to window titles.
+- **Attendee emails** are only persisted if the matching calendar rule has `tags_from_calendar: true`. The user can disable that per-rule.
+- **Provider-side privacy still applies.** When the user pastes a Google secret-address URL, Google logs Cairn's polling fetches the same way it logs any other ICS subscriber. Cairn cannot prevent that — the user is the one giving the URL to Google. This is documented in the Add Calendar dialog.
 
 ## Browser integration
 
@@ -80,7 +86,7 @@ A note on cloud-synced folders: backup and restore are explicitly snapshot opera
 
 Any of these requires a CHANGELOG entry tagged `[privacy]` and explicit reaffirmation in the Settings privacy card:
 
-- Adding any outbound network request (including update checks).
+- Adding any outbound network request (including update checks). The user-configured calendar fetches in Settings → Integrations → Calendar are the one allowed exception, scoped to URLs the user explicitly added.
 - Persisting any field marked "not stored" above.
 - Adding any third-party SDK (analytics, crash reporting, anything).
 - Changing the exclusion list behavior so an excluded signal _is_ observed in any capacity.
