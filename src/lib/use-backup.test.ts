@@ -307,4 +307,75 @@ describe("useBackup (inside Tauri)", () => {
     });
     expect(revealMock).not.toHaveBeenCalled();
   });
+
+  it("captures errors from stage_import as status.kind=error", async () => {
+    invokeMock
+      .mockResolvedValueOnce(PATHS)
+      .mockRejectedValueOnce(new Error("staging failed"));
+    openMock.mockResolvedValue("/src/file.sqlite");
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+    await act(async () => {
+      await result.current.importBackupFromFile();
+    });
+    expect(result.current.status.kind).toBe("error");
+    expect((result.current.status as { message: string }).message).toContain(
+      "staging failed",
+    );
+  });
+
+  it("captures errors from cancel_pending_import as status.kind=error", async () => {
+    invokeMock
+      .mockResolvedValueOnce(PATHS)
+      .mockRejectedValueOnce(new Error("cancel failed"));
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+    await act(async () => {
+      await result.current.cancelImport();
+    });
+    expect(result.current.status.kind).toBe("error");
+  });
+
+  it("captures errors from export_csv as status.kind=error", async () => {
+    invokeMock
+      .mockResolvedValueOnce(PATHS)
+      .mockResolvedValueOnce("entries.csv")
+      .mockRejectedValueOnce(new Error("write failed"));
+    saveMock.mockResolvedValue("/tmp/x.csv");
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+    await act(async () => {
+      await result.current.exportCsvToFile();
+    });
+    expect(result.current.status.kind).toBe("error");
+  });
+
+  it("captures errors from revealItemInDir as status.kind=error", async () => {
+    invokeMock.mockResolvedValueOnce(PATHS);
+    revealMock.mockRejectedValueOnce(new Error("opener failed"));
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+    await act(async () => {
+      await result.current.revealDataFolder();
+    });
+    expect(result.current.status.kind).toBe("error");
+  });
+
+  it("captures errors from delete_everything as status.kind=error", async () => {
+    invokeMock
+      .mockResolvedValueOnce(PATHS)
+      .mockRejectedValueOnce(new Error("nuke failed"));
+    askMock.mockResolvedValue(true);
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+    await act(async () => {
+      await result.current.deleteAllData();
+    });
+    expect(result.current.status.kind).toBe("error");
+  });
 });

@@ -114,6 +114,16 @@ describe("SettingsView (browser-dev mode)", () => {
     await waitFor(() => {});
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  it("the github footer link prevents default navigation when clicked", () => {
+    render(<SettingsView density="comfy" />);
+    const link = screen.getByRole("link", {
+      name: /github\.com\/drmowinckels\/cairn/i,
+    });
+    const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(true);
+  });
 });
 
 describe("SettingsView (inside Tauri)", () => {

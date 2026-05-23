@@ -38,4 +38,27 @@ describe("buildWeekSummary", () => {
     expect(out).toContain("0.0h tracked");
     expect(out).toContain("0 projects");
   });
+
+  it("falls back to the project id when projectsById has no entry", () => {
+    const out = buildWeekSummary({
+      weekLabel: "Orphan",
+      // 'orphaned' is referenced in segments but not in projectsById.
+      week: [{ day: "Mon", hours: 2, segments: [["orphaned", 2]] }],
+      projectsById: projects,
+    });
+    // Line label uses the id verbatim — the fallback rendered.
+    expect(out).toMatch(/orphaned\s+2\.0h/);
+  });
+
+  it("emits 0% per project when totalHours is zero (segment with 0 hours)", () => {
+    const out = buildWeekSummary({
+      weekLabel: "Zero",
+      // A segment with zero hours so the project is ranked but
+      // totalHours is 0 — the `totalHours > 0 ? … : 0` ternary takes
+      // the else branch.
+      week: [{ day: "Mon", hours: 0, segments: [["cairn", 0]] }],
+      projectsById: projects,
+    });
+    expect(out).toMatch(/Cairn\s+0\.0h\s+0%/);
+  });
 });

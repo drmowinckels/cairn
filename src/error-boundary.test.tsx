@@ -46,6 +46,34 @@ describe("ErrorBoundary", () => {
     expect(errSpy).toHaveBeenCalled();
   });
 
+  it("clicking 'Reload window' calls window.location.reload()", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reload = vi.fn();
+    const originalLocation = window.location;
+    // Replace window.location with a writable object that captures reload().
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { ...originalLocation, reload },
+    });
+    try {
+      render(
+        <ErrorBoundary area="X">
+          <Boom throwIt={true} />
+        </ErrorBoundary>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /reload window/i }));
+      expect(reload).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        writable: true,
+        value: originalLocation,
+      });
+      errSpy.mockRestore();
+    }
+  });
+
   it("clicking Try again clears the error and re-renders children", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { rerender } = render(

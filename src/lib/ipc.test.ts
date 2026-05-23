@@ -178,4 +178,91 @@ describe("ipc command helpers (inside Tauri)", () => {
       "/tmp/cairn-backup.sqlite",
     );
   });
+
+  it("listToday round-trips a validated entry list", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: "e1",
+        projectId: "p1",
+        task: "work",
+        startedAt: "2026-05-23T10:00:00Z",
+        endedAt: "2026-05-23T11:00:00Z",
+        source: "manual",
+        ruleId: null,
+        tags: ["dev"],
+      },
+    ]);
+    const { listToday } = await import("./ipc");
+    const today = await listToday();
+    expect(today).toHaveLength(1);
+    expect(today[0]?.tags).toEqual(["dev"]);
+    expect(invokeMock).toHaveBeenCalledWith("list_today", undefined);
+  });
+
+  it("hidePopover invokes the backend command", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { hidePopover } = await import("./ipc");
+    await hidePopover();
+    expect(invokeMock).toHaveBeenCalledWith("hide_popover", undefined);
+  });
+
+  it("currentRunning round-trips a non-null entry", async () => {
+    invokeMock.mockResolvedValue({
+      id: "e1",
+      projectId: null,
+      task: "thinking",
+      startedAt: "2026-05-23T10:00:00Z",
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+      tags: [],
+    });
+    const { currentRunning } = await import("./ipc");
+    const entry = await currentRunning();
+    expect(entry?.task).toBe("thinking");
+  });
+
+  it("stopEntry sends the entry id and round-trips the result", async () => {
+    invokeMock.mockResolvedValue({
+      id: "e1",
+      projectId: null,
+      task: "done",
+      startedAt: "2026-05-23T10:00:00Z",
+      endedAt: "2026-05-23T11:00:00Z",
+      source: "manual",
+      ruleId: null,
+      tags: [],
+    });
+    const { stopEntry } = await import("./ipc");
+    const entry = await stopEntry("e1");
+    expect(entry.endedAt).toBe("2026-05-23T11:00:00Z");
+    expect(invokeMock).toHaveBeenCalledWith("stop_entry", { id: "e1" });
+  });
+
+  it("stage / cancel-pending / suggested-name / dataPaths / delete commands round-trip", async () => {
+    invokeMock
+      .mockResolvedValueOnce("/staged")
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("cairn.sqlite")
+      .mockResolvedValueOnce("entries.csv")
+      .mockResolvedValueOnce({
+        dataDir: "/d",
+        dbPath: "/d/cairn.sqlite",
+        pendingImport: null,
+      })
+      .mockResolvedValueOnce("/tmp/x.csv")
+      .mockResolvedValueOnce(null);
+    const ipc = await import("./ipc");
+    await expect(ipc.stageImport("/src")).resolves.toBe("/staged");
+    await expect(ipc.cancelPendingImport()).resolves.toBeUndefined();
+    await expect(ipc.suggestedBackupName()).resolves.toBe("cairn.sqlite");
+    await expect(ipc.suggestedCsvName()).resolves.toBe("entries.csv");
+    await expect(ipc.dataPaths()).resolves.toEqual({
+      dataDir: "/d",
+      dbPath: "/d/cairn.sqlite",
+      pendingImport: null,
+    });
+    await expect(ipc.exportCsv("/tmp/x.csv")).resolves.toBe("/tmp/x.csv");
+    await expect(ipc.deleteEverything()).resolves.toBeUndefined();
+  });
 });
