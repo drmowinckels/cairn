@@ -1,0 +1,113 @@
+name: Checks
+
+# Skip the frontend + rust test matrix on changes that can't break the
+# app: pure docs, READMEs, contributor guides, issue templates, and the
+# adjacent workflow files. A mixed PR (e.g. docs + a code tweak) still
+# triggers — paths-ignore only skips when every changed file is ignored.
+#
+# Spell-check / link-check / dependency audits live in audit.yml with
+# NO paths-ignore filter, so docs-only PRs still get those gates.
+#
+# `workflow_dispatch` ignores path filters, so a manual rerun always
+# runs the full suite if needed.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/audit.yml"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/audit.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default to least-privilege. No job in this workflow needs write access
+# to the repo.
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run coverage
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: drmowinckels/cairn
+          files: coverage/lcov.info
+          flags: frontend
+          # Push events to main always upload. PRs only upload (and gate
+          # on success) when they originate from this repo — forks can't
+          # access CODECOV_TOKEN.
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      - run: npm run build
+      - name: accessibility audit (axe, every tab × light & dark)
+        run: node scripts/audit-a11y.mjs
+
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt, llvm-tools-preview
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo fmt
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - name: cargo clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Install cargo-llvm-cov
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: cargo test (with coverage)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --lcov --output-path src-tauri/lcov.info
+      - name: Upload Rust coverage to Codecov
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: drmowinckels/cairn
+          files: src-tauri/lcov.info
+          flags: rust
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      - name: cargo test
+        if: matrix.platform != 'ubuntu-22.04'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: cargo doc (fails on broken intra-doc links)
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --manifest-path src-tauri/Cargo.toml --no-deps

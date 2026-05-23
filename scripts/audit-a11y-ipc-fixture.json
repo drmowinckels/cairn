@@ -1,0 +1,39 @@
+{
+  "list_projects": [
+    {
+      "id": "acme",
+      "name": "acme-web",
+      "client": "ACME Co.",
+      "color": "#81b29a"
+    },
+    {
+      "id": "cairn",
+      "name": "Cairn",
+      "client": "Open source",
+      "color": "#f2cc8f"
+    },
+    {
+      "id": "site",
+      "name": "Personal site",
+      "client": null,
+      "color": "#e07a5f"
+    },
+    {
+      "id": "ops",
+      "name": "Operations",
+      "client": "Internal",
+      "color": "#9a9bb0"
+    },
+    { "id": "mtg", "name": "Meetings", "client": null, "color": "#c8b8e0" }
+  ],
+  "list_today": [],
+  "list_rules": [],
+  "current_running": null,
+  "data_paths": {
+    "dataDir": "/audit/cairn",
+    "dbPath": "/audit/cairn/cairn.sqlite",
+    "pendingImport": null
+  },
+  "suggested_backup_name": "cairn-backup.sqlite",
+  "suggested_csv_name": "cairn-export.csv"
+}
