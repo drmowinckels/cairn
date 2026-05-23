@@ -200,4 +200,111 @@ describe("useBackup (inside Tauri)", () => {
 
     expect(revealMock).toHaveBeenCalledWith("/data/cairn/cairn.sqlite");
   });
+
+  it("cancelImport calls the IPC and refreshes paths to idle status", async () => {
+    invokeMock
+      .mockResolvedValueOnce({ ...PATHS, pendingImport: "/staged" }) // initial
+      .mockResolvedValueOnce(null) // cancel_pending_import
+      .mockResolvedValueOnce(PATHS); // refresh paths
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() =>
+      expect(result.current.pendingImport).toBe("/staged"),
+    );
+
+    await act(async () => {
+      await result.current.cancelImport();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("cancel_pending_import", undefined);
+    expect(result.current.pendingImport).toBeNull();
+    expect(result.current.status.kind).toBe("done");
+  });
+
+  it("exportCsvToFile flows through suggested-name → save dialog → export_csv", async () => {
+    invokeMock
+      .mockResolvedValueOnce(PATHS)
+      .mockResolvedValueOnce("entries.csv") // suggested_csv_name
+      .mockResolvedValueOnce("/tmp/entries.csv"); // export_csv
+    saveMock.mockResolvedValue("/tmp/entries.csv");
+
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.exportCsvToFile();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("export_csv", {
+      dest: "/tmp/entries.csv",
+    });
+    expect(result.current.status.kind).toBe("done");
+  });
+
+  it("exportCsvToFile is a no-op when the save dialog is cancelled", async () => {
+    invokeMock.mockResolvedValueOnce(PATHS).mockResolvedValueOnce("entries.csv");
+    saveMock.mockResolvedValue(null);
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.exportCsvToFile();
+    });
+
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "export_csv",
+      expect.anything(),
+    );
+  });
+
+  it("captures errors from export_backup as status.kind=error", async () => {
+    invokeMock
+      .mockResolvedValueOnce(PATHS)
+      .mockResolvedValueOnce("cairn-backup.sqlite")
+      .mockRejectedValueOnce(new Error("disk full"));
+    saveMock.mockResolvedValue("/tmp/out.sqlite");
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.exportBackupToFile();
+    });
+
+    expect(result.current.status.kind).toBe("error");
+    expect((result.current.status as { message: string }).message).toContain(
+      "disk full",
+    );
+  });
+
+  it("importBackupFromFile is a no-op when the open dialog returns null", async () => {
+    invokeMock.mockResolvedValueOnce(PATHS);
+    openMock.mockResolvedValue(null);
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.importBackupFromFile();
+    });
+
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "stage_import",
+      expect.anything(),
+    );
+  });
+
+  it("revealDataFolder is a no-op until paths have loaded", async () => {
+    // No invokeMock value → data_paths rejects/yields undefined.
+    invokeMock.mockResolvedValueOnce(undefined);
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    // Without paths, revealDataFolder bails out.
+    await act(async () => {
+      await result.current.revealDataFolder();
+    });
+    expect(revealMock).not.toHaveBeenCalled();
+  });
 });
