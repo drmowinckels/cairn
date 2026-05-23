@@ -36,9 +36,18 @@ pub async fn build(calendar: &CalendarRegistry, at: DateTime<Utc>) -> SignalSnap
         None => (None, None, None),
     };
 
+    // Today, the only signal pointing at a candidate repo on disk is
+    // the IDE's project folder. The M1 snapshot stream (issue #5)
+    // will replace this with a watcher over user-configurable
+    // discovery roots; until then the IDE folder is our best lead.
+    let git_branch = ide_folder
+        .as_deref()
+        .and_then(|f| crate::signals::git::read_git_context(std::path::Path::new(f)))
+        .and_then(|ctx| ctx.branch);
+
     SignalSnapshot {
         ide_folder,
-        git_branch: None,
+        git_branch,
         window_title,
         app_name,
         browser_domain: None,
