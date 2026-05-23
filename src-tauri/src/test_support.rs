@@ -28,7 +28,11 @@ use tauri::{App, Manager};
 pub use tempfile::TempDir;
 
 use crate::rules::{Condition, Op, Rule, RuleAction, SignalSnapshot};
-use crate::{AppState, Db};
+use crate::Db;
+// AppState is only used by the cfg-gated mock_app rig — keep the
+// import gated the same way so Windows doesn't see it as unused.
+#[cfg(not(target_os = "windows"))]
+use crate::AppState;
 
 pub fn temp_dir() -> TempDir {
     tempfile::Builder::new()

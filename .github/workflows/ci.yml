@@ -51,6 +51,12 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run coverage
       - name: Upload frontend coverage to Codecov
+        # Skip the upload entirely until the repo wires up the
+        # CODECOV_TOKEN secret. Once it's set, this step runs and
+        # gates strictly on same-repo PRs / pushes to main.
+        if: ${{ env.HAS_CODECOV_TOKEN == 'true' }}
+        env:
+          HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -95,7 +101,10 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --lcov --output-path src-tauri/lcov.info
       - name: Upload Rust coverage to Codecov
-        if: matrix.platform == 'ubuntu-22.04'
+        # Skip until CODECOV_TOKEN is wired up. See the frontend job.
+        if: matrix.platform == 'ubuntu-22.04' && env.HAS_CODECOV_TOKEN == 'true'
+        env:
+          HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
