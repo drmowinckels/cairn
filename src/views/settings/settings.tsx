@@ -157,35 +157,35 @@ export function SettingsView({ density }: Props) {
         </SetRow>
 
         <SetRow label="High contrast" hint="Stronger borders and text contrast.">
-          <Toggle defaultOn={false} />
+          <Toggle defaultOn={false} label="High contrast" />
         </SetRow>
 
         <SetRow
           label="Reduce motion"
           hint="Disable timeline animations and idle pulse."
         >
-          <Toggle defaultOn />
+          <Toggle defaultOn label="Reduce motion" />
         </SetRow>
 
         <SetRow
           label="Colorblind-safe palette"
           hint="Swap project colors for an Okabe–Ito palette."
         >
-          <Toggle defaultOn={false} />
+          <Toggle defaultOn={false} label="Colorblind-safe palette" />
         </SetRow>
 
         <SetRow
           label="Screen reader announcements"
           hint="Announce timer start/stop and detection prompts."
         >
-          <Toggle defaultOn />
+          <Toggle defaultOn label="Screen reader announcements" />
         </SetRow>
 
         <SetRow
           label="Focus rings always visible"
           hint="Show focus indicators even when navigating with a mouse."
         >
-          <Toggle defaultOn={false} />
+          <Toggle defaultOn={false} label="Focus rings always visible" />
         </SetRow>
 
         <SetRow
@@ -293,13 +293,20 @@ function SetRow({ label, hint, children }: SetRowProps) {
   );
 }
 
-function Toggle({ defaultOn = false }: { defaultOn?: boolean }) {
+function Toggle({
+  defaultOn = false,
+  label,
+}: {
+  defaultOn?: boolean;
+  label: string;
+}) {
   const [on, setOn] = useState(defaultOn);
   return (
     <button
       className={`tgl${on ? " is-on" : ""}`}
       role="switch"
       aria-checked={on}
+      aria-label={label}
       onClick={() => setOn(!on)}
     >
       <span className="tgl-dot" />
