@@ -55,6 +55,26 @@ describe("useBackup (outside Tauri)", () => {
     expect(result.current.paths).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  it("all five actions are no-ops outside Tauri", async () => {
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await act(async () => {
+      await result.current.exportBackupToFile();
+      await result.current.importBackupFromFile();
+      await result.current.cancelImport();
+      await result.current.exportCsvToFile();
+      await result.current.deleteAllData();
+      await result.current.revealDataFolder();
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(openMock).not.toHaveBeenCalled();
+    expect(askMock).not.toHaveBeenCalled();
+    expect(revealMock).not.toHaveBeenCalled();
+    // Status stays idle — every action short-circuited.
+    expect(result.current.status).toEqual({ kind: "idle" });
+  });
 });
 
 describe("useBackup (inside Tauri)", () => {

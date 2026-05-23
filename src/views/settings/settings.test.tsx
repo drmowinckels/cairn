@@ -169,4 +169,53 @@ describe("SettingsView (inside Tauri)", () => {
     render(<FreshSettingsView density="comfy" />);
     expect(await screen.findByText(/restore is staged/i)).toBeTruthy();
   });
+
+  it("surfaces a status banner (status.kind=done) after a backup export", async () => {
+    invokeMock.mockResolvedValue({
+      dataDir: "/data",
+      dbPath: "/data/cairn.sqlite",
+      pendingImport: null,
+    });
+    invokeMock
+      // data_paths on mount
+      .mockResolvedValueOnce({
+        dataDir: "/data",
+        dbPath: "/data/cairn.sqlite",
+        pendingImport: null,
+      })
+      .mockResolvedValueOnce("cairn-backup.sqlite") // suggested_backup_name
+      .mockResolvedValueOnce("/tmp/written.sqlite"); // export_backup
+    saveMock.mockResolvedValue("/tmp/written.sqlite");
+
+    const { SettingsView: FreshSettingsView } = await import("./settings");
+    render(<FreshSettingsView density="comfy" />);
+    const btn = await screen.findByRole("button", { name: /export backup/i });
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(
+      await screen.findByText(/backup saved to/i),
+    ).toBeTruthy();
+  });
+
+  it("renders a status banner with role=alert on error", async () => {
+    invokeMock
+      .mockResolvedValueOnce({
+        dataDir: "/data",
+        dbPath: "/data/cairn.sqlite",
+        pendingImport: null,
+      })
+      .mockResolvedValueOnce("cairn-backup.sqlite")
+      .mockRejectedValueOnce(new Error("disk full"));
+    saveMock.mockResolvedValue("/tmp/out.sqlite");
+
+    const { SettingsView: FreshSettingsView } = await import("./settings");
+    render(<FreshSettingsView density="comfy" />);
+    const btn = await screen.findByRole("button", { name: /export backup/i });
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/disk full/);
+  });
 });
