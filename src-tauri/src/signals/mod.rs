@@ -8,5 +8,7 @@
 //! warnings` happy until then.
 #![allow(dead_code)]
 
+pub mod calendar;
 pub mod idle;
+pub mod snapshot;
 pub mod window;

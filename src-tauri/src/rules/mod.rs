@@ -10,13 +10,30 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SignalSnapshot {
     pub ide_folder: Option<String>,
     pub git_branch: Option<String>,
     pub window_title: Option<String>,
     pub app_name: Option<String>,
     pub browser_domain: Option<String>,
-    pub calendar_event: Option<String>,
+    /// Calendar events active at the snapshot timestamp. A user can be
+    /// in zero, one, or many concurrent events (overlapping meetings,
+    /// an all-day "OOO" event + a stand-up, etc.); the rules engine
+    /// matches `calendar.event` conditions against this whole list.
+    #[serde(default)]
+    pub calendar: Vec<CalendarEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEvent {
+    pub title: String,
+    pub source_label: String,
+    #[serde(default)]
+    pub attendees: Vec<String>,
+    #[serde(default)]
+    pub all_day: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,15 +168,28 @@ fn condition_is_any(c: &Condition) -> bool {
 }
 
 fn condition_matches(c: &Condition, snap: &SignalSnapshot) -> bool {
-    let (target, op, value) = match c {
-        Condition::IdeFolder { op, value, .. } => (snap.ide_folder.as_deref(), op, value),
-        Condition::GitBranch { op, value, .. } => (snap.git_branch.as_deref(), op, value),
-        Condition::WindowTitle { op, value, .. } => (snap.window_title.as_deref(), op, value),
-        Condition::AppName { op, value, .. } => (snap.app_name.as_deref(), op, value),
-        Condition::BrowserDomain { op, value, .. } => (snap.browser_domain.as_deref(), op, value),
-        Condition::CalendarEvent { op, value, .. } => (snap.calendar_event.as_deref(), op, value),
-    };
-    let Some(target) = target else { return false };
+    match c {
+        Condition::CalendarEvent { op, value, .. } => calendar_condition_matches(op, value, snap),
+        _ => {
+            let (target, op, value) = match c {
+                Condition::IdeFolder { op, value, .. } => (snap.ide_folder.as_deref(), op, value),
+                Condition::GitBranch { op, value, .. } => (snap.git_branch.as_deref(), op, value),
+                Condition::WindowTitle { op, value, .. } => {
+                    (snap.window_title.as_deref(), op, value)
+                }
+                Condition::AppName { op, value, .. } => (snap.app_name.as_deref(), op, value),
+                Condition::BrowserDomain { op, value, .. } => {
+                    (snap.browser_domain.as_deref(), op, value)
+                }
+                Condition::CalendarEvent { .. } => unreachable!("handled above"),
+            };
+            let Some(target) = target else { return false };
+            scalar_op_matches(op, target, value)
+        }
+    }
+}
+
+fn scalar_op_matches(op: &Op, target: &str, value: &str) -> bool {
     match op {
         Op::Contains => target.contains(value),
         Op::Equals => target == value,
@@ -168,6 +198,19 @@ fn condition_matches(c: &Condition, snap: &SignalSnapshot) -> bool {
         Op::Matches => regex_matches(target, value),
         Op::IsActive => !target.is_empty(),
     }
+}
+
+/// `calendar.event` matches if **any** currently-active event satisfies
+/// the op against its title. `Op::IsActive` ignores the value and is
+/// true whenever there is any active event — useful for "I'm in a
+/// meeting, log to project=meetings" style rules.
+fn calendar_condition_matches(op: &Op, value: &str, snap: &SignalSnapshot) -> bool {
+    if matches!(op, Op::IsActive) {
+        return !snap.calendar.is_empty();
+    }
+    snap.calendar
+        .iter()
+        .any(|ev| scalar_op_matches(op, &ev.title, value))
 }
 
 fn regex_matches(_target: &str, _pattern: &str) -> bool {
@@ -188,7 +231,16 @@ mod tests {
             window_title: Some("rules.rs — cairn".into()),
             app_name: Some("Zed".into()),
             browser_domain: None,
-            calendar_event: None,
+            calendar: vec![],
+        }
+    }
+
+    fn event(title: &str) -> CalendarEvent {
+        CalendarEvent {
+            title: title.into(),
+            source_label: "Work".into(),
+            attendees: vec![],
+            all_day: false,
         }
     }
 
@@ -506,5 +558,60 @@ mod tests {
         let reserialized = serde_json::to_value(&rule).unwrap();
         assert_eq!(reserialized["when"][0]["signal"], "ide.folder");
         assert_eq!(reserialized["when"][0]["op"], "contains");
+    }
+
+    #[test]
+    fn calendar_is_active_matches_when_any_event_present() {
+        let rule = Rule {
+            id: "r1".into(),
+            name: "Meetings".into(),
+            enabled: true,
+            priority: 0,
+            when: vec![Condition::CalendarEvent {
+                op: Op::IsActive,
+                value: String::new(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("meetings".into()),
+                tags: vec![],
+                tags_from_calendar: true,
+            },
+        };
+        let mut s = snap();
+        assert!(evaluate(std::iter::once(&rule), &s).is_none());
+        s.calendar = vec![event("Stand-up")];
+        assert_eq!(
+            evaluate(std::iter::once(&rule), &s)
+                .unwrap()
+                .project
+                .as_deref(),
+            Some("meetings"),
+        );
+    }
+
+    #[test]
+    fn calendar_contains_matches_any_concurrent_event() {
+        let rule = Rule {
+            id: "r1".into(),
+            name: "1-on-1 with Alice".into(),
+            enabled: true,
+            priority: 0,
+            when: vec![Condition::CalendarEvent {
+                op: Op::Contains,
+                value: "Alice".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("mgmt".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+            },
+        };
+        let mut s = snap();
+        // Two overlapping events: an all-day OOO + a 1:1. Only the 1:1
+        // mentions Alice; the rule should still fire.
+        s.calendar = vec![event("OOO: vacation"), event("1:1 Alice")];
+        assert!(evaluate(std::iter::once(&rule), &s).is_some());
     }
 }

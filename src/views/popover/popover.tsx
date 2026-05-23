@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ErrorBoundary } from "../../error-boundary";
 import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
+import { useA11yPrefs } from "../../lib/use-a11y-prefs";
 import type {
   Density,
   LayoutVariant,
@@ -33,6 +34,7 @@ export function Popover({
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
   const [suggestionDismissed, setSuggestionDismissed] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
+  const a11y = useA11yPrefs();
 
   useEffect(() => {
     if (theme === "system") {
@@ -69,9 +71,7 @@ export function Popover({
     >
       <header className="pop-head">
         <span className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <span className="mid" />
-          </span>
+          <CairnMark />
           Cairn
         </span>
         <LocalBadge />
@@ -110,6 +110,8 @@ export function Popover({
               setSuggestionDismissed={setSuggestionDismissed}
               showIdleModal={showIdleModal}
               setShowIdleModal={setShowIdleModal}
+              detectionPrompts={a11y.detectionPrompts}
+              announce={a11y.announce}
             />
           </ErrorBoundary>
         )}
@@ -130,7 +132,7 @@ export function Popover({
         )}
         {view === "settings" && (
           <ErrorBoundary area="Settings">
-            <SettingsView density={density} />
+            <SettingsView density={density} a11y={a11y} />
           </ErrorBoundary>
         )}
       </div>
@@ -159,6 +161,32 @@ interface NavTabProps {
   onSelect: (v: View) => void;
   icon: "today" | "reports" | "rules" | "settings";
   label: string;
+}
+
+function CairnMark() {
+  return (
+    <svg
+      className="brand-mark"
+      width="16"
+      height="18"
+      viewBox="0 0 16 18"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        className="stone stone--base"
+        d="M1.4 14.6 C0.8 13.4 1.1 12.2 2.4 11.7 C4.8 10.8 9.4 10.6 12.6 11.5 C14.2 11.9 14.9 12.9 14.6 14.1 C14.2 15.5 12.5 16.6 9.6 16.9 C6.4 17.3 3.3 16.7 1.9 15.6 C1.7 15.4 1.5 15.0 1.4 14.6 Z"
+      />
+      <path
+        className="stone stone--mid"
+        d="M3.5 9.8 C3.2 8.9 3.7 8.0 5.0 7.6 C6.9 7.0 9.7 7.1 11.2 7.7 C12.2 8.1 12.5 8.9 12.0 9.7 C11.4 10.7 9.7 11.3 7.5 11.3 C5.5 11.3 4.0 10.8 3.5 9.8 Z"
+      />
+      <path
+        className="stone stone--top"
+        d="M5.6 5.2 C5.4 4.4 6.1 3.7 7.4 3.5 C8.6 3.3 9.9 3.6 10.3 4.3 C10.7 5.0 10.1 5.8 8.7 6.0 C7.3 6.2 5.9 6.0 5.6 5.2 Z"
+      />
+    </svg>
+  );
 }
 
 function NavTab({ view, current, onSelect, icon, label }: NavTabProps) {

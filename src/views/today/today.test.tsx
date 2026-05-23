@@ -175,12 +175,12 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     const invoke = vi.fn().mockResolvedValue({
       id: "e1",
       projectId: "cairn",
-      task: "live work",
+      taskId: null,
+      description: "live work",
       startedAt: new Date(Date.now() - 60_000).toISOString(),
       endedAt: null,
       source,
       ruleId: source.startsWith("rule") ? "r1" : null,
-      tags: [],
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
     const { TodayView } = await import("./today");
@@ -216,12 +216,12 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     invoke.mockResolvedValueOnce({
       id: "e1",
       projectId: "cairn",
-      task: "live work",
+      taskId: null,
+      description: "live work",
       startedAt: new Date(Date.now() - 60_000).toISOString(),
       endedAt: new Date().toISOString(),
       source: "manual",
       ruleId: null,
-      tags: [],
     });
     const stop = await screen.findByRole("button", { name: /stop timer/i });
     await waitFor(() => expect(stop.hasAttribute("disabled")).toBe(false));

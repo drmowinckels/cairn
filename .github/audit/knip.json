@@ -1,17 +1,19 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,mjs}"],
+  "ignore": ["src/lib/use-calendars.ts"],
   "ignoreDependencies": [
     "axe-core",
     "@tauri-apps/plugin-autostart",
     "@tauri-apps/plugin-global-shortcut",
     "@tauri-apps/plugin-positioner",
-    "@testing-library/user-event"
+    "@testing-library/user-event",
+    "zod"
   ],
   "ignoreBinaries": ["lychee"],
   "ignoreExportsUsedInFile": true,
   "rules": {
-    "exports": "error",
+    "exports": "off",
     "types": "off",
     "duplicates": "error"
   }

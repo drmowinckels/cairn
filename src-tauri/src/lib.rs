@@ -9,14 +9,21 @@ mod tray;
 #[cfg(test)]
 mod test_support;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_log::{Target, TargetKind};
 
 pub use db::Db;
 
+use signals::calendar::CalendarRegistry;
+
 pub struct AppState {
     pub db: Db,
+    pub pinned: AtomicBool,
+    pub calendar: Arc<CalendarRegistry>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -52,7 +59,14 @@ pub fn run() {
             }
             if let WindowEvent::Focused(false) = event {
                 if window.label() == "popover" {
-                    let _ = window.hide();
+                    let pinned = window
+                        .app_handle()
+                        .try_state::<AppState>()
+                        .map(|s| s.pinned.load(Ordering::Relaxed))
+                        .unwrap_or(false);
+                    if !pinned {
+                        let _ = window.hide();
+                    }
                 }
             }
         })
@@ -69,13 +83,39 @@ pub fn run() {
             None,
         ))
         .invoke_handler(tauri::generate_handler![
+            ipc::list_clients,
+            ipc::save_client,
+            ipc::delete_client,
             ipc::list_projects,
+            ipc::save_project,
+            ipc::delete_project,
+            ipc::list_tasks,
+            ipc::save_task,
+            ipc::delete_task,
             ipc::list_today,
+            ipc::list_week,
             ipc::list_rules,
+            ipc::save_rule,
+            ipc::delete_rule,
+            ipc::list_exclusions,
+            ipc::save_exclusion,
+            ipc::delete_exclusion,
             ipc::current_running,
             ipc::start_entry,
             ipc::stop_entry,
+            ipc::update_entry,
+            ipc::delete_entry,
             ipc::hide_popover,
+            ipc::set_pinned,
+            ipc::set_popover_size,
+            ipc::list_calendar_sources,
+            ipc::add_calendar_source,
+            ipc::update_calendar_source,
+            ipc::remove_calendar_source,
+            ipc::refresh_calendar_source,
+            ipc::current_calendar_events,
+            ipc::calendar_sync_status,
+            ipc::current_snapshot,
             backup::data_paths,
             backup::export_backup,
             backup::stage_import,
@@ -101,7 +141,15 @@ pub fn run() {
             })
             .expect("open SQLite database");
 
-            app.manage(AppState { db });
+            let calendar =
+                Arc::new(CalendarRegistry::new(db.pool.clone()).expect("init calendar registry"));
+            tauri::async_runtime::spawn(calendar.clone().run_scheduler());
+
+            app.manage(AppState {
+                db,
+                pinned: AtomicBool::new(false),
+                calendar,
+            });
 
             tray::setup(app.handle())?;
             popover::register_shortcut(app.handle());

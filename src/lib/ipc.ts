@@ -1,38 +1,23 @@
-import { invoke as tauriInvoke, type InvokeArgs } from "@tauri-apps/api/core";
-import { z, type ZodIssue, type ZodType } from "zod";
-import type { Project } from "./types";
+import { invoke } from "@tauri-apps/api/core";
+import type { Client, Project, Task } from "./types";
 
-export class IpcError extends Error {
-  readonly command: string;
-  readonly issues: ZodIssue[];
-  readonly received: unknown;
-
-  constructor(command: string, issues: ZodIssue[], received: unknown) {
-    super(
-      `IPC response for "${command}" failed schema validation: ${issues
-        .map((i) => `${i.path.join(".") || "<root>"} – ${i.message}`)
-        .join("; ")}`,
-    );
-    this.name = "IpcError";
-    this.command = command;
-    this.issues = issues;
-    this.received = received;
-  }
+export interface BackendEntry {
+  id: string;
+  projectId: string | null;
+  taskId: string | null;
+  description: string;
+  startedAt: string;
+  endedAt: string | null;
+  source: string;
+  ruleId: string | null;
 }
 
-export async function invoke<T>(
-  cmd: string,
-  args: InvokeArgs | undefined,
-  schema: ZodType<T>,
-): Promise<T> {
-  const raw = await tauriInvoke(cmd, args);
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success) {
-    const err = new IpcError(cmd, parsed.error.issues, raw);
-    console.error(err.message, { issues: err.issues, received: raw });
-    throw err;
-  }
-  return parsed.data;
+export interface StartEntryInput {
+  projectId?: string | null;
+  taskId?: string | null;
+  description?: string;
+  source?: string;
+  ruleId?: string | null;
 }
 
 export const inTauri =
@@ -40,97 +25,334 @@ export const inTauri =
   typeof (window as unknown as { __TAURI_INTERNALS__?: unknown })
     .__TAURI_INTERNALS__ !== "undefined";
 
-const backendEntrySchema = z.object({
-  id: z.string(),
-  projectId: z.string().nullable(),
-  task: z.string(),
-  startedAt: z.string(),
-  endedAt: z.string().nullable(),
-  source: z.string(),
-  ruleId: z.string().nullable(),
-  tags: z.array(z.string()),
-});
+export async function listClients(): Promise<Client[]> {
+  if (!inTauri) return [];
+  return invoke<Client[]>("list_clients");
+}
 
-const projectSchema: ZodType<Project> = z.object({
-  id: z.string(),
-  name: z.string(),
-  client: z.string().nullable(),
-  color: z.string(),
-});
+export interface SaveClientInput {
+  id?: string | null;
+  name: string;
+  color?: string | null;
+  archived?: boolean;
+}
 
-const dataPathsSchema = z.object({
-  dataDir: z.string(),
-  dbPath: z.string(),
-  pendingImport: z.string().nullable(),
-});
+export async function saveClient(client: SaveClientInput): Promise<Client> {
+  return invoke<Client>("save_client", { client });
+}
 
-export type BackendEntry = z.infer<typeof backendEntrySchema>;
-export type DataPaths = z.infer<typeof dataPathsSchema>;
-
-export interface StartEntryInput {
-  projectId?: string | null;
-  task: string;
-  tags?: string[];
-  source?: string;
-  ruleId?: string | null;
+export async function deleteClient(id: string): Promise<void> {
+  await invoke("delete_client", { id });
 }
 
 export async function listProjects(): Promise<Project[]> {
   if (!inTauri) return [];
-  return invoke("list_projects", undefined, z.array(projectSchema));
+  return invoke<Project[]>("list_projects");
+}
+
+export interface SaveProjectInput {
+  id?: string | null;
+  name: string;
+  clientId?: string | null;
+  color: string;
+  archived?: boolean;
+}
+
+export async function saveProject(project: SaveProjectInput): Promise<Project> {
+  return invoke<Project>("save_project", { project });
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await invoke("delete_project", { id });
+}
+
+export async function listTasks(projectId?: string | null): Promise<Task[]> {
+  if (!inTauri) return [];
+  return invoke<Task[]>("list_tasks", { projectId: projectId ?? null });
+}
+
+export interface SaveTaskInput {
+  id?: string | null;
+  projectId: string;
+  name: string;
+  archived?: boolean;
+}
+
+export async function saveTask(task: SaveTaskInput): Promise<Task> {
+  return invoke<Task>("save_task", { task });
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  await invoke("delete_task", { id });
 }
 
 export async function listToday(): Promise<BackendEntry[]> {
   if (!inTauri) return [];
-  return invoke("list_today", undefined, z.array(backendEntrySchema));
+  return invoke<BackendEntry[]>("list_today");
+}
+
+export interface BackendWeekDay {
+  day: string;
+  date: string;
+  hours: number;
+  segments: Array<[string, number]>;
+  today: boolean;
+  future: boolean;
+  weekend: boolean;
+}
+
+export async function listWeek(): Promise<BackendWeekDay[]> {
+  if (!inTauri) return [];
+  return invoke<BackendWeekDay[]>("list_week");
+}
+
+export interface BackendRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  body: unknown;
+}
+
+export async function listRules(): Promise<BackendRule[]> {
+  if (!inTauri) return [];
+  return invoke<BackendRule[]>("list_rules");
+}
+
+export interface SaveRuleInput {
+  id: string | null;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  body: unknown;
+}
+
+export async function saveRule(rule: SaveRuleInput): Promise<BackendRule> {
+  return invoke<BackendRule>("save_rule", { rule });
+}
+
+export async function deleteRule(id: string): Promise<void> {
+  await invoke("delete_rule", { id });
+}
+
+export type ExclusionKind = "app" | "domain" | "window";
+
+export interface BackendExclusion {
+  id: string;
+  kind: ExclusionKind;
+  value: string;
+}
+
+export async function listExclusions(): Promise<BackendExclusion[]> {
+  if (!inTauri) return [];
+  return invoke<BackendExclusion[]>("list_exclusions");
+}
+
+export async function saveExclusion(
+  kind: ExclusionKind,
+  value: string,
+): Promise<BackendExclusion> {
+  return invoke<BackendExclusion>("save_exclusion", { input: { kind, value } });
+}
+
+export async function deleteExclusion(id: string): Promise<void> {
+  await invoke("delete_exclusion", { id });
+}
+
+export interface UpdateEntryInput {
+  id: string;
+  projectId?: string | null;
+  taskId?: string | null;
+  description?: string;
+  startedAt?: string;
+  endedAt?: string | null;
+}
+
+export async function updateEntry(input: UpdateEntryInput): Promise<BackendEntry> {
+  return invoke<BackendEntry>("update_entry", { input });
+}
+
+export async function deleteEntry(id: string): Promise<void> {
+  await invoke("delete_entry", { id });
 }
 
 export async function currentRunning(): Promise<BackendEntry | null> {
   if (!inTauri) return null;
-  return invoke("current_running", undefined, backendEntrySchema.nullable());
+  return invoke<BackendEntry | null>("current_running");
 }
 
 export async function startEntry(input: StartEntryInput): Promise<BackendEntry> {
-  return invoke("start_entry", { input }, backendEntrySchema);
+  return invoke<BackendEntry>("start_entry", { input });
 }
 
 export async function stopEntry(id: string): Promise<BackendEntry> {
-  return invoke("stop_entry", { id }, backendEntrySchema);
+  return invoke<BackendEntry>("stop_entry", { id });
 }
 
 export async function hidePopover(): Promise<void> {
   if (!inTauri) return;
-  await invoke("hide_popover", undefined, z.unknown());
+  await invoke("hide_popover");
+}
+
+export async function setPinned(pinned: boolean): Promise<void> {
+  if (!inTauri) return;
+  await invoke("set_pinned", { pinned });
+}
+
+export async function setPopoverSize(width: number, height: number): Promise<void> {
+  if (!inTauri) return;
+  await invoke("set_popover_size", { width, height });
+}
+
+export interface DataPaths {
+  dataDir: string;
+  dbPath: string;
+  pendingImport: string | null;
 }
 
 export async function dataPaths(): Promise<DataPaths> {
-  return invoke("data_paths", undefined, dataPathsSchema);
+  return invoke<DataPaths>("data_paths");
 }
 
 export async function exportBackup(dest: string): Promise<string> {
-  return invoke("export_backup", { dest }, z.string());
+  return invoke<string>("export_backup", { dest });
 }
 
 export async function stageImport(src: string): Promise<string> {
-  return invoke("stage_import", { src }, z.string());
+  return invoke<string>("stage_import", { src });
 }
 
 export async function cancelPendingImport(): Promise<void> {
-  await invoke("cancel_pending_import", undefined, z.unknown());
+  await invoke("cancel_pending_import");
 }
 
 export async function exportCsv(dest: string): Promise<string> {
-  return invoke("export_csv", { dest }, z.string());
+  return invoke<string>("export_csv", { dest });
 }
 
 export async function suggestedBackupName(): Promise<string> {
-  return invoke("suggested_backup_name", undefined, z.string());
+  return invoke<string>("suggested_backup_name");
 }
 
 export async function suggestedCsvName(): Promise<string> {
-  return invoke("suggested_csv_name", undefined, z.string());
+  return invoke<string>("suggested_csv_name");
 }
 
 export async function deleteEverything(): Promise<void> {
-  await invoke("delete_everything", undefined, z.unknown());
+  await invoke("delete_everything");
+}
+
+export type CalendarKind = "url" | "file";
+
+export interface CalendarSource {
+  id: string;
+  kind: CalendarKind;
+  label: string;
+  location: string;
+  pollSeconds: number;
+  enabled: boolean;
+  lastSyncedAt: string | null;
+  lastEtag: string | null;
+  lastModified: string | null;
+  lastError: string | null;
+}
+
+export interface AddCalendarInput {
+  kind: CalendarKind;
+  label: string;
+  /**
+   * For `url`: full subscription URL including any secret token (stored
+   * in the OS keychain; never persisted to SQLite).
+   * For `file`: absolute path on disk.
+   */
+  raw: string;
+}
+
+export interface UpdateCalendarInput {
+  id: string;
+  label?: string;
+  pollSeconds?: number;
+  enabled?: boolean;
+}
+
+export interface ActiveCalendarEvent {
+  sourceId: string;
+  sourceLabel: string;
+  uid: string;
+  summary: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  attendees: string[];
+}
+
+export interface CalendarSyncStatus {
+  sourceId: string;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  eventCount: number;
+}
+
+export async function listCalendarSources(): Promise<CalendarSource[]> {
+  if (!inTauri) return [];
+  return invoke<CalendarSource[]>("list_calendar_sources");
+}
+
+export async function addCalendarSource(
+  input: AddCalendarInput,
+): Promise<CalendarSource> {
+  return invoke<CalendarSource>("add_calendar_source", { input });
+}
+
+export async function updateCalendarSource(
+  input: UpdateCalendarInput,
+): Promise<CalendarSource> {
+  return invoke<CalendarSource>("update_calendar_source", { input });
+}
+
+export async function removeCalendarSource(id: string): Promise<void> {
+  await invoke("remove_calendar_source", { id });
+}
+
+export async function refreshCalendarSource(
+  id: string,
+): Promise<CalendarSource> {
+  return invoke<CalendarSource>("refresh_calendar_source", { id });
+}
+
+export async function currentCalendarEvents(): Promise<ActiveCalendarEvent[]> {
+  if (!inTauri) return [];
+  return invoke<ActiveCalendarEvent[]>("current_calendar_events");
+}
+
+export async function calendarSyncStatus(): Promise<CalendarSyncStatus[]> {
+  if (!inTauri) return [];
+  return invoke<CalendarSyncStatus[]>("calendar_sync_status");
+}
+
+export interface SignalCalendarEvent {
+  title: string;
+  sourceLabel: string;
+  attendees: string[];
+  allDay: boolean;
+}
+
+/**
+ * The live `SignalSnapshot` the rules engine evaluates against. The
+ * shape mirrors `rules::SignalSnapshot` 1:1. Today only window + app +
+ * calendar are populated; git / browser / IDE folder land in follow-up
+ * collector work.
+ */
+export interface SignalSnapshot {
+  ideFolder: string | null;
+  gitBranch: string | null;
+  windowTitle: string | null;
+  appName: string | null;
+  browserDomain: string | null;
+  calendar: SignalCalendarEvent[];
+}
+
+export async function currentSnapshot(): Promise<SignalSnapshot | null> {
+  if (!inTauri) return null;
+  return invoke<SignalSnapshot>("current_snapshot");
 }

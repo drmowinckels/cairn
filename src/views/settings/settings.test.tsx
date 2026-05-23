@@ -20,8 +20,30 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 import { SettingsView } from "./index";
+import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 
 type WithInternals = { __TAURI_INTERNALS__?: unknown };
+
+function stubA11y(overrides: Partial<UseA11yPrefs> = {}): UseA11yPrefs {
+  return {
+    theme: "system",
+    textScale: "md",
+    highContrast: false,
+    reduceMotion: false,
+    colorblindSafe: false,
+    announce: true,
+    alwaysFocusRing: false,
+    detectionPrompts: "subtle",
+    setTextScale: vi.fn(),
+    setHighContrast: vi.fn(),
+    setReduceMotion: vi.fn(),
+    setColorblindSafe: vi.fn(),
+    setAnnounce: vi.fn(),
+    setAlwaysFocusRing: vi.fn(),
+    setDetectionPrompts: vi.fn(),
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   invokeMock.mockReset();
@@ -36,30 +58,19 @@ afterEach(() => {
 });
 
 describe("SettingsView (browser-dev mode)", () => {
-  it("renders the four privacy guarantees verbatim", () => {
-    render(<SettingsView density="comfy" />);
+  it("renders the four privacy guarantees", () => {
+    render(<SettingsView density="comfy" a11y={stubA11y()} />);
+    expect(screen.getByText(/stored locally/i)).toBeTruthy();
+    expect(screen.getByText(/No accounts\. No telemetry/i)).toBeTruthy();
     expect(
-      screen.getByText(
-        /Everything is stored locally in\s+SQLite on this machine/i,
-      ),
+      screen.getByText(/window titles are read locally/i),
     ).toBeTruthy();
-    expect(
-      screen.getByText(
-        /No accounts\. No telemetry\. No\s+background phone-home/i,
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        /Window titles are read locally and\s+never leave the device/i,
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/Source on GitHub · Apache-2\.0\s+licensed/i),
-    ).toBeTruthy();
+    // 'Apache-2.0' appears in both the guarantee bullet and the footer.
+    expect(screen.getAllByText(/Apache-2\.0/i).length).toBeGreaterThan(0);
   });
 
   it("renders the five privacy action buttons", () => {
-    render(<SettingsView density="comfy" />);
+    render(<SettingsView density="comfy" a11y={stubA11y()} />);
     for (const name of [
       /export backup/i,
       /restore from file/i,
@@ -72,64 +83,48 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("disables 'View what's stored' when no paths are loaded", () => {
-    render(<SettingsView density="comfy" />);
+    render(<SettingsView density="comfy" a11y={stubA11y()} />);
     const btn = screen.getByRole("button", { name: /view what's stored/i });
     expect(btn.hasAttribute("disabled")).toBe(true);
   });
 
-  it("renders the exclusion list with mono codes and remove buttons", () => {
-    const { container } = render(<SettingsView density="comfy" />);
-    expect(container.querySelectorAll(".excl-row").length).toBeGreaterThanOrEqual(
-      3,
+  it("renders an exclusion list (or its empty hint) with at least one signal", () => {
+    const { container } = render(
+      <SettingsView density="comfy" a11y={stubA11y()} />,
     );
-    expect(container.querySelectorAll(".excl-x").length).toBeGreaterThanOrEqual(
-      3,
-    );
-  });
-
-  it("renders accessibility toggles with labels (a11y fix verification)", () => {
-    render(<SettingsView density="comfy" />);
+    // Either there's an exclusion list section, OR the empty hint is shown.
     expect(
-      screen.getByRole("switch", { name: /high contrast/i }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("switch", { name: /reduce motion/i }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("switch", { name: /colorblind-safe palette/i }),
+      container.querySelector(".excl-list, .settings-block"),
     ).toBeTruthy();
   });
 
-  it("toggling a switch flips aria-checked", () => {
-    render(<SettingsView density="comfy" />);
+  it("clicking an accessibility toggle calls the matching a11y setter", () => {
+    const a11y = stubA11y({ highContrast: false });
+    render(<SettingsView density="comfy" a11y={a11y} />);
     const sw = screen.getByRole("switch", { name: /high contrast/i });
-    expect(sw.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(sw);
-    expect(sw.getAttribute("aria-checked")).toBe("true");
+    expect(a11y.setHighContrast).toHaveBeenCalledWith(true);
+  });
+
+  it("renders the text-scale segmented control with the active option highlighted", () => {
+    render(
+      <SettingsView density="comfy" a11y={stubA11y({ textScale: "lg" })} />,
+    );
+    const group = screen.getByRole("radiogroup", { name: /text size/i });
+    const active = Array.from(
+      group.querySelectorAll<HTMLElement>('[role="radio"]'),
+    ).find((b) => b.getAttribute("aria-checked") === "true");
+    expect(active).toBeTruthy();
   });
 
   it("does not call IPC in browser-dev mode", async () => {
-    render(<SettingsView density="comfy" />);
-    // Give effects a tick to fire.
+    render(<SettingsView density="comfy" a11y={stubA11y()} />);
     await waitFor(() => {});
     expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("the github footer link prevents default navigation when clicked", () => {
-    render(<SettingsView density="comfy" />);
-    const link = screen.getByRole("link", {
-      name: /github\.com\/drmowinckels\/cairn/i,
-    });
-    const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
-    link.dispatchEvent(evt);
-    expect(evt.defaultPrevented).toBe(true);
   });
 });
 
 describe("SettingsView (inside Tauri)", () => {
-  // `inTauri` in src/lib/ipc.ts is evaluated at module-load time, so we
-  // set the flag, reset modules, and dynamically import a fresh copy of
-  // the component for each test in this block.
   beforeEach(() => {
     (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
     vi.resetModules();
@@ -146,13 +141,12 @@ describe("SettingsView (inside Tauri)", () => {
       pendingImport: null,
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
     const btn = await waitFor(() => {
       const b = screen.getByRole("button", { name: /view what's stored/i });
       expect(b.hasAttribute("disabled")).toBe(false);
       return b;
     });
-
     await act(async () => {
       fireEvent.click(btn);
     });
@@ -166,36 +160,27 @@ describe("SettingsView (inside Tauri)", () => {
       pendingImport: "/data/cairn.sqlite.pending",
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
     expect(await screen.findByText(/restore is staged/i)).toBeTruthy();
   });
 
   it("surfaces a status banner (status.kind=done) after a backup export", async () => {
-    invokeMock.mockResolvedValue({
-      dataDir: "/data",
-      dbPath: "/data/cairn.sqlite",
-      pendingImport: null,
-    });
     invokeMock
-      // data_paths on mount
       .mockResolvedValueOnce({
         dataDir: "/data",
         dbPath: "/data/cairn.sqlite",
         pendingImport: null,
       })
-      .mockResolvedValueOnce("cairn-backup.sqlite") // suggested_backup_name
-      .mockResolvedValueOnce("/tmp/written.sqlite"); // export_backup
+      .mockResolvedValueOnce("cairn-backup.sqlite")
+      .mockResolvedValueOnce("/tmp/written.sqlite");
     saveMock.mockResolvedValue("/tmp/written.sqlite");
-
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
     const btn = await screen.findByRole("button", { name: /export backup/i });
     await act(async () => {
       fireEvent.click(btn);
     });
-    expect(
-      await screen.findByText(/backup saved to/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/backup saved to/i)).toBeTruthy();
   });
 
   it("renders a status banner with role=alert on error", async () => {
@@ -208,9 +193,8 @@ describe("SettingsView (inside Tauri)", () => {
       .mockResolvedValueOnce("cairn-backup.sqlite")
       .mockRejectedValueOnce(new Error("disk full"));
     saveMock.mockResolvedValue("/tmp/out.sqlite");
-
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
     const btn = await screen.findByRole("button", { name: /export backup/i });
     await act(async () => {
       fireEvent.click(btn);

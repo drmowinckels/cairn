@@ -38,32 +38,54 @@ async fn seed_if_empty(pool: &SqlitePool) -> anyhow::Result<()> {
     }
 
     let now = Utc::now().to_rfc3339();
-    let seeds = [
-        ("acme", "acme-web", Some("ACME Co."), "#81b29a"),
-        ("cairn", "Cairn", Some("Open source"), "#f2cc8f"),
+    let client_seeds = [
+        ("client-acme", "ACME Co."),
+        ("client-internal", "Internal"),
+        ("client-os", "Open source"),
+    ];
+    let project_seeds: [(&str, &str, Option<&str>, &str); 5] = [
+        ("acme", "acme-web", Some("client-acme"), "#81b29a"),
+        ("cairn", "Cairn", Some("client-os"), "#f2cc8f"),
         ("site", "Personal site", None, "#e07a5f"),
-        ("ops", "Operations", Some("Internal"), "#9a9bb0"),
+        ("ops", "Operations", Some("client-internal"), "#9a9bb0"),
         ("mtg", "Meetings", None, "#c8b8e0"),
     ];
 
     let mut tx = pool.begin().await?;
-    for (id, name, client, color) in seeds {
+    for (id, name) in client_seeds {
         sqlx::query(
             r#"
-            INSERT INTO projects (id, name, client, color, archived, created_at, updated_at)
+            INSERT INTO clients (id, name, archived, created_at, updated_at)
+            VALUES (?1, ?2, 0, ?3, ?3)
+            "#,
+        )
+        .bind(id)
+        .bind(name)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for (id, name, client_id, color) in project_seeds {
+        sqlx::query(
+            r#"
+            INSERT INTO projects (id, name, client_id, color, archived, created_at, updated_at)
             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)
             "#,
         )
         .bind(id)
         .bind(name)
-        .bind(client)
+        .bind(client_id)
         .bind(color)
         .bind(&now)
         .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
-    log::info!("db: seeded {} default projects", seeds.len());
+    log::info!(
+        "db: seeded {} default clients and {} default projects",
+        client_seeds.len(),
+        project_seeds.len()
+    );
     Ok(())
 }
 
@@ -81,6 +103,17 @@ mod tests {
             .unwrap()
             .get("n");
         assert!(count > 0, "default seed should insert projects");
+    }
+
+    #[tokio::test]
+    async fn open_seeds_default_clients() {
+        let (_dir, db) = test_db().await;
+        let count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM clients")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+            .get("n");
+        assert!(count > 0, "default seed should insert clients");
     }
 
     #[tokio::test]
@@ -107,15 +140,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schema_includes_entries_tags_rules_exclusions() {
+    async fn schema_includes_all_tables() {
         let (_dir, db) = test_db().await;
-        for table in ["entries", "tags", "entry_tags", "rules", "exclusions"] {
+        // After migration 0002 the legacy `tags` / `entry_tags` tables
+        // are dropped in favor of a project-scoped tasks table — verify
+        // the post-migration shape.
+        for table in [
+            "projects",
+            "entries",
+            "rules",
+            "exclusions",
+            "clients",
+            "tasks",
+            "calendar_sources",
+        ] {
             let row = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name=?1")
                 .bind(table)
                 .fetch_optional(&db.pool)
                 .await
                 .unwrap();
             assert!(row.is_some(), "migrations must create table `{table}`");
+        }
+        for dropped in ["tags", "entry_tags"] {
+            let row = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name=?1")
+                .bind(dropped)
+                .fetch_optional(&db.pool)
+                .await
+                .unwrap();
+            assert!(
+                row.is_none(),
+                "migration 0002 must drop legacy `{dropped}` table"
+            );
         }
     }
 }

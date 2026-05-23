@@ -139,3 +139,13 @@ sysinfo
 windows-sys
 crash-reporting
 phone-home
+webcal
+webcals
+ICalendar
+icalendar
+iCloud
+EventKit
+RRULE
+EXDATE
+DTSTART
+DTEND

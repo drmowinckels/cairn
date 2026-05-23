@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Mono } from "../../lib/components";
+import { Empty, Mono } from "../../lib/components";
 import { buildWeekSummary } from "../../lib/summary";
 import { useBackup } from "../../lib/use-backup";
 import type { Density } from "../../lib/types";
@@ -40,6 +40,7 @@ export function ReportsView({ density }: Props) {
   );
   const sortedProjects = Object.entries(projTotals).sort((a, b) => b[1] - a[1]);
   const trackedDays = WEEK.filter((d) => d.hours > 0).length || 1;
+  const hasData = weekTotal > 0;
 
   return (
     <div className="view view-reports" data-density={density}>
@@ -56,6 +57,13 @@ export function ReportsView({ density }: Props) {
           <button className="seg-btn">Month</button>
         </div>
       </header>
+
+      {!hasData && (
+        <Empty
+          title="No hours tracked this week"
+          body="Once you start logging, you'll see daily totals and a breakdown by project here."
+        />
+      )}
 
       <section className="totals">
         <div className="total">

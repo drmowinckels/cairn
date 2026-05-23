@@ -34,6 +34,10 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 user-idle = "0.6"
+icalendar = "0.16"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "brotli", "deflate"] }
+url = "2"
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

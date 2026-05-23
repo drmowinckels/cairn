@@ -52,3 +52,49 @@ export function LocalBadge({ compact = false }: { compact?: boolean }) {
 export function Mono({ children }: { children: ReactNode }) {
   return <span className="mono">{children}</span>;
 }
+
+interface EmptyProps {
+  title: string;
+  body?: ReactNode;
+  action?: ReactNode;
+  tone?: "neutral" | "soft";
+}
+
+export function Empty({ title, body, action, tone = "neutral" }: EmptyProps) {
+  return (
+    <div className={`empty empty--${tone}`} role="status">
+      <div className="empty-title">{title}</div>
+      {body && <div className="empty-body">{body}</div>}
+      {action && <div className="empty-action">{action}</div>}
+    </div>
+  );
+}
+
+interface ErrorBannerProps {
+  message: string;
+  onRetry?: () => void;
+}
+
+export function ErrorBanner({ message, onRetry }: ErrorBannerProps) {
+  return (
+    <div className="err-banner" role="alert">
+      <span className="err-mark" aria-hidden="true">!</span>
+      <span className="err-msg">{message}</span>
+      {onRetry && (
+        <button type="button" className="link-btn" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function Skeleton({ width = "100%", height = 16 }: { width?: number | string; height?: number | string }) {
+  return (
+    <span
+      className="skeleton"
+      aria-hidden="true"
+      style={{ width, height }}
+    />
+  );
+}

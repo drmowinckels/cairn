@@ -179,7 +179,7 @@ describe("useBackup (inside Tauri)", () => {
       await result.current.deleteAllData();
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("delete_everything", undefined);
+    expect(invokeMock).toHaveBeenCalledWith("delete_everything");
     expect(result.current.status.kind).toBe("done");
   });
 
@@ -236,7 +236,7 @@ describe("useBackup (inside Tauri)", () => {
       await result.current.cancelImport();
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("cancel_pending_import", undefined);
+    expect(invokeMock).toHaveBeenCalledWith("cancel_pending_import");
     expect(result.current.pendingImport).toBeNull();
     expect(result.current.status.kind).toBe("done");
   });

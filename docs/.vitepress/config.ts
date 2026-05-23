@@ -10,13 +10,28 @@ export default withMermaid({
   srcExclude: ["future/**", "**/README.md"],
   ignoreDeadLinks: [/^\.?\/?future\//],
   head: [
-    ["meta", { name: "theme-color", content: "#e07a5f" }],
+    ["link", { rel: "icon", href: "/img/logo-favicon.svg", type: "image/svg+xml" }],
+    ["meta", { name: "theme-color", content: "#3d405b" }],
+    ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
+    ["link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }],
+    [
+      "link",
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap",
+      },
+    ],
   ],
   themeConfig: {
+    logo: {
+      light: "/img/logo-mark-light.svg",
+      dark: "/img/logo-mark-dark.svg",
+      alt: "Cairn",
+    },
     nav: [
       { text: "Guide", link: "/guide/getting-started" },
       { text: "Architecture", link: "/architecture/" },
-      { text: "Privacy", link: "/PRIVACY" },
+      { text: "Install", link: "/guide/install" },
       {
         text: "Releases",
         link: "https://github.com/drmowinckels/cairn/releases",
@@ -58,7 +73,8 @@ export default withMermaid({
       { icon: "github", link: "https://github.com/drmowinckels/cairn" },
     ],
     footer: {
-      message: "Released under the Apache 2.0 License.",
+      message:
+        'Released under the Apache 2.0 License. <a href="/PRIVACY">Privacy</a> · <a href="/legal/terms">Terms</a>.',
       copyright: "Copyright © Athanasia Mowinckel",
     },
     search: { provider: "local" },

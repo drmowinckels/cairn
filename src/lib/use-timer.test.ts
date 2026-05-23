@@ -19,12 +19,12 @@ type WithInternals = { __TAURI_INTERNALS__?: unknown };
 const ENTRY = {
   id: "e1",
   projectId: "p1",
-  task: "Rule preview UI",
+  taskId: null,
+  description: "Rule preview UI",
   startedAt: "2026-05-23T10:00:00Z",
   endedAt: null,
   source: "manual",
   ruleId: null,
-  tags: [],
 };
 
 afterEach(() => {
@@ -70,7 +70,7 @@ describe("useTimer (inside Tauri)", () => {
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.running?.id).toBe("e1");
-    expect(invokeMock).toHaveBeenCalledWith("current_running", undefined);
+    expect(invokeMock).toHaveBeenCalledWith("current_running");
   });
 
   it("handles 'no entry running' (null response)", async () => {
@@ -103,12 +103,12 @@ describe("useTimer (inside Tauri)", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      await result.current.start({ projectId: "p1", task: "Rule preview UI" });
+      await result.current.start({ projectId: "p1", description: "Rule preview UI" });
     });
 
     expect(result.current.running?.id).toBe("e1");
     expect(invokeMock).toHaveBeenCalledWith("start_entry", {
-      input: { projectId: "p1", task: "Rule preview UI" },
+      input: { projectId: "p1", description: "Rule preview UI" },
     });
   });
 

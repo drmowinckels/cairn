@@ -19,6 +19,8 @@
 #![allow(dead_code)]
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[cfg(not(target_os = "windows"))]
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
@@ -28,6 +30,7 @@ use tauri::{App, Manager};
 pub use tempfile::TempDir;
 
 use crate::rules::{Condition, Op, Rule, RuleAction, SignalSnapshot};
+use crate::signals::calendar::CalendarRegistry;
 use crate::Db;
 // AppState is only used by the cfg-gated mock_app rig — keep the
 // import gated the same way so Windows doesn't see it as unused.
@@ -72,10 +75,16 @@ pub async fn test_db_at(path: &Path) -> Db {
 #[cfg(not(target_os = "windows"))]
 pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
     let (dir, db) = test_db().await;
+    let calendar =
+        Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
     let app = mock_builder()
         .build(mock_context(noop_assets()))
         .expect("mock_app builds");
-    app.manage(AppState { db: db.clone() });
+    app.manage(AppState {
+        db: db.clone(),
+        pinned: AtomicBool::new(false),
+        calendar,
+    });
     (dir, app, db)
 }
 
@@ -93,7 +102,7 @@ pub fn make_snapshot() -> SignalSnapshot {
         window_title: None,
         app_name: None,
         browser_domain: None,
-        calendar_event: None,
+        calendar: vec![],
     }
 }
 
@@ -104,7 +113,7 @@ pub fn snapshot_for_cairn() -> SignalSnapshot {
         window_title: Some("rules.rs — cairn".into()),
         app_name: Some("Zed".into()),
         browser_domain: None,
-        calendar_event: None,
+        calendar: vec![],
     }
 }
 
