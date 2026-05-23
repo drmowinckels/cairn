@@ -5,19 +5,20 @@ hero:
   name: Cairn
   text: A quiet, local-first time tracker.
   tagline: Watches your work signals so you don't have to. No accounts, no telemetry, no cloud.
+  image:
+    light: /img/logo-mark-light.svg
+    dark: /img/logo-mark-dark.svg
+    alt: Cairn logo
   actions:
     - theme: brand
       text: Get started
       link: /guide/getting-started
     - theme: alt
-      text: Privacy contract
-      link: /PRIVACY
+      text: Install
+      link: /guide/install
     - theme: alt
       text: Rules engine
       link: /RULES_ENGINE
-    - theme: alt
-      text: View on GitHub
-      link: https://github.com/drmowinckels/cairn
 
 features:
   - icon: 🪨
