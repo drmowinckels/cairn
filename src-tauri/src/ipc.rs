@@ -867,6 +867,135 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+#[cfg(test)]
+#[cfg(not(target_os = "windows"))]
+mod tests {
+    use super::*;
+    use crate::test_support::mock_app_with_db;
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn list_projects_returns_seeded_projects() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let projects = list_projects(state).await.unwrap();
+        assert!(!projects.is_empty(), "seed must insert default projects");
+        assert!(projects.iter().any(|p| p.name == "Cairn"));
+    }
+
+    #[tokio::test]
+    async fn list_today_is_empty_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let today = list_today(state).await.unwrap();
+        assert!(today.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_rules_is_empty_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let rules = list_rules(state).await.unwrap();
+        assert!(rules.is_empty());
+    }
+
+    #[tokio::test]
+    async fn current_running_is_none_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let running = current_running(state).await.unwrap();
+        assert!(running.is_none());
+    }
+
+    fn start_input(project_id: Option<&str>, description: &str) -> StartEntryInput {
+        StartEntryInput {
+            project_id: project_id.map(|s| s.into()),
+            task_id: None,
+            description: description.into(),
+            source: Some("manual".into()),
+            rule_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn start_entry_creates_a_running_entry() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = start_entry(state.clone(), start_input(Some("cairn"), "Rule preview UI"))
+            .await
+            .unwrap();
+        assert!(entry.ended_at.is_none());
+        assert_eq!(entry.description, "Rule preview UI");
+        assert_eq!(entry.project_id.as_deref(), Some("cairn"));
+
+        // current_running now reflects this entry.
+        let running = current_running(state.clone()).await.unwrap().unwrap();
+        assert_eq!(running.id, entry.id);
+        assert_eq!(running.description, "Rule preview UI");
+
+        // list_today includes it.
+        let today = list_today(state).await.unwrap();
+        assert_eq!(today.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn start_entry_closes_the_previously_running_one() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let first = start_entry(state.clone(), start_input(Some("cairn"), "first"))
+            .await
+            .unwrap();
+        let second = start_entry(state.clone(), start_input(Some("acme"), "second"))
+            .await
+            .unwrap();
+        assert_ne!(first.id, second.id);
+
+        // Only the second is still running.
+        let running = current_running(state.clone()).await.unwrap().unwrap();
+        assert_eq!(running.id, second.id);
+
+        // The first now has ended_at set.
+        let today = list_today(state).await.unwrap();
+        let first_after = today.iter().find(|e| e.id == first.id).unwrap();
+        assert!(first_after.ended_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn stop_entry_marks_the_entry_ended() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = start_entry(state.clone(), start_input(None, "x"))
+            .await
+            .unwrap();
+        let stopped = stop_entry(state.clone(), entry.id.clone()).await.unwrap();
+        assert!(stopped.ended_at.is_some());
+
+        let running = current_running(state).await.unwrap();
+        assert!(running.is_none());
+    }
+
+    #[tokio::test]
+    async fn stop_entry_fails_for_unknown_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let result = stop_entry(state, "does-not-exist".into()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does-not-exist"));
+    }
+
+    #[test]
+    fn parse_ts_round_trips_rfc3339() {
+        let t = "2026-05-23T10:00:00+00:00";
+        let parsed = parse_ts(t).unwrap();
+        assert_eq!(parsed.to_rfc3339(), t);
+    }
+
+    #[test]
+    fn parse_ts_rejects_garbage() {
+        assert!(parse_ts("not a date").is_err());
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddCalendarInput {

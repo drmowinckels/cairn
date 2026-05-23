@@ -383,43 +383,60 @@ mod tests {
         assert!(!backup_path(dir.path()).exists());
     }
 
-    async fn insert_entry(pool: &SqlitePool, task: &str, tags: &[&str]) -> String {
+    async fn insert_entry(pool: &SqlitePool, description: &str) -> String {
         let now = Utc::now().to_rfc3339();
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            r#"INSERT INTO entries (id, project_id, task, started_at, ended_at, source, rule_id, created_at, updated_at)
-               VALUES (?1, 'cairn', ?2, ?3, NULL, 'manual', NULL, ?3, ?3)"#,
+            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+               VALUES (?1, 'cairn', NULL, ?2, ?3, NULL, 'manual', NULL, ?3, ?3)"#,
         )
         .bind(&id)
-        .bind(task)
+        .bind(description)
         .bind(&now)
         .execute(pool)
         .await
         .unwrap();
-        for tag in tags {
-            let tag_id = uuid::Uuid::new_v4().to_string();
-            sqlx::query("INSERT INTO tags (id, name) VALUES (?1, ?2)")
-                .bind(&tag_id)
-                .bind(tag)
-                .execute(pool)
-                .await
-                .unwrap();
-            sqlx::query("INSERT INTO entry_tags (entry_id, tag_id) VALUES (?1, ?2)")
-                .bind(&id)
-                .bind(&tag_id)
-                .execute(pool)
-                .await
-                .unwrap();
-        }
+        id
+    }
+
+    async fn insert_entry_with_task(
+        pool: &SqlitePool,
+        description: &str,
+        task_name: &str,
+    ) -> String {
+        let now = Utc::now().to_rfc3339();
+        let task_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"INSERT INTO tasks (id, project_id, name, archived, created_at, updated_at)
+               VALUES (?1, 'cairn', ?2, 0, ?3, ?3)"#,
+        )
+        .bind(&task_id)
+        .bind(task_name)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+               VALUES (?1, 'cairn', ?2, ?3, ?4, NULL, 'manual', NULL, ?4, ?4)"#,
+        )
+        .bind(&id)
+        .bind(&task_id)
+        .bind(description)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
         id
     }
 
     #[tokio::test]
-    async fn csv_is_long_format_one_row_per_tag() {
+    async fn csv_has_one_row_per_entry_with_client_project_task_description() {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(&db_path(dir.path())).await.unwrap();
-        insert_entry(&db.pool, "two-tag task", &["api", "design"]).await;
-        insert_entry(&db.pool, "lone task", &[]).await;
+        insert_entry(&db.pool, "lone description").await;
+        insert_entry_with_task(&db.pool, "with-task description", "Bug fixing").await;
 
         let csv_path = dir.path().join("out.csv");
         export_csv_to(&db.pool, &csv_path).await.unwrap();
@@ -428,22 +445,23 @@ mod tests {
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(
             lines[0],
-            "entry_id,started_at,ended_at,project,task,source,tag"
+            "entry_id,started_at,ended_at,client,project,task,description,source"
         );
-        // Header + 2 rows for the two-tag task + 1 row for the lone task
-        assert_eq!(lines.len(), 4);
+        // Header + one row per entry. No tag fan-out anymore.
+        assert_eq!(lines.len(), 3);
 
-        let two_tag_rows: Vec<&&str> = lines
+        let with_task = lines
             .iter()
-            .filter(|l| l.contains("two-tag task"))
-            .collect();
-        assert_eq!(two_tag_rows.len(), 2);
-        assert!(two_tag_rows.iter().any(|l| l.ends_with(",api")));
-        assert!(two_tag_rows.iter().any(|l| l.ends_with(",design")));
+            .find(|l| l.contains("with-task description"))
+            .unwrap();
+        assert!(with_task.contains(",Bug fixing,"), "{with_task}");
 
-        let lone_rows: Vec<&&str> = lines.iter().filter(|l| l.contains("lone task")).collect();
-        assert_eq!(lone_rows.len(), 1);
-        assert!(lone_rows[0].ends_with(",")); // empty tag column
+        let lone = lines
+            .iter()
+            .find(|l| l.contains("lone description"))
+            .unwrap();
+        // Task field is empty when entry has no task_id.
+        assert!(lone.contains(",,lone description,"), "{lone}");
     }
 
     #[tokio::test]
@@ -451,7 +469,7 @@ mod tests {
         // Source machine
         let src_dir = tempfile::tempdir().unwrap();
         let src_db = Db::open(&db_path(src_dir.path())).await.unwrap();
-        let entry_id = insert_entry(&src_db.pool, "round-trip subject", &["sync"]).await;
+        let entry_id = insert_entry(&src_db.pool, "round-trip subject").await;
         let backup_file = src_dir.path().join("backup.sqlite");
         vacuum_into(&src_db.pool, &backup_file).await.unwrap();
 
@@ -460,7 +478,7 @@ mod tests {
         // Pre-populate dst with its own DB to prove the swap really
         // replaces it (and rotates the old one to .bak).
         let dst_db = Db::open(&db_path(dst_dir.path())).await.unwrap();
-        insert_entry(&dst_db.pool, "to be replaced", &[]).await;
+        insert_entry(&dst_db.pool, "to be replaced").await;
         dst_db.pool.close().await;
 
         let staged = stage_import_at(dst_dir.path(), &backup_file).await.unwrap();
@@ -468,21 +486,22 @@ mod tests {
         apply_pending_import(dst_dir.path()).unwrap();
 
         let reopened = Db::open(&db_path(dst_dir.path())).await.unwrap();
-        let task: Option<String> = sqlx::query("SELECT task FROM entries WHERE id = ?1")
-            .bind(&entry_id)
-            .fetch_optional(&reopened.pool)
-            .await
-            .unwrap()
-            .map(|r| r.get("task"));
-        assert_eq!(task.as_deref(), Some("round-trip subject"));
-
-        // The replaced entry shouldn't survive; the pre-swap DB is now .bak.
-        let stale: Option<String> =
-            sqlx::query("SELECT task FROM entries WHERE task = 'to be replaced'")
+        let description: Option<String> =
+            sqlx::query("SELECT description FROM entries WHERE id = ?1")
+                .bind(&entry_id)
                 .fetch_optional(&reopened.pool)
                 .await
                 .unwrap()
-                .map(|r| r.get("task"));
+                .map(|r| r.get("description"));
+        assert_eq!(description.as_deref(), Some("round-trip subject"));
+
+        // The replaced entry shouldn't survive; the pre-swap DB is now .bak.
+        let stale: Option<String> =
+            sqlx::query("SELECT description FROM entries WHERE description = 'to be replaced'")
+                .fetch_optional(&reopened.pool)
+                .await
+                .unwrap()
+                .map(|r| r.get("description"));
         assert!(stale.is_none());
         assert!(backup_path(dst_dir.path()).exists());
     }

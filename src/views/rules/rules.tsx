@@ -242,11 +242,11 @@ function RuleRow({ rule, index, expanded, onToggle, complexity }: RuleRowProps) 
             <div className="then-row">
               <span className="then-key">Tags</span>
               <div className="then-tags">
-                {(rule.then.tags || []).map((t) => (
-                  <Tag key={t}>{t}</Tag>
-                ))}
-                <button className="add-tag" onClick={stopBubble}>
-                  + tag
+                {/* Free-text tags were removed in the Client→Project→Task
+                    refactor (migration 0002). The action's `taskId`
+                    instead picks the project-scoped task. */}
+                <button className="add-tag" onClick={stopBubble} disabled>
+                  tags removed
                 </button>
               </div>
             </div>

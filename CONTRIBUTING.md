@@ -14,25 +14,59 @@ Thanks for considering a contribution! Cairn is open-source under [Apache 2.0](L
 # Toolchain
 rustup default stable
 cargo install tauri-cli
-pnpm install
+npm install
 
 # Run in dev
-pnpm tauri dev
+npm run tauri dev
 
 # Format & lint
-cargo fmt && cargo clippy -- -D warnings
-pnpm lint && pnpm typecheck
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+npm run typecheck
 
 # Tests
-cargo test
-pnpm test
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+npm test
+npm run coverage     # vitest with v8 coverage
 ```
+
+## Audits
+
+These all run in CI; run them locally to fail fast:
+
+```bash
+npm run audit:knip       # unused exports / deps
+npm run audit:spell      # cspell (add new project terms to .github/audit/cspell/project-words.txt)
+npm run audit:size       # bundle-size budget (JS + CSS, gzip)
+npm run audit:a11y       # builds the app, drives Chromium, runs axe on every tab × light/dark
+npm run audit:links      # lychee broken-link check across docs (needs lychee installed)
+npm run audit:rust       # cargo deny (licenses + advisories)
+```
+
+## Cross-platform from day one
+
+Every PR is built and tested on **macOS, Ubuntu, and Windows**. Rust code that
+cannot work on a given OS should `#[cfg]`-gate gracefully (return `None`, log a
+warning) — never produce a compile error on the matrix. Mock-runtime tests
+(`tauri::test::mock_app`) are gated off Windows; see the `[target.cfg(not(target_os = "windows"))'.dev-dependencies]`
+note in `src-tauri/Cargo.toml`.
+
+## Writing tests
+
+- Frontend: colocate `*.test.ts(x)` next to the unit under test. Mock
+  `@tauri-apps/api/core` via `vi.mock`. Use the `inTauri` flag to assert the
+  no-Tauri branch separately.
+- Rust: keep pure logic free of `Db` / `AppHandle` and unit-test it in a
+  `#[cfg(test)] mod tests` next to the code. For DB / event paths, use the
+  `test_support` helpers (`test_db()`, `mock_app_with_db()`) — they thread the
+  same migrations + seed as the runtime through a `TempDir`.
 
 ## PR checklist
 
-- [ ] `cargo fmt && cargo clippy -- -D warnings` clean
-- [ ] `pnpm typecheck && pnpm lint` clean
-- [ ] Tests added / updated
+- [ ] `cargo fmt --check && cargo clippy --all-targets -- -D warnings` clean
+- [ ] `npm run typecheck` clean
+- [ ] `npm test` and `cargo test` green
+- [ ] Tests added / updated for new code paths
 - [ ] If UI changed: prototype in `design/` also updated, or PR explains the divergence
 - [ ] If signal/storage/network behavior changed: PRIVACY.md reviewed and CHANGELOG `[privacy]` entry added
 - [ ] If a new accessibility-relevant feature: setting toggle added or explained why none is needed

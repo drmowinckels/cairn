@@ -1,31 +1,56 @@
 import type {
+  Client,
   Entry,
   LiveSignal,
   Project,
   Rule,
   RunningEntry,
+  Task,
   UpcomingItem,
   WeekDay,
 } from "../lib/types";
 import { minutesOf as m } from "../lib/time";
 
+export const CLIENTS: Client[] = [
+  { id: "c-acme",     name: "ACME Co.",    color: null, archived: false },
+  { id: "c-os",       name: "Open source", color: null, archived: false },
+  { id: "c-internal", name: "Internal",    color: null, archived: false },
+];
+
+export const CLIENT_BY_ID = Object.fromEntries(
+  CLIENTS.map((c) => [c.id, c]),
+) as Record<string, Client>;
+
 export const PROJECTS: Project[] = [
-  { id: "acme",  name: "acme-web",      client: "ACME Co.",    color: "#81b29a" },
-  { id: "cairn", name: "Cairn",         client: "Open source", color: "#f2cc8f" },
-  { id: "site",  name: "Personal site", client: null,          color: "#e07a5f" },
-  { id: "ops",   name: "Operations",    client: "Internal",    color: "#9a9bb0" },
-  { id: "mtg",   name: "Meetings",      client: null,          color: "#c8b8e0" },
+  { id: "acme",  name: "acme-web",      clientId: "c-acme",     color: "#81b29a", archived: false },
+  { id: "cairn", name: "Cairn",         clientId: "c-os",       color: "#f2cc8f", archived: false },
+  { id: "site",  name: "Personal site", clientId: null,         color: "#e07a5f", archived: false },
+  { id: "ops",   name: "Operations",    clientId: "c-internal", color: "#9a9bb0", archived: false },
+  { id: "mtg",   name: "Meetings",      clientId: null,         color: "#c8b8e0", archived: false },
 ];
 
 export const PROJECT_BY_ID = Object.fromEntries(
   PROJECTS.map((p) => [p.id, p]),
 ) as Record<string, Project>;
 
+export const TASKS: Task[] = [
+  { id: "t-acme-design",   projectId: "acme",  name: "Design",     archived: false },
+  { id: "t-acme-impl",     projectId: "acme",  name: "Implementation", archived: false },
+  { id: "t-cairn-ui",      projectId: "cairn", name: "UI",         archived: false },
+  { id: "t-cairn-rules",   projectId: "cairn", name: "Rules engine", archived: false },
+  { id: "t-mtg-1on1",      projectId: "mtg",   name: "1:1",        archived: false },
+  { id: "t-mtg-team",      projectId: "mtg",   name: "Team",       archived: false },
+];
+
+export const TASK_BY_ID = Object.fromEntries(
+  TASKS.map((t) => [t.id, t]),
+) as Record<string, Task>;
+
 export const TODAY: Entry[] = [
-  { start: m(9, 12),  end: m(10, 45), project: "acme",  task: "API redesign discussion", tags: ["api", "design"],     source: "manual" },
-  { start: m(11, 0),  end: m(12, 30), project: "acme",  task: "Endpoint refactor",        tags: ["api", "refactor"],   source: "rule:repo=acme-web" },
-  { start: m(13, 15), end: m(14, 0),  project: "mtg",   task: "1:1 with Sarah",           tags: ["1:1"],               source: "calendar" },
-  { start: m(14, 0),  end: m(14, 48), project: "cairn", task: "Rule preview UI",          tags: ["ui", "rules"],       source: "rule:branch=feat/rules" },
+  { start: m(9, 12),  end: m(10, 45), project: "acme",  taskId: "t-acme-design", description: "API redesign discussion", source: "manual" },
+  { start: m(11, 0),  end: m(12, 30), project: "acme",  taskId: "t-acme-impl",   description: "Endpoint refactor",       source: "rule:repo=acme-web" },
+  { start: m(13, 15), end: m(14, 0),  project: "mtg",   taskId: "t-mtg-1on1",    description: "1:1 with Sarah",          source: "calendar" },
+  { start: m(14, 0),  end: m(14, 48), project: "cairn", taskId: "t-cairn-rules", description: "Rule preview UI",         source: "rule:branch=feat/rules" },
 ];
 
 export const NOW_MIN = m(15, 2);
@@ -33,8 +58,8 @@ export const NOW_MIN = m(15, 2);
 export const RUNNING: RunningEntry = {
   start: m(14, 48),
   project: "cairn",
-  task: "Rule preview UI",
-  tags: ["ui", "rules"],
+  taskId: "t-cairn-rules",
+  description: "Rule preview UI",
   source: "rule:branch=feat/rules",
 };
 
@@ -52,13 +77,13 @@ export const RULES: Rule[] = [
   {
     id: "r1", name: "Cairn dev work", enabled: true,
     when: [{ signal: "ide.folder", op: "contains", value: "cairn" }],
-    then: { project: "cairn", tags: ["dev"] },
+    then: { project: "cairn", taskId: "t-cairn-rules" },
     matchedToday: 3,
   },
   {
-    id: "r2", name: "Feature branch → tags", enabled: true,
+    id: "r2", name: "Feature branch", enabled: true,
     when: [{ signal: "git.branch", op: "starts-with", value: "feat/" }],
-    then: { project: null, tags: ["feature"] },
+    then: { project: null },
     matchedToday: 5,
   },
   {
@@ -68,7 +93,7 @@ export const RULES: Rule[] = [
       { signal: "browser.domain", op: "equals",   value: "acme.atlassian.net",  any: true },
       { signal: "browser.domain", op: "equals",   value: "github.com/acme",     any: true },
     ],
-    then: { project: "acme" },
+    then: { project: "acme", taskId: "t-acme-impl" },
     matchedToday: 12,
   },
   {

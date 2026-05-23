@@ -36,3 +36,4 @@ Cargo.lock.bak
 *.db
 *.db-journal
 /.cairn/
+coverage/

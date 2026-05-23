@@ -4,6 +4,7 @@ import type { A11yPrefs, DetectionPrompts, TextScale } from "./types";
 const STORAGE_KEY = "cairn:a11y-prefs:v1";
 
 const DEFAULTS: A11yPrefs = {
+  theme: "system",
   textScale: "md",
   highContrast: false,
   reduceMotion: matchesReduceMotion(),

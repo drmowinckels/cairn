@@ -1,0 +1,38 @@
+cache = true
+max_cache_age = "1d"
+no_progress = true
+accept = ["200", "206", "429"]
+max_concurrency = 8
+timeout = 20
+retry_wait_time = 2
+fallback_extensions = ["md", "html"]
+
+exclude_loopback = true
+exclude_all_private = true
+
+exclude = [
+  '^https?://example\.com',
+  # Academic publishers bot-block link checkers but resolve fine in browsers.
+  '^https?://(dx\.)?doi\.org/',
+  '^https?://(.*\.)?(wiley|tandfonline|sagepub|mdpi|apa|jstor|springer|frontiersin|elsevier|nature|sciencedirect)\.com',
+  # rustdoc / TypeDoc output: generated into the built site, not present in source.
+  '/api/(rust|ts)/',
+  # In-repo GitHub URLs (blob/tree/issues/pull/commit). These only resolve
+  # after the referencing commit lands on main, so on PR runs they 404 even
+  # when the link is correct. Broken in-repo links surface as 404s in the
+  # rendered docs anyway.
+  '^https?://github\.com/drmowinckels/cairn/(blob|tree|issues|pull|commit)/',
+  # VitePress mounts `docs/public/` at the site root — `/img/...` etc.
+  # don't exist under `docs/` — they live under `docs/public/`.
+  'file://.*?/docs/img/',
+]
+
+exclude_path = [
+  "node_modules",
+  "target",
+  "dist",
+  "coverage",
+  "src-tauri/gen",
+  "docs/.vitepress/cache",
+  ".claude",
+]

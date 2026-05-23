@@ -1,0 +1,134 @@
+name: Audit
+
+# Audit / advisory checks that target documentation as much as code
+# (cspell, lychee). They MUST NOT carry a `paths-ignore` filter — a
+# docs-only PR can still introduce unknown words or broken links that
+# the next non-docs PR would otherwise inherit as silent main rot.
+#
+# Frontend / Rust build-and-test jobs stay in ci.yml with their docs
+# paths-ignore, because they don't gain signal from a docs-only diff.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default to least-privilege. The `advisory` job opts in to
+# pull-requests: write for its sticky-comment step; nothing else
+# needs write access in this workflow.
+permissions:
+  contents: read
+
+jobs:
+  # Hard-fail audits: enforce correctness on every PR.
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: knip (unused exports / deps)
+        run: npm run audit:knip
+      - name: cspell (spell check)
+        run: npm run audit:spell
+      - name: size-limit (bundle budget)
+        run: npm run audit:size
+
+  # Advisory audits: surface signal without blocking merges.
+  # cargo-deny covers licenses + CVEs + duplicate-version checks.
+  # npm audit is externally-validated and can flap, so it stays advisory.
+  # lychee is merge-blocking — its step keeps `continue-on-error` so the
+  # job's final step exits non-zero if lychee flagged any link.
+  # Findings are aggregated into one sticky PR comment.
+  advisory:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: mkdir -p audit-reports
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: cargo-deny
+        id: deny
+        continue-on-error: true
+        working-directory: src-tauri
+        run: |
+          cargo deny check 2>&1 | tee ../audit-reports/cargo-deny.txt
+          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: lychee (broken links)
+        id: lychee
+        continue-on-error: true
+        # SHA-pinned: this action runs against the repo workspace and has
+        # access to GITHUB_TOKEN for rate-limiting. Update via dependabot.
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
+        with:
+          args: --config .github/audit/lychee.toml --root-dir "${{ github.workspace }}/docs" --no-progress "**/*.md"
+          output: audit-reports/lychee.md
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: npm ci
+
+      - name: npm audit
+        id: npm_audit
+        continue-on-error: true
+        run: |
+          npm audit --omit=dev --json 2>/dev/null > audit-reports/npm-audit.json || true
+          npm audit --omit=dev 2>&1 | tee audit-reports/npm-audit.txt
+          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Aggregate advisory results into one PR comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: advisory
+          message: |
+            ### Advisory audit summary
+
+            | check | result |
+            |---|---|
+            | cargo-deny | exit ${{ steps.deny.outputs.exit }} |
+            | lychee | exit ${{ steps.lychee.outcome }} |
+            | npm audit | exit ${{ steps.npm_audit.outputs.exit }} |
+
+            Detailed reports are uploaded as the `audit-reports` artifact.
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-reports
+          path: audit-reports/
+          if-no-files-found: ignore
+
+      - name: Final lychee gate
+        if: steps.lychee.outcome == 'failure'
+        run: |
+          echo "::error::lychee found broken links — see the audit-reports artifact"
+          exit 1

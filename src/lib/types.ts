@@ -1,10 +1,27 @@
+export type ClientId = string;
 export type ProjectId = string;
+export type TaskId = string;
+
+export interface Client {
+  id: ClientId;
+  name: string;
+  color: string | null;
+  archived: boolean;
+}
 
 export interface Project {
   id: ProjectId;
   name: string;
-  client: string | null;
+  clientId: ClientId | null;
   color: string;
+  archived: boolean;
+}
+
+export interface Task {
+  id: TaskId;
+  projectId: ProjectId;
+  name: string;
+  archived: boolean;
 }
 
 export type EntrySource =
@@ -12,20 +29,23 @@ export type EntrySource =
   | "calendar"
   | `rule:${string}`;
 
+/** Test-fixture entry shape — uses minutes-of-day for start/end to keep
+ *  the demo timeline cheap to author. Real DB entries flow through
+ *  TodayEntry in use-today.ts. */
 export interface Entry {
   start: number;
   end: number;
   project: ProjectId;
-  task: string;
-  tags?: string[];
+  taskId?: TaskId | null;
+  description: string;
   source: EntrySource;
 }
 
 export interface RunningEntry {
   start: number;
   project: ProjectId;
-  task: string;
-  tags: string[];
+  taskId?: TaskId | null;
+  description: string;
   source: EntrySource;
 }
 
@@ -60,7 +80,7 @@ export interface Rule {
   when: RuleCondition[];
   then: {
     project: ProjectId | null;
-    tags?: string[];
+    taskId?: TaskId | null;
     tagsFromCalendar?: boolean;
   };
   matchedToday: number;
@@ -92,12 +112,14 @@ export type Density = "comfy" | "compact";
 export type LayoutVariant = "default" | "projects-first";
 export type RulesComplexity = "light" | "medium" | "heavy";
 export type Theme = "light" | "dark";
-export type View = "today" | "reports" | "rules" | "settings";
+export type View = "today" | "reports" | "rules" | "projects" | "settings";
 
 export type TextScale = "sm" | "md" | "lg" | "xl";
 export type DetectionPrompts = "off" | "subtle" | "modal";
+export type ThemePref = "system" | "light" | "dark";
 
 export interface A11yPrefs {
+  theme: ThemePref;
   textScale: TextScale;
   highContrast: boolean;
   reduceMotion: boolean;

@@ -96,8 +96,9 @@ impl CalendarRegistry {
         // The error type carries no fragment of the raw URL, so it is
         // safe to bubble up as a user-visible message.
         let location = match kind {
-            CalendarKind::Url => secrets::redact_url(&raw)
-                .map_err(|e| anyhow!("invalid calendar URL: {e}"))?,
+            CalendarKind::Url => {
+                secrets::redact_url(&raw).map_err(|e| anyhow!("invalid calendar URL: {e}"))?
+            }
             CalendarKind::File => raw.clone(),
         };
         let src = CalendarSource {

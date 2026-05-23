@@ -21,17 +21,16 @@ pub fn toggle(app: &AppHandle) {
 }
 
 pub fn register_shortcut(app: &AppHandle) {
-    let shortcut = Shortcut::new(
-        Some(Modifiers::CONTROL | Modifiers::ALT),
-        Code::KeyT,
-    );
+    let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyT);
 
     let handle = app.clone();
-    let result = app.global_shortcut().on_shortcut(shortcut, move |_app, _sc, event| {
-        if matches!(event.state(), ShortcutState::Pressed) {
-            toggle(&handle);
-        }
-    });
+    let result = app
+        .global_shortcut()
+        .on_shortcut(shortcut, move |_app, _sc, event| {
+            if matches!(event.state(), ShortcutState::Pressed) {
+                toggle(&handle);
+            }
+        });
 
     if let Err(e) = result {
         log::warn!("popover: failed to register global shortcut Ctrl+Alt+T: {e}");

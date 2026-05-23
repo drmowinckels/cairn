@@ -1,5 +1,11 @@
 //! Rules engine. Pure functions over a `SignalSnapshot` — no DB access,
 //! no IO. See `docs/RULES_ENGINE.md` for the data model.
+//!
+//! The engine ships ahead of its consumers (the snapshot stream that
+//! drives it lands in M1). `#![allow(dead_code)]` keeps `cargo clippy
+//! --all-targets -- -D warnings` happy until the wiring lands; remove
+//! it the moment a non-test caller exists.
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 
@@ -312,6 +318,248 @@ mod tests {
         assert!(evaluate(std::iter::once(&rule), &s).is_some());
     }
 
+    fn rule_with(id: &str, project: &str, conds: Vec<Condition>) -> Rule {
+        Rule {
+            id: id.into(),
+            name: id.into(),
+            enabled: true,
+            priority: 0,
+            when: conds,
+            then: RuleAction {
+                project: Some(project.into()),
+                tags: vec![],
+                tags_from_calendar: false,
+            },
+        }
+    }
+
+    #[test]
+    fn empty_conditions_never_match() {
+        let rule = rule_with("r1", "cairn", vec![]);
+        assert!(evaluate(std::iter::once(&rule), &snap()).is_none());
+    }
+
+    #[test]
+    fn first_match_wins_in_order() {
+        let snap = snap();
+        let r1 = rule_with(
+            "first",
+            "cairn",
+            vec![Condition::IdeFolder {
+                op: Op::Contains,
+                value: "cairn".into(),
+                any: false,
+            }],
+        );
+        let r2 = rule_with(
+            "second",
+            "other",
+            vec![Condition::GitBranch {
+                op: Op::StartsWith,
+                value: "feat/".into(),
+                any: false,
+            }],
+        );
+        let m = evaluate([&r1, &r2], &snap).unwrap();
+        assert_eq!(m.rule_id, "first");
+    }
+
+    #[test]
+    fn no_signal_no_match() {
+        let mut s = snap();
+        s.ide_folder = None;
+        let rule = rule_with(
+            "r1",
+            "cairn",
+            vec![Condition::IdeFolder {
+                op: Op::Contains,
+                value: "cairn".into(),
+                any: false,
+            }],
+        );
+        assert!(evaluate(std::iter::once(&rule), &s).is_none());
+    }
+
+    #[test]
+    fn op_starts_with_and_ends_with() {
+        let snap = snap();
+        let starts = rule_with(
+            "s",
+            "p",
+            vec![Condition::GitBranch {
+                op: Op::StartsWith,
+                value: "feat/".into(),
+                any: false,
+            }],
+        );
+        let ends = rule_with(
+            "e",
+            "p",
+            vec![Condition::WindowTitle {
+                op: Op::EndsWith,
+                value: "cairn".into(),
+                any: false,
+            }],
+        );
+        assert!(evaluate(std::iter::once(&starts), &snap).is_some());
+        assert!(evaluate(std::iter::once(&ends), &snap).is_some());
+    }
+
+    #[test]
+    fn op_equals_is_exact() {
+        let mut s = snap();
+        s.app_name = Some("Zed".into());
+        let exact = rule_with(
+            "x",
+            "p",
+            vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+        );
+        let off = rule_with(
+            "off",
+            "p",
+            vec![Condition::AppName {
+                op: Op::Equals,
+                value: "zed".into(), // wrong case
+                any: false,
+            }],
+        );
+        assert!(evaluate(std::iter::once(&exact), &s).is_some());
+        assert!(evaluate(std::iter::once(&off), &s).is_none());
+    }
+
+    #[test]
+    fn all_conditions_must_match_when_no_any_flag() {
+        let mut s = snap();
+        s.git_branch = Some("main".into()); // does not start with feat/
+        let rule = rule_with(
+            "r",
+            "cairn",
+            vec![
+                Condition::IdeFolder {
+                    op: Op::Contains,
+                    value: "cairn".into(),
+                    any: false,
+                },
+                Condition::GitBranch {
+                    op: Op::StartsWith,
+                    value: "feat/".into(),
+                    any: false,
+                },
+            ],
+        );
+        // ide matches, git doesn't → rule fails
+        assert!(evaluate(std::iter::once(&rule), &s).is_none());
+
+        // both match → rule fires
+        s.git_branch = Some("feat/x".into());
+        assert!(evaluate(std::iter::once(&rule), &s).is_some());
+    }
+
+    #[test]
+    fn any_group_with_all_anchor_requires_anchor_too() {
+        // RULES_ENGINE.md §3: when conditions mix `any: false` (anchor) with
+        // `any: true` (alternatives), the anchor MUST match and at least one
+        // alternative must match.
+        let mut s = snap();
+        s.ide_folder = Some("~/code/cairn".into());
+        s.git_branch = None;
+        s.browser_domain = None;
+
+        let rule = rule_with(
+            "r",
+            "cairn",
+            vec![
+                Condition::IdeFolder {
+                    op: Op::Contains,
+                    value: "cairn".into(),
+                    any: false, // anchor
+                },
+                Condition::GitBranch {
+                    op: Op::StartsWith,
+                    value: "feat/".into(),
+                    any: true, // alt
+                },
+                Condition::BrowserDomain {
+                    op: Op::Equals,
+                    value: "github.com".into(),
+                    any: true, // alt
+                },
+            ],
+        );
+        // anchor matches, no alt does → no match
+        assert!(evaluate(std::iter::once(&rule), &s).is_none());
+
+        // anchor + one alt matches
+        s.git_branch = Some("feat/x".into());
+        assert!(evaluate(std::iter::once(&rule), &s).is_some());
+    }
+
+    #[test]
+    fn match_returns_rule_id_project_and_tags() {
+        let rule = Rule {
+            id: "tagged".into(),
+            name: "tagged".into(),
+            enabled: true,
+            priority: 0,
+            when: vec![Condition::IdeFolder {
+                op: Op::Contains,
+                value: "cairn".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("cairn".into()),
+                tags: vec!["dev".into(), "rules".into()],
+                tags_from_calendar: false,
+            },
+        };
+        let m = evaluate(std::iter::once(&rule), &snap()).unwrap();
+        assert_eq!(m.rule_id, "tagged");
+        assert_eq!(m.project.as_deref(), Some("cairn"));
+        assert_eq!(m.tags, vec!["dev", "rules"]);
+    }
+
+    #[test]
+    fn matches_op_is_currently_a_no_op() {
+        // The `Matches` op is intentionally unimplemented until a regex
+        // crate is picked. Pin the behavior so an accidental wire-up
+        // surfaces here.
+        let rule = rule_with(
+            "r",
+            "p",
+            vec![Condition::IdeFolder {
+                op: Op::Matches,
+                value: "^cairn$".into(),
+                any: false,
+            }],
+        );
+        assert!(evaluate(std::iter::once(&rule), &snap()).is_none());
+    }
+
+    #[test]
+    fn rule_json_roundtrip_kebab_case() {
+        let body = serde_json::json!({
+            "id": "r1",
+            "name": "Cairn",
+            "enabled": true,
+            "priority": 0,
+            "when": [
+                {"signal": "ide.folder", "op": "contains", "value": "cairn"}
+            ],
+            "then": {"project": "cairn", "tags": ["dev"]}
+        });
+        let rule: Rule = serde_json::from_value(body.clone()).unwrap();
+        assert_eq!(rule.name, "Cairn");
+        assert_eq!(rule.then.tags, vec!["dev".to_string()]);
+
+        let reserialized = serde_json::to_value(&rule).unwrap();
+        assert_eq!(reserialized["when"][0]["signal"], "ide.folder");
+        assert_eq!(reserialized["when"][0]["op"], "contains");
+    }
+
     #[test]
     fn calendar_is_active_matches_when_any_event_present() {
         let rule = Rule {
@@ -334,7 +582,10 @@ mod tests {
         assert!(evaluate(std::iter::once(&rule), &s).is_none());
         s.calendar = vec![event("Stand-up")];
         assert_eq!(
-            evaluate(std::iter::once(&rule), &s).unwrap().project.as_deref(),
+            evaluate(std::iter::once(&rule), &s)
+                .unwrap()
+                .project
+                .as_deref(),
             Some("meetings"),
         );
     }

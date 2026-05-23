@@ -46,8 +46,8 @@ export function TodayView({
   }, []);
 
   const runningProject = timer.running?.projectId ?? RUNNING.project;
-  const runningTask = timer.running?.task ?? RUNNING.task;
-  const runningTags = timer.running?.tags ?? RUNNING.tags;
+  const runningTask = timer.running?.description ?? RUNNING.description;
+  const runningTags = [] as string[];
   const runningSource = timer.running ? deriveSource(timer.running) : "rule";
 
   const startedAt = timer.running
@@ -64,7 +64,7 @@ export function TodayView({
     timer.stop().catch((e) => console.error("stop failed", e));
   };
   const onQuickStart = (projectId: string) => {
-    timer.start({ projectId, task: "" }).catch((e) => console.error("start failed", e));
+    timer.start({ projectId, description: "" }).catch((e) => console.error("start failed", e));
   };
 
   return (
@@ -251,7 +251,7 @@ export function TodayView({
                     className="proj-dot"
                     style={{ background: PROJECT_BY_ID[e.project].color }}
                   />
-                  <span className="entry-task">{e.task}</span>
+                  <span className="entry-task">{e.description}</span>
                   <span className="entry-dur">{fmtHm(e.end - e.start)}</span>
                   {e.source.startsWith("rule") && <Icon name="sparkle" size={10} className="entry-src" />}
                   {e.source === "calendar" && <Icon name="calendar" size={10} className="entry-src" />}
@@ -308,7 +308,7 @@ function DayTimeline() {
       start: RUNNING.start,
       end: NOW_MIN,
       project: RUNNING.project,
-      task: RUNNING.task,
+      description: RUNNING.description,
       running: true,
     },
   ];
@@ -325,7 +325,7 @@ function DayTimeline() {
               width: `${pct(e.end) - pct(e.start)}%`,
               background: PROJECT_BY_ID[e.project].color,
             }}
-            title={`${e.task} · ${fmtRange(e.start, e.end)}`}
+            title={`${e.description} · ${fmtRange(e.start, e.end)}`}
           />
         ))}
         <div className="dt-now" style={{ left: `${nowPct}%` }} aria-label="Now">

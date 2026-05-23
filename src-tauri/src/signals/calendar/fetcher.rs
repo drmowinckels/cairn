@@ -1,10 +1,13 @@
 //! HTTP fetcher for ICS subscription URLs.
 //!
 //! Sends only:
-//!   GET <user-supplied URL>
-//!   If-None-Match: <stored ETag, if any>
-//!   If-Modified-Since: <stored Last-Modified, if any>
-//!   User-Agent: cairn/0.x
+//!
+//! ```text
+//! GET <user-supplied URL>
+//! If-None-Match: <stored ETag, if any>
+//! If-Modified-Since: <stored Last-Modified, if any>
+//! User-Agent: cairn/0.x
+//! ```
 //!
 //! Never sends cookies, never follows redirects across hosts, never
 //! retries with backoff (the polling loop already retries on the next
