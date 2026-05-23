@@ -1488,10 +1488,18 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         // Open entry started 1h ago, no ended_at — list_week must
-        // close it against "now" and count ~1h on today's bucket.
+        // close it against "now" and count ~1h somewhere in the
+        // week.
+        //
+        // The bucket it lands on depends on local timezone: when
+        // this test runs in the first hour after local midnight,
+        // "1h ago" is yesterday locally. The contract we actually
+        // need to pin is that an open entry IS surfaced — without
+        // that the snapshot drops the running-timer signal in the
+        // weekly view. Pin the total instead of `today.hours` to
+        // keep the test deterministic across timezones.
         let id = uuid::Uuid::new_v4().to_string();
         let started = (Utc::now() - Duration::minutes(60)).to_rfc3339();
-        let now_str = Utc::now().to_rfc3339();
         sqlx::query(
             r#"
             INSERT INTO entries
@@ -1506,15 +1514,12 @@ mod tests {
         .execute(&app.state::<crate::AppState>().db.pool)
         .await
         .unwrap();
-        // Mark updated_at to satisfy the schema (the query above sets it).
-        let _ = now_str;
 
         let week = list_week(state).await.unwrap();
-        let today = week.iter().find(|d| d.today).expect("today bucket");
+        let total: f64 = week.iter().map(|d| d.hours).sum();
         assert!(
-            today.hours >= 0.9 && today.hours <= 1.1,
-            "open entry should contribute ~1h on today; got {}",
-            today.hours
+            (0.9..=1.1).contains(&total),
+            "open entry should contribute ~1h across the week; got {total}",
         );
     }
 

@@ -36,6 +36,15 @@ pub async fn build(calendar: &CalendarRegistry, at: DateTime<Utc>) -> SignalSnap
         None => (None, None, None),
     };
 
+    // `git_branch` deliberately stays `None` here. The read
+    // primitives ship in `signals::git` (see #4), but wiring them
+    // through `snapshot::build` requires an *absolute* repo path,
+    // which we don't have until #5 lands the user-configurable
+    // discovery roots — `derive_ide_folder` returns only a folder
+    // *name* extracted from the window title, so calling
+    // `read_git_context` on it would walk from CWD and silently
+    // report the wrong repo. #5 will plumb the snapshot stream
+    // through proper absolute paths and turn `git_branch` on.
     SignalSnapshot {
         ide_folder,
         git_branch: None,

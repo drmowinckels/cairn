@@ -1,7 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,mjs}"],
-  "ignore": ["src/lib/use-calendars.ts"],
   "ignoreDependencies": [
     "axe-core",
     "@tauri-apps/plugin-autostart",
