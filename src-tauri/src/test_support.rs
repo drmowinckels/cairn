@@ -19,7 +19,10 @@
 #![allow(dead_code)]
 
 use std::path::Path;
+
+#[cfg(not(target_os = "windows"))]
 use std::sync::atomic::AtomicBool;
+#[cfg(not(target_os = "windows"))]
 use std::sync::Arc;
 
 #[cfg(not(target_os = "windows"))]
@@ -30,10 +33,12 @@ use tauri::{App, Manager};
 pub use tempfile::TempDir;
 
 use crate::rules::{Condition, Op, Rule, RuleAction, SignalSnapshot};
-use crate::signals::calendar::CalendarRegistry;
 use crate::Db;
-// AppState is only used by the cfg-gated mock_app rig — keep the
-// import gated the same way so Windows doesn't see it as unused.
+// `CalendarRegistry` and `AppState` are only used by the cfg-gated
+// mock_app rig — keep their imports gated the same way so Windows
+// doesn't see them as unused.
+#[cfg(not(target_os = "windows"))]
+use crate::signals::calendar::CalendarRegistry;
 #[cfg(not(target_os = "windows"))]
 use crate::AppState;
 
