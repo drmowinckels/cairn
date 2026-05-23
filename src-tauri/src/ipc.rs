@@ -50,10 +50,12 @@ pub struct StartEntryInput {
 
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
-    let rows = sqlx::query("SELECT id, name, client, color FROM projects WHERE archived = 0 ORDER BY name")
-        .fetch_all(&state.db.pool)
-        .await
-        .map_err(err)?;
+    let rows = sqlx::query(
+        "SELECT id, name, client, color FROM projects WHERE archived = 0 ORDER BY name",
+    )
+    .fetch_all(&state.db.pool)
+    .await
+    .map_err(err)?;
     Ok(rows
         .into_iter()
         .map(|r| Project {
@@ -95,7 +97,10 @@ pub async fn list_today(state: State<'_, AppState>) -> Result<Vec<Entry>, String
             project_id: row.get("project_id"),
             task: row.get("task"),
             started_at: parse_ts(row.get::<String, _>("started_at"))?,
-            ended_at: row.get::<Option<String>, _>("ended_at").map(parse_ts).transpose()?,
+            ended_at: row
+                .get::<Option<String>, _>("ended_at")
+                .map(parse_ts)
+                .transpose()?,
             source: row.get("source"),
             rule_id: row.get("rule_id"),
             tags,
@@ -106,10 +111,11 @@ pub async fn list_today(state: State<'_, AppState>) -> Result<Vec<Entry>, String
 
 #[tauri::command]
 pub async fn list_rules(state: State<'_, AppState>) -> Result<Vec<Rule>, String> {
-    let rows = sqlx::query("SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC")
-        .fetch_all(&state.db.pool)
-        .await
-        .map_err(err)?;
+    let rows =
+        sqlx::query("SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC")
+            .fetch_all(&state.db.pool)
+            .await
+            .map_err(err)?;
     rows.into_iter()
         .map(|r| {
             let body_str: String = r.get("body");
@@ -147,7 +153,10 @@ pub async fn current_running(state: State<'_, AppState>) -> Result<Option<Entry>
         project_id: row.get("project_id"),
         task: row.get("task"),
         started_at: parse_ts(row.get::<String, _>("started_at"))?,
-        ended_at: row.get::<Option<String>, _>("ended_at").map(parse_ts).transpose()?,
+        ended_at: row
+            .get::<Option<String>, _>("ended_at")
+            .map(parse_ts)
+            .transpose()?,
         source: row.get("source"),
         rule_id: row.get("rule_id"),
         tags,
@@ -247,7 +256,10 @@ pub async fn stop_entry(state: State<'_, AppState>, id: String) -> Result<Entry,
         project_id: row.get("project_id"),
         task: row.get("task"),
         started_at: parse_ts(row.get::<String, _>("started_at"))?,
-        ended_at: row.get::<Option<String>, _>("ended_at").map(parse_ts).transpose()?,
+        ended_at: row
+            .get::<Option<String>, _>("ended_at")
+            .map(parse_ts)
+            .transpose()?,
         source: row.get("source"),
         rule_id: row.get("rule_id"),
         tags,
@@ -276,7 +288,10 @@ async fn load_tags(pool: &sqlx::SqlitePool, entry_id: &str) -> Result<Vec<String
     .fetch_all(pool)
     .await
     .map_err(err)?;
-    Ok(rows.into_iter().map(|r| r.get::<String, _>("name")).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("name"))
+        .collect())
 }
 
 async fn upsert_tag(

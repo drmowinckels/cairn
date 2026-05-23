@@ -6,6 +6,9 @@ mod rules;
 mod signals;
 mod tray;
 
+#[cfg(test)]
+mod test_support;
+
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_log::{Target, TargetKind};
@@ -86,10 +89,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("app_data_dir resolves");
+            let data_dir = app.path().app_data_dir().expect("app_data_dir resolves");
             std::fs::create_dir_all(&data_dir).ok();
 
             if let Err(e) = backup::apply_pending_import(&data_dir) {

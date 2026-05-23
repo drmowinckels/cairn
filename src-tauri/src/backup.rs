@@ -193,20 +193,14 @@ pub async fn data_paths(app: tauri::AppHandle) -> Result<DataPaths, String> {
 }
 
 #[tauri::command]
-pub async fn export_backup(
-    state: State<'_, AppState>,
-    dest: String,
-) -> Result<String, String> {
+pub async fn export_backup(state: State<'_, AppState>, dest: String) -> Result<String, String> {
     let dest = PathBuf::from(dest);
     vacuum_into(&state.db.pool, &dest).await?;
     Ok(dest.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub async fn stage_import(
-    app: tauri::AppHandle,
-    src: String,
-) -> Result<String, String> {
+pub async fn stage_import(app: tauri::AppHandle, src: String) -> Result<String, String> {
     let data_dir = app.path().app_data_dir().map_err(err)?;
     let dest = stage_import_at(&data_dir, &PathBuf::from(src)).await?;
     Ok(dest.to_string_lossy().to_string())
@@ -223,10 +217,7 @@ pub async fn cancel_pending_import(app: tauri::AppHandle) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub async fn export_csv(
-    state: State<'_, AppState>,
-    dest: String,
-) -> Result<String, String> {
+pub async fn export_csv(state: State<'_, AppState>, dest: String) -> Result<String, String> {
     let dest = PathBuf::from(dest);
     export_csv_to(&state.db.pool, &dest).await?;
     Ok(dest.to_string_lossy().to_string())
@@ -407,11 +398,17 @@ mod tests {
 
         let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
         let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[0], "entry_id,started_at,ended_at,project,task,source,tag");
+        assert_eq!(
+            lines[0],
+            "entry_id,started_at,ended_at,project,task,source,tag"
+        );
         // Header + 2 rows for the two-tag task + 1 row for the lone task
         assert_eq!(lines.len(), 4);
 
-        let two_tag_rows: Vec<&&str> = lines.iter().filter(|l| l.contains("two-tag task")).collect();
+        let two_tag_rows: Vec<&&str> = lines
+            .iter()
+            .filter(|l| l.contains("two-tag task"))
+            .collect();
         assert_eq!(two_tag_rows.len(), 2);
         assert!(two_tag_rows.iter().any(|l| l.ends_with(",api")));
         assert!(two_tag_rows.iter().any(|l| l.ends_with(",design")));
@@ -452,11 +449,12 @@ mod tests {
         assert_eq!(task.as_deref(), Some("round-trip subject"));
 
         // The replaced entry shouldn't survive; the pre-swap DB is now .bak.
-        let stale: Option<String> = sqlx::query("SELECT task FROM entries WHERE task = 'to be replaced'")
-            .fetch_optional(&reopened.pool)
-            .await
-            .unwrap()
-            .map(|r| r.get("task"));
+        let stale: Option<String> =
+            sqlx::query("SELECT task FROM entries WHERE task = 'to be replaced'")
+                .fetch_optional(&reopened.pool)
+                .await
+                .unwrap()
+                .map(|r| r.get("task"));
         assert!(stale.is_none());
         assert!(backup_path(dst_dir.path()).exists());
     }
