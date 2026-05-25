@@ -162,7 +162,7 @@ pub fn evaluate<'a, I>(rules: I, snapshot: &SignalSnapshot) -> Option<RuleMatch>
 where
     I: IntoIterator<Item = &'a Rule>,
 {
-    evaluate_with_snoozer(rules, snapshot, None, chrono::Utc::now())
+    evaluate_full(rules, snapshot, None, None, chrono::Utc::now())
 }
 
 /// Same as `evaluate` but with snooze-gating. Rules that are
@@ -177,6 +177,39 @@ pub fn evaluate_with_snoozer<'a, I>(
     rules: I,
     snapshot: &SignalSnapshot,
     snoozer: Option<&mut Snoozer>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<RuleMatch>
+where
+    I: IntoIterator<Item = &'a Rule>,
+{
+    evaluate_full(rules, snapshot, snoozer, None, now)
+}
+
+/// Trait for any opaque attendee-email exclusion check the matcher
+/// can consult before adding `tags_from_calendar` entries.
+///
+/// Defined as a trait (rather than passing `&ExclusionMatcher`
+/// directly) so the `rules` module stays free of a `signals` import
+/// — the matcher remains a pure-state module with no IO or cross-
+/// module coupling. The fanout supplies an adapter that delegates
+/// to `signals::exclusions::ExclusionMatcher::matches_domain`.
+pub trait AttendeeExclusionCheck {
+    /// True iff this attendee should be dropped from
+    /// `RuleMatch.tags`. Implementations typically extract the
+    /// email's domain part and consult an exclusion list.
+    fn attendee_is_excluded(&self, attendee: &str) -> bool;
+}
+
+/// Full evaluate path — superset of `evaluate` + `evaluate_with_snoozer`
+/// that also accepts an `AttendeeExclusionCheck`. The fanout uses
+/// this signature in production so attendee emails added via
+/// `tags_from_calendar` are filtered through the user's exclusion
+/// list before reaching `RuleMatch.tags`.
+pub fn evaluate_full<'a, I>(
+    rules: I,
+    snapshot: &SignalSnapshot,
+    snoozer: Option<&mut Snoozer>,
+    attendee_filter: Option<&dyn AttendeeExclusionCheck>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Option<RuleMatch>
 where
@@ -211,12 +244,25 @@ where
 
             // Tags: start from the rule's static tags; if
             // `tags_from_calendar` is set AND an event matched,
-            // append the event's attendees. De-dup so repeated
-            // matches don't accumulate duplicate entries.
+            // append the event's attendees. Two privacy gates
+            // apply before an attendee enters `tags`:
+            // 1. The user's exclusion list (`attendee_filter`)
+            //    drops attendees whose email domain matches a
+            //    `domain` exclusion — same opt-out as the browser
+            //    collector uses. Without this, an attendee on a
+            //    privacy-sensitive address would persist as a tag
+            //    just because the calendar invite includes them.
+            // 2. De-dup against the static tag list so repeated
+            //    matches don't accumulate duplicates.
             let mut tags = rule.then.tags.clone();
             if rule.then.tags_from_calendar {
                 if let Some(ev) = matched_event {
                     for a in &ev.attendees {
+                        if let Some(filter) = attendee_filter {
+                            if filter.attendee_is_excluded(a) {
+                                continue;
+                            }
+                        }
                         if !tags.contains(a) {
                             tags.push(a.clone());
                         }
@@ -267,11 +313,84 @@ fn first_matching_calendar_event<'a>(
 }
 
 /// Substitute supported placeholders in a description template.
+///
 /// Currently supported: `{calendar.event}` → matched event's title
 /// (or empty string when no event matched).
+///
+/// Escape rules (same shape as `str::format` / Python's `.format`):
+/// - `{{` → literal `{`
+/// - `}}` → literal `}`
+///
+/// So `{{calendar.event}}` (= `{{` + `calendar.event` + `}}`)
+/// emits the literal text `{calendar.event}` rather than
+/// substituting. Unknown placeholders are emitted verbatim so a
+/// user typo is visible rather than silently dropped.
 fn resolve_description_template(tpl: &str, matched_event: Option<&CalendarEvent>) -> String {
     let event_title = matched_event.map(|e| e.title.as_str()).unwrap_or("");
-    tpl.replace("{calendar.event}", event_title)
+    let mut out = String::with_capacity(tpl.len());
+    let bytes = tpl.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' if i + 1 < bytes.len() && bytes[i + 1] == b'{' => {
+                // `{{` → literal `{`
+                out.push('{');
+                i += 2;
+            }
+            b'}' if i + 1 < bytes.len() && bytes[i + 1] == b'}' => {
+                // `}}` → literal `}`
+                out.push('}');
+                i += 2;
+            }
+            b'{' => {
+                // Placeholder. Find the matching `}`. Search in
+                // the remaining string so we get a byte offset
+                // relative to `tpl`.
+                let rest = &tpl[i + 1..];
+                match rest.find('}') {
+                    Some(close_offset) => {
+                        let key = &rest[..close_offset];
+                        match key {
+                            "calendar.event" => out.push_str(event_title),
+                            _ => {
+                                // Unknown placeholder — passthrough
+                                // literally so typos are visible.
+                                out.push('{');
+                                out.push_str(key);
+                                out.push('}');
+                            }
+                        }
+                        i += 1 + close_offset + 1;
+                    }
+                    None => {
+                        // Unterminated placeholder — emit the
+                        // remainder verbatim.
+                        out.push_str(&tpl[i..]);
+                        break;
+                    }
+                }
+            }
+            _ => {
+                // ASCII path stays simple; for non-ASCII bytes
+                // we still advance one byte at a time which is
+                // safe because UTF-8 continuation bytes never
+                // collide with `{` / `}` (0x7B / 0x7D are pure
+                // ASCII).
+                // Copy the next UTF-8 character to preserve
+                // multibyte sequences intact.
+                let ch_start = i;
+                // Find the next char boundary in the original str.
+                let next = tpl[ch_start..]
+                    .chars()
+                    .next()
+                    .map(|c| ch_start + c.len_utf8())
+                    .unwrap_or(ch_start + 1);
+                out.push_str(&tpl[ch_start..next]);
+                i = next;
+            }
+        }
+    }
+    out
 }
 
 fn matches(rule: &Rule, snap: &SignalSnapshot) -> bool {
@@ -495,6 +614,181 @@ mod tests {
         s.calendar = vec![event("Stand-up")];
         let m = evaluate(std::iter::once(&rule), &s).unwrap();
         assert_eq!(m.description, "Meeting: Stand-up");
+    }
+
+    #[test]
+    fn description_template_passes_through_when_no_placeholder() {
+        // Template without `{calendar.event}` is emitted verbatim
+        // — the user can pin a static description on every rule
+        // match.
+        let rule = Rule {
+            id: "r1".into(),
+            name: "x".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Strict,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("cairn".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: Some("Daily sync".into()),
+            },
+        };
+        let s = snap();
+        let m = evaluate(std::iter::once(&rule), &s).unwrap();
+        assert_eq!(m.description, "Daily sync");
+    }
+
+    #[test]
+    fn description_template_double_brace_escapes_literal() {
+        // `{{calendar.event}}` → `{calendar.event}` in the output
+        // — so users can describe the placeholder syntax itself.
+        let rule = Rule {
+            id: "r-cal".into(),
+            name: "x".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Strict,
+            when: vec![Condition::CalendarEvent {
+                op: Op::IsActive,
+                value: String::new(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("meetings".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: Some("Use {{calendar.event}} for {calendar.event}".into()),
+            },
+        };
+        let mut s = snap();
+        s.calendar = vec![event("Stand-up")];
+        let m = evaluate(std::iter::once(&rule), &s).unwrap();
+        assert_eq!(m.description, "Use {calendar.event} for Stand-up");
+    }
+
+    #[test]
+    fn description_template_unknown_placeholder_passes_through() {
+        // A typo like `{foo.bar}` is emitted literally rather than
+        // silently dropped — the user sees their typo and can fix
+        // it.
+        let rule = Rule {
+            id: "r1".into(),
+            name: "x".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Strict,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("cairn".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: Some("typo: {foo.bar}".into()),
+            },
+        };
+        let s = snap();
+        let m = evaluate(std::iter::once(&rule), &s).unwrap();
+        assert_eq!(m.description, "typo: {foo.bar}");
+    }
+
+    #[test]
+    fn description_template_with_empty_event_title() {
+        let rule = Rule {
+            id: "r-cal".into(),
+            name: "x".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Strict,
+            when: vec![Condition::CalendarEvent {
+                op: Op::IsActive,
+                value: String::new(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("meetings".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: Some("Meeting: {calendar.event}".into()),
+            },
+        };
+        let mut s = snap();
+        s.calendar = vec![CalendarEvent {
+            title: "".into(),
+            source_label: "Work".into(),
+            attendees: vec![],
+            all_day: false,
+        }];
+        let m = evaluate(std::iter::once(&rule), &s).unwrap();
+        assert_eq!(m.description, "Meeting: ");
+    }
+
+    #[test]
+    fn attendee_exclusion_filter_drops_matching_addresses() {
+        // The fanout supplies an attendee filter that delegates
+        // to `signals::exclusions::ExclusionMatcher::matches_attendee`.
+        // Pin the matcher's contract via a synthetic
+        // implementation that excludes `*@blocked.com`.
+        struct DropBlockedCom;
+        impl AttendeeExclusionCheck for DropBlockedCom {
+            fn attendee_is_excluded(&self, attendee: &str) -> bool {
+                attendee.ends_with("@blocked.com")
+            }
+        }
+
+        let rule = Rule {
+            id: "r-cal".into(),
+            name: "x".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Strict,
+            when: vec![Condition::CalendarEvent {
+                op: Op::IsActive,
+                value: String::new(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("meetings".into()),
+                tags: vec![],
+                tags_from_calendar: true,
+                description_template: None,
+            },
+        };
+        let mut s = snap();
+        s.calendar = vec![CalendarEvent {
+            title: "Stand-up".into(),
+            source_label: "Work".into(),
+            attendees: vec![
+                "alice@allowed.com".into(),
+                "bob@blocked.com".into(),
+                "carol@allowed.com".into(),
+            ],
+            all_day: false,
+        }];
+        let m = evaluate_full(
+            std::iter::once(&rule),
+            &s,
+            None,
+            Some(&DropBlockedCom),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        // bob@blocked.com is filtered; the other two pass.
+        assert_eq!(
+            m.tags,
+            vec![
+                "alice@allowed.com".to_string(),
+                "carol@allowed.com".to_string()
+            ]
+        );
     }
 
     #[test]

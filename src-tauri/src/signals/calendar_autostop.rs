@@ -32,6 +32,7 @@ use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 
 use crate::rules::{evaluate, Confidence, Rule, SignalSnapshot};
+// `Confidence` is used by `should_auto_stop`'s Strict gate.
 use crate::signals::calendar::CalendarRegistry;
 
 /// How often the auto-stop task wakes. Meetings are minute-grained
@@ -41,9 +42,16 @@ pub const AUTOSTOP_INTERVAL: std::time::Duration = std::time::Duration::from_sec
 
 /// `updated_at - created_at` tolerance for "the user has not
 /// touched this entry." A single `start_entry` transaction writes
-/// both timestamps to the same `now_str`, but some sqlx drivers
-/// truncate sub-second precision differently — 2s of slop avoids
-/// false positives on the boundary.
+/// both timestamps to the same `now_str` so the immediate diff
+/// after creation is zero. The 2s slop absorbs a *fast user* who
+/// races to type into the description / change the project within
+/// a couple of seconds of confirm — without this, those edits
+/// would silently disable auto-stop.
+///
+/// Sufficient-but-not-correct: the proper fix is an explicit
+/// `auto_stop_eligible` column on entries flipped by any
+/// `update_entry` write or "Stop" click. Tracked for a follow-up
+/// with the rest of the entry-schema cleanup.
 const TOUCH_TOLERANCE_SECS: i64 = 2;
 
 /// A snapshot of a running entry the auto-stop task considers.
@@ -84,6 +92,24 @@ pub fn should_auto_stop(
         // for manual cleanup.
         return false;
     };
+    // Disabling a rule mid-meeting is a perfectly reasonable way
+    // to say "keep the timer running past the scheduled end."
+    // Without this gate, the auto-stop would fire on the very next
+    // tick because `evaluate` skips disabled rules. Respect the
+    // user's choice.
+    if !rule.enabled {
+        return false;
+    }
+    // Auto-stop is for Strict rules only. Suggestive matches
+    // required an explicit Confirm click; treating the resulting
+    // entry as "user-tracked until the user stops it" is the
+    // conservative default. (Suggestive rules don't even surface
+    // here today because the confirm path passes
+    // `source = "rule"`, but the entry's lifecycle is the user's
+    // call from that point on.)
+    if !matches!(rule.confidence, Confidence::Strict) {
+        return false;
+    }
     // Only calendar-bound rules drive auto-stop. The same task
     // could in principle handle other conditions but the issue
     // is scoped to calendar.
@@ -96,7 +122,10 @@ pub fn should_auto_stop(
     }
     // Manual-override gate: any `update_entry` past creation
     // pushes `updated_at` forward; treat anything beyond the
-    // tolerance as user activity.
+    // tolerance as user activity. The tolerance window
+    // (`TOUCH_TOLERANCE_SECS`) absorbs the same-transaction
+    // `created_at == updated_at` write from `start_entry` plus a
+    // small slop for a user racing to type a description.
     let touch_window = Duration::seconds(TOUCH_TOLERANCE_SECS);
     if entry.updated_at - entry.created_at > touch_window {
         return false;
@@ -104,12 +133,11 @@ pub fn should_auto_stop(
     // Auto-stop iff the rule no longer matches against the live
     // snapshot. Use the simple `evaluate` rather than the snoozer
     // variant — snooze affects *new* matches, not whether to stop
-    // an already-running entry. Confidence is unused here; we
-    // just need the match decision.
-    let still_matches = evaluate(std::iter::once(rule), snapshot)
-        .map(|m| m.rule_id == rule.id)
-        .unwrap_or(false);
-    !still_matches && matches!(rule.confidence, Confidence::Strict)
+    // an already-running entry. A single-rule iterator means
+    // `evaluate` returning `Some` is unambiguous; just check
+    // is_some.
+    let still_matches = evaluate(std::iter::once(rule), snapshot).is_some();
+    !still_matches
 }
 
 /// Query the DB for every running rule-driven entry. Used by the
@@ -151,10 +179,16 @@ async fn list_running_rule_entries(pool: &SqlitePool) -> Vec<RunningRuleEntry> {
 
 /// Close `entry_id` at `now`. Used by the auto-stop loop after
 /// `should_auto_stop` decides to fire.
+///
+/// Guards against `ended_at < started_at`: if the wall clock moved
+/// backwards between `start_entry` and this tick (NTP correction,
+/// sleep/wake on macOS, DST), the `MAX(started_at, ?1)` expression
+/// floors `ended_at` at the entry's start so the report layer
+/// never sees a negative duration.
 async fn close_entry(pool: &SqlitePool, entry_id: &str, now: DateTime<Utc>) {
     let now_str = now.to_rfc3339();
     if let Err(e) = sqlx::query(
-        "UPDATE entries SET ended_at = ?1, updated_at = ?1 \
+        "UPDATE entries SET ended_at = MAX(started_at, ?1), updated_at = ?1 \
          WHERE id = ?2 AND ended_at IS NULL",
     )
     .bind(&now_str)
@@ -212,8 +246,10 @@ pub async fn run(pool: SqlitePool, calendar: Arc<CalendarRegistry>) {
         };
 
         // Load rules. We reload per-tick rather than caching —
-        // small `Vec<Rule>` query, runs once every 30s.
-        let rules = load_engine_rules(&pool).await;
+        // small query, runs once every 30s. Shares the fanout's
+        // loader so the parsing path stays single-source.
+        let ipc_rules = crate::signals::fanout::load_rules(&pool).await;
+        let rules = crate::signals::fanout::project_rules(ipc_rules);
 
         for entry in entries {
             if should_auto_stop(&entry, &rules, &snapshot) {
@@ -221,52 +257,6 @@ pub async fn run(pool: SqlitePool, calendar: Arc<CalendarRegistry>) {
             }
         }
     }
-}
-
-/// Load rules from the DB in the engine shape. Mirrors
-/// `signals::fanout::load_rules` + `project_rules` but inlined here
-/// to avoid making those public for one extra caller.
-async fn load_engine_rules(pool: &SqlitePool) -> Vec<Rule> {
-    #[derive(serde::Deserialize)]
-    struct RuleBody {
-        #[serde(default)]
-        confidence: Confidence,
-        #[serde(default)]
-        when: Vec<crate::rules::Condition>,
-        then: crate::rules::RuleAction,
-    }
-
-    let rows = match sqlx::query(
-        "SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC",
-    )
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            log::warn!("calendar-autostop: rules query failed: {e}");
-            return Vec::new();
-        }
-    };
-    rows.into_iter()
-        .filter_map(|r| {
-            let id: String = r.get("id");
-            let name: String = r.get("name");
-            let enabled = r.get::<i64, _>("enabled") != 0;
-            let priority: i64 = r.get("priority");
-            let body_str: String = r.get("body");
-            let body: RuleBody = serde_json::from_str(&body_str).ok()?;
-            Some(Rule {
-                id,
-                name,
-                enabled,
-                priority,
-                confidence: body.confidence,
-                when: body.when,
-                then: body.then,
-            })
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -446,9 +436,44 @@ mod tests {
         ));
     }
 
+    // ---- New regression tests for the round-2 review fixes ----
+
+    #[test]
+    fn does_not_stop_when_rule_is_disabled() {
+        // Disabling a rule mid-meeting is a valid way to say
+        // "keep the timer running past the scheduled end."
+        // Auto-stop must respect that — without this gate the
+        // first tick after disable would fire because `evaluate`
+        // skips disabled rules and returns `None`.
+        let mut rule = cal_rule("r-cal");
+        rule.enabled = false;
+        // Rule still has calendar.event condition, no event
+        // active — without the enabled gate, this would fire.
+        assert!(!should_auto_stop(
+            &pristine_entry("r-cal"),
+            &[rule],
+            &empty_snap()
+        ));
+    }
+
+    #[test]
+    fn auto_stops_even_when_rule_is_snoozed() {
+        // Snooze affects whether NEW matches surface; it does NOT
+        // pin a running entry open. A meeting that ends while the
+        // rule is snoozed should still auto-stop.
+        let rule = cal_rule("r-cal");
+        // No active event → rule wouldn't match the snapshot. The
+        // auto-stop path uses `evaluate` (no snoozer) for exactly
+        // this reason — pin that it still fires.
+        assert!(should_auto_stop(
+            &pristine_entry("r-cal"),
+            &[rule],
+            &empty_snap()
+        ));
+    }
+
     // ---- DB-backed: list_running_rule_entries ----
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn list_running_rule_entries_returns_only_source_rule_entries() {
         let (_dir, db) = crate::test_support::test_db().await;

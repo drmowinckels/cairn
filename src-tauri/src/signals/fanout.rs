@@ -106,8 +106,26 @@ pub fn outcome_for_with_snoozer(
     rules: &[Rule],
     snoozer: Option<&mut crate::rules::Snoozer>,
 ) -> MatchOutcome {
-    let rule_match =
-        crate::rules::evaluate_with_snoozer(rules, &snapshot, snoozer, chrono::Utc::now());
+    outcome_for_full(snapshot, rules, snoozer, None)
+}
+
+/// Superset path: snoozer + attendee-exclusion filter. The
+/// production fanout supplies both so `tags_from_calendar`
+/// attendees pass through the user's exclusion list before
+/// reaching the published `signal:match` payload.
+pub fn outcome_for_full(
+    snapshot: SignalSnapshot,
+    rules: &[Rule],
+    snoozer: Option<&mut crate::rules::Snoozer>,
+    attendee_filter: Option<&dyn crate::rules::AttendeeExclusionCheck>,
+) -> MatchOutcome {
+    let rule_match = crate::rules::evaluate_full(
+        rules,
+        &snapshot,
+        snoozer,
+        attendee_filter,
+        chrono::Utc::now(),
+    );
     MatchOutcome {
         rule_match,
         snapshot,
@@ -118,7 +136,10 @@ pub fn outcome_for_with_snoozer(
 /// shape. Used by the fan-out task on each snapshot tick. Kept
 /// parallel to `ipc::list_rules` (which is gated behind a Tauri
 /// `State`) so the fan-out loop can run without a `State`.
-async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
+///
+/// `pub(crate)` so other backend tasks (e.g. `calendar_autostop`)
+/// can reuse the same query + parse logic instead of duplicating.
+pub(crate) async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
     let rows = match sqlx::query(
         "SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC",
     )
@@ -174,6 +195,7 @@ pub async fn run<R: Runtime>(
     mut rx: watch::Receiver<Option<SignalSnapshot>>,
     pool: SqlitePool,
     snoozer: std::sync::Arc<std::sync::Mutex<crate::rules::Snoozer>>,
+    exclusions: std::sync::Arc<std::sync::RwLock<crate::signals::exclusions::ExclusionMatcher>>,
     app: AppHandle<R>,
 ) {
     let _ = rx.borrow_and_update();
@@ -186,17 +208,32 @@ pub async fn run<R: Runtime>(
         };
         let rules = load_rules(&pool).await;
         let parsed = project_rules(rules);
+        // Snapshot the exclusion matcher into a local clone so the
+        // read-lock is released before we acquire the snoozer mutex
+        // (avoids deadlock potential if a future refactor mixes lock
+        // orderings, and decouples the matcher's borrow lifetime).
+        let exclusions_snapshot = match exclusions.read() {
+            Ok(guard) => Some(guard.clone()),
+            Err(_) => {
+                log::warn!("fanout: exclusions lock poisoned, attendee filter disabled");
+                None
+            }
+        };
+        let attendee_filter = exclusions_snapshot
+            .as_ref()
+            .map(|m| m as &dyn crate::rules::AttendeeExclusionCheck);
         let outcome = match snoozer.lock() {
-            Ok(mut guard) => outcome_for_with_snoozer(snap, &parsed, Some(&mut *guard)),
+            Ok(mut guard) => outcome_for_full(snap, &parsed, Some(&mut *guard), attendee_filter),
             Err(_) => {
                 // Lock poisoned (panic inside a previous IPC). Fall
                 // back to the no-snooze path so the matcher still
                 // runs — dropping every match would be a worse UX
                 // than the (unlikely) chance of firing a snoozed
                 // rule for one cycle until the next snooze write
-                // replaces the lock state.
+                // replaces the lock state. Attendee filter still
+                // applies — that's privacy, not UX.
                 log::warn!("fanout: snoozer lock poisoned, evaluating without snooze gate");
-                outcome_for(snap, &parsed)
+                outcome_for_full(snap, &parsed, None, attendee_filter)
             }
         };
         if let Err(e) = app.emit_to(POPOVER_LABEL, EVENT_SNAPSHOT, &outcome.snapshot) {
@@ -400,7 +437,10 @@ mod tests {
         let app = _app.handle().clone();
         let pool = db.pool.clone();
         let snoozer = std::sync::Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new()));
-        let task = tokio::spawn(async move { run(rx, pool, snoozer, app).await });
+        let exclusions = std::sync::Arc::new(std::sync::RwLock::new(
+            crate::signals::exclusions::ExclusionMatcher::default(),
+        ));
+        let task = tokio::spawn(async move { run(rx, pool, snoozer, exclusions, app).await });
 
         // Push one real snapshot — drives one iteration of the loop.
         tx.send(Some(snap_with_app("Cairn"))).unwrap();

@@ -194,9 +194,16 @@ pub fn run() {
             let fanout_handle = app.handle().clone();
             let snoozer_for_fanout = Arc::new(std::sync::Mutex::new(Snoozer::new()));
             let snoozer_for_state = snoozer_for_fanout.clone();
+            let exclusions_for_fanout = exclusions.clone();
             tauri::async_runtime::spawn(async move {
-                signals::fanout::run(fanout_rx, fanout_pool, snoozer_for_fanout, fanout_handle)
-                    .await;
+                signals::fanout::run(
+                    fanout_rx,
+                    fanout_pool,
+                    snoozer_for_fanout,
+                    exclusions_for_fanout,
+                    fanout_handle,
+                )
+                .await;
             });
 
             // Idle-resume fan-out: re-emits each `Idle → Active`
