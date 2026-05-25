@@ -283,6 +283,25 @@ describe("RulesView", () => {
     });
   });
 
+  it("clicking a Live-signals row is a no-op if the expanded id is stale", () => {
+    // If `openRuleId` references a rule that doesn't exist (e.g. the
+    // user deleted it from another view while Rules was open), the
+    // handler must short-circuit: no new rule, no exception.
+    const { container } = renderRules({
+      openRuleId: "does-not-exist",
+      complexity: "medium",
+    });
+    const rulesBefore = container.querySelectorAll(".rule").length;
+    const sigButtons = container.querySelectorAll<HTMLButtonElement>(
+      ".sig-row--clickable",
+    );
+    expect(sigButtons.length).toBeGreaterThan(0);
+    fireEvent.click(sigButtons[0]);
+    // Same rule count; the click didn't fall through to the
+    // "create new rule" path either.
+    expect(container.querySelectorAll(".rule").length).toBe(rulesBefore);
+  });
+
   it("clicking a Live-signals row with no rule open creates one + seeds the condition (#12)", async () => {
     const { container } = renderRules({ complexity: "medium" });
     const rulesBefore = container.querySelectorAll(".rule").length;

@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-import { snapshotToLiveSignals, useSnapshot } from "./use-snapshot";
+import {
+  selectLiveSignals,
+  snapshotToLiveSignals,
+  useSnapshot,
+} from "./use-snapshot";
 import type { SignalSnapshot } from "./ipc";
+import type { LiveSignal } from "./types";
 
 describe("snapshotToLiveSignals", () => {
   const empty: SignalSnapshot = {
@@ -58,6 +63,30 @@ describe("snapshotToLiveSignals", () => {
       gitBranch: "main",
     });
     expect(rows[0].app).toBe("");
+  });
+});
+
+describe("selectLiveSignals", () => {
+  const fixture: LiveSignal[] = [
+    { signal: "ide.folder", value: "~/demo", app: "Zed" },
+  ];
+  const snapshot: SignalSnapshot = {
+    ideFolder: "~/live",
+    gitBranch: null,
+    windowTitle: null,
+    appName: "Zed",
+    browserDomain: null,
+    calendar: [],
+  };
+
+  it("returns the live snapshot rows in Tauri", () => {
+    const rows = selectLiveSignals(snapshot, fixture, true);
+    expect(rows.map((r) => r.value)).toEqual(["~/live"]);
+  });
+
+  it("returns the static fixture outside Tauri (Vite dev / vitest)", () => {
+    const rows = selectLiveSignals(snapshot, fixture, false);
+    expect(rows).toBe(fixture);
   });
 });
 
@@ -130,5 +159,56 @@ describe("useSnapshot hook", () => {
     );
     expect(listenFn).not.toHaveBeenCalled();
     expect(fetchCurrent).not.toHaveBeenCalled();
+  });
+
+  it("calls un() when the hook unmounts before listen() resolves (race-safe)", async () => {
+    // The effect kicks off two async calls (fetch + listen). If
+    // the consumer unmounts before listen() settles, the resolved
+    // unlisten handle would otherwise leak. The effect catches
+    // this by setting `cancelled = true` on cleanup and calling
+    // un() inside the .then.
+    let resolveListen: ((un: () => void) => void) | null = null;
+    const un = vi.fn();
+    const listenFn = vi.fn(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveListen = resolve;
+        }),
+    );
+    const fetchCurrent = vi.fn(async () => null);
+    const { unmount } = renderHook(() =>
+      useSnapshot({
+        enabled: true,
+        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
+      }),
+    );
+    // Listen is still pending — unmount before it resolves.
+    unmount();
+    expect(resolveListen).not.toBeNull();
+    resolveListen!(un);
+    await waitFor(() => expect(un).toHaveBeenCalledOnce());
+  });
+
+  it("calls the unlisten handle on cleanup when listen has already resolved", async () => {
+    // Opposite of the race-safe case: listen() resolves first, so
+    // `unlisten` gets assigned. Cleanup then sees `unlisten` is
+    // non-null and invokes it.
+    const un = vi.fn();
+    const listenFn = vi.fn(async () => un);
+    const fetchCurrent = vi.fn(async () => null);
+    const { unmount } = renderHook(() =>
+      useSnapshot({
+        enabled: true,
+        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
+      }),
+    );
+    // Wait until the .then chain assigning `unlisten` has run.
+    await waitFor(() => expect(listenFn).toHaveBeenCalled());
+    await Promise.resolve();
+    await Promise.resolve();
+    unmount();
+    expect(un).toHaveBeenCalledOnce();
   });
 });

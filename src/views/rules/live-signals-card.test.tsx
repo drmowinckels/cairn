@@ -69,4 +69,37 @@ describe("LiveSignalsCard", () => {
       "~/code/cairn",
     );
   });
+
+  it("omits the source-app cell entirely when a row has no app (R4)", () => {
+    // An empty source-app span would eat the grid's trailing `auto`
+    // column and shift the layout. The component renders an empty
+    // <span/> placeholder instead — assert .sig-src is absent.
+    // `snapshotToLiveSignals` falls back to `app: ""` when the
+    // collector didn't observe an app, which is the case this
+    // branch exists for.
+    const { container } = render(
+      <LiveSignalsCard
+        signals={[{ signal: "git.branch", value: "main", app: "" }]}
+      />,
+    );
+    expect(container.querySelector(".sig-src")).toBeNull();
+    // The row still renders (just without the app cell).
+    expect(container.querySelectorAll(".sig-item")).toHaveLength(1);
+  });
+
+  it("renders the correct icon for every SignalKind the card supports", () => {
+    // Cover the SignalIcon nested-ternary fully — without this the
+    // browser.tab / calendar.event / fall-through branches stay
+    // unreachable from the SAMPLE fixture.
+    const ALL: LiveSignal[] = [
+      { signal: "browser.tab", value: "1", app: "Safari" },
+      { signal: "calendar.event", value: "Standup", app: "Calendar" },
+      { signal: "app.name", value: "Zed", app: "Zed" },
+    ];
+    const { container } = render(<LiveSignalsCard signals={ALL} />);
+    const icons = container.querySelectorAll<SVGElement>(".sig-ic");
+    // 3 rows → 3 icons; we don't assert the inner shape (icon lib
+    // detail) but each one must have rendered.
+    expect(icons).toHaveLength(3);
+  });
 });

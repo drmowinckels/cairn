@@ -21,7 +21,7 @@ import {
 } from "../../lib/use-rules";
 import { useProjects } from "../../lib/use-projects";
 import { useDebouncedCallback } from "../../lib/use-debounced-callback";
-import { snapshotToLiveSignals, useSnapshot } from "../../lib/use-snapshot";
+import { selectLiveSignals, useSnapshot } from "../../lib/use-snapshot";
 import { LiveSignalsCard } from "./live-signals-card";
 import { LIVE_SIGNALS as FIXTURE_SIGNALS } from "../../test-fixtures/data";
 import { inTauri } from "../../lib/ipc";
@@ -66,14 +66,8 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
     [projects],
   );
   const snapshot = useSnapshot();
-  // Outside Tauri (Vite dev preview / Storybook / vitest with no IPC
-  // mock) we fall back to the static demo fixture so the design
-  // remains explorable without a backend running. `inTauri` is a
-  // module constant — included in the dep list so ESLint's
-  // exhaustive-deps stays happy and refactors that swap it for a
-  // hook value still re-memoize correctly.
   const liveSignals = useMemo(
-    () => (inTauri ? snapshotToLiveSignals(snapshot) : FIXTURE_SIGNALS),
+    () => selectLiveSignals(snapshot, FIXTURE_SIGNALS, inTauri),
     [snapshot],
   );
   const [expanded, setExpanded] = useState<string | null>(openRuleId);

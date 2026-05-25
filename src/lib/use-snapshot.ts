@@ -88,3 +88,18 @@ export function snapshotToLiveSignals(
   push("browser.domain", snapshot.browserDomain);
   return rows;
 }
+
+/**
+ * In Tauri, surface the live snapshot; outside Tauri (Vite dev
+ * preview / vitest with no IPC mock) fall back to the static demo
+ * fixture so the design remains explorable without a backend. The
+ * `isTauri` flag is passed in (not read from the module-level
+ * `inTauri` const) so this is unit-testable in both modes.
+ */
+export function selectLiveSignals(
+  snapshot: SignalSnapshot | null,
+  fixture: LiveSignal[],
+  isTauri: boolean,
+): LiveSignal[] {
+  return isTauri ? snapshotToLiveSignals(snapshot) : fixture;
+}
