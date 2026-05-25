@@ -54,8 +54,9 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
 
-use chrono::Utc;
-use tokio::sync::{mpsc, watch};
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
 use crate::rules::{CalendarEvent, SignalSnapshot};
@@ -83,6 +84,35 @@ pub const CALENDAR_TICK_INTERVAL: Duration = Duration::from_secs(30);
 /// Idle is for the ambiguity modal (#7); fine-grained polling isn't
 /// useful — the threshold check is what triggers UI.
 pub const IDLE_POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+/// How many seconds without input qualifies as "idle". Default 5
+/// minutes per `docs/DESIGN_SPEC.md` §3.4.3. Crossing this threshold
+/// while a timer is running starts an idle period; when the user
+/// returns (seconds resets) the driver emits `IdleResume`.
+///
+/// The matching "Settings → Detection prompts" UI lives with M4's
+/// settings schema work; for now the threshold is a compile-time
+/// constant. The stream's spawn accepts an override so tests don't
+/// have to wait 5 minutes.
+pub const DEFAULT_IDLE_THRESHOLD_SECS: u64 = 300;
+
+/// Emitted on every `Idle → Active` transition. The frontend
+/// translates this into the Today view's ambiguity modal: the user
+/// chooses Keep / Discard / Move-to-break for the
+/// `[since, until]` window.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdleResume {
+    /// When the user went idle (computed from the OS-reported
+    /// `seconds_since_input` at the moment idle was first observed).
+    pub since: DateTime<Utc>,
+    /// When the user came back (the wall-clock at the moment we saw
+    /// `seconds` drop back below threshold).
+    pub until: DateTime<Utc>,
+    /// `until - since`, in seconds. Always positive; equal to or
+    /// greater than the configured threshold.
+    pub duration_seconds: u64,
+}
 
 /// Bounded mpsc capacity for `SignalEvent`. Sources use `try_send`
 /// and drop on overflow rather than awaiting — a backed-up driver
@@ -135,6 +165,7 @@ pub struct IdleState {
 pub struct SnapshotStream {
     snapshot_rx: watch::Receiver<Option<SignalSnapshot>>,
     idle_rx: watch::Receiver<IdleState>,
+    idle_resume_tx: broadcast::Sender<IdleResume>,
     event_tx: mpsc::Sender<SignalEvent>,
 }
 
@@ -154,6 +185,17 @@ impl SnapshotStream {
     /// idle source posts its first reading.
     pub fn subscribe_idle(&self) -> watch::Receiver<IdleState> {
         self.idle_rx.clone()
+    }
+
+    /// Subscribe to `Idle → Active` transition events. Each
+    /// subscriber receives every `IdleResume` published from the
+    /// moment they subscribe; missed events while detached are
+    /// dropped (broadcast capacity = `IDLE_RESUME_CAPACITY`). The
+    /// fanout task is the production consumer — it re-emits each
+    /// resume as the `signal:idle-resume` Tauri event so the
+    /// Today view's idle modal can render.
+    pub fn subscribe_idle_resume(&self) -> broadcast::Receiver<IdleResume> {
+        self.idle_resume_tx.subscribe()
     }
 
     /// Sender that source tasks push events through. Cloning this
@@ -180,7 +222,18 @@ struct LiveState {
     front: Option<FrontWindow>,
     git: Option<GitContext>,
     idle: IdleState,
+    /// When the user first crossed the idle threshold. `None` while
+    /// active; `Some(ts)` while idle. The transition `Some → None`
+    /// is what fires an `IdleResume` event.
+    idle_since: Option<DateTime<Utc>>,
 }
+
+/// Broadcast channel capacity for `IdleResume` events. Idle ↔
+/// Active transitions are rare (one per multi-minute idle period),
+/// so 8 is generous — a backed-up subscriber that misses events
+/// is not the end of the world; the user can still resolve the
+/// modal manually via the Today view.
+const IDLE_RESUME_CAPACITY: usize = 8;
 
 /// Spawn the snapshot-stream driver. Returns a handle that owns
 /// subscribers and the event sender. The actual source tasks
@@ -196,9 +249,27 @@ pub fn spawn(
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
 ) -> SnapshotStream {
+    spawn_with_idle_threshold(
+        calendar,
+        exclusions,
+        debounce,
+        Duration::from_secs(DEFAULT_IDLE_THRESHOLD_SECS),
+    )
+}
+
+/// Same as `spawn` but takes an explicit idle threshold so tests
+/// can use short values (e.g. 1s) instead of waiting the production
+/// default of 5 minutes.
+pub fn spawn_with_idle_threshold(
+    calendar: Arc<CalendarRegistry>,
+    exclusions: Arc<RwLock<ExclusionMatcher>>,
+    debounce: Duration,
+    idle_threshold: Duration,
+) -> SnapshotStream {
     let (event_tx, event_rx) = mpsc::channel::<SignalEvent>(EVENT_CHANNEL_CAPACITY);
     let (snapshot_tx, snapshot_rx) = watch::channel::<Option<SignalSnapshot>>(None);
     let (idle_tx, idle_rx) = watch::channel(IdleState::default());
+    let (idle_resume_tx, _) = broadcast::channel::<IdleResume>(IDLE_RESUME_CAPACITY);
 
     // Spawn the driver as a normal task, then a supervisor that
     // awaits its JoinHandle and logs on panic. Without the
@@ -213,15 +284,18 @@ pub fn spawn(
         event_rx,
         snapshot_tx,
         idle_tx,
+        idle_resume_tx.clone(),
         calendar,
         exclusions,
         debounce,
+        idle_threshold,
     ));
     tokio::spawn(supervise(driver_handle));
 
     SnapshotStream {
         snapshot_rx,
         idle_rx,
+        idle_resume_tx,
         event_tx,
     }
 }
@@ -262,13 +336,16 @@ pub fn spawn_default_sources(stream: &SnapshotStream) {
 // driver
 // -----------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn driver(
     mut event_rx: mpsc::Receiver<SignalEvent>,
     snapshot_tx: watch::Sender<Option<SignalSnapshot>>,
     idle_tx: watch::Sender<IdleState>,
+    idle_resume_tx: broadcast::Sender<IdleResume>,
     calendar: Arc<CalendarRegistry>,
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
+    idle_threshold: Duration,
 ) {
     let mut state = LiveState::default();
     let mut next_publish_at: Option<Instant> = None;
@@ -282,7 +359,14 @@ async fn driver(
             ev = event_rx.recv() => {
                 match ev {
                     Some(ev) => {
-                        apply_event(&mut state, &idle_tx, &exclusions, ev);
+                        apply_event(
+                            &mut state,
+                            &idle_tx,
+                            &idle_resume_tx,
+                            &exclusions,
+                            idle_threshold,
+                            ev,
+                        );
                         next_publish_at = Some(Instant::now() + debounce);
                     }
                     None => {
@@ -319,7 +403,9 @@ async fn sleep_until(deadline: Option<Instant>) {
 fn apply_event(
     state: &mut LiveState,
     idle_tx: &watch::Sender<IdleState>,
+    idle_resume_tx: &broadcast::Sender<IdleResume>,
     exclusions: &Arc<RwLock<ExclusionMatcher>>,
+    idle_threshold: Duration,
     ev: SignalEvent,
 ) {
     match ev {
@@ -366,6 +452,47 @@ fn apply_event(
             // case (no receivers) is intentionally ignored — idle
             // is informational.
             let _ = idle_tx.send(idle);
+
+            // Idle-tracker state machine:
+            // - Active → Idle: `seconds >= threshold`. Record the
+            //   wall-clock at which the idle period started
+            //   (now - seconds).
+            // - Idle → Active: `seconds` dropped back below the
+            //   threshold AND the reading is `Some`. The OS resets
+            //   `seconds_since_input` to 0 on the next user input,
+            //   so this transition is how we detect "the user is
+            //   back". Emit an `IdleResume` so the fanout can fire
+            //   the Tauri event the modal listens to.
+            // - `seconds = None` (OS query failed): preserve the
+            //   current `idle_since` state. A transient permission
+            //   glitch in the middle of an idle period must NOT
+            //   fire a bogus resume — only a confirmed
+            //   "user is back" reading does that.
+            let threshold_s = idle_threshold.as_secs();
+            let now = Utc::now();
+            if let Some(current_s) = idle.seconds {
+                let is_idle = current_s >= threshold_s && threshold_s > 0;
+                match (state.idle_since, is_idle) {
+                    (None, true) => {
+                        let elapsed = chrono::Duration::seconds(current_s as i64);
+                        state.idle_since = Some(now - elapsed);
+                    }
+                    (Some(since), false) => {
+                        let duration_seconds = (now - since).num_seconds().max(0) as u64;
+                        let resume = IdleResume {
+                            since,
+                            until: now,
+                            duration_seconds,
+                        };
+                        // `send` only errors when no subscribers
+                        // are active — ignore (the user just
+                        // wasn't looking, no harm done).
+                        let _ = idle_resume_tx.send(resume);
+                        state.idle_since = None;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }
@@ -569,6 +696,18 @@ mod tests {
             Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
         let exclusions = Arc::new(RwLock::new(excl));
         let stream = spawn(calendar, exclusions, debounce);
+        (dir, stream)
+    }
+
+    async fn fresh_stream_with_idle_threshold(
+        debounce: Duration,
+        idle_threshold: Duration,
+    ) -> (tempfile::TempDir, SnapshotStream) {
+        let (dir, db) = test_db().await;
+        let calendar =
+            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let stream = spawn_with_idle_threshold(calendar, exclusions, debounce, idle_threshold);
         (dir, stream)
     }
 
@@ -1085,5 +1224,157 @@ mod tests {
             .unwrap();
         idle_rx.changed().await.ok();
         assert_eq!(idle_rx.borrow().seconds, None);
+    }
+
+    // -- Idle tracker (Active → Idle → Active transition) ------------
+
+    #[tokio::test]
+    async fn idle_resume_fires_when_seconds_drops_below_threshold() {
+        let (_dir, stream) =
+            fresh_stream_with_idle_threshold(Duration::from_millis(50), Duration::from_secs(60))
+                .await;
+        let tx = stream.event_sender();
+        let mut resume_rx = stream.subscribe_idle_resume();
+
+        // Cross the threshold → driver records `idle_since`. No
+        // event yet.
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(90) }))
+            .await
+            .unwrap();
+        let immediate = tokio::time::timeout(Duration::from_millis(100), resume_rx.recv()).await;
+        assert!(
+            immediate.is_err(),
+            "Active→Idle alone should NOT fire a resume event"
+        );
+
+        // Drop back to 0 → Idle → Active transition fires resume.
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(0) }))
+            .await
+            .unwrap();
+        let resume = tokio::time::timeout(Duration::from_secs(1), resume_rx.recv())
+            .await
+            .expect("resume event arrives within the timeout")
+            .expect("broadcast channel still open");
+        // Duration is at least the threshold (within timing slop)
+        // and bounded by `seconds reported on the first event
+        // (90) + the few ms the test takes to drive the second
+        // event`. Both bounds keep a future refactor from
+        // accidentally setting since=epoch or until=year-3000.
+        assert!(
+            resume.duration_seconds >= 60,
+            "duration {} should be >= threshold 60",
+            resume.duration_seconds
+        );
+        assert!(
+            resume.duration_seconds < 120,
+            "duration {} should be < ~test-window (90 + slop)",
+            resume.duration_seconds
+        );
+        assert!(resume.until > resume.since);
+    }
+
+    #[tokio::test]
+    async fn idle_resume_does_not_fire_for_brief_below_threshold_blip() {
+        let (_dir, stream) =
+            fresh_stream_with_idle_threshold(Duration::from_millis(50), Duration::from_secs(300))
+                .await;
+        let tx = stream.event_sender();
+        let mut resume_rx = stream.subscribe_idle_resume();
+
+        // 30s and 60s are both below the 300s threshold → no idle
+        // period was ever observed → no resume event on the
+        // transition back to 0.
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(30) }))
+            .await
+            .unwrap();
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(60) }))
+            .await
+            .unwrap();
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(0) }))
+            .await
+            .unwrap();
+
+        let immediate = tokio::time::timeout(Duration::from_millis(200), resume_rx.recv()).await;
+        assert!(
+            immediate.is_err(),
+            "below-threshold blips must not produce a resume event"
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_resume_handles_multiple_cycles() {
+        let (_dir, stream) =
+            fresh_stream_with_idle_threshold(Duration::from_millis(50), Duration::from_secs(60))
+                .await;
+        let tx = stream.event_sender();
+        let mut resume_rx = stream.subscribe_idle_resume();
+
+        // Cycle 1
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(120) }))
+            .await
+            .unwrap();
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(0) }))
+            .await
+            .unwrap();
+        let r1 = tokio::time::timeout(Duration::from_secs(1), resume_rx.recv())
+            .await
+            .expect("first resume arrives")
+            .expect("channel open");
+        assert!(r1.duration_seconds >= 60 && r1.duration_seconds < 150);
+
+        // Cycle 2
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(180) }))
+            .await
+            .unwrap();
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(0) }))
+            .await
+            .unwrap();
+        let r2 = tokio::time::timeout(Duration::from_secs(1), resume_rx.recv())
+            .await
+            .expect("second resume arrives")
+            .expect("channel open");
+        assert!(r2.duration_seconds >= 60 && r2.duration_seconds < 210);
+        // The two cycles produce distinct since values and r2 is
+        // after r1.
+        assert_ne!(r1.since, r2.since);
+        assert!(r2.until > r1.until);
+    }
+
+    #[tokio::test]
+    async fn idle_unavailable_does_not_trigger_resume() {
+        // `IdleState { seconds: None }` is "the OS query failed".
+        // It must NOT count as Active for transition purposes —
+        // otherwise a transient permission glitch in the middle of
+        // an idle period would fire a bogus resume.
+        let (_dir, stream) =
+            fresh_stream_with_idle_threshold(Duration::from_millis(50), Duration::from_secs(60))
+                .await;
+        let tx = stream.event_sender();
+        let mut resume_rx = stream.subscribe_idle_resume();
+
+        // Cross threshold.
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(120) }))
+            .await
+            .unwrap();
+        // Glitch: OS query returns None for a tick.
+        tx.send(SignalEvent::Idle(IdleState { seconds: None }))
+            .await
+            .unwrap();
+
+        let immediate = tokio::time::timeout(Duration::from_millis(200), resume_rx.recv()).await;
+        assert!(
+            immediate.is_err(),
+            "transient OS-query glitch should NOT fire a resume mid-idle"
+        );
+
+        // User actually returns — Some(0) — this should fire.
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(0) }))
+            .await
+            .unwrap();
+        let r = tokio::time::timeout(Duration::from_secs(1), resume_rx.recv())
+            .await
+            .expect("real resume fires when seconds drops to Some(0)")
+            .expect("channel open");
+        assert!(r.duration_seconds >= 60);
     }
 }

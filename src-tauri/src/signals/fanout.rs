@@ -14,9 +14,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Runtime};
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 use crate::rules::{Condition, Confidence, Rule, RuleAction, RuleMatch, SignalSnapshot};
+use crate::signals::stream::IdleResume;
 
 /// Tauri window label the fan-out task targets when emitting
 /// events. The popover is the only window today; using `emit_to`
@@ -33,6 +34,10 @@ pub const EVENT_SNAPSHOT: &str = "signal:snapshot";
 /// Event name fired when a snapshot produces a rule match. The
 /// suggestion banner (#6) listens here.
 pub const EVENT_MATCH: &str = "signal:match";
+
+/// Event name fired when the user resumes from an idle period. The
+/// Today view's idle-modal (#7) listens here.
+pub const EVENT_IDLE_RESUME: &str = "signal:idle-resume";
 
 /// Payload for the `signal:match` event. The UI needs both the
 /// matched rule's projection (project + tags) AND the snapshot that
@@ -175,6 +180,34 @@ pub async fn run<R: Runtime>(
         if let Some(rule_match) = &outcome.rule_match {
             if let Err(e) = app.emit_to(POPOVER_LABEL, EVENT_MATCH, rule_match) {
                 log::debug!("fanout: emit_to {POPOVER_LABEL} {EVENT_MATCH} failed: {e}");
+            }
+        }
+    }
+}
+
+/// Sibling of `run` for idle-resume events. The stream's broadcast
+/// channel fires one `IdleResume` per `Idle → Active` transition;
+/// this task re-emits each as `signal:idle-resume` to the popover
+/// window. Exits cleanly when every clone of the broadcast sender
+/// has been dropped (driver shutdown).
+pub async fn run_idle_resume<R: Runtime>(
+    mut rx: broadcast::Receiver<IdleResume>,
+    app: AppHandle<R>,
+) {
+    loop {
+        match rx.recv().await {
+            Ok(resume) => {
+                if let Err(e) = app.emit_to(POPOVER_LABEL, EVENT_IDLE_RESUME, &resume) {
+                    log::debug!("fanout: emit_to {POPOVER_LABEL} {EVENT_IDLE_RESUME} failed: {e}");
+                }
+            }
+            Err(broadcast::error::RecvError::Closed) => return,
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                // Capacity-bounded — a slow subscriber dropped
+                // `skipped` events. Usually because the popover
+                // was hidden while idle resumes fired; not
+                // interesting enough to warn-log every time.
+                log::debug!("fanout: idle-resume lagged, missed {skipped} events");
             }
         }
     }
