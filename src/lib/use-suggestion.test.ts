@@ -230,6 +230,116 @@ describe("useSuggestion (strict path)", () => {
       }),
     );
   });
+
+  it("does NOT re-fire when the same Strict rule already drives the running timer", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+
+    renderHook(() =>
+      useSuggestion({
+        startEntry: startEntryMock as never,
+        listen: listen as never,
+        currentRunningRuleId: "r-strict",
+        enabled: true,
+      }),
+    );
+
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r-strict",
+        ruleName: "ACME work",
+        confidence: "strict",
+        project: "acme",
+        tags: [],
+      });
+    });
+
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("re-fires when a DIFFERENT Strict rule fires than the one currently running", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+
+    renderHook(() =>
+      useSuggestion({
+        startEntry: startEntryMock as never,
+        listen: listen as never,
+        currentRunningRuleId: "r-other",
+        enabled: true,
+      }),
+    );
+
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r-strict",
+        ruleName: "ACME work",
+        confidence: "strict",
+        project: "acme",
+        tags: [],
+      });
+    });
+
+    await waitFor(() => expect(startEntryMock).toHaveBeenCalledTimes(1));
+    expect(startEntryMock).toHaveBeenCalledWith({
+      projectId: "acme",
+      source: "rule",
+      ruleId: "r-strict",
+    });
+  });
+
+  it("does not snooze the Strict path even if a same-id rule was dismissed earlier as Suggestive", async () => {
+    // If a user dismissed a rule when it was Suggestive, then the
+    // rule is upgraded to Strict (or it always was Strict and the
+    // earlier dismissal was a different snapshot), the Strict
+    // auto-start MUST NOT be silently suppressed by the snooze
+    // map. The spec ties snooze to "dismissed suggestion", not to
+    // "rule_id is in the map".
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+
+    const { result } = renderHook(() =>
+      useSuggestion({
+        startEntry: startEntryMock as never,
+        listen: listen as never,
+        enabled: true,
+      }),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+
+    // Dismiss r1 as Suggestive (snoozes it).
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive",
+        project: "cairn",
+        tags: [],
+      });
+    });
+    act(() => result.current.dismiss());
+
+    // Same rule fires later as Strict — must auto-start.
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "strict",
+        project: "cairn",
+        tags: [],
+      });
+    });
+
+    await waitFor(() =>
+      expect(startEntryMock).toHaveBeenCalledWith({
+        projectId: "cairn",
+        source: "rule",
+        ruleId: "r1",
+      }),
+    );
+  });
 });
 
 describe("useSuggestion (disabled)", () => {

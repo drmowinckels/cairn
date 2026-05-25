@@ -12,13 +12,30 @@ export const SIGNAL_MATCH_EVENT = "signal:match";
 /** Default snooze duration for a dismissed suggestion. */
 export const DEFAULT_SNOOZE_MS = 5 * 60 * 1000;
 
+/**
+ * Options for `useSuggestion`. **Stability matters**: `startEntry`,
+ * `listen`, and `currentRunningRuleId` are part of the subscription
+ * `useEffect`'s deps. Pass module-level imports or memoised values —
+ * inline closures will re-subscribe on every render.
+ */
 export interface UseSuggestionOpts {
   /**
    * How long to suppress further `signal:match` events for a given
-   * `ruleId` after a dismiss. See `docs/RULES_ENGINE.md` §6. The
-   * default mirrors the spec's 5-minute floor.
+   * `ruleId` after a *Suggestive* dismiss. See `docs/RULES_ENGINE.md`
+   * §6. The default mirrors the spec's 5-minute floor. Snooze does
+   * NOT apply to Strict matches — that path is governed by the
+   * `currentRunningRuleId` de-dup below.
    */
   snoozeMs?: number;
+  /**
+   * The `rule_id` of the currently-running timer, if any. The Strict
+   * auto-start path skips the IPC when the firing rule's id already
+   * matches this — without it, a Strict rule that keeps matching
+   * would call `start_entry` on every snapshot publish (~2 Hz),
+   * which the backend implements as "close current + open new",
+   * churning the entries table with zero-second ghost entries.
+   */
+  currentRunningRuleId?: string | null;
   /**
    * Override the IPC start hook. The default reaches into the real
    * `startEntry` IPC; tests inject a spy so they don't need a
@@ -57,7 +74,9 @@ export interface UseSuggestionState {
  *   snoozes the rule for `snoozeMs`.
  * - `confidence: "strict"` → auto-calls `startEntry` immediately with
  *   `source: "rule"` and the rule's project + id. No banner; the
- *   running timer surfaces in the `now` section instead.
+ *   running timer surfaces in the `now` section instead. De-duped
+ *   against `currentRunningRuleId` so a Strict rule that keeps
+ *   matching doesn't churn the timer.
  *
  * Per `docs/RULES_ENGINE.md` §4 + §6.
  *
@@ -66,13 +85,23 @@ export interface UseSuggestionState {
  * the rest of the Today view.
  */
 export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState {
-  const snoozeMs = opts.snoozeMs ?? DEFAULT_SNOOZE_MS;
+  const snoozeMs = Math.max(0, opts.snoozeMs ?? DEFAULT_SNOOZE_MS);
   const start = opts.startEntry ?? startEntry;
   const listenFn = opts.listen ?? listen;
   const enabled = opts.enabled ?? inTauri;
+  const currentRunningRuleId = opts.currentRunningRuleId ?? null;
 
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const snoozedUntilRef = useRef(new Map<string, number>());
+  // Mirror the currently-running ruleId in a ref so the listener
+  // sees the latest value without re-subscribing. The Strict
+  // auto-start de-dup compares the incoming match's ruleId against
+  // this; without the ref, the listener would close over the value
+  // at subscribe-time and never refresh.
+  const currentRunningRuleIdRef = useRef<string | null>(currentRunningRuleId);
+  useEffect(() => {
+    currentRunningRuleIdRef.current = currentRunningRuleId;
+  }, [currentRunningRuleId]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -80,11 +109,12 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
     let cancelled = false;
     void listenFn<RuleMatchEvent>(SIGNAL_MATCH_EVENT, (event) => {
       const payload = event.payload;
-      const now = Date.now();
-      const snoozedUntil = snoozedUntilRef.current.get(payload.ruleId) ?? 0;
-      if (snoozedUntil > now) return;
 
       if (payload.confidence === "strict") {
+        // Skip if the same rule already drove the running timer —
+        // otherwise every snapshot publish would re-start it,
+        // churning zero-second entries through the DB.
+        if (currentRunningRuleIdRef.current === payload.ruleId) return;
         start({
           projectId: payload.project ?? null,
           source: "rule",
@@ -94,8 +124,15 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
         });
         return;
       }
-      // Suggestive: drop the banner content into state for the
-      // Today view to render.
+
+      // Suggestive: snooze gate applies only here, per RULES_ENGINE.md §6.
+      const now = Date.now();
+      const snoozedUntil = snoozedUntilRef.current.get(payload.ruleId) ?? 0;
+      if (snoozedUntil > now) return;
+      // Sweep this entry if it had expired — keeps the map from
+      // accreting stale entries over long-running sessions.
+      if (snoozedUntil > 0) snoozedUntilRef.current.delete(payload.ruleId);
+
       setSuggestion(payload);
     }).then((un) => {
       if (cancelled) {
@@ -111,32 +148,27 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
   }, [enabled, listenFn, start]);
 
   const confirm = useCallback(async () => {
-    setSuggestion((current) => {
-      if (current) {
-        void start({
-          projectId: current.project ?? null,
-          source: "rule",
-          ruleId: current.ruleId,
-        }).catch((e) =>
-          console.error("useSuggestion: confirm start_entry failed", e),
-        );
-      }
-      return null;
-    });
-  }, [start]);
+    if (!suggestion) return;
+    const current = suggestion;
+    setSuggestion(null);
+    try {
+      await start({
+        projectId: current.project ?? null,
+        source: "rule",
+        ruleId: current.ruleId,
+      });
+    } catch (e) {
+      console.error("useSuggestion: confirm start_entry failed", e);
+    }
+  }, [start, suggestion]);
 
   const dismiss = useCallback(() => {
-    setSuggestion((current) => {
-      if (current) {
-        snoozedUntilRef.current.set(current.ruleId, Date.now() + snoozeMs);
-      }
-      return null;
-    });
-  }, [snoozeMs]);
+    if (!suggestion) return;
+    snoozedUntilRef.current.set(suggestion.ruleId, Date.now() + snoozeMs);
+    setSuggestion(null);
+  }, [snoozeMs, suggestion]);
 
   return { suggestion, confirm, dismiss };
 }
 
-/** Exposed for tests that want to assert the constant by name. */
-export const __TEST__ = { DEFAULT_SNOOZE_MS };
 export type { Confidence };

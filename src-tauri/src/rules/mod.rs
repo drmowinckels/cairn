@@ -248,6 +248,55 @@ fn regex_matches(_target: &str, _pattern: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn confidence_serialises_to_kebab_case() {
+        // Pins the wire format that the TS `Confidence` type relies
+        // on. If a future variant gets added (e.g. `StrictWithWarning`),
+        // this test will fail with the new kebab-case form so the TS
+        // side knows to update.
+        assert_eq!(
+            serde_json::to_string(&Confidence::Suggestive).unwrap(),
+            "\"suggestive\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Confidence::Strict).unwrap(),
+            "\"strict\""
+        );
+    }
+
+    #[test]
+    fn confidence_default_is_suggestive() {
+        // The privacy guarantee: a new rule never auto-starts a
+        // timer unless the user explicitly opts into Strict. Default
+        // is Suggestive — pin that.
+        assert_eq!(Confidence::default(), Confidence::Suggestive);
+    }
+
+    #[test]
+    fn rule_match_includes_confidence_from_rule() {
+        let rule = Rule {
+            id: "r-strict".into(),
+            name: "ACME work".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Strict,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("acme".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+            },
+        };
+        let snap_v = snap();
+        let m = evaluate([&rule], &snap_v).expect("rule fires for app=Zed");
+        assert_eq!(m.confidence, Confidence::Strict);
+        assert_eq!(m.rule_name, "ACME work");
+    }
+
     fn snap() -> SignalSnapshot {
         SignalSnapshot {
             ide_folder: Some("~/code/cairn".into()),

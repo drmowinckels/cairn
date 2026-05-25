@@ -89,10 +89,12 @@ export interface Rule {
   matchedToday: number;
 }
 
-/// Payload of the `signal:match` Tauri event. The backend fires
-/// this on every snapshot publish where a rule fires. The UI's
-/// `useSuggestion` hook decides what to do based on
-/// `confidence`: Suggestive → banner; Strict → auto-start.
+/**
+ * Payload of the `signal:match` Tauri event. The backend fires
+ * this on every snapshot publish where a rule fires. The UI's
+ * `useSuggestion` hook decides what to do based on
+ * `confidence`: Suggestive → banner; Strict → auto-start.
+ */
 export interface RuleMatchEvent {
   ruleId: string;
   ruleName: string;

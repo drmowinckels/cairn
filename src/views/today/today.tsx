@@ -18,8 +18,6 @@ interface Props {
   density: Density;
   layoutVariant: LayoutVariant;
   onOpenRule: (id: string) => void;
-  suggestionDismissed: boolean;
-  setSuggestionDismissed: (v: boolean) => void;
   showIdleModal: boolean;
   setShowIdleModal: (v: boolean) => void;
   detectionPrompts?: DetectionPrompts;
@@ -30,8 +28,6 @@ export function TodayView({
   density,
   layoutVariant,
   onOpenRule,
-  suggestionDismissed,
-  setSuggestionDismissed,
   showIdleModal,
   setShowIdleModal,
   detectionPrompts = "subtle",
@@ -39,7 +35,15 @@ export function TodayView({
 }: Props) {
   const compact = density === "compact";
   const timer = useTimer();
-  const { suggestion, confirm, dismiss } = useSuggestion();
+  // The hook owns banner visibility internally — dismissed
+  // suggestions clear via the snooze map per RULES_ENGINE.md §6,
+  // and Strict matches skip the banner entirely. The popover used
+  // to track `suggestionDismissed` as a session boolean; that's
+  // gone now because it permanently silenced the banner after the
+  // first dismiss, even after the snooze expired.
+  const { suggestion, confirm, dismiss } = useSuggestion({
+    currentRunningRuleId: timer.running?.ruleId ?? null,
+  });
 
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -71,7 +75,7 @@ export function TodayView({
 
   return (
     <div className="view view-today" data-density={density}>
-      {!suggestionDismissed && detectionPrompts !== "off" && suggestion && (
+      {detectionPrompts !== "off" && suggestion && (
         <section
           className={`suggest suggest--${detectionPrompts}`}
           aria-label="Auto-detected work"
@@ -80,7 +84,6 @@ export function TodayView({
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               dismiss();
-              setSuggestionDismissed(true);
             } else if (e.key === "Enter") {
               void confirm();
             }
@@ -91,10 +94,7 @@ export function TodayView({
             <span>Detected</span>
             <button
               className="suggest-x"
-              onClick={() => {
-                dismiss();
-                setSuggestionDismissed(true);
-              }}
+              onClick={() => dismiss()}
               aria-label="Dismiss suggestion"
             >
               <Icon name="x" size={12} />
@@ -109,11 +109,26 @@ export function TodayView({
               <>Detected</>
             )}{" "}
             — <em>{suggestion.ruleName}</em>?
+            {suggestion.tags.length > 0 && (
+              <span className="suggest-tags">
+                {suggestion.tags.map((t) => (
+                  <Tag key={t}>{t}</Tag>
+                ))}
+              </span>
+            )}
           </div>
           <div className="suggest-why">
             <button
               className="suggest-link"
-              onClick={() => onOpenRule(suggestion.ruleId)}
+              onClick={() => {
+                // Viewing the rule acks the suggestion. Without
+                // this the banner stays pinned on return, with
+                // potentially stale `ruleName` if the user renamed
+                // the rule in the editor.
+                const id = suggestion.ruleId;
+                dismiss();
+                onOpenRule(id);
+              }}
             >
               view rule
             </button>
@@ -127,10 +142,7 @@ export function TodayView({
             </button>
             <button
               className="btn btn--ghost"
-              onClick={() => {
-                dismiss();
-                setSuggestionDismissed(true);
-              }}
+              onClick={() => dismiss()}
             >
               Change…
             </button>
