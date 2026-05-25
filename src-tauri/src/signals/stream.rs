@@ -278,7 +278,7 @@ async fn driver(
                         // one final snapshot if a debounce was
                         // pending, then exit.
                         if next_publish_at.is_some() {
-                            publish(&state, &snapshot_tx, &calendar).await;
+                            publish(&state, &snapshot_tx, &calendar, &exclusions).await;
                         }
                         return;
                     }
@@ -286,7 +286,7 @@ async fn driver(
             }
 
             _ = sleep_until(next_publish_at), if next_publish_at.is_some() => {
-                publish(&state, &snapshot_tx, &calendar).await;
+                publish(&state, &snapshot_tx, &calendar, &exclusions).await;
                 next_publish_at = None;
             }
         }
@@ -361,6 +361,7 @@ async fn publish(
     state: &LiveState,
     snapshot_tx: &watch::Sender<Option<SignalSnapshot>>,
     calendar: &Arc<CalendarRegistry>,
+    exclusions: &Arc<RwLock<ExclusionMatcher>>,
 ) {
     let active = calendar.active_events_at(Utc::now()).await;
     let calendar_events: Vec<CalendarEvent> = active
@@ -387,7 +388,7 @@ async fn publish(
 
     let git_branch = state.git.as_ref().and_then(|g| g.branch.clone());
 
-    let snap = SignalSnapshot {
+    let mut snap = SignalSnapshot {
         ide_folder,
         git_branch,
         window_title,
@@ -395,6 +396,26 @@ async fn publish(
         browser_domain: None,
         calendar: calendar_events,
     };
+
+    // Defence-in-depth: even though `apply_event` already filters
+    // incoming Window signals against the matcher, the cached
+    // `LiveState.front` from BEFORE a mid-session exclusion add
+    // could still leak here. Re-running the filter on the composed
+    // snapshot covers that gap. Also covers a future browser
+    // collector that emits `browser_domain` directly.
+    if let Ok(guard) = exclusions.read() {
+        guard.redact_snapshot(&mut snap);
+    } else {
+        // Lock poisoned (writer panicked). Fail closed: drop every
+        // OS-derived field. This matches `apply_event`'s poisoned-
+        // lock behaviour.
+        log::warn!("exclusions: read lock poisoned, redacting snapshot fully");
+        snap.app_name = None;
+        snap.window_title = None;
+        snap.ide_folder = None;
+        snap.git_branch = None;
+        snap.browser_domain = None;
+    }
 
     let _ = snapshot_tx.send_replace(Some(snap));
 }
@@ -469,10 +490,23 @@ async fn idle_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
-        let seconds = tokio::task::spawn_blocking(crate::signals::idle::seconds_since_input)
-            .await
-            .ok()
-            .flatten();
+        // Mirror window_source's JoinError handling. A panic in the
+        // blocking task is a different failure mode from "the OS
+        // query returned None" (permission denied / Wayland) and
+        // must be logged loudly — silently folding it into the
+        // same `None` would mask a real bug.
+        let seconds =
+            match tokio::task::spawn_blocking(crate::signals::idle::seconds_since_input).await {
+                Ok(v) => v,
+                Err(e) if e.is_panic() => {
+                    log::error!("idle source spawn_blocking panicked: {e}");
+                    None
+                }
+                Err(e) => {
+                    log::warn!("idle source spawn_blocking error: {e}");
+                    None
+                }
+            };
         let current = IdleState { seconds };
         // Push when the 30s bucket changes — fine-grained "one more
         // second idle" events would arm the debounce on every tick
@@ -782,6 +816,66 @@ mod tests {
         let snap = rx.borrow().clone().expect("Some snapshot");
         assert!(snap.app_name.is_none());
         assert!(snap.window_title.is_none());
+    }
+
+    #[tokio::test]
+    async fn mid_session_exclusion_add_redacts_stale_cached_front() {
+        // Reviewer's B1.2: when an exclusion is added AFTER the
+        // driver has cached a non-excluded front-window, the next
+        // publish must still redact — the cached LiveState.front
+        // can't leak through. Defence-in-depth in `publish` is what
+        // closes this gap (the `apply_event` filter only sees
+        // *incoming* events).
+        let (_dir, db) = test_db().await;
+        let calendar =
+            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let stream = spawn(
+            calendar.clone(),
+            exclusions.clone(),
+            Duration::from_millis(50),
+        );
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        // Step 1: send a Chrome window event (no exclusions yet).
+        tx.send(SignalEvent::Window(Some(fw(
+            "Chrome",
+            Some("Banking — Chase"),
+        ))))
+        .await
+        .unwrap();
+        let snap = wait_for_app_name(&mut rx, "Chrome", Duration::from_secs(1))
+            .await
+            .expect("Chrome window published before exclusion was added");
+        assert_eq!(snap.app_name.as_deref(), Some("Chrome"));
+        assert_eq!(snap.window_title.as_deref(), Some("Banking — Chase"));
+
+        // Step 2: user adds an exclusion for "Banking" mid-session.
+        // The cached LiveState.front is still Chrome+Banking title.
+        *exclusions.write().unwrap() = ExclusionMatcher::for_test(&[], &["Banking"], &[]);
+
+        // Step 3: a calendar-refresh-style event (no Window event)
+        // arms the debounce. publish() re-runs the redaction filter
+        // and the now-excluded title must NOT leak.
+        tx.send(SignalEvent::CalendarRefresh).await.unwrap();
+        // Wait for the next publish.
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("publish runs after CalendarRefresh")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert!(
+            snap.app_name.is_none(),
+            "stale-cached app_name leaked after mid-session exclusion: {:?}",
+            snap.app_name
+        );
+        assert!(
+            snap.window_title.is_none(),
+            "stale-cached window_title leaked: {:?}",
+            snap.window_title
+        );
     }
 
     #[tokio::test]

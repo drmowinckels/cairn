@@ -33,6 +33,12 @@ pub struct AppState {
     /// engine. Mutators (`save_exclusion` / `delete_exclusion` IPC)
     /// reload it after a write.
     pub exclusions: Arc<RwLock<ExclusionMatcher>>,
+    /// Serializes `(DB write, exclusions reload)` pairs so two
+    /// concurrent `save_exclusion` / `delete_exclusion` IPC calls
+    /// can't interleave such that the in-memory matcher ends up
+    /// reflecting a stale DB snapshot. tokio Mutex (not std) so
+    /// the await across the lock + DB roundtrip is non-blocking.
+    pub exclusions_mutator: tokio::sync::Mutex<()>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -184,6 +190,7 @@ pub fn run() {
                 calendar,
                 stream,
                 exclusions,
+                exclusions_mutator: tokio::sync::Mutex::new(()),
             });
 
             tray::setup(app.handle())?;

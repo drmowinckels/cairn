@@ -22,6 +22,7 @@
 
 use sqlx::{Row, SqlitePool};
 
+use crate::rules::SignalSnapshot;
 use crate::signals::window::FrontWindow;
 
 /// Snapshot of the exclusions table at a point in time. The driver
@@ -45,17 +46,43 @@ impl ExclusionMatcher {
 
     /// True iff the given front-window matches any exclusion rule.
     /// Apps match exactly on `app_name`; window-title rules match by
-    /// case-sensitive substring on `title`.
+    /// **case-insensitive** substring on `title`. Case-insensitivity
+    /// is a hard requirement of the privacy contract: a user who
+    /// excludes `"Banking"` cannot have a window titled `"banking"`
+    /// silently leak through.
     pub fn matches_window(&self, fw: &FrontWindow) -> bool {
         if self.apps.iter().any(|a| a == &fw.app_name) {
             return true;
         }
         if let Some(title) = fw.title.as_deref() {
-            if self.windows.iter().any(|w| title.contains(w.as_str())) {
+            let title_lower = title.to_ascii_lowercase();
+            if self
+                .windows
+                .iter()
+                .any(|w| title_lower.contains(&w.to_ascii_lowercase()))
+            {
                 return true;
             }
         }
         false
+    }
+
+    /// True iff the given app name matches any `app` exclusion. Used
+    /// by `redact_snapshot` to filter a `SignalSnapshot` whose
+    /// `FrontWindow` has already been consumed (e.g. the cached
+    /// `LiveState.front` projected into `publish`'s output).
+    pub fn matches_app(&self, app_name: &str) -> bool {
+        self.apps.iter().any(|a| a == app_name)
+    }
+
+    /// True iff the given window title matches any `window`
+    /// exclusion. Same case-insensitive substring rule as
+    /// `matches_window`.
+    pub fn matches_title(&self, title: &str) -> bool {
+        let title_lower = title.to_ascii_lowercase();
+        self.windows
+            .iter()
+            .any(|w| title_lower.contains(&w.to_ascii_lowercase()))
     }
 
     /// True iff the given browser domain matches any `domain`
@@ -63,6 +90,44 @@ impl ExclusionMatcher {
     /// UI doesn't expose them either).
     pub fn matches_domain(&self, domain: &str) -> bool {
         self.domains.iter().any(|d| d == domain)
+    }
+
+    /// Filter a composed `SignalSnapshot` through the exclusion
+    /// matcher: any window/title/domain field that now matches an
+    /// exclusion is cleared. Used as defence-in-depth at every
+    /// publish site (`stream::publish`, `snapshot::build`,
+    /// `current_snapshot` IPC fallback) so a stale `LiveState.front`
+    /// from before a mid-session exclusion add can't leak on the
+    /// next publish.
+    ///
+    /// Per `docs/PRIVACY.md`: "While an exclusion is active, Cairn
+    /// behaves as if the user has no foreground app at all" — this
+    /// is the function that enforces that on the publish-side path.
+    pub fn redact_snapshot(&self, snap: &mut SignalSnapshot) {
+        let app_excluded = snap
+            .app_name
+            .as_deref()
+            .is_some_and(|a| self.matches_app(a));
+        let title_excluded = snap
+            .window_title
+            .as_deref()
+            .is_some_and(|t| self.matches_title(t));
+        if app_excluded || title_excluded {
+            snap.app_name = None;
+            snap.window_title = None;
+            snap.ide_folder = None;
+            // `git_branch` is cleared too: the rules engine treats
+            // the snapshot as a unit, so leaving git_branch alone
+            // would mean the rules engine sees `git_branch=Some`
+            // with no window context — a confusing partial state
+            // that no rule design assumes.
+            snap.git_branch = None;
+        }
+        if let Some(domain) = snap.browser_domain.as_deref() {
+            if self.matches_domain(domain) {
+                snap.browser_domain = None;
+            }
+        }
     }
 
     /// Load every exclusion row from the DB into a fresh matcher.
@@ -137,6 +202,96 @@ mod tests {
         let m = ExclusionMatcher::for_test(&[], &["Banking"], &[]);
         assert!(m.matches_window(&fw("Chrome", Some("Banking — Chase"))));
         assert!(!m.matches_window(&fw("Chrome", Some("GitHub — cairn"))));
+    }
+
+    #[test]
+    fn matches_window_title_is_case_insensitive() {
+        let m = ExclusionMatcher::for_test(&[], &["Banking"], &[]);
+        // Privacy: a user who typed "Banking" must not have
+        // "banking" or "BANKING" leak through.
+        assert!(m.matches_window(&fw("Chrome", Some("banking — chase"))));
+        assert!(m.matches_window(&fw("Chrome", Some("BANKING TIME"))));
+    }
+
+    #[test]
+    fn redact_snapshot_clears_excluded_app_fields() {
+        use crate::rules::SignalSnapshot;
+        let m = ExclusionMatcher::for_test(&["1Password"], &[], &[]);
+        let mut snap = SignalSnapshot {
+            ide_folder: Some("vault".into()),
+            git_branch: Some("main".into()),
+            window_title: Some("vault open".into()),
+            app_name: Some("1Password".into()),
+            browser_domain: Some("example.com".into()),
+            calendar: vec![],
+        };
+        m.redact_snapshot(&mut snap);
+        assert!(snap.app_name.is_none());
+        assert!(snap.window_title.is_none());
+        assert!(snap.ide_folder.is_none());
+        assert!(snap.git_branch.is_none());
+        // Non-excluded domain stays.
+        assert_eq!(snap.browser_domain.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn redact_snapshot_clears_excluded_title_substring() {
+        use crate::rules::SignalSnapshot;
+        let m = ExclusionMatcher::for_test(&[], &["Banking"], &[]);
+        let mut snap = SignalSnapshot {
+            ide_folder: Some("/code/banking-app".into()),
+            git_branch: Some("feat/y".into()),
+            window_title: Some("Banking — Chase".into()),
+            app_name: Some("Chrome".into()),
+            browser_domain: None,
+            calendar: vec![],
+        };
+        m.redact_snapshot(&mut snap);
+        assert!(snap.app_name.is_none());
+        assert!(snap.window_title.is_none());
+        assert!(snap.ide_folder.is_none());
+        assert!(snap.git_branch.is_none());
+    }
+
+    #[test]
+    fn redact_snapshot_clears_excluded_domain_only() {
+        use crate::rules::SignalSnapshot;
+        let m = ExclusionMatcher::for_test(&[], &[], &["bank.example.com"]);
+        let mut snap = SignalSnapshot {
+            ide_folder: None,
+            git_branch: None,
+            window_title: Some("login — bank".into()),
+            app_name: Some("Chrome".into()),
+            browser_domain: Some("bank.example.com".into()),
+            calendar: vec![],
+        };
+        m.redact_snapshot(&mut snap);
+        // Window fields untouched because no window-rule matched.
+        assert_eq!(snap.app_name.as_deref(), Some("Chrome"));
+        assert_eq!(snap.window_title.as_deref(), Some("login — bank"));
+        // Domain field cleared.
+        assert!(snap.browser_domain.is_none());
+    }
+
+    #[test]
+    fn redact_snapshot_is_noop_for_allowed_snapshot() {
+        use crate::rules::SignalSnapshot;
+        let m = ExclusionMatcher::for_test(&["NotMatched"], &["NotInTitle"], &["bad.example"]);
+        let mut snap = SignalSnapshot {
+            ide_folder: Some("cairn".into()),
+            git_branch: Some("main".into()),
+            window_title: Some("rules.rs — cairn".into()),
+            app_name: Some("Zed".into()),
+            browser_domain: Some("github.com".into()),
+            calendar: vec![],
+        };
+        let before = snap.clone();
+        m.redact_snapshot(&mut snap);
+        assert_eq!(snap.app_name, before.app_name);
+        assert_eq!(snap.window_title, before.window_title);
+        assert_eq!(snap.ide_folder, before.ide_folder);
+        assert_eq!(snap.git_branch, before.git_branch);
+        assert_eq!(snap.browser_domain, before.browser_domain);
     }
 
     #[test]

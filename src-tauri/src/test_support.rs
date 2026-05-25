@@ -101,6 +101,7 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         calendar,
         stream,
         exclusions,
+        exclusions_mutator: tokio::sync::Mutex::new(()),
     });
     (dir, app, db)
 }

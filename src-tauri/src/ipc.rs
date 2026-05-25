@@ -595,6 +595,9 @@ pub async fn save_exclusion(
     if !matches!(kind.as_str(), "app" | "domain" | "window") {
         return Err(format!("unknown exclusion kind: {kind}"));
     }
+    // Serialize (INSERT, reload) so concurrent mutator IPCs can't
+    // interleave such that the matcher ends up stale.
+    let _mutator = state.exclusions_mutator.lock().await;
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO exclusions (id, kind, value) VALUES (?1, ?2, ?3)")
         .bind(&id)
@@ -609,6 +612,7 @@ pub async fn save_exclusion(
 
 #[tauri::command]
 pub async fn delete_exclusion(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let _mutator = state.exclusions_mutator.lock().await;
     sqlx::query("DELETE FROM exclusions WHERE id = ?1")
         .bind(&id)
         .execute(&state.db.pool)
@@ -1971,14 +1975,14 @@ pub async fn current_snapshot(
     state: State<'_, AppState>,
 ) -> Result<crate::rules::SignalSnapshot, String> {
     // Prefer the stream's live cache (O(1), matches what the rules
-    // engine just evaluated). On cold start — before the driver
-    // has published its first snapshot — fall back to a synchronous
-    // `snapshot::build` so the popover doesn't see all-`None`
-    // fields when the user opens it within the first second of
-    // launch.
+    // engine just evaluated and is already exclusion-filtered). On
+    // cold start — before the driver has published its first
+    // snapshot — fall back to a synchronous `snapshot::build` which
+    // also applies exclusions internally so a popover opened in
+    // the first ~1.5s never sees an excluded app's title.
     if let Some(snap) = state.stream.current() {
         Ok(snap)
     } else {
-        Ok(crate::signals::snapshot::build(&state.calendar, Utc::now()).await)
+        Ok(crate::signals::snapshot::build(&state.calendar, &state.exclusions, Utc::now()).await)
     }
 }
