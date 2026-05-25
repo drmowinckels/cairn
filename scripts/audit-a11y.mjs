@@ -66,6 +66,15 @@ const TAURI_SHIM = `
     runCallback: (id, ...args) => callbacks[id]?.(...args),
     convertFileSrc: (p) => p,
   };
+
+  // \`@tauri-apps/api/event::listen\` uses a separate internals
+  // object for the unlisten path. The audit's preview build has no
+  // real plugin to call into, so we stub the methods as no-ops —
+  // the goal is to keep the React tree mounting cleanly, not to
+  // exercise event delivery.
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: () => {},
+  };
 })();
 `;
 
