@@ -19,11 +19,13 @@ use tauri_plugin_log::{Target, TargetKind};
 pub use db::Db;
 
 use signals::calendar::CalendarRegistry;
+use signals::stream::SnapshotStream;
 
 pub struct AppState {
     pub db: Db,
     pub pinned: AtomicBool,
     pub calendar: Arc<CalendarRegistry>,
+    pub stream: Arc<SnapshotStream>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -145,10 +147,29 @@ pub fn run() {
                 Arc::new(CalendarRegistry::new(db.pool.clone()).expect("init calendar registry"));
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
 
+            let stream = Arc::new(signals::stream::spawn(
+                calendar.clone(),
+                signals::stream::DEFAULT_DEBOUNCE,
+            ));
+            signals::stream::spawn_default_sources(&stream);
+
+            // Tauri fan-out: every published snapshot is evaluated
+            // against the rules in the DB and emitted as
+            // `signal:snapshot` / `signal:match` for the suggestion
+            // banner and Live Signals card. Exits on driver
+            // shutdown (the watch channel closes).
+            let fanout_rx = stream.subscribe();
+            let fanout_pool = db.pool.clone();
+            let fanout_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                signals::fanout::run(fanout_rx, fanout_pool, fanout_handle).await;
+            });
+
             app.manage(AppState {
                 db,
                 pinned: AtomicBool::new(false),
                 calendar,
+                stream,
             });
 
             tray::setup(app.handle())?;

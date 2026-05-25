@@ -82,6 +82,10 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
     let (dir, db) = test_db().await;
     let calendar =
         Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+    let stream = Arc::new(crate::signals::stream::spawn(
+        calendar.clone(),
+        std::time::Duration::from_millis(50),
+    ));
     let app = mock_builder()
         .build(mock_context(noop_assets()))
         .expect("mock_app builds");
@@ -89,6 +93,7 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         db: db.clone(),
         pinned: AtomicBool::new(false),
         calendar,
+        stream,
     });
     (dir, app, db)
 }

@@ -9,7 +9,9 @@
 #![allow(dead_code)]
 
 pub mod calendar;
+pub mod fanout;
 pub mod git;
 pub mod idle;
 pub mod snapshot;
+pub mod stream;
 pub mod window;

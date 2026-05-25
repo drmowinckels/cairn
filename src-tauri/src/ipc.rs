@@ -1950,5 +1950,10 @@ pub async fn calendar_sync_status(state: State<'_, AppState>) -> Result<Vec<Sync
 pub async fn current_snapshot(
     state: State<'_, AppState>,
 ) -> Result<crate::rules::SignalSnapshot, String> {
-    Ok(crate::signals::snapshot::build(&state.calendar, Utc::now()).await)
+    // The stream maintains a live snapshot that's updated by the
+    // background driver task — return its current value rather than
+    // rebuilding synchronously. That keeps the IPC O(1) and means
+    // the value the UI reads matches what the rules engine just
+    // evaluated.
+    Ok(state.stream.current())
 }
