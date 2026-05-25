@@ -12,6 +12,25 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
 
+const SUGGESTION_FIXTURE = {
+  ruleId: "r1",
+  ruleName: "Cairn dev",
+  confidence: "suggestive" as const,
+  project: "cairn" as string | null,
+  tags: ["dev"],
+};
+const confirmMock = vi.fn();
+const dismissMock = vi.fn();
+let suggestionOverride: typeof SUGGESTION_FIXTURE | null = SUGGESTION_FIXTURE;
+
+vi.mock("../../lib/use-suggestion", () => ({
+  useSuggestion: () => ({
+    suggestion: suggestionOverride,
+    confirm: confirmMock,
+    dismiss: dismissMock,
+  }),
+}));
+
 import { TodayView } from "./index";
 
 interface RenderArgs {
@@ -44,6 +63,7 @@ function renderToday({
 
 afterEach(() => {
   vi.clearAllMocks();
+  suggestionOverride = SUGGESTION_FIXTURE;
 });
 
 describe("TodayView", () => {

@@ -3,6 +3,7 @@ import { Icon } from "../../lib/icon";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { fmtClock, fmtHm, fmtRange } from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
+import { useSuggestion } from "../../lib/use-suggestion";
 import type { Density, DetectionPrompts, LayoutVariant } from "../../lib/types";
 import {
   NOW_MIN,
@@ -38,6 +39,7 @@ export function TodayView({
 }: Props) {
   const compact = density === "compact";
   const timer = useTimer();
+  const { suggestion, confirm, dismiss } = useSuggestion();
 
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -69,38 +71,69 @@ export function TodayView({
 
   return (
     <div className="view view-today" data-density={density}>
-      {!suggestionDismissed && detectionPrompts !== "off" && (
+      {!suggestionDismissed && detectionPrompts !== "off" && suggestion && (
         <section
           className={`suggest suggest--${detectionPrompts}`}
           aria-label="Auto-detected work"
           aria-live={announce ? "polite" : "off"}
           role={detectionPrompts === "modal" ? "alertdialog" : undefined}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              dismiss();
+              setSuggestionDismissed(true);
+            } else if (e.key === "Enter") {
+              void confirm();
+            }
+          }}
         >
           <div className="suggest-head">
             <Icon name="sparkle" size={13} />
             <span>Detected</span>
             <button
               className="suggest-x"
-              onClick={() => setSuggestionDismissed(true)}
+              onClick={() => {
+                dismiss();
+                setSuggestionDismissed(true);
+              }}
               aria-label="Dismiss suggestion"
             >
               <Icon name="x" size={12} />
             </button>
           </div>
           <div className="suggest-body">
-            Working on <ProjectChip id="cairn" /> — <em>Rule preview UI</em>?
+            {suggestion.project ? (
+              <>
+                Working on <ProjectChip id={suggestion.project} />
+              </>
+            ) : (
+              <>Detected</>
+            )}{" "}
+            — <em>{suggestion.ruleName}</em>?
           </div>
           <div className="suggest-why">
-            because <code>feat/rules-ui</code> · folder <code>~/code/cairn</code>
-            <button className="suggest-link" onClick={() => onOpenRule("r1")}>
+            <button
+              className="suggest-link"
+              onClick={() => onOpenRule(suggestion.ruleId)}
+            >
               view rule
             </button>
           </div>
           <div className="suggest-actions">
-            <button className="btn btn--primary">
+            <button
+              className="btn btn--primary"
+              onClick={() => void confirm()}
+            >
               <Icon name="check" size={13} /> Confirm
             </button>
-            <button className="btn btn--ghost">Change…</button>
+            <button
+              className="btn btn--ghost"
+              onClick={() => {
+                dismiss();
+                setSuggestionDismissed(true);
+              }}
+            >
+              Change…
+            </button>
           </div>
         </section>
       )}

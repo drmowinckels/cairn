@@ -32,7 +32,7 @@ use tauri::{App, Manager};
 
 pub use tempfile::TempDir;
 
-use crate::rules::{Condition, Op, Rule, RuleAction, SignalSnapshot};
+use crate::rules::{Condition, Confidence, Op, Rule, RuleAction, SignalSnapshot};
 use crate::Db;
 // `CalendarRegistry` and `AppState` are only used by the cfg-gated
 // mock_app rig — keep their imports gated the same way so Windows
@@ -141,6 +141,7 @@ pub fn make_rule(id: &str, name: &str) -> Rule {
         name: name.into(),
         enabled: true,
         priority: 0,
+        confidence: Confidence::Suggestive,
         when: vec![],
         then: RuleAction {
             project: None,
@@ -157,6 +158,7 @@ pub fn ide_folder_rule(id: &str, project: &str, value: &str) -> Rule {
         name: format!("ide={value}"),
         enabled: true,
         priority: 0,
+        confidence: Confidence::Suggestive,
         when: vec![Condition::IdeFolder {
             op: Op::Contains,
             value: value.into(),

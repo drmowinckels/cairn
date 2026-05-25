@@ -16,7 +16,7 @@ use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::watch;
 
-use crate::rules::{Condition, Rule, RuleAction, RuleMatch, SignalSnapshot};
+use crate::rules::{Condition, Confidence, Rule, RuleAction, RuleMatch, SignalSnapshot};
 
 /// Tauri window label the fan-out task targets when emitting
 /// events. The popover is the only window today; using `emit_to`
@@ -52,6 +52,8 @@ pub struct MatchOutcome {
 #[derive(Debug, Clone, Deserialize)]
 struct RuleBody {
     #[serde(default)]
+    confidence: Confidence,
+    #[serde(default)]
     when: Vec<Condition>,
     then: RuleAction,
 }
@@ -70,6 +72,7 @@ pub fn project_rules(rules: Vec<crate::ipc::Rule>) -> Vec<Rule> {
                 name: r.name,
                 enabled: r.enabled,
                 priority: r.priority,
+                confidence: body.confidence,
                 when: body.when,
                 then: body.then,
             }),
