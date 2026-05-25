@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { inTauri, resolveIdle, type IdleChoice } from "./ipc";
 import type { IdleResumeEvent } from "./types";
@@ -37,8 +37,17 @@ export interface UseIdlePromptState {
   discard: () => Promise<void>;
   /** Resolve "Move to break": close, insert a break entry, resume. */
   moveToBreak: () => Promise<void>;
-  /** Dismiss without resolving (closes the modal — defaults to Keep). */
-  dismiss: () => Promise<void>;
+}
+
+/// Internal: we capture the running entry's id at the moment the
+/// event arrives so the user's choice is applied to the entry that
+/// WAS running at idle time, not whatever's running now. Without
+/// this snapshot, the user could stop the timer mid-modal and then
+/// click Discard — `runningEntryId` would be null, the IPC would
+/// be skipped, and the entry would keep whatever ended_at the
+/// manual stop set. Silent disagreement with user intent.
+interface PendingPrompt extends IdleResumeEvent {
+  entryId: string | null;
 }
 
 /**
@@ -62,14 +71,27 @@ export function useIdlePrompt(opts: UseIdlePromptOpts = {}): UseIdlePromptState 
   const listenFn = opts.listen ?? listen;
   const enabled = opts.enabled ?? inTauri;
 
-  const [prompt, setPrompt] = useState<IdleResumeEvent | null>(null);
+  const [pending, setPending] = useState<PendingPrompt | null>(null);
+  // Mirror the latest running id in a ref so the listener captures
+  // the freshest value when an event arrives, without re-subscribing.
+  const runningEntryIdRef = useRef<string | null>(runningEntryId);
+  useEffect(() => {
+    runningEntryIdRef.current = runningEntryId;
+  }, [runningEntryId]);
 
   useEffect(() => {
     if (!enabled) return;
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
     void listenFn<IdleResumeEvent>(SIGNAL_IDLE_RESUME_EVENT, (event) => {
-      setPrompt(event.payload);
+      // Snapshot the running entry id at event-arrival time. The
+      // user might stop the timer manually before clicking a
+      // button; we still apply their choice to the entry that
+      // was running when the idle happened.
+      setPending({
+        ...event.payload,
+        entryId: runningEntryIdRef.current,
+      });
     }).then((un) => {
       if (cancelled) {
         un();
@@ -85,18 +107,22 @@ export function useIdlePrompt(opts: UseIdlePromptOpts = {}): UseIdlePromptState 
 
   const resolveChoice = useCallback(
     async (choice: IdleChoice) => {
-      if (!prompt) return;
-      const current = prompt;
-      setPrompt(null);
-      if (!runningEntryId) {
-        // No timer to attribute the idle time to. The event was
-        // emitted (backend doesn't know the running state); drop
-        // it on the UI side.
+      if (!pending) return;
+      const current = pending;
+      setPending(null);
+      if (!current.entryId) {
+        // No timer was running when the idle event arrived. Log
+        // and surface — silently dropping would let the user
+        // think their choice took effect.
+        console.warn(
+          "useIdlePrompt: idle event arrived with no running entry; choice dropped",
+          { choice, since: current.since, until: current.until },
+        );
         return;
       }
       try {
         await resolve({
-          entryId: runningEntryId,
+          entryId: current.entryId,
           since: current.since,
           until: current.until,
           choice,
@@ -105,14 +131,21 @@ export function useIdlePrompt(opts: UseIdlePromptOpts = {}): UseIdlePromptState 
         console.error("useIdlePrompt: resolve_idle failed", e);
       }
     },
-    [prompt, runningEntryId, resolve],
+    [pending, resolve],
   );
+
+  const prompt: IdleResumeEvent | null = pending
+    ? {
+        since: pending.since,
+        until: pending.until,
+        durationSeconds: pending.durationSeconds,
+      }
+    : null;
 
   return {
     prompt,
     keep: useCallback(() => resolveChoice("keep"), [resolveChoice]),
     discard: useCallback(() => resolveChoice("discard"), [resolveChoice]),
     moveToBreak: useCallback(() => resolveChoice("break"), [resolveChoice]),
-    dismiss: useCallback(() => resolveChoice("keep"), [resolveChoice]),
   };
 }

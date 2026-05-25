@@ -158,6 +158,7 @@ describe("useIdlePrompt", () => {
     const { listen, harness } = makeListenHarness();
     const { useIdlePrompt } = await import("./use-idle-prompt");
 
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { result } = renderHook(() =>
       useIdlePrompt({
         runningEntryId: null,
@@ -170,15 +171,58 @@ describe("useIdlePrompt", () => {
     await waitFor(() => expect(harness.handler).not.toBeNull());
     act(() => harness.emit(SAMPLE_RESUME));
 
-    // The prompt surfaces (so the UI can render it for context),
-    // but calling any of the resolutions skips the IPC because
-    // there's no entry to attribute the idle time to.
     expect(result.current.prompt).toEqual(SAMPLE_RESUME);
     await act(async () => {
       await result.current.discard();
     });
     expect(resolveIdleMock).not.toHaveBeenCalled();
     expect(result.current.prompt).toBeNull();
+    // The dropped choice is loud, not silent — the user expected
+    // their click to take effect.
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("snapshots runningEntryId at event-arrival time (survives mid-modal stop)", async () => {
+    // Race scenario: idle resume fires while entry "e1" is
+    // running. Before the user clicks, they stop the timer
+    // manually → runningEntryId becomes null. The hook must still
+    // apply the user's choice to entry "e1" (the entry that WAS
+    // running when the idle happened), not silently drop because
+    // runningEntryId is now null.
+    const { listen, harness } = makeListenHarness();
+    const { useIdlePrompt } = await import("./use-idle-prompt");
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string | null }) =>
+        useIdlePrompt({
+          runningEntryId: id,
+          resolveIdle: resolveIdleMock as never,
+          listen: listen as never,
+          enabled: true,
+        }),
+      { initialProps: { id: "e1" as string | null } },
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+
+    // Event arrives while "e1" is running.
+    act(() => harness.emit(SAMPLE_RESUME));
+    expect(result.current.prompt).toEqual(SAMPLE_RESUME);
+
+    // User stops the timer before clicking anything.
+    rerender({ id: null });
+
+    // User clicks Discard → resolve_idle MUST be called with
+    // entryId="e1" (the snapshot), not skipped.
+    await act(async () => {
+      await result.current.discard();
+    });
+    expect(resolveIdleMock).toHaveBeenCalledWith({
+      entryId: "e1",
+      since: SAMPLE_RESUME.since,
+      until: SAMPLE_RESUME.until,
+      choice: "discard",
+    });
   });
 
   it("does not subscribe when disabled (outside Tauri)", async () => {

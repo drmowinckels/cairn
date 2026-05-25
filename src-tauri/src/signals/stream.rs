@@ -1255,13 +1255,21 @@ mod tests {
             .await
             .expect("resume event arrives within the timeout")
             .expect("broadcast channel still open");
-        // Duration is at least the threshold (within timing slop).
+        // Duration is at least the threshold (within timing slop)
+        // and bounded by `seconds reported on the first event
+        // (90) + the few ms the test takes to drive the second
+        // event`. Both bounds keep a future refactor from
+        // accidentally setting since=epoch or until=year-3000.
         assert!(
             resume.duration_seconds >= 60,
             "duration {} should be >= threshold 60",
             resume.duration_seconds
         );
-        // until > since.
+        assert!(
+            resume.duration_seconds < 120,
+            "duration {} should be < ~test-window (90 + slop)",
+            resume.duration_seconds
+        );
         assert!(resume.until > resume.since);
     }
 
@@ -1312,7 +1320,7 @@ mod tests {
             .await
             .expect("first resume arrives")
             .expect("channel open");
-        assert!(r1.duration_seconds >= 60);
+        assert!(r1.duration_seconds >= 60 && r1.duration_seconds < 150);
 
         // Cycle 2
         tx.send(SignalEvent::Idle(IdleState { seconds: Some(180) }))
@@ -1325,9 +1333,11 @@ mod tests {
             .await
             .expect("second resume arrives")
             .expect("channel open");
-        assert!(r2.duration_seconds >= 60);
-        // The two cycles produce distinct since values.
+        assert!(r2.duration_seconds >= 60 && r2.duration_seconds < 210);
+        // The two cycles produce distinct since values and r2 is
+        // after r1.
         assert_ne!(r1.since, r2.since);
+        assert!(r2.until > r1.until);
     }
 
     #[tokio::test]

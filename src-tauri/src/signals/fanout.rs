@@ -204,9 +204,10 @@ pub async fn run_idle_resume<R: Runtime>(
             Err(broadcast::error::RecvError::Closed) => return,
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 // Capacity-bounded — a slow subscriber dropped
-                // `skipped` events. Log so an idle-modal that
-                // looks "missed" has a paper trail.
-                log::warn!("fanout: idle-resume lagged, missed {skipped} events");
+                // `skipped` events. Usually because the popover
+                // was hidden while idle resumes fired; not
+                // interesting enough to warn-log every time.
+                log::debug!("fanout: idle-resume lagged, missed {skipped} events");
             }
         }
     }

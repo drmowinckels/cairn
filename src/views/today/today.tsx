@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
-import { fmtClock, fmtHm, fmtRange } from "../../lib/time";
+import { fmtClock, fmtClockFromIso, fmtHm, fmtIdleDuration, fmtRange } from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
 import { useSuggestion } from "../../lib/use-suggestion";
 import { useIdlePrompt } from "../../lib/use-idle-prompt";
@@ -369,20 +369,6 @@ export function TodayView({
       </section>
     </div>
   );
-}
-
-function fmtClockFromIso(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-function fmtIdleDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.floor(seconds)} sec`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const rem = minutes % 60;
-  return rem === 0 ? `${hours} h` : `${hours} h ${rem} min`;
 }
 
 function deriveSource(entry: { source: string }): string {
