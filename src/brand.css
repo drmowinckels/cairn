@@ -1578,6 +1578,48 @@ body {
   font-family: var(--mono);
   font-size: 12px;
 }
+select.rule-conf {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.rule-meta-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: var(--amber-soft, rgba(255, 196, 0, 0.08));
+  border: 0.5px solid var(--amber, rgba(255, 196, 0, 0.5));
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+.rule-meta-warn .warn-ic {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.rule-meta-warn .warn-text {
+  flex: 1 1 auto;
+}
+.rule-meta-warn .warn-dismiss {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-size: 11px;
+  text-decoration: underline;
+  padding: 0;
+}
+.rule-meta-warn .warn-dismiss:hover,
+.rule-meta-warn .warn-dismiss:focus-visible {
+  color: var(--ink);
+}
 
 .rule-foot {
   display: flex;

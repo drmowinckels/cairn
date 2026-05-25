@@ -102,6 +102,12 @@ export interface Rule {
   when: RuleCondition[];
   then: RuleAction;
   matchedToday: number;
+  /**
+   * Set when the user dismisses the confidence-heuristic warning
+   * (see #14, RULES_ENGINE.md §5). Persisted in the rule body so
+   * the dismissal sticks across sessions. Per-rule, not global.
+   */
+  confidenceWarningDismissed?: boolean;
 }
 
 /**

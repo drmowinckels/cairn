@@ -27,6 +27,7 @@ interface RuleBody {
   confidence?: Confidence;
   when: RuleCondition[];
   then: RuleAction;
+  confidenceWarningDismissed?: boolean;
 }
 
 export interface UseRules {
@@ -52,6 +53,7 @@ export interface PatchRule {
   when?: RuleCondition[];
   /** Shallow-merged into the existing `then` — pass only the fields you're changing. */
   then?: Partial<RuleAction>;
+  confidenceWarningDismissed?: boolean;
 }
 
 export function useRules(): UseRules {
@@ -208,6 +210,9 @@ export function serializeRule(rule: Rule, id: string | null): SaveRuleInput {
     confidence: rule.confidence,
     when: rule.when,
     then: rule.then,
+    ...(rule.confidenceWarningDismissed
+      ? { confidenceWarningDismissed: true }
+      : {}),
   };
   return {
     id,
@@ -242,7 +247,28 @@ export function deserializeRule(backend: BackendRule): Rule {
         ? { ...body.then, project: body.then.project ?? null }
         : { project: null },
     matchedToday: 0,
+    confidenceWarningDismissed: body.confidenceWarningDismissed === true,
   };
+}
+
+/**
+ * Per `docs/RULES_ENGINE.md` §5: a rule with `confidence: strict`
+ * that has fewer than 2 conditions OR uses only `contains` ops is
+ * likely to over-fire (and auto-start the timer without prompting).
+ * Surface a dismissible warning in the editor.
+ *
+ * Returns `false` once the user has dismissed the warning on this
+ * specific rule — `confidenceWarningDismissed` is a per-rule flag,
+ * persisted in the rule body so the dismissal sticks across sessions.
+ * It does NOT silence the warning on other rules.
+ *
+ * Pure: no React, no state. Easy to unit-test against every shape.
+ */
+export function shouldWarnConfidence(rule: Rule): boolean {
+  if (rule.confidence !== "strict") return false;
+  if (rule.confidenceWarningDismissed === true) return false;
+  if (rule.when.length < 2) return true;
+  return rule.when.every((c) => c.op === "contains");
 }
 
 // -----------------------------------------------------------------
