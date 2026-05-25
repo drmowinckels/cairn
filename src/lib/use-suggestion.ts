@@ -133,6 +133,7 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
           projectId: payload.project ?? null,
           source: "rule",
           ruleId: payload.ruleId,
+          description: payload.description || undefined,
         }).catch((e) => {
           console.error("useSuggestion: auto-start (strict) failed", e);
         });
@@ -166,6 +167,7 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
         projectId: current.project ?? null,
         source: "rule",
         ruleId: current.ruleId,
+        description: current.description || undefined,
       });
     } catch (e) {
       console.error("useSuggestion: confirm start_entry failed", e);

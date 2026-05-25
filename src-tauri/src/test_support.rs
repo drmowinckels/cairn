@@ -148,6 +148,7 @@ pub fn make_rule(id: &str, name: &str) -> Rule {
             project: None,
             tags: vec![],
             tags_from_calendar: false,
+            description_template: None,
         },
     }
 }
@@ -169,6 +170,7 @@ pub fn ide_folder_rule(id: &str, project: &str, value: &str) -> Rule {
             project: Some(project.into()),
             tags: vec![],
             tags_from_calendar: false,
+            description_template: None,
         },
     }
 }

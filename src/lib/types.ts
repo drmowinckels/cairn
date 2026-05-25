@@ -113,6 +113,12 @@ export interface RuleMatchEvent {
   confidence: Confidence;
   project: ProjectId | null;
   tags: string[];
+  /**
+   * Pre-substituted description from the rule's `description_template`
+   * (e.g. `"Meeting: Stand-up"` after `{calendar.event}` resolution).
+   * Empty string when the rule has no template.
+   */
+  description: string;
 }
 
 export interface LiveSignal {

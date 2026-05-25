@@ -208,6 +208,15 @@ pub fn run() {
                 signals::fanout::run_idle_resume(idle_rx, idle_handle).await;
             });
 
+            // Calendar auto-stop: closes Strict-rule-driven entries
+            // whose bound calendar event has ended, unless the user
+            // manually edited the entry in between. See M1 #10.
+            let autostop_pool = db.pool.clone();
+            let autostop_calendar = calendar.clone();
+            tauri::async_runtime::spawn(async move {
+                signals::calendar_autostop::run(autostop_pool, autostop_calendar).await;
+            });
+
             app.manage(AppState {
                 db,
                 pinned: AtomicBool::new(false),
