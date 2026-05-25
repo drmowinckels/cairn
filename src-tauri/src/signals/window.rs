@@ -22,7 +22,10 @@
 //! against rules, and discarded. Nothing in this module writes to disk
 //! or persists state.
 
-use std::path::PathBuf;
+// `PathBuf` is no longer used in this file directly — IDE-folder
+// derivation moved to `signals::ide`. The re-export keeps the
+// pre-existing call site (`crate::signals::window::derive_ide_folder`)
+// compiling for any consumer that hasn't migrated yet.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontWindow {
@@ -53,100 +56,12 @@ pub fn current() -> Option<FrontWindow> {
 }
 
 // -----------------------------------------------------------------
-// IDE folder derivation — pure Rust, runs everywhere, unit-testable.
+// IDE folder derivation lives in `signals::ide` now. Keeping a
+// re-export here for callers that haven't migrated yet.
 // -----------------------------------------------------------------
 
-/// Best-effort: from an editor window title (e.g. "rules.tsx — cairn"
-/// in Zed, "settings.tsx - Visual Studio Code"), return the project
-/// root path the editor is showing. Falls back to `None` when the
-/// title doesn't follow a recognised editor pattern.
-///
-/// This is intentionally a pure function over strings — no IO — so
-/// the rules engine can resolve `ide.folder` deterministically and the
-/// tests can pin behaviour across every supported editor without
-/// touching the filesystem.
-///
-/// The returned `PathBuf` is the *folder name* only (e.g. `cairn`,
-/// `my-project`), not a fully-qualified path. The rules engine's
-/// `ide.folder contains "cairn"` op works on substring match, so a
-/// folder name is sufficient. The `git` collector contributes the
-/// fully-qualified repo path through its own snapshot field.
-pub fn derive_ide_folder(app_name: &str, title: &str) -> Option<PathBuf> {
-    let candidate = match app_name {
-        // Zed, Sublime, RustRover, IntelliJ family, PyCharm, WebStorm,
-        // GoLand, RubyMine, CLion, Android Studio: "file — project"
-        "Zed"
-        | "Sublime Text"
-        | "RustRover"
-        | "IntelliJ IDEA"
-        | "IntelliJ IDEA Ultimate"
-        | "IntelliJ IDEA Community Edition"
-        | "PyCharm"
-        | "PyCharm Professional Edition"
-        | "PyCharm CE"
-        | "WebStorm"
-        | "GoLand"
-        | "RubyMine"
-        | "CLion"
-        | "Android Studio" => extract_after_em_dash(title),
-        // VS Code / Cursor / Code — OSS: "file - project - Visual Studio Code"
-        "Code" | "Visual Studio Code" | "Cursor" | "VSCodium" => extract_vscode_project(title),
-        // Xcode: "Cairn — main — file.swift" → project is first segment
-        "Xcode" => extract_first_em_dash_segment(title),
-        // RStudio: "project - RStudio" or "~/path/to/file — project — RStudio"
-        "RStudio" => extract_rstudio_project(title),
-        // Nova: "file.tsx — project"
-        "Nova" => extract_after_em_dash(title),
-        // Emacs / GNU Emacs: "file.el — project" (varies)
-        "Emacs" | "GNU Emacs" => extract_after_em_dash(title),
-        // Neovim / Vim run in a terminal — title is usually the terminal
-        // emulator's app name, not the IDE. Best to skip; the user can
-        // model this via the git collector instead.
-        _ => None,
-    }?;
-    let trimmed = candidate.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(trimmed))
-    }
-}
-
-/// "file.tsx — cairn"  →  "cairn"
-/// "rules.rs — cairn — main"  →  "cairn" (first segment after em-dash)
-fn extract_after_em_dash(title: &str) -> Option<String> {
-    let after = title.split(" — ").nth(1)?;
-    Some(after.split(" — ").next().unwrap_or(after).to_string())
-}
-
-/// "file.tsx — cairn"  →  "cairn" (alias for clarity at the call site)
-fn extract_first_em_dash_segment(title: &str) -> Option<String> {
-    title.split(" — ").nth(1).map(str::to_string)
-}
-
-/// "settings.tsx - Visual Studio Code"           → None (no project name)
-/// "settings.tsx - cairn - Visual Studio Code"  →  "cairn"
-fn extract_vscode_project(title: &str) -> Option<String> {
-    let parts: Vec<&str> = title.split(" - ").collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    Some(parts[parts.len() - 2].to_string())
-}
-
-/// "cairn - RStudio"                                 →  "cairn"
-/// "~/code/cairn/foo.R — cairn — RStudio"           →  "cairn"
-fn extract_rstudio_project(title: &str) -> Option<String> {
-    if let Some(rest) = title.strip_suffix(" - RStudio") {
-        return Some(rest.to_string());
-    }
-    if let Some(rest) = title.strip_suffix(" — RStudio") {
-        // pick the segment immediately preceding "— RStudio".
-        // `Split<&str>` isn't a DoubleEndedIterator, so use `rsplit`.
-        return rest.rsplit(" — ").next().map(str::to_string);
-    }
-    None
-}
+#[allow(unused_imports)]
+pub use crate::signals::ide::derive_ide_folder;
 
 // -----------------------------------------------------------------
 // macOS
@@ -352,117 +267,4 @@ mod linux {
     }
 }
 
-// -----------------------------------------------------------------
-// Tests
-// -----------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zed_pattern() {
-        assert_eq!(
-            derive_ide_folder("Zed", "rules.tsx — cairn"),
-            Some(PathBuf::from("cairn")),
-        );
-    }
-
-    #[test]
-    fn zed_with_unsaved_marker_still_picks_project() {
-        // Zed uses " ●" to mark unsaved buffers; the project name is
-        // unchanged.
-        assert_eq!(
-            derive_ide_folder("Zed", "rules.tsx ● — cairn"),
-            Some(PathBuf::from("cairn")),
-        );
-    }
-
-    #[test]
-    fn vscode_pattern_with_project() {
-        assert_eq!(
-            derive_ide_folder("Code", "settings.tsx - cairn - Visual Studio Code"),
-            Some(PathBuf::from("cairn")),
-        );
-    }
-
-    #[test]
-    fn vscode_pattern_without_project_returns_none() {
-        assert!(
-            derive_ide_folder("Code", "settings.tsx - Visual Studio Code").is_none(),
-            "no project segment → no derived folder"
-        );
-    }
-
-    #[test]
-    fn cursor_uses_the_vscode_pattern() {
-        assert_eq!(
-            derive_ide_folder("Cursor", "foo.rs - cairn - Visual Studio Code"),
-            Some(PathBuf::from("cairn")),
-        );
-    }
-
-    #[test]
-    fn intellij_uses_the_em_dash_pattern() {
-        assert_eq!(
-            derive_ide_folder("IntelliJ IDEA", "Main.kt — server"),
-            Some(PathBuf::from("server")),
-        );
-    }
-
-    #[test]
-    fn xcode_first_segment_is_project() {
-        assert_eq!(
-            derive_ide_folder("Xcode", "Cairn — main — AppDelegate.swift"),
-            Some(PathBuf::from("main")),
-        );
-    }
-
-    #[test]
-    fn rstudio_short_form() {
-        assert_eq!(
-            derive_ide_folder("RStudio", "cairn - RStudio"),
-            Some(PathBuf::from("cairn")),
-        );
-    }
-
-    #[test]
-    fn rstudio_long_form_with_em_dash() {
-        assert_eq!(
-            derive_ide_folder("RStudio", "~/code/cairn/foo.R — cairn — RStudio"),
-            Some(PathBuf::from("cairn")),
-        );
-    }
-
-    #[test]
-    fn nova_em_dash_pattern() {
-        assert_eq!(
-            derive_ide_folder("Nova", "page.tsx — site"),
-            Some(PathBuf::from("site")),
-        );
-    }
-
-    #[test]
-    fn unknown_app_returns_none() {
-        // Safari / Slack / random apps: we don't try to derive a
-        // folder from their titles. The browser and other signals
-        // carry that info instead.
-        assert!(derive_ide_folder("Safari", "GitHub - cairn-app/cairn").is_none());
-        assert!(derive_ide_folder("Slack", "general — Acme").is_none());
-    }
-
-    #[test]
-    fn title_without_em_dash_returns_none() {
-        assert!(derive_ide_folder("Zed", "settings.tsx").is_none());
-    }
-
-    #[test]
-    fn empty_project_segment_returns_none() {
-        assert!(derive_ide_folder("Zed", "file.tsx — ").is_none());
-    }
-
-    #[test]
-    fn whitespace_only_project_is_treated_as_empty() {
-        assert!(derive_ide_folder("Zed", "file.tsx —    ").is_none());
-    }
-}
+// IDE-derivation tests live with the new code in `signals::ide`.

@@ -12,6 +12,7 @@ pub mod calendar;
 pub mod exclusions;
 pub mod fanout;
 pub mod git;
+pub mod ide;
 pub mod idle;
 pub mod snapshot;
 pub mod stream;

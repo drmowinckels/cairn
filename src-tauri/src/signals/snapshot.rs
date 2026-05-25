@@ -62,7 +62,7 @@ pub async fn build(
             let folder = w
                 .title
                 .as_deref()
-                .and_then(|t| crate::signals::window::derive_ide_folder(&w.app_name, t))
+                .and_then(|t| crate::signals::ide::derive_ide_folder(&w.app_name, t, &[]))
                 .map(|p| p.to_string_lossy().into_owned());
             (Some(w.app_name), w.title, folder)
         }
