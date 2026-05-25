@@ -50,6 +50,7 @@
 //! `signals::idle::seconds_since_input`) via `spawn_blocking` so a
 //! slow subprocess on the host doesn't stall the tokio worker.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -249,11 +250,12 @@ pub fn spawn(
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
 ) -> SnapshotStream {
-    spawn_with_idle_threshold(
+    spawn_full(
         calendar,
         exclusions,
         debounce,
         Duration::from_secs(DEFAULT_IDLE_THRESHOLD_SECS),
+        Vec::new(),
     )
 }
 
@@ -265,6 +267,23 @@ pub fn spawn_with_idle_threshold(
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
     idle_threshold: Duration,
+) -> SnapshotStream {
+    spawn_full(calendar, exclusions, debounce, idle_threshold, Vec::new())
+}
+
+/// Full spawn signature accepting the git watcher's discovered
+/// repo paths. The driver passes these into
+/// `signals::ide::derive_ide_folder` so the IDE-folder resolution
+/// can fall back to longest-prefix repo-path matching for editors
+/// whose title doesn't fit a known pattern (Vim / Neovim / custom
+/// titles). See PR #59 for the `derive_ide_folder` shape and M1
+/// #4 for the watcher.
+pub fn spawn_full(
+    calendar: Arc<CalendarRegistry>,
+    exclusions: Arc<RwLock<ExclusionMatcher>>,
+    debounce: Duration,
+    idle_threshold: Duration,
+    repo_paths: Vec<PathBuf>,
 ) -> SnapshotStream {
     let (event_tx, event_rx) = mpsc::channel::<SignalEvent>(EVENT_CHANNEL_CAPACITY);
     let (snapshot_tx, snapshot_rx) = watch::channel::<Option<SignalSnapshot>>(None);
@@ -289,6 +308,7 @@ pub fn spawn_with_idle_threshold(
         exclusions,
         debounce,
         idle_threshold,
+        Arc::new(repo_paths),
     ));
     tokio::spawn(supervise(driver_handle));
 
@@ -346,6 +366,7 @@ async fn driver(
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
     idle_threshold: Duration,
+    repo_paths: Arc<Vec<PathBuf>>,
 ) {
     let mut state = LiveState::default();
     let mut next_publish_at: Option<Instant> = None;
@@ -375,7 +396,14 @@ async fn driver(
                         // one final snapshot if a debounce was
                         // pending, then exit.
                         if next_publish_at.is_some() {
-                            publish(&state, &snapshot_tx, &calendar, &exclusions).await;
+                            publish(
+                                &state,
+                                &snapshot_tx,
+                                &calendar,
+                                &exclusions,
+                                &repo_paths,
+                            )
+                            .await;
                         }
                         return;
                     }
@@ -383,7 +411,14 @@ async fn driver(
             }
 
             _ = sleep_until(next_publish_at), if next_publish_at.is_some() => {
-                publish(&state, &snapshot_tx, &calendar, &exclusions).await;
+                publish(
+                    &state,
+                    &snapshot_tx,
+                    &calendar,
+                    &exclusions,
+                    &repo_paths,
+                )
+                .await;
                 next_publish_at = None;
             }
         }
@@ -502,6 +537,7 @@ async fn publish(
     snapshot_tx: &watch::Sender<Option<SignalSnapshot>>,
     calendar: &Arc<CalendarRegistry>,
     exclusions: &Arc<RwLock<ExclusionMatcher>>,
+    repo_paths: &[PathBuf],
 ) {
     let active = calendar.active_events_at(Utc::now()).await;
     let calendar_events: Vec<CalendarEvent> = active
@@ -519,7 +555,7 @@ async fn publish(
             let folder = w
                 .title
                 .as_deref()
-                .and_then(|t| crate::signals::ide::derive_ide_folder(&w.app_name, t, &[]))
+                .and_then(|t| crate::signals::ide::derive_ide_folder(&w.app_name, t, repo_paths))
                 .map(|p| p.to_string_lossy().into_owned());
             (Some(w.app_name.clone()), w.title.clone(), folder)
         }

@@ -38,6 +38,13 @@ icalendar = "0.16"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "brotli", "deflate"] }
 url = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+# Cross-platform filesystem watcher used by `signals::git_watcher`
+# to detect `.git/HEAD` changes (branch switches, rebases). Uses
+# FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on
+# Windows. `macos_kqueue` feature disabled because the default
+# FSEvents path is preferred.
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+dirs = "5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
