@@ -747,6 +747,24 @@ mod tests {
         (dir, stream)
     }
 
+    async fn fresh_stream_with_repo_paths(
+        debounce: Duration,
+        repo_paths: Vec<PathBuf>,
+    ) -> (tempfile::TempDir, SnapshotStream) {
+        let (dir, db) = test_db().await;
+        let calendar =
+            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let stream = spawn_full(
+            calendar,
+            exclusions,
+            debounce,
+            Duration::from_secs(DEFAULT_IDLE_THRESHOLD_SECS),
+            repo_paths,
+        );
+        (dir, stream)
+    }
+
     /// Wait for the watch receiver to observe a `Some(snap)` whose
     /// `app_name` matches `expected`. Polls `changed()` until the
     /// timeout, so the test doesn't race the debounce.
@@ -1063,6 +1081,39 @@ mod tests {
             snap.window_title.is_none(),
             "stale-cached window_title leaked: {:?}",
             snap.window_title
+        );
+    }
+
+    #[tokio::test]
+    async fn repo_paths_feed_ide_folder_fallback_for_terminal_editor() {
+        // The whole point of `spawn_full`'s `repo_paths` arg is to
+        // make `derive_ide_folder`'s longest-prefix fallback work
+        // for terminal-based editors. Pin that wiring with a
+        // window event from `iTerm2` whose title contains the
+        // full repo path; the published snapshot's `ide_folder`
+        // should resolve to that path even though the editor isn't
+        // in the title-parser allow-list.
+        let repo = PathBuf::from("/home/u/code/cairn");
+        let (_dir, stream) =
+            fresh_stream_with_repo_paths(Duration::from_millis(50), vec![repo.clone()]).await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Window(Some(fw(
+            "iTerm2",
+            Some("nvim: /home/u/code/cairn/src/lib.rs"),
+        ))))
+        .await
+        .unwrap();
+
+        let snap = wait_for_app_name(&mut rx, "iTerm2", Duration::from_secs(1))
+            .await
+            .expect("iTerm2 publish arrives");
+        assert_eq!(
+            snap.ide_folder.as_deref(),
+            Some(repo.to_str().unwrap()),
+            "repo-paths fallback must resolve the terminal editor's working dir"
         );
     }
 

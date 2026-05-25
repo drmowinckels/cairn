@@ -33,13 +33,12 @@
 //! the watcher most-recently emitted.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
-use notify::{event::ModifyKind, EventKind, RecursiveMode, Watcher};
+use notify::{EventKind, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
-use crate::signals::git::{read_git_context, GitContext};
+use crate::signals::git::read_git_context;
 use crate::signals::stream::SignalEvent;
 
 /// Max directory levels `discover_repos` will walk down from each
@@ -50,8 +49,14 @@ use crate::signals::stream::SignalEvent;
 /// without spelunking into syncthing/cloud-sync directories.
 pub const MAX_DISCOVERY_DEPTH: usize = 3;
 
-/// Directory names skipped during discovery. Always-large,
-/// always-not-a-repo-root.
+/// Directory names skipped during discovery. Always-large or
+/// platform-system; rarely a repo root anyone wants tracked.
+///
+/// The list deliberately excludes `Library` and `Applications`
+/// because those names occasionally appear as legit project
+/// subdirs. The macOS-system dirs of those names sit under
+/// `$HOME` only, and the discovery roots (`~/code`, `~/workspace`,
+/// etc.) don't include `$HOME` directly today.
 const SKIP_DIRS: &[&str] = &[
     "node_modules",
     "target",
@@ -60,14 +65,17 @@ const SKIP_DIRS: &[&str] = &[
     "__pycache__",
     "dist",
     "build",
+    "coverage",
     ".cache",
     ".cargo",
     ".rustup",
     ".npm",
     ".yarn",
     ".pnpm-store",
-    "Library", // macOS system dirs that look like home subdirs
-    "Applications",
+    "vendor",
+    "bower_components",
+    "Pods",
+    "DerivedData",
 ];
 
 /// Default discovery roots when no user config has been written.
@@ -161,21 +169,31 @@ fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
 /// stream is built (the stream takes the list for its
 /// `derive_ide_folder` repo-paths fallback).
 pub fn spawn_watcher_task(event_tx: mpsc::Sender<SignalEvent>, repos: Vec<PathBuf>) {
-    log::info!("git_watcher: watching {} repos", repos.len());
+    log::info!("git_watcher: discovered {} repos", repos.len());
 
-    // Emit one event per repo on startup. Done before the watcher
-    // is set up so the snapshot stream has the latest branch
-    // before any user-driven event arrives.
-    for repo in &repos {
-        if let Some(ctx) = read_git_context(repo) {
-            let _ = event_tx.try_send(SignalEvent::Git(Some(ctx)));
-        }
-    }
-
-    let repos_for_task = repos.clone();
-    let event_tx_for_task = event_tx.clone();
+    // Spawn into a tokio task — the startup-emit loop does file
+    // I/O on each repo's `.git/HEAD`, which would otherwise block
+    // the Tauri `setup()` callback. Inside the task we also push
+    // events into a tokio mpsc (try_send is non-blocking) so a
+    // user with hundreds of repos doesn't stall app launch.
     tokio::spawn(async move {
-        if let Err(e) = run(repos_for_task, event_tx_for_task).await {
+        // Emit one event per repo on startup so the snapshot
+        // stream has the latest branch before any user-driven
+        // event arrives. Sorted by `discover_repos`, so the
+        // first-arriving event is the alphabetically-first repo;
+        // the snapshot stream's `LiveState.git` only retains one
+        // value, so subsequent repos overwrite — that's fine
+        // because the *real* active-repo determination happens
+        // via the window source + `derive_ide_folder`'s repo-paths
+        // fallback once the user navigates.
+        for repo in &repos {
+            if let Some(ctx) = read_git_context(repo) {
+                if let Err(e) = event_tx.try_send(SignalEvent::Git(Some(ctx))) {
+                    log::warn!("git_watcher: startup try_send dropped event: {e}");
+                }
+            }
+        }
+        if let Err(e) = run(repos, event_tx).await {
             log::warn!("git_watcher: task exited: {e}");
         }
     });
@@ -204,9 +222,13 @@ async fn run(
     // any change in there could mean a branch switch. We filter
     // to actual HEAD changes inside the handler.
     //
-    // Canonicalize the `.git` path so notify's event paths
-    // (which come from the OS already-canonicalized — e.g. macOS
-    // rewrites `/tmp/...` to `/private/tmp/...`) match our keys.
+    // Index each watched `.git` under BOTH its raw and canonical
+    // forms so the event-path lookup matches whichever variant
+    // notify hands us (macOS sends `/private/tmp/...` for paths
+    // we passed in as `/tmp/...`). Without both keys, a failed
+    // `canonicalize` on the event path would fall back to a
+    // non-matching raw form and the event would be dropped
+    // silently.
     let mut watched: std::collections::HashMap<PathBuf, PathBuf> = Default::default();
     for repo in &repos {
         let git_dir = repo.join(".git");
@@ -223,19 +245,31 @@ async fn run(
             log::warn!("git_watcher: watch {} failed: {e}", git_dir.display());
             continue;
         }
-        let canonical = git_dir.canonicalize().unwrap_or(git_dir);
-        watched.insert(canonical, repo.clone());
+        // Insert raw form first; canonical may equal raw on
+        // systems without symlink rewriting.
+        watched.insert(git_dir.clone(), repo.clone());
+        if let Ok(canonical) = git_dir.canonicalize() {
+            if canonical != git_dir {
+                watched.insert(canonical, repo.clone());
+            }
+        }
     }
 
-    log::info!("git_watcher: watching {} repos", watched.len());
+    log::info!(
+        "git_watcher: actively watching {} .git dirs",
+        watched.len() / 2
+    );
 
     // Debounce: HEAD changes often come as a burst (rename + write
     // + close on git checkout). Coalesce events within DEBOUNCE
-    // per-repo before re-reading the GitContext.
+    // per-repo before re-reading the GitContext. `Delay` (rather
+    // than `Skip`) is the right behaviour for a drain timer — if
+    // notify floods us with events, the ticker should serve them
+    // promptly rather than coalesce intervals.
     let debounce = Duration::from_millis(200);
     let mut pending: std::collections::HashMap<PathBuf, tokio::time::Instant> = Default::default();
     let mut tick = tokio::time::interval(debounce);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -247,20 +281,34 @@ async fn run(
                     continue;
                 }
                 for path in &ev.paths {
-                    // Match the event path against the canonical
-                    // form we stored, so a macOS-style
-                    // `/tmp` ↔ `/private/tmp` symlink rewrite
-                    // doesn't drop the event silently.
-                    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.clone());
-                    let Some((_, repo)) = watched
-                        .iter()
-                        .find(|(gd, _)| canonical_path.starts_with(gd.as_path()))
-                    else { continue; };
-                    // We only care about HEAD itself (not arbitrary refs).
-                    if !canonical_path.ends_with("HEAD") {
+                    // Only care about HEAD itself. Check the raw
+                    // event path first — that's the cheap path —
+                    // before falling back to canonicalize, which
+                    // requires the file to exist (and may fail
+                    // for transient temp paths during atomic
+                    // rename).
+                    if !path.ends_with("HEAD") {
                         continue;
                     }
-                    pending.insert(repo.clone(), tokio::time::Instant::now() + debounce);
+                    // Try the raw path against the watch map
+                    // first; if it doesn't match, canonicalize
+                    // and retry. The map holds both forms (raw +
+                    // canonical) per repo, so this covers macOS's
+                    // /tmp ↔ /private/tmp rewriting without
+                    // depending on canonicalize succeeding here.
+                    let repo = watched
+                        .iter()
+                        .find(|(gd, _)| path.starts_with(gd.as_path()))
+                        .map(|(_, r)| r.clone())
+                        .or_else(|| {
+                            let canonical = path.canonicalize().ok()?;
+                            watched
+                                .iter()
+                                .find(|(gd, _)| canonical.starts_with(gd.as_path()))
+                                .map(|(_, r)| r.clone())
+                        });
+                    let Some(repo) = repo else { continue };
+                    pending.insert(repo, tokio::time::Instant::now() + debounce);
                 }
             }
             _ = tick.tick() => {
@@ -287,32 +335,21 @@ async fn run(
 }
 
 /// True iff a notify event is the kind we care about for HEAD
-/// changes. We include Modify (content change) and Create (e.g.
-/// an atomic-rename install of a new HEAD by `git checkout`).
+/// changes. We accept any `Modify` (content writes from
+/// `git checkout`, `git reset`, etc.) and any `Create` (atomic-
+/// rename installations land as a Create on the destination
+/// path). `EventKind::Other` is the platform-fallback bucket some
+/// backends use when they can't classify; include it
+/// defensively. `Remove` events on HEAD are deliberately
+/// excluded — a Remove without a follow-up Create means git
+/// failed mid-checkout and the HEAD will be replaced almost
+/// immediately, so reading at remove-time would race the writer.
 fn is_head_event(kind: &EventKind) -> bool {
     matches!(
         kind,
         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Other
-    ) || matches!(
-        kind,
-        EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Any)
     )
 }
-
-/// Test seam: synchronously read the GitContext for a discovered
-/// repo. Used by the snapshot stream's window-publish path so the
-/// IDE folder → repo path → branch wiring happens without going
-/// through the watcher's debounce. `pub` so other modules in the
-/// crate can call this directly.
-pub fn read_for(repo: &Path) -> Option<GitContext> {
-    read_git_context(repo)
-}
-
-/// Sugar: `Arc<Vec<PathBuf>>` of discovered repo paths is what the
-/// snapshot stream's publish path needs for the
-/// `derive_ide_folder` repo_paths fallback. Sharing via Arc avoids
-/// cloning the slice into every snapshot publish.
-pub type SharedRepoPaths = Arc<Vec<PathBuf>>;
 
 #[cfg(test)]
 mod tests {
@@ -432,13 +469,28 @@ mod tests {
         }
     }
 
+    // -- is_head_event filter --
+
     #[test]
-    fn read_for_returns_git_context() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = mk_repo(tmp.path(), "x");
-        let ctx = read_for(&repo).expect("HEAD parses");
-        assert_eq!(ctx.branch.as_deref(), Some("main"));
-        assert_eq!(ctx.repo_path, repo);
+    fn is_head_event_accepts_modify_create_other() {
+        use notify::event::{CreateKind, ModifyKind};
+        assert!(is_head_event(&EventKind::Modify(ModifyKind::Any)));
+        assert!(is_head_event(&EventKind::Modify(ModifyKind::Data(
+            notify::event::DataChange::Content
+        ))));
+        assert!(is_head_event(&EventKind::Modify(ModifyKind::Name(
+            notify::event::RenameMode::To
+        ))));
+        assert!(is_head_event(&EventKind::Create(CreateKind::File)));
+        assert!(is_head_event(&EventKind::Other));
+    }
+
+    #[test]
+    fn is_head_event_rejects_remove_and_access() {
+        use notify::event::{AccessKind, RemoveKind};
+        assert!(!is_head_event(&EventKind::Remove(RemoveKind::File)));
+        assert!(!is_head_event(&EventKind::Access(AccessKind::Read)));
+        assert!(!is_head_event(&EventKind::Any));
     }
 
     // ---- Integration: spawn_watcher_task end-to-end -------------
@@ -476,10 +528,20 @@ mod tests {
 
         spawn_watcher_task(tx, vec![repo.clone()]);
 
-        // Drain the startup event.
-        let _ = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        // Drain the startup event and assert it carries the
+        // pre-change branch ("main"). This pins the order:
+        // startup event THEN the user-driven change event.
+        let startup = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
-            .expect("startup event arrives");
+            .expect("startup event arrives")
+            .expect("channel open");
+        match startup {
+            SignalEvent::Git(Some(ref ctx)) => {
+                assert_eq!(ctx.branch.as_deref(), Some("main"));
+                assert_eq!(ctx.repo_path, repo);
+            }
+            other => panic!("expected startup Git event with main, got {other:?}"),
+        }
 
         // Give notify a moment to wire up the watch on the .git
         // dir. Without this small sleep on macOS the very first
@@ -491,7 +553,10 @@ mod tests {
 
         // The notify event arrives, the 200ms debounce elapses,
         // and a Git event with the new branch lands. Allow up to
-        // 2s total to absorb test-host filesystem latency.
+        // 2s total to absorb test-host filesystem latency. The
+        // first Git event after the write must carry the new
+        // branch — anything else means the debounce or the path
+        // filter is letting noise through.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
             let remaining = deadline
@@ -501,15 +566,18 @@ mod tests {
                 Ok(Some(ev)) => ev,
                 _ => panic!("HEAD change event did not arrive within timeout"),
             };
-            let SignalEvent::Git(Some(ctx)) = ev else {
-                continue;
-            };
-            if ctx.branch.as_deref() == Some("feat/x") {
+            if let SignalEvent::Git(Some(ctx)) = ev {
+                assert_eq!(
+                    ctx.branch.as_deref(),
+                    Some("feat/x"),
+                    "first Git event after HEAD write must carry the new branch",
+                );
                 assert_eq!(ctx.repo_path, repo);
                 return;
             }
-            // Could be a residual startup event or a transient
-            // partial-write; keep waiting for the final state.
+            // Non-Git events: today the watcher only emits Git
+            // events, so this branch is reachable only if a
+            // future refactor adds something.
         }
     }
 }
