@@ -177,12 +177,26 @@ pub fn run() {
                 tauri::async_runtime::block_on(async { ExclusionMatcher::load(&db.pool).await });
             let exclusions = Arc::new(RwLock::new(exclusions));
 
-            let stream = Arc::new(signals::stream::spawn(
+            // Git watcher: discover repos under the user's
+            // discovery roots so the snapshot stream gets a list of
+            // repo paths to use for `derive_ide_folder`'s
+            // longest-prefix fallback. Then start the actual
+            // file-watcher task on each `.git/HEAD`.
+            let discovery_roots = signals::git_watcher::default_discovery_roots();
+            let discovered_repos = signals::git_watcher::discover_repos(&discovery_roots);
+
+            let stream = Arc::new(signals::stream::spawn_full(
                 calendar.clone(),
                 exclusions.clone(),
                 signals::stream::DEFAULT_DEBOUNCE,
+                std::time::Duration::from_secs(signals::stream::DEFAULT_IDLE_THRESHOLD_SECS),
+                discovered_repos.clone(),
             ));
             signals::stream::spawn_default_sources(&stream);
+
+            // Spawn the git watcher *after* the stream so the
+            // initial Git events flow into the stream's sender.
+            signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos);
 
             // Tauri fan-out: every published snapshot is evaluated
             // against the rules in the DB and emitted as

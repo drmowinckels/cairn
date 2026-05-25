@@ -13,6 +13,7 @@ pub mod calendar_autostop;
 pub mod exclusions;
 pub mod fanout;
 pub mod git;
+pub mod git_watcher;
 pub mod ide;
 pub mod idle;
 pub mod snapshot;

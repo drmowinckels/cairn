@@ -50,6 +50,7 @@
 //! `signals::idle::seconds_since_input`) via `spawn_blocking` so a
 //! slow subprocess on the host doesn't stall the tokio worker.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -249,11 +250,12 @@ pub fn spawn(
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
 ) -> SnapshotStream {
-    spawn_with_idle_threshold(
+    spawn_full(
         calendar,
         exclusions,
         debounce,
         Duration::from_secs(DEFAULT_IDLE_THRESHOLD_SECS),
+        Vec::new(),
     )
 }
 
@@ -265,6 +267,23 @@ pub fn spawn_with_idle_threshold(
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
     idle_threshold: Duration,
+) -> SnapshotStream {
+    spawn_full(calendar, exclusions, debounce, idle_threshold, Vec::new())
+}
+
+/// Full spawn signature accepting the git watcher's discovered
+/// repo paths. The driver passes these into
+/// `signals::ide::derive_ide_folder` so the IDE-folder resolution
+/// can fall back to longest-prefix repo-path matching for editors
+/// whose title doesn't fit a known pattern (Vim / Neovim / custom
+/// titles). See PR #59 for the `derive_ide_folder` shape and M1
+/// #4 for the watcher.
+pub fn spawn_full(
+    calendar: Arc<CalendarRegistry>,
+    exclusions: Arc<RwLock<ExclusionMatcher>>,
+    debounce: Duration,
+    idle_threshold: Duration,
+    repo_paths: Vec<PathBuf>,
 ) -> SnapshotStream {
     let (event_tx, event_rx) = mpsc::channel::<SignalEvent>(EVENT_CHANNEL_CAPACITY);
     let (snapshot_tx, snapshot_rx) = watch::channel::<Option<SignalSnapshot>>(None);
@@ -289,6 +308,7 @@ pub fn spawn_with_idle_threshold(
         exclusions,
         debounce,
         idle_threshold,
+        Arc::new(repo_paths),
     ));
     tokio::spawn(supervise(driver_handle));
 
@@ -346,6 +366,7 @@ async fn driver(
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
     idle_threshold: Duration,
+    repo_paths: Arc<Vec<PathBuf>>,
 ) {
     let mut state = LiveState::default();
     let mut next_publish_at: Option<Instant> = None;
@@ -375,7 +396,14 @@ async fn driver(
                         // one final snapshot if a debounce was
                         // pending, then exit.
                         if next_publish_at.is_some() {
-                            publish(&state, &snapshot_tx, &calendar, &exclusions).await;
+                            publish(
+                                &state,
+                                &snapshot_tx,
+                                &calendar,
+                                &exclusions,
+                                &repo_paths,
+                            )
+                            .await;
                         }
                         return;
                     }
@@ -383,7 +411,14 @@ async fn driver(
             }
 
             _ = sleep_until(next_publish_at), if next_publish_at.is_some() => {
-                publish(&state, &snapshot_tx, &calendar, &exclusions).await;
+                publish(
+                    &state,
+                    &snapshot_tx,
+                    &calendar,
+                    &exclusions,
+                    &repo_paths,
+                )
+                .await;
                 next_publish_at = None;
             }
         }
@@ -502,6 +537,7 @@ async fn publish(
     snapshot_tx: &watch::Sender<Option<SignalSnapshot>>,
     calendar: &Arc<CalendarRegistry>,
     exclusions: &Arc<RwLock<ExclusionMatcher>>,
+    repo_paths: &[PathBuf],
 ) {
     let active = calendar.active_events_at(Utc::now()).await;
     let calendar_events: Vec<CalendarEvent> = active
@@ -519,7 +555,7 @@ async fn publish(
             let folder = w
                 .title
                 .as_deref()
-                .and_then(|t| crate::signals::ide::derive_ide_folder(&w.app_name, t, &[]))
+                .and_then(|t| crate::signals::ide::derive_ide_folder(&w.app_name, t, repo_paths))
                 .map(|p| p.to_string_lossy().into_owned());
             (Some(w.app_name.clone()), w.title.clone(), folder)
         }
@@ -708,6 +744,24 @@ mod tests {
             Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
         let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
         let stream = spawn_with_idle_threshold(calendar, exclusions, debounce, idle_threshold);
+        (dir, stream)
+    }
+
+    async fn fresh_stream_with_repo_paths(
+        debounce: Duration,
+        repo_paths: Vec<PathBuf>,
+    ) -> (tempfile::TempDir, SnapshotStream) {
+        let (dir, db) = test_db().await;
+        let calendar =
+            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let stream = spawn_full(
+            calendar,
+            exclusions,
+            debounce,
+            Duration::from_secs(DEFAULT_IDLE_THRESHOLD_SECS),
+            repo_paths,
+        );
         (dir, stream)
     }
 
@@ -1027,6 +1081,39 @@ mod tests {
             snap.window_title.is_none(),
             "stale-cached window_title leaked: {:?}",
             snap.window_title
+        );
+    }
+
+    #[tokio::test]
+    async fn repo_paths_feed_ide_folder_fallback_for_terminal_editor() {
+        // The whole point of `spawn_full`'s `repo_paths` arg is to
+        // make `derive_ide_folder`'s longest-prefix fallback work
+        // for terminal-based editors. Pin that wiring with a
+        // window event from `iTerm2` whose title contains the
+        // full repo path; the published snapshot's `ide_folder`
+        // should resolve to that path even though the editor isn't
+        // in the title-parser allow-list.
+        let repo = PathBuf::from("/home/u/code/cairn");
+        let (_dir, stream) =
+            fresh_stream_with_repo_paths(Duration::from_millis(50), vec![repo.clone()]).await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Window(Some(fw(
+            "iTerm2",
+            Some("nvim: /home/u/code/cairn/src/lib.rs"),
+        ))))
+        .await
+        .unwrap();
+
+        let snap = wait_for_app_name(&mut rx, "iTerm2", Duration::from_secs(1))
+            .await
+            .expect("iTerm2 publish arrives");
+        assert_eq!(
+            snap.ide_folder.as_deref(),
+            Some(repo.to_str().unwrap()),
+            "repo-paths fallback must resolve the terminal editor's working dir"
         );
     }
 
