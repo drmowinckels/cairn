@@ -265,4 +265,35 @@ describe("RulesView", () => {
     const opSel = container.querySelector<HTMLSelectElement>(".cond-op");
     expect(opSel?.value).toBe("is-active");
   });
+
+  // ---- #12: Live signals card integration -------------------------
+
+  it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const conditionsBefore = container.querySelectorAll(".cond").length;
+    // The card renders signal rows as buttons when an onSignalClick
+    // handler is wired in. Click the first one.
+    const sigButtons = container.querySelectorAll<HTMLButtonElement>(
+      ".sig-row--clickable",
+    );
+    expect(sigButtons.length).toBeGreaterThan(0);
+    fireEvent.click(sigButtons[0]);
+    await waitFor(() => {
+      expect(container.querySelectorAll(".cond").length).toBe(conditionsBefore + 1);
+    });
+  });
+
+  it("clicking a Live-signals row with no rule open creates one (#12)", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const rulesBefore = container.querySelectorAll(".rule").length;
+    const sigButtons = container.querySelectorAll<HTMLButtonElement>(
+      ".sig-row--clickable",
+    );
+    fireEvent.click(sigButtons[0]);
+    await waitFor(() => {
+      expect(container.querySelectorAll(".rule").length).toBe(rulesBefore + 1);
+      // The new rule is auto-expanded so the user can edit/confirm.
+      expect(container.querySelectorAll(".rule.is-open").length).toBe(1);
+    });
+  });
 });
