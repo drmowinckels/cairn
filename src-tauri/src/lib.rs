@@ -3,6 +3,7 @@ mod db;
 mod ipc;
 mod popover;
 mod rules;
+mod shutdown;
 mod signals;
 mod tray;
 
@@ -281,6 +282,17 @@ pub fn run() {
             popover::register_shortcut(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| {
+            // Drain the SQLite pool before the Tokio runtime drops
+            // — otherwise in-flight writes get aborted mid-
+            // transaction and the most recent entry can be silently
+            // lost. The helper lives in `shutdown.rs` so the
+            // contract has tests (this closure can't be unit-
+            // tested in a mock_app rig).
+            if let tauri::RunEvent::ExitRequested { .. } = &event {
+                tauri::async_runtime::block_on(shutdown::drain_db_pool(app_handle));
+            }
+        });
 }
