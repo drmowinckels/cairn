@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { inTauri, startEntry } from "./ipc";
+import { inTauri, snoozeAll, snoozeRule, startEntry } from "./ipc";
 import type { Confidence, RuleMatchEvent } from "./types";
 
 /** A suggestion the UI should display in the `.suggest` banner. */
@@ -9,8 +9,8 @@ export type Suggestion = RuleMatchEvent;
 /** Tauri event name the backend's `signals::fanout` task emits. */
 export const SIGNAL_MATCH_EVENT = "signal:match";
 
-/** Default snooze duration for a dismissed suggestion. */
-export const DEFAULT_SNOOZE_MS = 5 * 60 * 1000;
+/** Default snooze duration for a dismissed suggestion (5 min). */
+export const DEFAULT_SNOOZE_SECONDS = 5 * 60;
 
 /**
  * Options for `useSuggestion`. **Stability matters**: `startEntry`,
@@ -20,13 +20,14 @@ export const DEFAULT_SNOOZE_MS = 5 * 60 * 1000;
  */
 export interface UseSuggestionOpts {
   /**
-   * How long to suppress further `signal:match` events for a given
-   * `ruleId` after a *Suggestive* dismiss. See `docs/RULES_ENGINE.md`
-   * §6. The default mirrors the spec's 5-minute floor. Snooze does
-   * NOT apply to Strict matches — that path is governed by the
-   * `currentRunningRuleId` de-dup below.
+   * How long to snooze the rule on dismiss (seconds). See
+   * `docs/RULES_ENGINE.md` §6. The default mirrors the spec's
+   * 5-minute floor. The snooze itself is enforced *backend-side*
+   * via `snooze_rule` IPC so it persists across popover hide/show
+   * (per M1 #9). Snooze does NOT apply to Strict matches — that
+   * path is governed by the `currentRunningRuleId` de-dup below.
    */
-  snoozeMs?: number;
+  snoozeSeconds?: number;
   /**
    * The `rule_id` of the currently-running timer, if any. The Strict
    * auto-start path skips the IPC when the firing rule's id already
@@ -42,6 +43,16 @@ export interface UseSuggestionOpts {
    * Tauri runtime.
    */
   startEntry?: typeof startEntry;
+  /**
+   * Override the IPC snooze hook for tests.
+   */
+  snoozeRule?: typeof snoozeRule;
+  /**
+   * Override the IPC snooze-all hook for tests. Used by the
+   * overflow menu's "Snooze all for 1h" / "Until tomorrow"
+   * options.
+   */
+  snoozeAll?: typeof snoozeAll;
   /**
    * Override the Tauri event listener. The default uses
    * `@tauri-apps/api/event::listen`; tests inject a fake that lets
@@ -61,8 +72,10 @@ export interface UseSuggestionState {
   suggestion: Suggestion | null;
   /** Confirm: start a timer with the suggested project + rule_id. */
   confirm: () => Promise<void>;
-  /** Dismiss + snooze the rule for `snoozeMs`. */
-  dismiss: () => void;
+  /** Dismiss + snooze the rule on the backend for `snoozeSeconds`. */
+  dismiss: () => Promise<void>;
+  /** Snooze every suggestion globally for `seconds`. */
+  snoozeEverything: (seconds: number) => Promise<void>;
 }
 
 /**
@@ -85,14 +98,15 @@ export interface UseSuggestionState {
  * the rest of the Today view.
  */
 export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState {
-  const snoozeMs = Math.max(0, opts.snoozeMs ?? DEFAULT_SNOOZE_MS);
+  const snoozeSeconds = Math.max(1, opts.snoozeSeconds ?? DEFAULT_SNOOZE_SECONDS);
   const start = opts.startEntry ?? startEntry;
+  const snooze = opts.snoozeRule ?? snoozeRule;
+  const snoozeAllFn = opts.snoozeAll ?? snoozeAll;
   const listenFn = opts.listen ?? listen;
   const enabled = opts.enabled ?? inTauri;
   const currentRunningRuleId = opts.currentRunningRuleId ?? null;
 
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
-  const snoozedUntilRef = useRef(new Map<string, number>());
   // Mirror the currently-running ruleId in a ref so the listener
   // sees the latest value without re-subscribing. The Strict
   // auto-start de-dup compares the incoming match's ruleId against
@@ -125,14 +139,10 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
         return;
       }
 
-      // Suggestive: snooze gate applies only here, per RULES_ENGINE.md §6.
-      const now = Date.now();
-      const snoozedUntil = snoozedUntilRef.current.get(payload.ruleId) ?? 0;
-      if (snoozedUntil > now) return;
-      // Sweep this entry if it had expired — keeps the map from
-      // accreting stale entries over long-running sessions.
-      if (snoozedUntil > 0) snoozedUntilRef.current.delete(payload.ruleId);
-
+      // Suggestive: the *backend* snoozer gates whether we see this
+      // event at all (per M1 #9, the matcher in `signals::fanout`
+      // skips snoozed rules before emitting `signal:match`). The
+      // hook just surfaces whatever the matcher decided to fire.
       setSuggestion(payload);
     }).then((un) => {
       if (cancelled) {
@@ -162,13 +172,30 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
     }
   }, [start, suggestion]);
 
-  const dismiss = useCallback(() => {
+  const dismiss = useCallback(async () => {
     if (!suggestion) return;
-    snoozedUntilRef.current.set(suggestion.ruleId, Date.now() + snoozeMs);
+    const current = suggestion;
     setSuggestion(null);
-  }, [snoozeMs, suggestion]);
+    try {
+      await snooze(current.ruleId, snoozeSeconds);
+    } catch (e) {
+      console.error("useSuggestion: snooze_rule failed", e);
+    }
+  }, [snooze, snoozeSeconds, suggestion]);
 
-  return { suggestion, confirm, dismiss };
+  const snoozeEverything = useCallback(
+    async (seconds: number) => {
+      setSuggestion(null);
+      try {
+        await snoozeAllFn(Math.max(1, Math.floor(seconds)));
+      } catch (e) {
+        console.error("useSuggestion: snooze_all failed", e);
+      }
+    },
+    [snoozeAllFn],
+  );
+
+  return { suggestion, confirm, dismiss, snoozeEverything };
 }
 
 export type { Confidence };

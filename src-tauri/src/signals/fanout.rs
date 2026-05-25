@@ -95,7 +95,19 @@ pub fn project_rules(rules: Vec<crate::ipc::Rule>) -> Vec<Rule> {
 /// Evaluate a snapshot against a list of rules and build the
 /// outcome the fan-out task emits. Pure — no IO, no Tauri.
 pub fn outcome_for(snapshot: SignalSnapshot, rules: &[Rule]) -> MatchOutcome {
-    let rule_match = crate::rules::evaluate(rules, &snapshot);
+    outcome_for_with_snoozer(snapshot, rules, None)
+}
+
+/// Same as `outcome_for` but consults a snoozer first. Rules that
+/// are currently snoozed (per-rule or globally) are skipped, which
+/// is what the production fanout uses on every snapshot publish.
+pub fn outcome_for_with_snoozer(
+    snapshot: SignalSnapshot,
+    rules: &[Rule],
+    snoozer: Option<&mut crate::rules::Snoozer>,
+) -> MatchOutcome {
+    let rule_match =
+        crate::rules::evaluate_with_snoozer(rules, &snapshot, snoozer, chrono::Utc::now());
     MatchOutcome {
         rule_match,
         snapshot,
@@ -161,6 +173,7 @@ async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
 pub async fn run<R: Runtime>(
     mut rx: watch::Receiver<Option<SignalSnapshot>>,
     pool: SqlitePool,
+    snoozer: std::sync::Arc<std::sync::Mutex<crate::rules::Snoozer>>,
     app: AppHandle<R>,
 ) {
     let _ = rx.borrow_and_update();
@@ -173,7 +186,19 @@ pub async fn run<R: Runtime>(
         };
         let rules = load_rules(&pool).await;
         let parsed = project_rules(rules);
-        let outcome = outcome_for(snap, &parsed);
+        let outcome = match snoozer.lock() {
+            Ok(mut guard) => outcome_for_with_snoozer(snap, &parsed, Some(&mut *guard)),
+            Err(_) => {
+                // Lock poisoned (panic inside a previous IPC). Fall
+                // back to the no-snooze path so the matcher still
+                // runs — dropping every match would be a worse UX
+                // than the (unlikely) chance of firing a snoozed
+                // rule for one cycle until the next snooze write
+                // replaces the lock state.
+                log::warn!("fanout: snoozer lock poisoned, evaluating without snooze gate");
+                outcome_for(snap, &parsed)
+            }
+        };
         if let Err(e) = app.emit_to(POPOVER_LABEL, EVENT_SNAPSHOT, &outcome.snapshot) {
             log::debug!("fanout: emit_to {POPOVER_LABEL} {EVENT_SNAPSHOT} failed: {e}");
         }
@@ -374,7 +399,8 @@ mod tests {
         let (tx, rx) = watch::channel::<Option<SignalSnapshot>>(None);
         let app = _app.handle().clone();
         let pool = db.pool.clone();
-        let task = tokio::spawn(async move { run(rx, pool, app).await });
+        let snoozer = std::sync::Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new()));
+        let task = tokio::spawn(async move { run(rx, pool, snoozer, app).await });
 
         // Push one real snapshot — drives one iteration of the loop.
         tx.send(Some(snap_with_app("Cairn"))).unwrap();

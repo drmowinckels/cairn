@@ -2,11 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 const startEntryMock = vi.fn();
+const snoozeRuleMock = vi.fn();
+const snoozeAllMock = vi.fn();
 
-// Minimal Tauri event harness: the test holds a reference to the
-// handler the hook registers via `listen`, and emits payloads by
-// invoking it directly. `listen` returns the unlisten fn the hook
-// will call on unmount.
 interface ListenHarness {
   handler: ((event: { payload: unknown }) => void) | null;
   unlisten: ReturnType<typeof vi.fn>;
@@ -38,9 +36,23 @@ function makeListenHarness(): {
   return { listen, harness };
 }
 
+function defaultOpts(overrides: Record<string, unknown> = {}) {
+  return {
+    startEntry: startEntryMock as never,
+    snoozeRule: snoozeRuleMock as never,
+    snoozeAll: snoozeAllMock as never,
+    enabled: true,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   startEntryMock.mockReset();
   startEntryMock.mockResolvedValue({});
+  snoozeRuleMock.mockReset();
+  snoozeRuleMock.mockResolvedValue(undefined);
+  snoozeAllMock.mockReset();
+  snoozeAllMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -53,11 +65,7 @@ describe("useSuggestion (suggestive path)", () => {
     const { useSuggestion } = await import("./use-suggestion");
 
     const { result } = renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        enabled: true,
-      }),
+      useSuggestion(defaultOpts({ listen: listen as never })),
     );
 
     await waitFor(() => expect(harness.handler).not.toBeNull());
@@ -81,6 +89,7 @@ describe("useSuggestion (suggestive path)", () => {
       tags: ["dev"],
     });
     expect(startEntryMock).not.toHaveBeenCalled();
+    expect(snoozeRuleMock).not.toHaveBeenCalled();
   });
 
   it("confirm() calls startEntry with source=rule and clears the suggestion", async () => {
@@ -88,11 +97,7 @@ describe("useSuggestion (suggestive path)", () => {
     const { useSuggestion } = await import("./use-suggestion");
 
     const { result } = renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        enabled: true,
-      }),
+      useSuggestion(defaultOpts({ listen: listen as never })),
     );
 
     await waitFor(() => expect(harness.handler).not.toBeNull());
@@ -105,7 +110,6 @@ describe("useSuggestion (suggestive path)", () => {
         tags: ["dev"],
       });
     });
-    expect(result.current.suggestion).not.toBeNull();
 
     await act(async () => {
       await result.current.confirm();
@@ -120,23 +124,12 @@ describe("useSuggestion (suggestive path)", () => {
     expect(result.current.suggestion).toBeNull();
   });
 
-  it("dismiss() clears the suggestion and snoozes that rule's future matches", async () => {
-    // Mock Date.now() instead of fake timers — fake timers break
-    // waitFor's polling. The hook reads Date.now() for snooze
-    // bookkeeping; controlling it directly is enough.
-    let now = 1_000_000;
-    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
-
+  it("dismiss() clears the suggestion and calls snoozeRule IPC with the default duration", async () => {
     const { listen, harness } = makeListenHarness();
-    const { useSuggestion } = await import("./use-suggestion");
+    const { useSuggestion, DEFAULT_SNOOZE_SECONDS } = await import("./use-suggestion");
 
     const { result } = renderHook(() =>
-      useSuggestion({
-        snoozeMs: 60_000,
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        enabled: true,
-      }),
+      useSuggestion(defaultOpts({ listen: listen as never })),
     );
 
     await waitFor(() => expect(harness.handler).not.toBeNull());
@@ -149,51 +142,143 @@ describe("useSuggestion (suggestive path)", () => {
         tags: [],
       });
     });
-    expect(result.current.suggestion).not.toBeNull();
 
-    act(() => result.current.dismiss());
-    expect(result.current.suggestion).toBeNull();
-
-    // Within the snooze window: same rule re-firing must NOT
-    // resurface the banner.
-    now += 30_000; // half the snooze
-    act(() => {
-      harness.emit({
-        ruleId: "r1",
-        ruleName: "Cairn dev",
-        confidence: "suggestive",
-        project: "cairn",
-        tags: [],
-      });
+    await act(async () => {
+      await result.current.dismiss();
     });
-    expect(result.current.suggestion).toBeNull();
 
-    // A different rule firing in the same window is unaffected.
+    expect(result.current.suggestion).toBeNull();
+    expect(snoozeRuleMock).toHaveBeenCalledTimes(1);
+    expect(snoozeRuleMock).toHaveBeenCalledWith("r1", DEFAULT_SNOOZE_SECONDS);
+  });
+
+  it("dismiss() honours a caller-supplied snoozeSeconds", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+
+    const { result } = renderHook(() =>
+      useSuggestion(
+        defaultOpts({ listen: listen as never, snoozeSeconds: 60 }),
+      ),
+    );
+
+    await waitFor(() => expect(harness.handler).not.toBeNull());
     act(() => {
       harness.emit({
         ruleId: "r2",
         ruleName: "Other",
         confidence: "suggestive",
-        project: "other",
+        project: "p",
         tags: [],
       });
     });
-    expect(result.current.suggestion?.ruleId).toBe("r2");
 
-    // After the snooze expires the original rule may resurface.
-    act(() => result.current.dismiss());
-    now += 60_001;
+    await act(async () => {
+      await result.current.dismiss();
+    });
+    expect(snoozeRuleMock).toHaveBeenCalledWith("r2", 60);
+  });
+
+  it("snoozeEverything() calls snoozeAll IPC and clears the suggestion", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
     act(() => {
       harness.emit({
-        ruleId: "r1",
-        ruleName: "Cairn dev",
+        ruleId: "r3",
+        ruleName: "x",
         confidence: "suggestive",
-        project: "cairn",
+        project: "p",
         tags: [],
       });
     });
-    expect(result.current.suggestion?.ruleId).toBe("r1");
-    dateNow.mockRestore();
+
+    await act(async () => {
+      await result.current.snoozeEverything(3600);
+    });
+
+    expect(snoozeAllMock).toHaveBeenCalledWith(3600);
+    expect(result.current.suggestion).toBeNull();
+  });
+
+  it("dismiss clears the banner BEFORE awaiting the IPC (no UI flicker on slow IPC)", async () => {
+    // If `dismiss()` waited on the IPC before clearing the
+    // banner, a slow IPC roundtrip would leave the banner
+    // visible. Pin "set null first, IPC second" so this contract
+    // doesn't silently regress.
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+
+    // Hold the snooze IPC open with a never-resolving promise so
+    // we can observe the in-flight state.
+    let resolveSnooze: () => void = () => {};
+    snoozeRuleMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          resolveSnooze = r;
+        }),
+    );
+
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r-flicker",
+        ruleName: "x",
+        confidence: "suggestive",
+        project: "p",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).not.toBeNull();
+
+    // Fire dismiss but don't await — the IPC promise is parked.
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.dismiss();
+    });
+    // Banner is already cleared even though the IPC is still in flight.
+    expect(result.current.suggestion).toBeNull();
+    expect(snoozeRuleMock).toHaveBeenCalledWith(
+      "r-flicker",
+      expect.any(Number),
+    );
+
+    // Resolve and await to keep the test lifecycle clean.
+    resolveSnooze();
+    await act(async () => {
+      await pending;
+    });
+  });
+
+  it("snoozeEverything() floors and clamps non-positive durations to 1 second", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+
+    await act(async () => {
+      await result.current.snoozeEverything(0);
+    });
+    await act(async () => {
+      await result.current.snoozeEverything(-100);
+    });
+    await act(async () => {
+      await result.current.snoozeEverything(3600.7);
+    });
+
+    // 0 → 1, -100 → 1, 3600.7 → 3600 (floored)
+    expect(snoozeAllMock).toHaveBeenNthCalledWith(1, 1);
+    expect(snoozeAllMock).toHaveBeenNthCalledWith(2, 1);
+    expect(snoozeAllMock).toHaveBeenNthCalledWith(3, 3600);
   });
 });
 
@@ -203,11 +288,7 @@ describe("useSuggestion (strict path)", () => {
     const { useSuggestion } = await import("./use-suggestion");
 
     const { result } = renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        enabled: true,
-      }),
+      useSuggestion(defaultOpts({ listen: listen as never })),
     );
 
     await waitFor(() => expect(harness.handler).not.toBeNull());
@@ -229,6 +310,7 @@ describe("useSuggestion (strict path)", () => {
         ruleId: "r-strict",
       }),
     );
+    expect(snoozeRuleMock).not.toHaveBeenCalled();
   });
 
   it("does NOT re-fire when the same Strict rule already drives the running timer", async () => {
@@ -236,12 +318,12 @@ describe("useSuggestion (strict path)", () => {
     const { useSuggestion } = await import("./use-suggestion");
 
     renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        currentRunningRuleId: "r-strict",
-        enabled: true,
-      }),
+      useSuggestion(
+        defaultOpts({
+          listen: listen as never,
+          currentRunningRuleId: "r-strict",
+        }),
+      ),
     );
 
     await waitFor(() => expect(harness.handler).not.toBeNull());
@@ -263,12 +345,12 @@ describe("useSuggestion (strict path)", () => {
     const { useSuggestion } = await import("./use-suggestion");
 
     renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        currentRunningRuleId: "r-other",
-        enabled: true,
-      }),
+      useSuggestion(
+        defaultOpts({
+          listen: listen as never,
+          currentRunningRuleId: "r-other",
+        }),
+      ),
     );
 
     await waitFor(() => expect(harness.handler).not.toBeNull());
@@ -289,57 +371,6 @@ describe("useSuggestion (strict path)", () => {
       ruleId: "r-strict",
     });
   });
-
-  it("does not snooze the Strict path even if a same-id rule was dismissed earlier as Suggestive", async () => {
-    // If a user dismissed a rule when it was Suggestive, then the
-    // rule is upgraded to Strict (or it always was Strict and the
-    // earlier dismissal was a different snapshot), the Strict
-    // auto-start MUST NOT be silently suppressed by the snooze
-    // map. The spec ties snooze to "dismissed suggestion", not to
-    // "rule_id is in the map".
-    const { listen, harness } = makeListenHarness();
-    const { useSuggestion } = await import("./use-suggestion");
-
-    const { result } = renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        enabled: true,
-      }),
-    );
-    await waitFor(() => expect(harness.handler).not.toBeNull());
-
-    // Dismiss r1 as Suggestive (snoozes it).
-    act(() => {
-      harness.emit({
-        ruleId: "r1",
-        ruleName: "Cairn dev",
-        confidence: "suggestive",
-        project: "cairn",
-        tags: [],
-      });
-    });
-    act(() => result.current.dismiss());
-
-    // Same rule fires later as Strict — must auto-start.
-    act(() => {
-      harness.emit({
-        ruleId: "r1",
-        ruleName: "Cairn dev",
-        confidence: "strict",
-        project: "cairn",
-        tags: [],
-      });
-    });
-
-    await waitFor(() =>
-      expect(startEntryMock).toHaveBeenCalledWith({
-        projectId: "cairn",
-        source: "rule",
-        ruleId: "r1",
-      }),
-    );
-  });
 });
 
 describe("useSuggestion (disabled)", () => {
@@ -348,11 +379,7 @@ describe("useSuggestion (disabled)", () => {
     const { useSuggestion } = await import("./use-suggestion");
 
     renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        enabled: false,
-      }),
+      useSuggestion(defaultOpts({ listen: listen as never, enabled: false })),
     );
 
     expect(harness.handler).toBeNull();
@@ -364,11 +391,7 @@ describe("useSuggestion (disabled)", () => {
     const { useSuggestion } = await import("./use-suggestion");
 
     const { unmount } = renderHook(() =>
-      useSuggestion({
-        startEntry: startEntryMock as never,
-        listen: listen as never,
-        enabled: true,
-      }),
+      useSuggestion(defaultOpts({ listen: listen as never })),
     );
     await waitFor(() => expect(harness.handler).not.toBeNull());
     unmount();
