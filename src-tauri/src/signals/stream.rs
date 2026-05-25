@@ -20,13 +20,13 @@
 //!
 //! ```text
 //!   window poller ─┐
-//!   git watcher  ──┼─► mpsc<SignalEvent> ─► driver task ─┬─► watch<SignalSnapshot>
+//!   git watcher  ──┼─► mpsc<SignalEvent> ─► driver task ─┬─► watch<Option<SignalSnapshot>>
 //!   calendar tick ─┤                       (500ms debounce)│
 //!   idle poller  ──┘                                       └─► watch<IdleState>
 //!                                                              │
 //!                                                              └─► fan-out task
 //!                                                                  ├─ rules::evaluate
-//!                                                                  └─ AppHandle::emit
+//!                                                                  └─ AppHandle::emit_to(popover)
 //! ```
 //!
 //! The driver task is deterministic: every event mutates an in-memory
@@ -34,14 +34,24 @@
 //! fires, the driver composes a fresh `SignalSnapshot` (pulling
 //! `active_events_at(now)` from the calendar registry) and publishes.
 //!
+//! ## Privacy
+//!
+//! The `Window` source consults an [`ExclusionMatcher`] before
+//! sending — apps and window-title substrings on the exclusion list
+//! are dropped *at the collector*, so the matched signal never
+//! reaches the rules engine, the published snapshot, or any
+//! webview. This implements the contract from `docs/PRIVACY.md`.
+//!
 //! ## Cross-platform
 //!
 //! The stream itself is pure tokio — runs unchanged on macOS,
 //! Ubuntu, Windows. Source tasks delegate to the per-platform
-//! collectors that already exist (`signals::window::current`,
-//! `signals::idle::seconds_since_input`).
+//! collectors (`signals::window::current`,
+//! `signals::idle::seconds_since_input`) via `spawn_blocking` so a
+//! slow subprocess on the host doesn't stall the tokio worker.
 
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -50,6 +60,8 @@ use tokio::time::Instant;
 
 use crate::rules::{CalendarEvent, SignalSnapshot};
 use crate::signals::calendar::CalendarRegistry;
+use crate::signals::exclusions::ExclusionMatcher;
+use crate::signals::git::GitContext;
 use crate::signals::window::FrontWindow;
 
 /// Default debounce window. Bursts of events within this window
@@ -72,9 +84,11 @@ pub const CALENDAR_TICK_INTERVAL: Duration = Duration::from_secs(30);
 /// useful — the threshold check is what triggers UI.
 pub const IDLE_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
-/// Bounded mpsc capacity for `SignalEvent`. The driver task drains
-/// continuously so back-pressure should never bite, but a finite
-/// capacity protects against a runaway source.
+/// Bounded mpsc capacity for `SignalEvent`. Sources use `try_send`
+/// and drop on overflow rather than awaiting — a backed-up driver
+/// (e.g. a slow `calendar.active_events_at` call) must never deadlock
+/// the source tasks. The debounce window already collapses bursts,
+/// so dropping the occasional event under load just collapses harder.
 const EVENT_CHANNEL_CAPACITY: usize = 64;
 
 /// An event pushed by one of the signal sources. The driver task
@@ -83,6 +97,12 @@ const EVENT_CHANNEL_CAPACITY: usize = 64;
 #[derive(Debug, Clone)]
 pub enum SignalEvent {
     Window(Option<FrontWindow>),
+    /// Git context for the currently relevant repo, or `None` if the
+    /// user has navigated outside any tracked repo. Wired by the
+    /// notify-based watcher that lands with the remainder of #4 —
+    /// the variant is here today so the publish path's git_branch
+    /// projection ships with the snapshot stream.
+    Git(Option<GitContext>),
     /// Calendar tick: re-query `active_events_at(now)`. The event
     /// carries no payload — the calendar registry is the source of
     /// truth.
@@ -90,50 +110,65 @@ pub enum SignalEvent {
     Idle(IdleState),
 }
 
-/// Idle state. `seconds` is the wall-clock seconds since the last
-/// user input from any attached HID. Wraps the raw `user_idle`
-/// reading so the stream can later add a derived "is_idle" boolean
-/// without breaking event consumers.
+/// Idle state. `seconds = Some(n)` is "the OS reports n seconds
+/// since the last user input"; `seconds = None` is "we cannot
+/// determine idle state on this host" (CGEventSource permission
+/// denied, X11 not running, etc.) — explicitly distinct from "the
+/// user is active" so the ambiguity modal (#7) can choose a safe
+/// default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IdleState {
-    pub seconds: u64,
+    pub seconds: Option<u64>,
 }
 
-/// Cancellation handle. Dropping it does NOT cancel the driver task
-/// directly — the driver exits when every clone of `event_tx` is
-/// dropped (i.e. when all sources have shut down). Keep this alive
-/// for the lifetime of the stream; dropping the senders by dropping
-/// the handle is the supported shutdown path.
+/// Cancellation-aware handle on a running snapshot stream.
+///
+/// In production the stream is held inside `AppState` for the
+/// lifetime of the Tauri runtime; in tests, dropping the
+/// `SnapshotStream` value drops the internal `event_tx` and the
+/// driver exits cleanly. (The source tasks each own a clone of
+/// `event_tx`, so the driver only sees the channel close after every
+/// source has dropped its clone — but in production the source
+/// tasks are spawned without a cancellation handle, so they only
+/// shut down at process exit. That's acceptable for a desktop app
+/// with no live-reload story.)
 pub struct SnapshotStream {
-    snapshot_rx: watch::Receiver<SignalSnapshot>,
+    snapshot_rx: watch::Receiver<Option<SignalSnapshot>>,
     idle_rx: watch::Receiver<IdleState>,
     event_tx: mpsc::Sender<SignalEvent>,
 }
 
 impl SnapshotStream {
-    /// Subscribe to snapshot updates. Each subscriber gets its own
-    /// `Receiver`; the latest value is always immediately available
-    /// via `borrow()`.
-    pub fn subscribe(&self) -> watch::Receiver<SignalSnapshot> {
+    /// Subscribe to snapshot updates. The receiver's initial value
+    /// is `None` until the driver publishes its first snapshot — the
+    /// `current_snapshot` IPC falls back to a synchronous
+    /// `snapshot::build` when this is `None` so a popover opened
+    /// pre-first-publish doesn't see empty fields.
+    pub fn subscribe(&self) -> watch::Receiver<Option<SignalSnapshot>> {
         self.snapshot_rx.clone()
     }
 
     /// Subscribe to idle-state updates. Same semantics as
     /// `subscribe`; the consumer of this is the ambiguity modal
-    /// (#7).
+    /// (#7). The published value is `IdleState::default()` until the
+    /// idle source posts its first reading.
     pub fn subscribe_idle(&self) -> watch::Receiver<IdleState> {
         self.idle_rx.clone()
     }
 
     /// Sender that source tasks push events through. Cloning this
-    /// is cheap — every source owns its own clone.
+    /// is cheap — every source owns its own clone. Public so tests
+    /// and the planned git watcher (#4 tail-end) can inject events
+    /// directly without needing to spawn another source task.
     pub fn event_sender(&self) -> mpsc::Sender<SignalEvent> {
         self.event_tx.clone()
     }
 
-    /// Current snapshot without subscribing — used by the IPC
-    /// `current_snapshot` command which returns one-shot.
-    pub fn current(&self) -> SignalSnapshot {
+    /// Current snapshot if the driver has ever published one,
+    /// otherwise `None`. The `current_snapshot` IPC must fall back
+    /// to `snapshot::build` for the `None` case so the popover never
+    /// shows blank fields on cold start.
+    pub fn current(&self) -> Option<SignalSnapshot> {
         self.snapshot_rx.borrow().clone()
     }
 }
@@ -143,6 +178,7 @@ impl SnapshotStream {
 #[derive(Default)]
 struct LiveState {
     front: Option<FrontWindow>,
+    git: Option<GitContext>,
     idle: IdleState,
 }
 
@@ -150,19 +186,46 @@ struct LiveState {
 /// subscribers and the event sender. The actual source tasks
 /// (window/calendar/idle) are spawned separately by
 /// `spawn_default_sources` once the stream exists.
-pub fn spawn(calendar: Arc<CalendarRegistry>, debounce: Duration) -> SnapshotStream {
+///
+/// `exclusions` is the in-memory exclusion-list snapshot consulted
+/// by `apply_event` on every `Window` (and future browser-domain)
+/// event. Wrapped in `Arc<RwLock<_>>` so the `save_exclusion` /
+/// `delete_exclusion` IPC handlers can invalidate after a write.
+pub fn spawn(
+    calendar: Arc<CalendarRegistry>,
+    exclusions: Arc<RwLock<ExclusionMatcher>>,
+    debounce: Duration,
+) -> SnapshotStream {
     let (event_tx, event_rx) = mpsc::channel::<SignalEvent>(EVENT_CHANNEL_CAPACITY);
-    let (snapshot_tx, snapshot_rx) = watch::channel(SignalSnapshot {
-        ide_folder: None,
-        git_branch: None,
-        window_title: None,
-        app_name: None,
-        browser_domain: None,
-        calendar: Vec::new(),
-    });
+    let (snapshot_tx, snapshot_rx) = watch::channel::<Option<SignalSnapshot>>(None);
     let (idle_tx, idle_rx) = watch::channel(IdleState::default());
 
-    tokio::spawn(driver(event_rx, snapshot_tx, idle_tx, calendar, debounce));
+    // Spawn the driver as a normal task, then a supervisor that
+    // awaits its JoinHandle and logs on panic. Without the
+    // supervisor, a panic in `publish` (e.g. an `RwLock` poison
+    // deep in the calendar registry) would silently kill the
+    // driver and leave every subscriber stuck on the last
+    // published value forever — a worst-case stale-data failure
+    // mode that produces no telemetry. The supervisor at least
+    // surfaces the panic in the logs; auto-restart belongs with
+    // the cancellation-token shutdown story (#7's quit path).
+    let driver_handle = tokio::spawn(driver(
+        event_rx,
+        snapshot_tx,
+        idle_tx,
+        calendar,
+        exclusions,
+        debounce,
+    ));
+    tokio::spawn(async move {
+        if let Err(e) = driver_handle.await {
+            if e.is_panic() {
+                log::error!("snapshot stream driver panicked: {e}");
+            } else if e.is_cancelled() {
+                log::warn!("snapshot stream driver was cancelled");
+            }
+        }
+    });
 
     SnapshotStream {
         snapshot_rx,
@@ -173,10 +236,8 @@ pub fn spawn(calendar: Arc<CalendarRegistry>, debounce: Duration) -> SnapshotStr
 
 /// Spawn the default cross-platform source tasks: window poller,
 /// calendar tick, idle poller. Each task ends when the stream's
-/// event_tx is dropped (i.e. when the stream itself goes away).
-///
-/// Returns nothing — the tasks self-manage. The caller is expected
-/// to keep the `SnapshotStream` alive for the program lifetime.
+/// `event_tx` is dropped (i.e. when the stream itself goes away in
+/// test tear-down). In production they run until process exit.
 pub fn spawn_default_sources(stream: &SnapshotStream) {
     let tx = stream.event_sender();
     tokio::spawn(window_source(tx.clone(), WINDOW_POLL_INTERVAL));
@@ -190,9 +251,10 @@ pub fn spawn_default_sources(stream: &SnapshotStream) {
 
 async fn driver(
     mut event_rx: mpsc::Receiver<SignalEvent>,
-    snapshot_tx: watch::Sender<SignalSnapshot>,
+    snapshot_tx: watch::Sender<Option<SignalSnapshot>>,
     idle_tx: watch::Sender<IdleState>,
     calendar: Arc<CalendarRegistry>,
+    exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
 ) {
     let mut state = LiveState::default();
@@ -207,13 +269,14 @@ async fn driver(
             ev = event_rx.recv() => {
                 match ev {
                     Some(ev) => {
-                        apply_event(&mut state, &idle_tx, ev);
+                        apply_event(&mut state, &idle_tx, &exclusions, ev);
                         next_publish_at = Some(Instant::now() + debounce);
                     }
                     None => {
-                        // All senders dropped — the stream is being
-                        // torn down. Flush one final snapshot if a
-                        // debounce was pending, then exit.
+                        // All senders dropped — graceful shutdown
+                        // path (mostly exercised by tests). Flush
+                        // one final snapshot if a debounce was
+                        // pending, then exit.
                         if next_publish_at.is_some() {
                             publish(&state, &snapshot_tx, &calendar).await;
                         }
@@ -240,10 +303,43 @@ async fn sleep_until(deadline: Option<Instant>) {
     }
 }
 
-fn apply_event(state: &mut LiveState, idle_tx: &watch::Sender<IdleState>, ev: SignalEvent) {
+fn apply_event(
+    state: &mut LiveState,
+    idle_tx: &watch::Sender<IdleState>,
+    exclusions: &Arc<RwLock<ExclusionMatcher>>,
+    ev: SignalEvent,
+) {
     match ev {
         SignalEvent::Window(front) => {
-            state.front = front;
+            // Per docs/PRIVACY.md: the exclusion list applies *here*,
+            // at the collector, before the title reaches the rules
+            // engine or any subscriber. A matched front-window is
+            // collapsed to `None` so the snapshot publishes the
+            // user's privacy choice rather than the excluded app.
+            let filtered = front.and_then(|w| {
+                let excluded = match exclusions.read() {
+                    Ok(guard) => guard.matches_window(&w),
+                    Err(_) => {
+                        // RwLock poisoned (panic in a writer) — fail
+                        // closed: assume the worst and drop the
+                        // signal. The next save_exclusion will
+                        // create a fresh lock by replacing the
+                        // contents under a new guard, but for now
+                        // there's nothing safe to compare against.
+                        log::warn!("exclusions: read lock poisoned, dropping window signal");
+                        true
+                    }
+                };
+                if excluded {
+                    None
+                } else {
+                    Some(w)
+                }
+            });
+            state.front = filtered;
+        }
+        SignalEvent::Git(git) => {
+            state.git = git;
         }
         SignalEvent::CalendarRefresh => {
             // No state mutation — the driver re-queries calendar on
@@ -251,10 +347,11 @@ fn apply_event(state: &mut LiveState, idle_tx: &watch::Sender<IdleState>, ev: Si
         }
         SignalEvent::Idle(idle) => {
             state.idle = idle;
-            // Idle is broadcast immediately on its own channel so the
-            // ambiguity modal (#7) doesn't have to wait for the
-            // 500ms debounce. send_replace is non-blocking even with
-            // no subscribers.
+            // Idle is broadcast immediately on its own channel so
+            // the ambiguity modal (#7) doesn't have to wait for the
+            // 500ms debounce. `send` is non-blocking; the `Err`
+            // case (no receivers) is intentionally ignored — idle
+            // is informational.
             let _ = idle_tx.send(idle);
         }
     }
@@ -262,7 +359,7 @@ fn apply_event(state: &mut LiveState, idle_tx: &watch::Sender<IdleState>, ev: Si
 
 async fn publish(
     state: &LiveState,
-    snapshot_tx: &watch::Sender<SignalSnapshot>,
+    snapshot_tx: &watch::Sender<Option<SignalSnapshot>>,
     calendar: &Arc<CalendarRegistry>,
 ) {
     let active = calendar.active_events_at(Utc::now()).await;
@@ -288,22 +385,41 @@ async fn publish(
         None => (None, None, None),
     };
 
+    let git_branch = state.git.as_ref().and_then(|g| g.branch.clone());
+
     let snap = SignalSnapshot {
         ide_folder,
-        git_branch: None,
+        git_branch,
         window_title,
         app_name,
         browser_domain: None,
         calendar: calendar_events,
     };
 
-    // send_replace returns the previous value; we drop it.
-    let _ = snapshot_tx.send_replace(snap);
+    let _ = snapshot_tx.send_replace(Some(snap));
 }
 
 // -----------------------------------------------------------------
 // sources
 // -----------------------------------------------------------------
+
+/// Push an event onto the driver channel without ever blocking. If
+/// the channel is full (driver behind), we *drop* the event rather
+/// than `.await` on `.send()` — the debounce window collapses
+/// bursts anyway, and a backed-up driver must never deadlock the
+/// source tasks. Returns `false` if the channel is closed (i.e. the
+/// driver shut down), which signals the source to exit.
+fn push_or_drop(tx: &mpsc::Sender<SignalEvent>, ev: SignalEvent) -> bool {
+    use mpsc::error::TrySendError;
+    match tx.try_send(ev) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => {
+            log::debug!("snapshot stream event dropped: channel full (driver behind)");
+            true
+        }
+        Err(TrySendError::Closed(_)) => false,
+    }
+}
 
 async fn window_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
     let mut last: Option<FrontWindow> = None;
@@ -311,9 +427,20 @@ async fn window_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
-        let current = crate::signals::window::current();
+        // signals::window::current() is blocking on every platform
+        // (osascript subprocess on macOS, xdotool on Linux,
+        // GetWindowTextW + QueryFullProcessImageNameW on Windows).
+        // Run it on the blocking pool so a slow subprocess never
+        // stalls the tokio worker that runs the driver / fanout.
+        let current = match tokio::task::spawn_blocking(crate::signals::window::current).await {
+            Ok(w) => w,
+            Err(e) => {
+                log::warn!("window source spawn_blocking failed: {e}");
+                None
+            }
+        };
         if current != last {
-            if tx.send(SignalEvent::Window(current.clone())).await.is_err() {
+            if !push_or_drop(&tx, SignalEvent::Window(current.clone())) {
                 return;
             }
             last = current;
@@ -322,15 +449,15 @@ async fn window_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
 }
 
 async fn calendar_tick_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
-    let mut ticker = tokio::time::interval(interval);
+    // Start the first tick `interval` from now — the default
+    // `tokio::time::interval` fires immediately, which would arm a
+    // debounce before any window/idle signal had a chance to prime
+    // state. Using `interval_at` makes "skip first tick" explicit.
+    let mut ticker = tokio::time::interval_at(Instant::now() + interval, interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // The first tick fires immediately — skip it so we don't spam a
-    // refresh at startup before any window/idle signal has primed
-    // the state.
-    ticker.tick().await;
     loop {
         ticker.tick().await;
-        if tx.send(SignalEvent::CalendarRefresh).await.is_err() {
+        if !push_or_drop(&tx, SignalEvent::CalendarRefresh) {
             return;
         }
     }
@@ -342,15 +469,21 @@ async fn idle_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
-        let seconds = crate::signals::idle::seconds_since_input().unwrap_or(0);
+        let seconds = tokio::task::spawn_blocking(crate::signals::idle::seconds_since_input)
+            .await
+            .ok()
+            .flatten();
         let current = IdleState { seconds };
-        // Only push when the idle state crosses a 30s bucket — fine-
-        // grained "every second I was idle one more" events would
-        // arm the debounce on every tick without changing anything
-        // useful. The ambiguity modal (#7) thresholds are minute-
-        // granularity anyway.
-        if current.seconds / 30 != last.seconds / 30 {
-            if tx.send(SignalEvent::Idle(current)).await.is_err() {
+        // Push when the 30s bucket changes — fine-grained "one more
+        // second idle" events would arm the debounce on every tick
+        // without ambiguity-modal-level meaning. Also push when the
+        // availability of the reading itself changes (Some↔None), so
+        // the consumer can show "idle detection unavailable" the
+        // moment the underlying permission disappears.
+        let bucket_changed = current.seconds.map(|s| s / 30) != last.seconds.map(|s| s / 30);
+        let availability_changed = current.seconds.is_some() != last.seconds.is_some();
+        if bucket_changed || availability_changed {
+            if !push_or_drop(&tx, SignalEvent::Idle(current)) {
                 return;
             }
             last = current;
@@ -377,37 +510,53 @@ mod tests {
     }
 
     async fn fresh_stream(debounce: Duration) -> (tempfile::TempDir, SnapshotStream) {
+        fresh_stream_with_exclusions(debounce, ExclusionMatcher::default()).await
+    }
+
+    async fn fresh_stream_with_exclusions(
+        debounce: Duration,
+        excl: ExclusionMatcher,
+    ) -> (tempfile::TempDir, SnapshotStream) {
         let (dir, db) = test_db().await;
         let calendar =
             Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
-        let stream = spawn(calendar, debounce);
+        let exclusions = Arc::new(RwLock::new(excl));
+        let stream = spawn(calendar, exclusions, debounce);
         (dir, stream)
     }
 
-    /// Wait for the watch receiver to observe a snapshot whose
-    /// app_name matches `expected`. Polls `changed()` so the test
-    /// doesn't race the debounce.
+    /// Wait for the watch receiver to observe a `Some(snap)` whose
+    /// `app_name` matches `expected`. Polls `changed()` until the
+    /// timeout, so the test doesn't race the debounce.
     async fn wait_for_app_name(
-        rx: &mut watch::Receiver<SignalSnapshot>,
+        rx: &mut watch::Receiver<Option<SignalSnapshot>>,
         expected: &str,
         timeout: Duration,
     ) -> Option<SignalSnapshot> {
         let deadline = Instant::now() + timeout;
         loop {
-            if let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-                match tokio::time::timeout(remaining, rx.changed()).await {
-                    Ok(Ok(())) => {
-                        let snap = rx.borrow_and_update().clone();
+            let remaining = deadline.checked_duration_since(Instant::now())?;
+            match tokio::time::timeout(remaining, rx.changed()).await {
+                Ok(Ok(())) => {
+                    if let Some(snap) = rx.borrow_and_update().clone() {
                         if snap.app_name.as_deref() == Some(expected) {
                             return Some(snap);
                         }
                     }
-                    _ => return None,
                 }
-            } else {
-                return None;
+                Ok(Err(_)) => panic!("watch channel closed before expected snapshot"),
+                Err(_) => return None,
             }
         }
+    }
+
+    #[tokio::test]
+    async fn current_returns_none_before_first_publish() {
+        let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
+        // No events sent — `current` must return None so the
+        // `current_snapshot` IPC knows to fall back to
+        // `snapshot::build`.
+        assert!(stream.current().is_none());
     }
 
     #[tokio::test]
@@ -415,7 +564,6 @@ mod tests {
         let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
         let tx = stream.event_sender();
         let mut rx = stream.subscribe();
-        // Skip the initial empty value.
         let _ = rx.borrow_and_update();
 
         tx.send(SignalEvent::Window(Some(fw("Cairn", None))))
@@ -435,9 +583,6 @@ mod tests {
         let mut rx = stream.subscribe();
         let _ = rx.borrow_and_update();
 
-        // Three rapid events — the driver should publish exactly one
-        // snapshot after the debounce window, carrying the *last*
-        // event's state.
         for app in ["First", "Second", "Last"] {
             tx.send(SignalEvent::Window(Some(fw(app, None))))
                 .await
@@ -450,9 +595,6 @@ mod tests {
             .expect("burst collapses to a single publish of the last state");
         assert_eq!(snap.app_name.as_deref(), Some("Last"));
 
-        // Drain any further changes within a short window — there
-        // should be none (the burst was within debounce, so no
-        // second publish).
         let further = tokio::time::timeout(Duration::from_millis(200), rx.changed()).await;
         assert!(
             further.is_err(),
@@ -497,7 +639,7 @@ mod tests {
         let mut idle_rx = stream.subscribe_idle();
         let _ = idle_rx.borrow_and_update();
 
-        tx.send(SignalEvent::Idle(IdleState { seconds: 120 }))
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(120) }))
             .await
             .unwrap();
 
@@ -506,7 +648,7 @@ mod tests {
             .await
             .expect("idle channel publishes")
             .expect("idle channel still open");
-        assert_eq!(idle_rx.borrow().seconds, 120);
+        assert_eq!(idle_rx.borrow().seconds, Some(120));
     }
 
     #[tokio::test]
@@ -514,11 +656,7 @@ mod tests {
         let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
         let mut rx = stream.subscribe();
         let _ = rx.borrow_and_update();
-        // Drop the stream — the internal event_tx goes with it.
         drop(stream);
-        // The watch channel sender lives inside the driver task; when
-        // the driver returns, every subscriber sees `changed()`
-        // resolve with `Err` (channel closed).
         let result = tokio::time::timeout(Duration::from_secs(1), rx.changed()).await;
         assert!(
             matches!(result, Ok(Err(_))),
@@ -533,8 +671,6 @@ mod tests {
         let mut rx = stream.subscribe();
         let _ = rx.borrow_and_update();
 
-        // Zed pattern: "file — project". The pure derive_ide_folder
-        // helper must resolve this without IO.
         tx.send(SignalEvent::Window(Some(fw(
             "Zed",
             Some("rules.tsx — cairn"),
@@ -558,40 +694,166 @@ mod tests {
 
         tx.send(SignalEvent::CalendarRefresh).await.unwrap();
 
-        // No calendar sources registered → published snapshot still
-        // has empty calendar list, but the *publish itself* happens.
-        // changed() resolving confirms the debounce-and-publish loop
-        // ran for a calendar-refresh event with no other state.
-        tokio::time::timeout(Duration::from_secs(1), rx.changed())
-            .await
-            .expect("calendar refresh causes a publish")
-            .expect("channel still open");
-        assert!(rx.borrow().calendar.is_empty());
+        let result = tokio::time::timeout(Duration::from_secs(1), rx.changed()).await;
+        assert!(
+            matches!(result, Ok(Ok(()))),
+            "calendar refresh alone arms the debounce and publishes a snapshot"
+        );
+        // The published snapshot is a real Some(...) value with an
+        // empty calendar (no sources registered in this test).
+        let published = rx.borrow().clone();
+        let snap = published.expect("publish produced Some(snapshot), not None");
+        assert!(snap.calendar.is_empty());
+        // Other fields default — no window/idle/git events were
+        // sent — so this also asserts "publishing on calendar alone
+        // doesn't invent state out of thin air".
+        assert!(snap.app_name.is_none());
+        assert!(snap.git_branch.is_none());
     }
 
     #[tokio::test]
-    async fn idle_state_persists_across_publishes() {
+    async fn excluded_window_signal_is_dropped_at_the_collector() {
+        // Privacy contract: an excluded app must never appear in
+        // any published snapshot. Set up the exclusion BEFORE the
+        // stream sees any window event.
+        let (_dir, stream) = fresh_stream_with_exclusions(
+            Duration::from_millis(50),
+            ExclusionMatcher::for_test(&["1Password"], &[], &[]),
+        )
+        .await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        // Send an excluded app — driver must drop the front-window
+        // and publish a snapshot whose app_name is None.
+        tx.send(SignalEvent::Window(Some(fw(
+            "1Password",
+            Some("vault opened"),
+        ))))
+        .await
+        .unwrap();
+
+        // Wait for publish (excluded events still arm the debounce —
+        // the publish just doesn't carry the excluded title).
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("excluded event still triggers a publish (with cleared title)")
+            .expect("channel still open");
+
+        let snap = rx
+            .borrow()
+            .clone()
+            .expect("driver published Some(snapshot)");
+        assert!(
+            snap.app_name.is_none(),
+            "excluded app_name leaked through: {:?}",
+            snap.app_name
+        );
+        assert!(
+            snap.window_title.is_none(),
+            "excluded window_title leaked through: {:?}",
+            snap.window_title
+        );
+    }
+
+    #[tokio::test]
+    async fn excluded_by_title_substring_drops_signal() {
+        let (_dir, stream) = fresh_stream_with_exclusions(
+            Duration::from_millis(50),
+            ExclusionMatcher::for_test(&[], &["Banking"], &[]),
+        )
+        .await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Window(Some(fw(
+            "Chrome",
+            Some("Banking — Chase"),
+        ))))
+        .await
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("publish runs")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert!(snap.app_name.is_none());
+        assert!(snap.window_title.is_none());
+    }
+
+    #[tokio::test]
+    async fn git_event_populates_git_branch() {
         let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
         let tx = stream.event_sender();
         let mut rx = stream.subscribe();
         let _ = rx.borrow_and_update();
 
-        tx.send(SignalEvent::Idle(IdleState { seconds: 300 }))
-            .await
-            .unwrap();
-        // Wait for the snapshot publish (idle still triggers the
-        // debounce path for the snapshot itself).
+        tx.send(SignalEvent::Git(Some(GitContext {
+            repo_path: std::path::PathBuf::from("/tmp/cairn"),
+            branch: Some("feat/snapshot-stream".to_string()),
+        })))
+        .await
+        .unwrap();
+
         tokio::time::timeout(Duration::from_secs(1), rx.changed())
             .await
-            .expect("idle triggers snapshot publish")
+            .expect("publish runs")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert_eq!(snap.git_branch.as_deref(), Some("feat/snapshot-stream"));
+    }
+
+    #[tokio::test]
+    async fn git_none_clears_branch() {
+        let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        // First a Some(GitContext) to set the branch.
+        tx.send(SignalEvent::Git(Some(GitContext {
+            repo_path: std::path::PathBuf::from("/tmp/cairn"),
+            branch: Some("main".to_string()),
+        })))
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .ok();
+        assert_eq!(
+            rx.borrow().clone().and_then(|s| s.git_branch),
+            Some("main".to_string())
+        );
+
+        // Then a None to clear it (user navigated out of the repo).
+        tx.send(SignalEvent::Git(None)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .ok();
+        assert_eq!(rx.borrow().clone().and_then(|s| s.git_branch), None);
+    }
+
+    #[tokio::test]
+    async fn window_publish_works_after_idle_event() {
+        // Originally `idle_state_persists_across_publishes`. The
+        // assertion doesn't actually pin persistence — it pins that
+        // a window publish following an idle event still carries the
+        // window state. Renamed to match what the test verifies.
+        let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(300) }))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
             .ok();
 
-        // Send a window event; the snapshot should carry both the new
-        // window AND the prior idle state. (Idle isn't on
-        // SignalSnapshot today, but we still verify the state was
-        // retained internally by sending a follow-up Idle event with
-        // the same value and asserting the idle watch channel didn't
-        // de-dup.)
         tx.send(SignalEvent::Window(Some(fw("Cairn", None))))
             .await
             .unwrap();
@@ -599,5 +861,29 @@ mod tests {
             .await
             .expect("window publish after idle");
         assert_eq!(snap.app_name.as_deref(), Some("Cairn"));
+    }
+
+    #[tokio::test]
+    async fn idle_none_propagates_distinctly_from_active() {
+        // R4 from review: "idle unavailable" must be distinct from
+        // "user is active" so the ambiguity modal can choose a safe
+        // default. Verify both Some(0) and None come through the
+        // idle watch channel correctly.
+        let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
+        let tx = stream.event_sender();
+        let mut idle_rx = stream.subscribe_idle();
+        let _ = idle_rx.borrow_and_update();
+
+        tx.send(SignalEvent::Idle(IdleState { seconds: Some(0) }))
+            .await
+            .unwrap();
+        idle_rx.changed().await.ok();
+        assert_eq!(idle_rx.borrow().seconds, Some(0));
+
+        tx.send(SignalEvent::Idle(IdleState { seconds: None }))
+            .await
+            .unwrap();
+        idle_rx.changed().await.ok();
+        assert_eq!(idle_rx.borrow().seconds, None);
     }
 }

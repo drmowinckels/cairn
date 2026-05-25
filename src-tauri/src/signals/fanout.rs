@@ -18,6 +18,14 @@ use tokio::sync::watch;
 
 use crate::rules::{Condition, Rule, RuleAction, RuleMatch, SignalSnapshot};
 
+/// Tauri window label the fan-out task targets when emitting
+/// events. The popover is the only window today; using `emit_to`
+/// instead of `emit` prevents the snapshot payload (which carries
+/// `window_title` from the OS) from being broadcast to any future
+/// window that doesn't strictly need it. See the security review
+/// notes on PR #5.
+pub const POPOVER_LABEL: &str = "popover";
+
 /// Event name fired on every published snapshot. The Live Signals
 /// card in Rules subscribes here.
 pub const EVENT_SNAPSHOT: &str = "signal:snapshot";
@@ -56,16 +64,22 @@ struct RuleBody {
 pub fn project_rules(rules: Vec<crate::ipc::Rule>) -> Vec<Rule> {
     rules
         .into_iter()
-        .filter_map(|r| {
-            let body: RuleBody = serde_json::from_value(r.body).ok()?;
-            Some(Rule {
+        .filter_map(|r| match serde_json::from_value::<RuleBody>(r.body) {
+            Ok(body) => Some(Rule {
                 id: r.id,
                 name: r.name,
                 enabled: r.enabled,
                 priority: r.priority,
                 when: body.when,
                 then: body.then,
-            })
+            }),
+            Err(e) => {
+                // Log the rule_id but NOT the body — body strings
+                // can carry user-entered project names / window-
+                // title regex patterns that may include PII.
+                log::warn!("fanout: rule {} body invalid, dropping: {e}", r.id);
+                None
+            }
         })
         .collect()
 }
@@ -99,16 +113,21 @@ async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
     };
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
+        let id: String = r.get("id");
         let body_str: String = r.get("body");
         let body: serde_json::Value = match serde_json::from_str(&body_str) {
             Ok(v) => v,
             Err(e) => {
-                log::warn!("fanout: rule body parse failed: {e}");
+                // Intentionally do NOT log `body_str` — it can
+                // carry user-entered project names / window-title
+                // regex patterns that may include PII. The rule_id
+                // is enough for the user to locate the broken row.
+                log::warn!("fanout: rule {id} body unparseable, dropping: {e}");
                 continue;
             }
         };
         out.push(crate::ipc::Rule {
-            id: r.get("id"),
+            id,
             name: r.get("name"),
             enabled: r.get::<i64, _>("enabled") != 0,
             priority: r.get("priority"),
@@ -121,24 +140,38 @@ async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
 /// Run the fan-out loop. Exits cleanly when the upstream
 /// `watch::Sender` is dropped (driver shutdown).
 ///
-/// Skips the initial empty snapshot value held by the watch
-/// channel: `borrow_and_update` consumes it, then the `changed()`
-/// loop only fires on *new* snapshots.
-pub async fn run(mut rx: watch::Receiver<SignalSnapshot>, pool: SqlitePool, app: AppHandle) {
-    // Drop the initial empty value so we don't fire a `signal:match`
-    // for "no rules + empty snapshot" on startup.
+/// The initial `None` value held by the watch channel is consumed
+/// via `borrow_and_update` so we don't fire `signal:match` for
+/// "no rules + no snapshot" on startup. The loop then waits for
+/// `changed()` and processes every `Some(snapshot)` publish.
+///
+/// Events are emitted via `emit_to(POPOVER_LABEL, …)` rather than
+/// the global `emit(…)` to prevent the snapshot payload (which
+/// carries `window_title` from the OS) from being broadcast to any
+/// future window that doesn't strictly need it. See the security
+/// review on PR #5.
+pub async fn run(
+    mut rx: watch::Receiver<Option<SignalSnapshot>>,
+    pool: SqlitePool,
+    app: AppHandle,
+) {
     let _ = rx.borrow_and_update();
     while rx.changed().await.is_ok() {
-        let snap = rx.borrow_and_update().clone();
+        let Some(snap) = rx.borrow_and_update().clone() else {
+            // A `None` after `changed()` shouldn't happen — the
+            // driver only ever transitions None→Some — but be
+            // defensive.
+            continue;
+        };
         let rules = load_rules(&pool).await;
         let parsed = project_rules(rules);
         let outcome = outcome_for(snap, &parsed);
-        if let Err(e) = app.emit(EVENT_SNAPSHOT, &outcome.snapshot) {
-            log::debug!("fanout: emit {EVENT_SNAPSHOT} failed: {e}");
+        if let Err(e) = app.emit_to(POPOVER_LABEL, EVENT_SNAPSHOT, &outcome.snapshot) {
+            log::debug!("fanout: emit_to {POPOVER_LABEL} {EVENT_SNAPSHOT} failed: {e}");
         }
         if let Some(rule_match) = &outcome.rule_match {
-            if let Err(e) = app.emit(EVENT_MATCH, rule_match) {
-                log::debug!("fanout: emit {EVENT_MATCH} failed: {e}");
+            if let Err(e) = app.emit_to(POPOVER_LABEL, EVENT_MATCH, rule_match) {
+                log::debug!("fanout: emit_to {POPOVER_LABEL} {EVENT_MATCH} failed: {e}");
             }
         }
     }

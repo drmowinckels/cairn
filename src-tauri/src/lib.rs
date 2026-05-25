@@ -10,7 +10,7 @@ mod tray;
 mod test_support;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -19,6 +19,7 @@ use tauri_plugin_log::{Target, TargetKind};
 pub use db::Db;
 
 use signals::calendar::CalendarRegistry;
+use signals::exclusions::ExclusionMatcher;
 use signals::stream::SnapshotStream;
 
 pub struct AppState {
@@ -26,6 +27,12 @@ pub struct AppState {
     pub pinned: AtomicBool,
     pub calendar: Arc<CalendarRegistry>,
     pub stream: Arc<SnapshotStream>,
+    /// Live exclusion-list snapshot. The snapshot-stream driver
+    /// consults this on every `Window` event to drop signals from
+    /// excluded apps / window titles before they reach the rules
+    /// engine. Mutators (`save_exclusion` / `delete_exclusion` IPC)
+    /// reload it after a write.
+    pub exclusions: Arc<RwLock<ExclusionMatcher>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -147,17 +154,23 @@ pub fn run() {
                 Arc::new(CalendarRegistry::new(db.pool.clone()).expect("init calendar registry"));
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
 
+            // Load the exclusion list once at startup; mutator IPC
+            // handlers replace the contents under the same `Arc`.
+            let exclusions =
+                tauri::async_runtime::block_on(async { ExclusionMatcher::load(&db.pool).await });
+            let exclusions = Arc::new(RwLock::new(exclusions));
+
             let stream = Arc::new(signals::stream::spawn(
                 calendar.clone(),
+                exclusions.clone(),
                 signals::stream::DEFAULT_DEBOUNCE,
             ));
             signals::stream::spawn_default_sources(&stream);
 
             // Tauri fan-out: every published snapshot is evaluated
             // against the rules in the DB and emitted as
-            // `signal:snapshot` / `signal:match` for the suggestion
-            // banner and Live Signals card. Exits on driver
-            // shutdown (the watch channel closes).
+            // `signal:snapshot` / `signal:match` to the popover
+            // window. Exits on driver shutdown.
             let fanout_rx = stream.subscribe();
             let fanout_pool = db.pool.clone();
             let fanout_handle = app.handle().clone();
@@ -170,6 +183,7 @@ pub fn run() {
                 pinned: AtomicBool::new(false),
                 calendar,
                 stream,
+                exclusions,
             });
 
             tray::setup(app.handle())?;

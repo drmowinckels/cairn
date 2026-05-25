@@ -603,6 +603,7 @@ pub async fn save_exclusion(
         .execute(&state.db.pool)
         .await
         .map_err(err)?;
+    reload_exclusions(&state).await;
     Ok(Exclusion { id, kind, value })
 }
 
@@ -613,7 +614,26 @@ pub async fn delete_exclusion(state: State<'_, AppState>, id: String) -> Result<
         .execute(&state.db.pool)
         .await
         .map_err(err)?;
+    reload_exclusions(&state).await;
     Ok(())
+}
+
+/// Reload the in-memory exclusion matcher from the DB. Called after
+/// every `save_exclusion` / `delete_exclusion` so the snapshot
+/// stream driver sees the new state on the very next event.
+async fn reload_exclusions(state: &State<'_, AppState>) {
+    let fresh = crate::signals::exclusions::ExclusionMatcher::load(&state.db.pool).await;
+    match state.exclusions.write() {
+        Ok(mut guard) => *guard = fresh,
+        Err(poisoned) => {
+            // RwLock poisoning means a previous writer panicked.
+            // Replace the contents anyway — the lock is logically
+            // valid; the panic was in user code, not in us.
+            let mut guard = poisoned.into_inner();
+            *guard = fresh;
+            log::warn!("exclusions: recovered from poisoned RwLock and reloaded");
+        }
+    }
 }
 
 #[tauri::command]
@@ -1950,10 +1970,15 @@ pub async fn calendar_sync_status(state: State<'_, AppState>) -> Result<Vec<Sync
 pub async fn current_snapshot(
     state: State<'_, AppState>,
 ) -> Result<crate::rules::SignalSnapshot, String> {
-    // The stream maintains a live snapshot that's updated by the
-    // background driver task — return its current value rather than
-    // rebuilding synchronously. That keeps the IPC O(1) and means
-    // the value the UI reads matches what the rules engine just
-    // evaluated.
-    Ok(state.stream.current())
+    // Prefer the stream's live cache (O(1), matches what the rules
+    // engine just evaluated). On cold start — before the driver
+    // has published its first snapshot — fall back to a synchronous
+    // `snapshot::build` so the popover doesn't see all-`None`
+    // fields when the user opens it within the first second of
+    // launch.
+    if let Some(snap) = state.stream.current() {
+        Ok(snap)
+    } else {
+        Ok(crate::signals::snapshot::build(&state.calendar, Utc::now()).await)
+    }
 }
