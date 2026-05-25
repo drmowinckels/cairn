@@ -205,6 +205,58 @@ describe("useSuggestion (suggestive path)", () => {
     expect(result.current.suggestion).toBeNull();
   });
 
+  it("dismiss clears the banner BEFORE awaiting the IPC (no UI flicker on slow IPC)", async () => {
+    // If `dismiss()` waited on the IPC before clearing the
+    // banner, a slow IPC roundtrip would leave the banner
+    // visible. Pin "set null first, IPC second" so this contract
+    // doesn't silently regress.
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+
+    // Hold the snooze IPC open with a never-resolving promise so
+    // we can observe the in-flight state.
+    let resolveSnooze: () => void = () => {};
+    snoozeRuleMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          resolveSnooze = r;
+        }),
+    );
+
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r-flicker",
+        ruleName: "x",
+        confidence: "suggestive",
+        project: "p",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).not.toBeNull();
+
+    // Fire dismiss but don't await — the IPC promise is parked.
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.dismiss();
+    });
+    // Banner is already cleared even though the IPC is still in flight.
+    expect(result.current.suggestion).toBeNull();
+    expect(snoozeRuleMock).toHaveBeenCalledWith(
+      "r-flicker",
+      expect.any(Number),
+    );
+
+    // Resolve and await to keep the test lifecycle clean.
+    resolveSnooze();
+    await act(async () => {
+      await pending;
+    });
+  });
+
   it("snoozeEverything() floors and clamps non-positive durations to 1 second", async () => {
     const { listen, harness } = makeListenHarness();
     const { useSuggestion } = await import("./use-suggestion");

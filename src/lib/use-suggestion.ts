@@ -12,12 +12,6 @@ export const SIGNAL_MATCH_EVENT = "signal:match";
 /** Default snooze duration for a dismissed suggestion (5 min). */
 export const DEFAULT_SNOOZE_SECONDS = 5 * 60;
 
-/** Backwards-compat constant — kept so existing callers still
- * compile while the hook moves from the client-side snooze map to
- * backend-driven snooze.
- */
-export const DEFAULT_SNOOZE_MS = DEFAULT_SNOOZE_SECONDS * 1000;
-
 /**
  * Options for `useSuggestion`. **Stability matters**: `startEntry`,
  * `listen`, and `currentRunningRuleId` are part of the subscription

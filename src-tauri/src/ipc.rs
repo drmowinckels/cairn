@@ -1291,7 +1291,7 @@ mod tests {
     // ---------------- snooze IPCs (M1 #9) ----------------
 
     #[tokio::test]
-    async fn snooze_rule_silences_the_rule_via_snoozer() {
+    async fn snooze_rule_records_entry_and_blocks_matcher() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         snooze_rule(
@@ -1303,10 +1303,19 @@ mod tests {
         )
         .await
         .unwrap();
-        let snapshot = list_snoozes(state).await.unwrap();
+        let snapshot = list_snoozes(state.clone()).await.unwrap();
         assert_eq!(snapshot.rules.len(), 1);
         assert_eq!(snapshot.rules[0].0, "r1");
         assert!(snapshot.global.is_none());
+        // End-to-end: the matcher path in `rules::evaluate_with_snoozer`
+        // must now treat "r1" as snoozed when called with the same
+        // snoozer. Pin via the live AppState.
+        let mut guard = state.snoozer.lock().unwrap();
+        assert!(
+            guard.is_snoozed("r1", Utc::now()),
+            "the stored entry must actually silence the matcher"
+        );
+        assert!(!guard.is_snoozed("r2", Utc::now()));
     }
 
     #[tokio::test]
@@ -2676,10 +2685,13 @@ pub struct SnoozeAllInput {
 #[tauri::command]
 pub async fn snooze_rule(state: State<'_, AppState>, input: SnoozeRuleInput) -> Result<(), String> {
     let dur = validate_snooze_duration(input.duration_seconds)?;
-    let mut guard = state
-        .snoozer
-        .lock()
-        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    let mut guard = state.snoozer.lock().unwrap_or_else(|p| {
+        // Recover from poisoning by taking the inner — the IPC
+        // writer's job is to update state, not propagate the
+        // panic of a previous critical section.
+        log::warn!("snoozer lock was poisoned, recovering");
+        p.into_inner()
+    });
     guard.snooze_rule(&input.rule_id, dur, Utc::now());
     Ok(())
 }
@@ -2689,10 +2701,13 @@ pub async fn snooze_rule(state: State<'_, AppState>, input: SnoozeRuleInput) -> 
 #[tauri::command]
 pub async fn snooze_all(state: State<'_, AppState>, input: SnoozeAllInput) -> Result<(), String> {
     let dur = validate_snooze_duration(input.duration_seconds)?;
-    let mut guard = state
-        .snoozer
-        .lock()
-        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    let mut guard = state.snoozer.lock().unwrap_or_else(|p| {
+        // Recover from poisoning by taking the inner — the IPC
+        // writer's job is to update state, not propagate the
+        // panic of a previous critical section.
+        log::warn!("snoozer lock was poisoned, recovering");
+        p.into_inner()
+    });
     guard.snooze_all(dur, Utc::now());
     Ok(())
 }
@@ -2701,10 +2716,13 @@ pub async fn snooze_all(state: State<'_, AppState>, input: SnoozeAllInput) -> Re
 /// affordance in Settings.
 #[tauri::command]
 pub async fn unsnooze_all(state: State<'_, AppState>) -> Result<(), String> {
-    let mut guard = state
-        .snoozer
-        .lock()
-        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    let mut guard = state.snoozer.lock().unwrap_or_else(|p| {
+        // Recover from poisoning by taking the inner — the IPC
+        // writer's job is to update state, not propagate the
+        // panic of a previous critical section.
+        log::warn!("snoozer lock was poisoned, recovering");
+        p.into_inner()
+    });
     guard.unsnooze_all();
     Ok(())
 }
@@ -2715,20 +2733,21 @@ pub async fn unsnooze_all(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn list_snoozes(
     state: State<'_, AppState>,
 ) -> Result<crate::rules::SnoozeSnapshot, String> {
-    let guard = state
-        .snoozer
-        .lock()
-        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    let guard = state.snoozer.lock().unwrap_or_else(|p| {
+        log::warn!("snoozer lock was poisoned, recovering");
+        p.into_inner()
+    });
     Ok(guard.snapshot(Utc::now()))
 }
 
 fn validate_snooze_duration(seconds: i64) -> Result<chrono::Duration, String> {
-    // Clamp the inputs the IPC could conceivably receive — a
-    // negative duration means "snooze for 0" (no-op), a huge value
-    // means "silence forever" which contradicts the "fresh app
-    // launch = fresh attention" design (snoozes don't persist
-    // across launches, but a 24-day snooze inside one launch is
-    // effectively persistence).
+    // The lower bound is `1` (not the spec floor of 300s = 5 min)
+    // so tests and programmatic clients can use short windows; the
+    // production UI defaults to 5 min via the frontend constant
+    // `DEFAULT_SNOOZE_SECONDS`. The upper bound is an arbitrary
+    // hardening cap to reject obviously-malformed payloads — the
+    // real lifetime guarantee is "snoozes don't persist across app
+    // launches" (the Snoozer state is in-memory only).
     const MAX_SNOOZE_SECS: i64 = 7 * 24 * 3600;
     if seconds < 1 {
         return Err("duration_seconds must be >= 1".into());

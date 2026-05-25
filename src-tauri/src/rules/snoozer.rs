@@ -100,6 +100,15 @@ impl Snoozer {
         self.global = None;
     }
 
+    /// Number of per-rule entries in the underlying map, including
+    /// any that have expired but not yet been pruned. Exposed for
+    /// tests so they can pin pruning behaviour directly instead of
+    /// inferring it from `snapshot`'s expiry filter.
+    #[cfg(test)]
+    pub fn rules_map_len(&self) -> usize {
+        self.rules.len()
+    }
+
     /// Project the current state into a JSON-friendly snapshot
     /// (un-expired entries only). Used by `list_snoozes` IPC for
     /// the Rules view's "snoozed until …" badges.
@@ -150,9 +159,18 @@ mod tests {
         let mut s = Snoozer::new();
         s.snooze_rule("r1", Duration::seconds(300), t(1000));
         // Re-snooze with a SHORTER duration shouldn't shorten the
-        // existing window — the user already chose 5 minutes.
-        s.snooze_rule("r1", Duration::seconds(10), t(1000));
-        assert!(s.is_snoozed("r1", t(1200)));
+        // existing window. Pin the actual stored expiry to avoid
+        // a false-pass via the still-active original window.
+        s.snooze_rule("r1", Duration::seconds(10), t(1100));
+        let snap = s.snapshot(t(1050));
+        assert_eq!(
+            snap.rules
+                .iter()
+                .find(|(id, _)| id == "r1")
+                .map(|(_, t)| *t),
+            Some(t(1300)),
+            "shorter re-snooze must not shorten — original 300s @ t(1000) expires at t(1300)"
+        );
     }
 
     #[test]
@@ -160,8 +178,42 @@ mod tests {
         let mut s = Snoozer::new();
         s.snooze_rule("r1", Duration::seconds(60), t(1000));
         s.snooze_rule("r1", Duration::seconds(3600), t(1010));
+        // Original 60s expires at t(1060); new 1h at t(4610).
+        let snap = s.snapshot(t(1020));
+        assert_eq!(
+            snap.rules
+                .iter()
+                .find(|(id, _)| id == "r1")
+                .map(|(_, t)| *t),
+            Some(t(4610)),
+            "longer re-snooze must replace the shorter window"
+        );
+    }
+
+    #[test]
+    fn snooze_all_extends_but_does_not_shorten() {
+        let mut s = Snoozer::new();
+        s.snooze_all(Duration::seconds(3600), t(1000));
+        // Re-snoozing all with a SHORTER duration must NOT shorten
+        // the existing global window. Asserted via the snapshot's
+        // exact expiration to pin the actual invariant.
+        s.snooze_all(Duration::seconds(60), t(1000));
+        let snap = s.snapshot(t(1010));
+        assert_eq!(
+            snap.global,
+            Some(t(4600)),
+            "shorter snooze_all must not shorten"
+        );
+    }
+
+    #[test]
+    fn snooze_all_with_longer_duration_wins() {
+        let mut s = Snoozer::new();
+        s.snooze_all(Duration::seconds(60), t(1000));
+        s.snooze_all(Duration::seconds(3600), t(1010));
         // Original 60s would expire at 1060; new 1h expires at 4610.
-        assert!(s.is_snoozed("r1", t(2000)));
+        let snap = s.snapshot(t(1020));
+        assert_eq!(snap.global, Some(t(4610)));
     }
 
     #[test]
@@ -195,11 +247,15 @@ mod tests {
     fn expired_per_rule_entries_are_pruned_on_check() {
         let mut s = Snoozer::new();
         s.snooze_rule("r1", Duration::seconds(60), t(1000));
-        // Past expiry; check prunes.
+        assert_eq!(s.rules_map_len(), 1, "entry exists before prune");
+        // Past expiry; checking prunes the entry from the
+        // underlying map (not just from the snapshot filter).
         s.is_snoozed("r1", t(2000));
-        // Snapshot reflects the pruned state.
-        let snap = s.snapshot(t(2000));
-        assert!(snap.rules.is_empty());
+        assert_eq!(
+            s.rules_map_len(),
+            0,
+            "expired entry must be removed from underlying map, not just filtered by snapshot"
+        );
     }
 
     #[test]
