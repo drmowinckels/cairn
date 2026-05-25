@@ -209,9 +209,17 @@ pub fn run() {
             // Rules cache: load once, refreshed by `save_rule` /
             // `delete_rule` IPC mutators. The fanout reads this on
             // every snapshot publish; per-tick DB queries used to
-            // dominate the hot path (issue #55).
+            // dominate the hot path (issue #55). A startup-load
+            // failure here is unlikely (we just opened the pool)
+            // but if it happens we boot with an empty cache — the
+            // first save_rule mutator will repopulate.
             let rules_cache = tauri::async_runtime::block_on(async {
-                signals::fanout::load_engine_rules(&db.pool).await
+                signals::fanout::load_engine_rules(&db.pool)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::warn!("rules: startup load failed: {e}; starting with empty cache");
+                        Vec::new()
+                    })
             });
             let rules_cache = Arc::new(RwLock::new(rules_cache));
 

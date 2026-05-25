@@ -96,7 +96,9 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         .build(mock_context(noop_assets()))
         .expect("mock_app builds");
     let rules_cache = Arc::new(RwLock::new(
-        crate::signals::fanout::load_engine_rules(&db.pool).await,
+        crate::signals::fanout::load_engine_rules(&db.pool)
+            .await
+            .expect("load_engine_rules: fresh test db"),
     ));
     app.manage(AppState {
         db: db.clone(),

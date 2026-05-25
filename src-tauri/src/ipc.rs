@@ -543,8 +543,9 @@ pub async fn save_rule(state: State<'_, AppState>, rule: RuleInput) -> Result<Ru
 
     // Serialize (INSERT, reload) so concurrent mutator IPCs can't
     // interleave such that the rules cache ends up reflecting a
-    // stale DB snapshot.
-    let _mutator = state.rules_mutator.lock().await;
+    // stale DB snapshot. The leading underscore tells the compiler
+    // it's an RAII guard — its lifetime is what holds the lock.
+    let _guard = state.rules_mutator.lock().await;
     sqlx::query(
         r#"
         INSERT INTO rules (id, name, enabled, priority, body, created_at, updated_at)
@@ -579,7 +580,7 @@ pub async fn save_rule(state: State<'_, AppState>, rule: RuleInput) -> Result<Ru
 
 #[tauri::command]
 pub async fn delete_rule(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let _mutator = state.rules_mutator.lock().await;
+    let _guard = state.rules_mutator.lock().await;
     sqlx::query("DELETE FROM rules WHERE id = ?1")
         .bind(&id)
         .execute(&state.db.pool)
@@ -593,8 +594,21 @@ pub async fn delete_rule(state: State<'_, AppState>, id: String) -> Result<(), S
 /// `save_rule` / `delete_rule` so the fanout and calendar-autostop
 /// tasks see the new state on the very next tick. Mirrors
 /// `reload_exclusions`.
+///
+/// On SQL failure (e.g. transient `SQLITE_BUSY`) the cache is
+/// *retained* rather than blanked — overwriting with `Vec::new()`
+/// would silently disable every rule until the next mutator runs.
+/// The DB write that triggered the reload has already succeeded;
+/// the cache lag converges as soon as the next mutator (or app
+/// restart) loads cleanly.
 async fn reload_rules(state: &State<'_, AppState>) {
-    let fresh = crate::signals::fanout::load_engine_rules(&state.db.pool).await;
+    let fresh = match crate::signals::fanout::load_engine_rules(&state.db.pool).await {
+        Ok(rules) => rules,
+        Err(e) => {
+            log::warn!("rules: reload skipped — DB query failed: {e}; cache retained");
+            return;
+        }
+    };
     match state.rules_cache.write() {
         Ok(mut guard) => *guard = fresh,
         Err(poisoned) => {
@@ -2023,19 +2037,106 @@ mod tests {
         // cache must be invalidated after every `save_rule` write
         // or the fanout would evaluate snapshots against a stale
         // rule set.
+        //
+        // Asserts the *engine shape*: the cache holds parsed
+        // `when` / `then` (not raw JSON), so the fanout can call
+        // `outcome_for_full` against it without re-parsing.
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         assert!(
             state.rules_cache.read().unwrap().is_empty(),
             "fresh app starts with an empty rules cache",
         );
-        let saved = save_rule(state.clone(), rule_input(None, "Cached"))
-            .await
-            .unwrap();
+        let body = serde_json::json!({
+            "when": [{"signal": "app.name", "op": "equals", "value": "Cached"}],
+            "then": { "project": "cached-project", "tags": [], "tagsFromCalendar": false }
+        });
+        let saved = save_rule(
+            state.clone(),
+            RuleInput {
+                id: None,
+                name: "Cached".into(),
+                enabled: true,
+                priority: 10,
+                body,
+            },
+        )
+        .await
+        .unwrap();
         let cache = state.rules_cache.read().unwrap();
-        assert_eq!(cache.len(), 1, "cache should contain the just-saved rule",);
-        assert_eq!(cache[0].id, saved.id);
-        assert_eq!(cache[0].name, "Cached");
+        assert_eq!(cache.len(), 1, "cache should contain the just-saved rule");
+        let cached = &cache[0];
+        assert_eq!(cached.id, saved.id);
+        assert_eq!(cached.name, "Cached");
+        // Engine-shape assertions: the body was projected through
+        // `project_rules`, not stored as raw JSON. A bug here would
+        // mean the fanout's `outcome_for_full` runs against an empty
+        // ruleset even though the cache claims to hold one.
+        assert_eq!(cached.when.len(), 1, "parsed `when` from body");
+        assert!(
+            matches!(
+                &cached.when[0],
+                crate::rules::Condition::AppName { value, .. } if value == "Cached"
+            ),
+            "first condition projects through to AppName",
+        );
+        assert_eq!(
+            cached.then.project.as_deref(),
+            Some("cached-project"),
+            "parsed `then.project` from body",
+        );
+    }
+
+    #[tokio::test]
+    async fn save_rule_update_refreshes_rules_cache() {
+        // The save path's `ON CONFLICT(id) DO UPDATE` covers both
+        // insert and update. The cache must reflect the *new* body
+        // on the update path too — without the reload, the fanout
+        // would keep matching against the previous body.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let body_v1 = serde_json::json!({
+            "when": [{"signal": "app.name", "op": "equals", "value": "Original"}],
+            "then": { "project": "p1", "tags": [], "tagsFromCalendar": false }
+        });
+        let made = save_rule(
+            state.clone(),
+            RuleInput {
+                id: None,
+                name: "R".into(),
+                enabled: true,
+                priority: 10,
+                body: body_v1,
+            },
+        )
+        .await
+        .unwrap();
+        let body_v2 = serde_json::json!({
+            "when": [{"signal": "app.name", "op": "equals", "value": "Renamed"}],
+            "then": { "project": "p2", "tags": [], "tagsFromCalendar": false }
+        });
+        save_rule(
+            state.clone(),
+            RuleInput {
+                id: Some(made.id.clone()),
+                name: "R".into(),
+                enabled: true,
+                priority: 10,
+                body: body_v2,
+            },
+        )
+        .await
+        .unwrap();
+        let cache = state.rules_cache.read().unwrap();
+        assert_eq!(cache.len(), 1);
+        assert!(
+            matches!(
+                &cache[0].when[0],
+                crate::rules::Condition::AppName { value, .. } if value == "Renamed"
+            ),
+            "cache must reflect the updated body, not the original",
+        );
+        assert_eq!(cache[0].then.project.as_deref(), Some("p2"));
     }
 
     #[tokio::test]

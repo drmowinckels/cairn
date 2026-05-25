@@ -139,31 +139,30 @@ pub fn outcome_for_full(
 /// (`save_rule` / `delete_rule`) to refresh the
 /// `AppState.rules_cache` after a write. The fanout itself never
 /// calls this — it reads the cache instead, per issue #55.
-pub async fn load_engine_rules(pool: &SqlitePool) -> Vec<Rule> {
-    let ipc_rules = load_rules(pool).await;
-    project_rules(ipc_rules)
+///
+/// Returns `Err` on SQL failure so callers can distinguish
+/// "no rules" from "the query failed and we don't actually know
+/// what's in the table." Critical for `reload_rules`: writing an
+/// empty `Vec` to the cache on a transient `SQLITE_BUSY` would
+/// silently disable every rule until the next mutator runs.
+pub async fn load_engine_rules(pool: &SqlitePool) -> Result<Vec<Rule>, sqlx::Error> {
+    let ipc_rules = load_rules(pool).await?;
+    Ok(project_rules(ipc_rules))
 }
 
 /// Load every rule from the DB, in priority order, in the IPC
-/// shape. Used by the fan-out task on each snapshot tick. Kept
-/// parallel to `ipc::list_rules` (which is gated behind a Tauri
-/// `State`) so the fan-out loop can run without a `State`.
+/// shape. Returns `Err` on SQL failure; rows whose `body` column
+/// can't be parsed as JSON are dropped (with a warn-log keyed by
+/// `rule_id` — body strings can carry user-entered patterns that
+/// may include PII so we never log them).
 ///
-/// `pub(crate)` so other backend tasks (e.g. `calendar_autostop`)
-/// can reuse the same query + parse logic instead of duplicating.
-pub(crate) async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
-    let rows = match sqlx::query(
-        "SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC",
-    )
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            log::warn!("fanout: rules query failed: {e}");
-            return Vec::new();
-        }
-    };
+/// `pub(crate)` so other backend tasks can reuse the same query +
+/// parse logic instead of duplicating.
+pub(crate) async fn load_rules(pool: &SqlitePool) -> Result<Vec<crate::ipc::Rule>, sqlx::Error> {
+    let rows =
+        sqlx::query("SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC")
+            .fetch_all(pool)
+            .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let id: String = r.get("id");
@@ -187,7 +186,7 @@ pub(crate) async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
             body,
         });
     }
-    out
+    Ok(out)
 }
 
 /// Run the fan-out loop. Exits cleanly when the upstream
@@ -432,7 +431,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let rules = load_rules(&db.pool).await;
+        let rules = load_rules(&db.pool).await.expect("load_rules ok");
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].id, "early");
         assert_eq!(rules[1].id, "late");
@@ -442,8 +441,26 @@ mod tests {
     #[tokio::test]
     async fn load_rules_returns_empty_on_fresh_db() {
         let (_dir, db) = crate::test_support::test_db().await;
-        let rules = load_rules(&db.pool).await;
+        let rules = load_rules(&db.pool).await.expect("load_rules ok");
         assert!(rules.is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn load_rules_errors_when_pool_is_closed() {
+        // Pin the regression that the round-1 review caught: previously
+        // `load_rules` swallowed SQL errors and returned `Vec::new()`,
+        // which `reload_rules` would happily write into the cache —
+        // silently disabling every rule on a transient `SQLITE_BUSY`.
+        // Now SQL failures bubble; the caller decides what to do.
+        let (_dir, db) = crate::test_support::test_db().await;
+        db.pool.close().await;
+        let res = load_rules(&db.pool).await;
+        assert!(
+            res.is_err(),
+            "load_rules must return Err on SQL failure so reload_rules \
+             can keep the cache intact instead of blanking it",
+        );
     }
 
     // ---- Integration test: full run() loop via mock_app ----------
