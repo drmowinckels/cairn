@@ -95,6 +95,9 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
     let app = mock_builder()
         .build(mock_context(noop_assets()))
         .expect("mock_app builds");
+    let rules_cache = Arc::new(RwLock::new(
+        crate::signals::fanout::load_engine_rules(&db.pool).await,
+    ));
     app.manage(AppState {
         db: db.clone(),
         pinned: AtomicBool::new(false),
@@ -103,6 +106,8 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         exclusions,
         exclusions_mutator: tokio::sync::Mutex::new(()),
         snoozer: Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new())),
+        rules_cache,
+        rules_mutator: tokio::sync::Mutex::new(()),
     });
     (dir, app, db)
 }

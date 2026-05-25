@@ -18,7 +18,7 @@ use tauri_plugin_log::{Target, TargetKind};
 
 pub use db::Db;
 
-use rules::Snoozer;
+use rules::{Rule as EngineRule, Snoozer};
 use signals::calendar::CalendarRegistry;
 use signals::exclusions::ExclusionMatcher;
 use signals::stream::SnapshotStream;
@@ -45,6 +45,14 @@ pub struct AppState {
     /// it. `std::sync::Mutex` because every critical section is a
     /// bounded `HashMap` operation with no `.await` inside.
     pub snoozer: Arc<std::sync::Mutex<Snoozer>>,
+    /// Cache of rules in their engine shape (parsed `when`/`then`).
+    /// Replaces the per-snapshot DB query + JSON parse on the
+    /// fanout's hot path (issue #55). Mutator IPCs
+    /// (`save_rule` / `delete_rule`) reload it after a write.
+    pub rules_cache: Arc<RwLock<Vec<EngineRule>>>,
+    /// Same pattern as `exclusions_mutator`: serializes
+    /// `(DB write, rules reload)` pairs.
+    pub rules_mutator: tokio::sync::Mutex<()>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -198,13 +206,22 @@ pub fn run() {
             // initial Git events flow into the stream's sender.
             signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos);
 
+            // Rules cache: load once, refreshed by `save_rule` /
+            // `delete_rule` IPC mutators. The fanout reads this on
+            // every snapshot publish; per-tick DB queries used to
+            // dominate the hot path (issue #55).
+            let rules_cache = tauri::async_runtime::block_on(async {
+                signals::fanout::load_engine_rules(&db.pool).await
+            });
+            let rules_cache = Arc::new(RwLock::new(rules_cache));
+
             // Tauri fan-out: every published snapshot is evaluated
-            // against the rules in the DB and emitted as
+            // against the rules-cache snapshot and emitted as
             // `signal:snapshot` / `signal:match` to the popover
             // window. The snoozer gates the matcher so dismissed-
             // banner rules stay quiet. Exits on driver shutdown.
             let fanout_rx = stream.subscribe();
-            let fanout_pool = db.pool.clone();
+            let fanout_rules = rules_cache.clone();
             let fanout_handle = app.handle().clone();
             let snoozer_for_fanout = Arc::new(std::sync::Mutex::new(Snoozer::new()));
             let snoozer_for_state = snoozer_for_fanout.clone();
@@ -212,7 +229,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 signals::fanout::run(
                     fanout_rx,
-                    fanout_pool,
+                    fanout_rules,
                     snoozer_for_fanout,
                     exclusions_for_fanout,
                     fanout_handle,
@@ -234,8 +251,10 @@ pub fn run() {
             // manually edited the entry in between. See M1 #10.
             let autostop_pool = db.pool.clone();
             let autostop_calendar = calendar.clone();
+            let autostop_rules = rules_cache.clone();
             tauri::async_runtime::spawn(async move {
-                signals::calendar_autostop::run(autostop_pool, autostop_calendar).await;
+                signals::calendar_autostop::run(autostop_pool, autostop_calendar, autostop_rules)
+                    .await;
             });
 
             app.manage(AppState {
@@ -246,6 +265,8 @@ pub fn run() {
                 exclusions,
                 exclusions_mutator: tokio::sync::Mutex::new(()),
                 snoozer: snoozer_for_state,
+                rules_cache,
+                rules_mutator: tokio::sync::Mutex::new(()),
             });
 
             tray::setup(app.handle())?;

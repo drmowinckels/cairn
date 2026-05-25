@@ -207,7 +207,15 @@ async fn close_entry(pool: &SqlitePool, entry_id: &str, now: DateTime<Utc>) {
 ///
 /// Exits when the pool is closed; the task is otherwise expected
 /// to run until process exit.
-pub async fn run(pool: SqlitePool, calendar: Arc<CalendarRegistry>) {
+///
+/// `rules_cache` is the `AppState.rules_cache` snapshot fronted by
+/// `Arc<RwLock<_>>`. The task clones the cache contents per-tick;
+/// IPC mutators refresh it after writes (see issue #55).
+pub async fn run(
+    pool: SqlitePool,
+    calendar: Arc<CalendarRegistry>,
+    rules_cache: Arc<std::sync::RwLock<Vec<Rule>>>,
+) {
     let mut ticker = tokio::time::interval(AUTOSTOP_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Skip the first immediate tick — the app just started; no
@@ -245,11 +253,16 @@ pub async fn run(pool: SqlitePool, calendar: Arc<CalendarRegistry>) {
             calendar: calendar_events,
         };
 
-        // Load rules. We reload per-tick rather than caching —
-        // small query, runs once every 30s. Shares the fanout's
-        // loader so the parsing path stays single-source.
-        let ipc_rules = crate::signals::fanout::load_rules(&pool).await;
-        let rules = crate::signals::fanout::project_rules(ipc_rules);
+        // Snapshot the rules cache into a local clone so the read
+        // lock is released before we do anything `await`-y. Cache
+        // is refreshed by IPC mutators (see issue #55).
+        let rules: Vec<Rule> = match rules_cache.read() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                log::warn!("calendar-autostop: rules cache lock poisoned, skipping tick");
+                continue;
+            }
+        };
 
         for entry in entries {
             if should_auto_stop(&entry, &rules, &snapshot) {

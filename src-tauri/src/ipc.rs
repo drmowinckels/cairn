@@ -541,6 +541,10 @@ pub async fn save_rule(state: State<'_, AppState>, rule: RuleInput) -> Result<Ru
     let now = Utc::now().to_rfc3339();
     let body_str = serde_json::to_string(&rule.body).map_err(err)?;
 
+    // Serialize (INSERT, reload) so concurrent mutator IPCs can't
+    // interleave such that the rules cache ends up reflecting a
+    // stale DB snapshot.
+    let _mutator = state.rules_mutator.lock().await;
     sqlx::query(
         r#"
         INSERT INTO rules (id, name, enabled, priority, body, created_at, updated_at)
@@ -562,6 +566,7 @@ pub async fn save_rule(state: State<'_, AppState>, rule: RuleInput) -> Result<Ru
     .execute(&state.db.pool)
     .await
     .map_err(err)?;
+    reload_rules(&state).await;
 
     Ok(Rule {
         id,
@@ -574,12 +579,30 @@ pub async fn save_rule(state: State<'_, AppState>, rule: RuleInput) -> Result<Ru
 
 #[tauri::command]
 pub async fn delete_rule(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let _mutator = state.rules_mutator.lock().await;
     sqlx::query("DELETE FROM rules WHERE id = ?1")
         .bind(&id)
         .execute(&state.db.pool)
         .await
         .map_err(err)?;
+    reload_rules(&state).await;
     Ok(())
+}
+
+/// Reload the in-memory rules cache from the DB. Called after every
+/// `save_rule` / `delete_rule` so the fanout and calendar-autostop
+/// tasks see the new state on the very next tick. Mirrors
+/// `reload_exclusions`.
+async fn reload_rules(state: &State<'_, AppState>) {
+    let fresh = crate::signals::fanout::load_engine_rules(&state.db.pool).await;
+    match state.rules_cache.write() {
+        Ok(mut guard) => *guard = fresh,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = fresh;
+            log::warn!("rules: recovered from poisoned RwLock and reloaded");
+        }
+    }
 }
 
 #[tauri::command]
@@ -1991,6 +2014,46 @@ mod tests {
         delete_rule(state.clone(), made.id.clone()).await.unwrap();
         let after = list_rules(state).await.unwrap();
         assert!(after.iter().all(|r| r.id != made.id));
+    }
+
+    #[tokio::test]
+    async fn save_rule_refreshes_rules_cache() {
+        // Pin issue #55: the fanout reads from `AppState.rules_cache`
+        // instead of querying the DB on every snapshot publish. The
+        // cache must be invalidated after every `save_rule` write
+        // or the fanout would evaluate snapshots against a stale
+        // rule set.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        assert!(
+            state.rules_cache.read().unwrap().is_empty(),
+            "fresh app starts with an empty rules cache",
+        );
+        let saved = save_rule(state.clone(), rule_input(None, "Cached"))
+            .await
+            .unwrap();
+        let cache = state.rules_cache.read().unwrap();
+        assert_eq!(cache.len(), 1, "cache should contain the just-saved rule",);
+        assert_eq!(cache[0].id, saved.id);
+        assert_eq!(cache[0].name, "Cached");
+    }
+
+    #[tokio::test]
+    async fn delete_rule_refreshes_rules_cache() {
+        // Sibling to save_rule_refreshes_rules_cache. Without the
+        // post-delete reload the fanout would keep matching against
+        // a rule the user just removed.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let made = save_rule(state.clone(), rule_input(None, "ToDelete"))
+            .await
+            .unwrap();
+        assert_eq!(state.rules_cache.read().unwrap().len(), 1);
+        delete_rule(state.clone(), made.id.clone()).await.unwrap();
+        assert!(
+            state.rules_cache.read().unwrap().is_empty(),
+            "cache should reflect the delete on next read",
+        );
     }
 
     // ---------------- exclusions CRUD ----------------
