@@ -94,12 +94,31 @@ pub enum Op {
     IsActive,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Confidence {
+    /// Default. A match posts an `Event::Suggestion` to the UI; the
+    /// user confirms before a timer starts. See
+    /// `docs/RULES_ENGINE.md` §4.
+    #[default]
+    Suggestive,
+    /// A match auto-starts the timer with no UI prompt. The user can
+    /// still stop or change it after. Reserved for rules the user
+    /// trusts enough not to need a confirmation step.
+    Strict,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub id: String,
     pub name: String,
     pub enabled: bool,
     pub priority: i64,
+    /// `Suggestive` (default) or `Strict`. See `docs/RULES_ENGINE.md`
+    /// §4. New rules default to Suggestive so a matching rule never
+    /// starts a timer behind the user's back unless they opt in.
+    #[serde(default)]
+    pub confidence: Confidence,
     pub when: Vec<Condition>,
     pub then: RuleAction,
 }
@@ -114,8 +133,11 @@ pub struct RuleAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuleMatch {
     pub rule_id: String,
+    pub rule_name: String,
+    pub confidence: Confidence,
     pub project: Option<String>,
     pub tags: Vec<String>,
 }
@@ -131,6 +153,8 @@ where
         if matches(rule, snapshot) {
             return Some(RuleMatch {
                 rule_id: rule.id.clone(),
+                rule_name: rule.name.clone(),
+                confidence: rule.confidence,
                 project: rule.then.project.clone(),
                 tags: rule.then.tags.clone(),
             });
@@ -224,6 +248,55 @@ fn regex_matches(_target: &str, _pattern: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn confidence_serialises_to_kebab_case() {
+        // Pins the wire format that the TS `Confidence` type relies
+        // on. If a future variant gets added (e.g. `StrictWithWarning`),
+        // this test will fail with the new kebab-case form so the TS
+        // side knows to update.
+        assert_eq!(
+            serde_json::to_string(&Confidence::Suggestive).unwrap(),
+            "\"suggestive\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Confidence::Strict).unwrap(),
+            "\"strict\""
+        );
+    }
+
+    #[test]
+    fn confidence_default_is_suggestive() {
+        // The privacy guarantee: a new rule never auto-starts a
+        // timer unless the user explicitly opts into Strict. Default
+        // is Suggestive — pin that.
+        assert_eq!(Confidence::default(), Confidence::Suggestive);
+    }
+
+    #[test]
+    fn rule_match_includes_confidence_from_rule() {
+        let rule = Rule {
+            id: "r-strict".into(),
+            name: "ACME work".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Strict,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("acme".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+            },
+        };
+        let snap_v = snap();
+        let m = evaluate([&rule], &snap_v).expect("rule fires for app=Zed");
+        assert_eq!(m.confidence, Confidence::Strict);
+        assert_eq!(m.rule_name, "ACME work");
+    }
+
     fn snap() -> SignalSnapshot {
         SignalSnapshot {
             ide_folder: Some("~/code/cairn".into()),
@@ -251,6 +324,7 @@ mod tests {
             name: "Cairn".into(),
             enabled: true,
             priority: 0,
+            confidence: Confidence::Suggestive,
             when: vec![Condition::IdeFolder {
                 op: Op::Contains,
                 value: "cairn".into(),
@@ -273,6 +347,7 @@ mod tests {
             name: "Disabled".into(),
             enabled: false,
             priority: 0,
+            confidence: Confidence::Suggestive,
             when: vec![Condition::IdeFolder {
                 op: Op::Contains,
                 value: "cairn".into(),
@@ -294,6 +369,7 @@ mod tests {
             name: "ACME".into(),
             enabled: true,
             priority: 0,
+            confidence: Confidence::Suggestive,
             when: vec![
                 Condition::IdeFolder {
                     op: Op::Contains,
@@ -324,6 +400,7 @@ mod tests {
             name: id.into(),
             enabled: true,
             priority: 0,
+            confidence: Confidence::Suggestive,
             when: conds,
             then: RuleAction {
                 project: Some(project.into()),
@@ -505,6 +582,7 @@ mod tests {
             name: "tagged".into(),
             enabled: true,
             priority: 0,
+            confidence: Confidence::Suggestive,
             when: vec![Condition::IdeFolder {
                 op: Op::Contains,
                 value: "cairn".into(),
@@ -567,6 +645,7 @@ mod tests {
             name: "Meetings".into(),
             enabled: true,
             priority: 0,
+            confidence: Confidence::Suggestive,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -597,6 +676,7 @@ mod tests {
             name: "1-on-1 with Alice".into(),
             enabled: true,
             priority: 0,
+            confidence: Confidence::Suggestive,
             when: vec![Condition::CalendarEvent {
                 op: Op::Contains,
                 value: "Alice".into(),

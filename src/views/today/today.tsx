@@ -3,6 +3,7 @@ import { Icon } from "../../lib/icon";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { fmtClock, fmtHm, fmtRange } from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
+import { useSuggestion } from "../../lib/use-suggestion";
 import type { Density, DetectionPrompts, LayoutVariant } from "../../lib/types";
 import {
   NOW_MIN,
@@ -17,8 +18,6 @@ interface Props {
   density: Density;
   layoutVariant: LayoutVariant;
   onOpenRule: (id: string) => void;
-  suggestionDismissed: boolean;
-  setSuggestionDismissed: (v: boolean) => void;
   showIdleModal: boolean;
   setShowIdleModal: (v: boolean) => void;
   detectionPrompts?: DetectionPrompts;
@@ -29,8 +28,6 @@ export function TodayView({
   density,
   layoutVariant,
   onOpenRule,
-  suggestionDismissed,
-  setSuggestionDismissed,
   showIdleModal,
   setShowIdleModal,
   detectionPrompts = "subtle",
@@ -38,6 +35,15 @@ export function TodayView({
 }: Props) {
   const compact = density === "compact";
   const timer = useTimer();
+  // The hook owns banner visibility internally — dismissed
+  // suggestions clear via the snooze map per RULES_ENGINE.md §6,
+  // and Strict matches skip the banner entirely. The popover used
+  // to track `suggestionDismissed` as a session boolean; that's
+  // gone now because it permanently silenced the banner after the
+  // first dismiss, even after the snooze expired.
+  const { suggestion, confirm, dismiss } = useSuggestion({
+    currentRunningRuleId: timer.running?.ruleId ?? null,
+  });
 
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -69,38 +75,77 @@ export function TodayView({
 
   return (
     <div className="view view-today" data-density={density}>
-      {!suggestionDismissed && detectionPrompts !== "off" && (
+      {detectionPrompts !== "off" && suggestion && (
         <section
           className={`suggest suggest--${detectionPrompts}`}
           aria-label="Auto-detected work"
           aria-live={announce ? "polite" : "off"}
           role={detectionPrompts === "modal" ? "alertdialog" : undefined}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              dismiss();
+            } else if (e.key === "Enter") {
+              void confirm();
+            }
+          }}
         >
           <div className="suggest-head">
             <Icon name="sparkle" size={13} />
             <span>Detected</span>
             <button
               className="suggest-x"
-              onClick={() => setSuggestionDismissed(true)}
+              onClick={() => dismiss()}
               aria-label="Dismiss suggestion"
             >
               <Icon name="x" size={12} />
             </button>
           </div>
           <div className="suggest-body">
-            Working on <ProjectChip id="cairn" /> — <em>Rule preview UI</em>?
+            {suggestion.project ? (
+              <>
+                Working on <ProjectChip id={suggestion.project} />
+              </>
+            ) : (
+              <>Detected</>
+            )}{" "}
+            — <em>{suggestion.ruleName}</em>?
+            {suggestion.tags.length > 0 && (
+              <span className="suggest-tags">
+                {suggestion.tags.map((t) => (
+                  <Tag key={t}>{t}</Tag>
+                ))}
+              </span>
+            )}
           </div>
           <div className="suggest-why">
-            because <code>feat/rules-ui</code> · folder <code>~/code/cairn</code>
-            <button className="suggest-link" onClick={() => onOpenRule("r1")}>
+            <button
+              className="suggest-link"
+              onClick={() => {
+                // Viewing the rule acks the suggestion. Without
+                // this the banner stays pinned on return, with
+                // potentially stale `ruleName` if the user renamed
+                // the rule in the editor.
+                const id = suggestion.ruleId;
+                dismiss();
+                onOpenRule(id);
+              }}
+            >
               view rule
             </button>
           </div>
           <div className="suggest-actions">
-            <button className="btn btn--primary">
+            <button
+              className="btn btn--primary"
+              onClick={() => void confirm()}
+            >
               <Icon name="check" size={13} /> Confirm
             </button>
-            <button className="btn btn--ghost">Change…</button>
+            <button
+              className="btn btn--ghost"
+              onClick={() => dismiss()}
+            >
+              Change…
+            </button>
           </div>
         </section>
       )}

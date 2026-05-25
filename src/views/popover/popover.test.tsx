@@ -24,6 +24,24 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
 
+// The popover transitively mounts Today which renders the
+// suggestion banner via useSuggestion(). Mock the hook with a
+// fixed Suggestive match so the "view rule" / dismissal flows
+// have something to click on.
+vi.mock("../../lib/use-suggestion", () => ({
+  useSuggestion: () => ({
+    suggestion: {
+      ruleId: "r1",
+      ruleName: "Cairn dev",
+      confidence: "suggestive" as const,
+      project: "cairn",
+      tags: ["dev"],
+    },
+    confirm: vi.fn(),
+    dismiss: vi.fn(),
+  }),
+}));
+
 import { Popover } from "./popover";
 
 beforeEach(() => {

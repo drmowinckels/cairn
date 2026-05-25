@@ -32,7 +32,6 @@ export function Popover({
 }: Props) {
   const [view, setView] = useState<View>(initialView);
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
-  const [suggestionDismissed, setSuggestionDismissed] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const a11y = useA11yPrefs();
 
@@ -106,8 +105,6 @@ export function Popover({
               density={density}
               layoutVariant={layoutVariant}
               onOpenRule={openRule}
-              suggestionDismissed={suggestionDismissed}
-              setSuggestionDismissed={setSuggestionDismissed}
               showIdleModal={showIdleModal}
               setShowIdleModal={setShowIdleModal}
               detectionPrompts={a11y.detectionPrompts}

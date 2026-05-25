@@ -12,20 +12,39 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
 
+const SUGGESTION_FIXTURE = {
+  ruleId: "r1",
+  ruleName: "Cairn dev",
+  confidence: "suggestive" as const,
+  project: "cairn" as string | null,
+  tags: ["dev"],
+};
+const confirmMock = vi.fn();
+const dismissMock = vi.fn();
+let suggestionOverride: typeof SUGGESTION_FIXTURE | null = SUGGESTION_FIXTURE;
+
+vi.mock("../../lib/use-suggestion", () => ({
+  useSuggestion: () => ({
+    suggestion: suggestionOverride,
+    confirm: confirmMock,
+    dismiss: dismissMock,
+  }),
+}));
+
 import { TodayView } from "./index";
 
 interface RenderArgs {
   layoutVariant?: "default" | "projects-first";
-  suggestionDismissed?: boolean;
   showIdleModal?: boolean;
+  hideSuggestion?: boolean;
 }
 
 function renderToday({
   layoutVariant = "default",
-  suggestionDismissed = false,
   showIdleModal = false,
+  hideSuggestion = false,
 }: RenderArgs = {}) {
-  const setSuggestionDismissed = vi.fn();
+  suggestionOverride = hideSuggestion ? null : SUGGESTION_FIXTURE;
   const setShowIdleModal = vi.fn();
   const onOpenRule = vi.fn();
   const result = render(
@@ -33,51 +52,70 @@ function renderToday({
       density="comfy"
       layoutVariant={layoutVariant}
       onOpenRule={onOpenRule}
-      suggestionDismissed={suggestionDismissed}
-      setSuggestionDismissed={setSuggestionDismissed}
       showIdleModal={showIdleModal}
       setShowIdleModal={setShowIdleModal}
     />,
   );
-  return { ...result, setSuggestionDismissed, setShowIdleModal, onOpenRule };
+  return { ...result, setShowIdleModal, onOpenRule };
 }
 
 afterEach(() => {
   vi.clearAllMocks();
+  suggestionOverride = SUGGESTION_FIXTURE;
 });
 
 describe("TodayView", () => {
   it("renders the running timer card with the project chip and stop button", () => {
-    const { container } = renderToday({ suggestionDismissed: true });
+    const { container } = renderToday({ hideSuggestion: true });
     expect(screen.getByLabelText(/current timer/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /stop timer/i })).toBeTruthy();
-    // Inside the .now card, expect a project chip with the running project.
     const chip = container.querySelector(".now .proj-chip");
     expect(chip?.textContent).toMatch(/cairn/i);
   });
 
-  it("renders the auto-detect suggestion banner when not dismissed", () => {
+  it("renders the auto-detect suggestion banner when the hook surfaces a suggestion", () => {
     renderToday();
     expect(screen.getByLabelText(/auto-detected work/i)).toBeTruthy();
     expect(screen.getByText(/detected/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /^confirm$/i })).toBeTruthy();
   });
 
-  it("dismissing the suggestion calls setSuggestionDismissed(true)", () => {
-    const { setSuggestionDismissed } = renderToday();
+  it("dismissing the banner calls the hook's dismiss() (which handles snooze)", () => {
+    renderToday();
     fireEvent.click(screen.getByRole("button", { name: /dismiss suggestion/i }));
-    expect(setSuggestionDismissed).toHaveBeenCalledWith(true);
+    expect(dismissMock).toHaveBeenCalledTimes(1);
   });
 
-  it("clicking 'view rule' on the suggestion opens that rule", () => {
+  it("'Change…' dismisses the suggestion", () => {
+    renderToday();
+    fireEvent.click(screen.getByRole("button", { name: /change…/i }));
+    expect(dismissMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking 'view rule' on the suggestion dismisses the banner and opens that rule", () => {
     const { onOpenRule } = renderToday();
     fireEvent.click(screen.getByRole("button", { name: /view rule/i }));
+    // Acknowledges the suggestion (dismiss) then navigates.
+    expect(dismissMock).toHaveBeenCalledTimes(1);
     expect(onOpenRule).toHaveBeenCalledWith("r1");
   });
 
-  it("hides the suggestion banner when suggestionDismissed=true", () => {
-    renderToday({ suggestionDismissed: true });
+  it("clicking Confirm calls the hook's confirm()", async () => {
+    renderToday();
+    fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the suggestion banner when the hook returns suggestion=null", () => {
+    renderToday({ hideSuggestion: true });
     expect(screen.queryByLabelText(/auto-detected work/i)).toBeNull();
+  });
+
+  it("renders the suggestion's tags from the live event payload", () => {
+    renderToday();
+    // Tag component prefixes the value with "#".
+    const tag = document.querySelector(".suggest-tags .tag");
+    expect(tag?.textContent).toBe("#dev");
   });
 
   it("shows the idle modal as an alertdialog when showIdleModal=true", () => {
@@ -118,8 +156,6 @@ describe("TodayView", () => {
         density="comfy"
         layoutVariant="projects-first"
         onOpenRule={vi.fn()}
-        suggestionDismissed
-        setSuggestionDismissed={vi.fn()}
         showIdleModal={false}
         setShowIdleModal={vi.fn()}
       />,
@@ -140,7 +176,7 @@ describe("TodayView", () => {
     // browser-dev mode there is no running entry, so onStop is a no-op
     // and the catch path can't be reached without a real running entry.
     // Just verify the button is clickable without crashing the view.
-    renderToday({ suggestionDismissed: true });
+    renderToday({ hideSuggestion: true });
     const stop = screen.getByRole("button", { name: /stop timer/i });
     expect(stop.hasAttribute("disabled")).toBe(true);
     // Clicking still fires onClick (button is disabled but jsdom allows it).
@@ -189,8 +225,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        suggestionDismissed
-        setSuggestionDismissed={vi.fn()}
         showIdleModal={false}
         setShowIdleModal={vi.fn()}
       />,

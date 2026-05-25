@@ -73,10 +73,13 @@ export interface RuleCondition {
   any?: boolean;
 }
 
+export type Confidence = "suggestive" | "strict";
+
 export interface Rule {
   id: string;
   name: string;
   enabled: boolean;
+  confidence?: Confidence;
   when: RuleCondition[];
   then: {
     project: ProjectId | null;
@@ -84,6 +87,20 @@ export interface Rule {
     tagsFromCalendar?: boolean;
   };
   matchedToday: number;
+}
+
+/**
+ * Payload of the `signal:match` Tauri event. The backend fires
+ * this on every snapshot publish where a rule fires. The UI's
+ * `useSuggestion` hook decides what to do based on
+ * `confidence`: Suggestive → banner; Strict → auto-start.
+ */
+export interface RuleMatchEvent {
+  ruleId: string;
+  ruleName: string;
+  confidence: Confidence;
+  project: ProjectId | null;
+  tags: string[];
 }
 
 export interface LiveSignal {
