@@ -15,7 +15,6 @@ import type { Rule } from "./types";
 // Mock the IPC layer. We test the hook end-to-end against an
 // in-memory backend so we cover the optimistic-update + rollback
 // paths in the same harness as the fixture (no-Tauri) path.
-const backendStore = new Map<string, ReturnType<typeof serializeRule>>();
 
 vi.mock("./ipc", async () => {
   // We can't reference `backendStore` inside the factory (vi.mock
@@ -182,7 +181,12 @@ describe("useRules hook", () => {
     );
   });
 
-  it("update() rolls back on IPC failure", async () => {
+  it("update() keeps the local change on IPC failure (no destructive rollback)", async () => {
+    // PR #65 review B2: rolling back the local state on a failed
+    // save would silently discard every keystroke the user typed
+    // after the save was queued. The hook surfaces the error in
+    // `error` but leaves the local state alone — the next mutation
+    // will retry the save with whatever the user has by then.
     ipcMock.__seed([
       {
         id: "r1",
@@ -196,10 +200,61 @@ describe("useRules hook", () => {
     await waitFor(() => expect(result.current.rules).toHaveLength(1));
     vi.mocked(ipc.saveRule).mockRejectedValueOnce(new Error("DB locked"));
     await act(async () => {
-      await result.current.update("r1", { name: "Should rollback" });
+      await result.current.update("r1", { name: "Kept locally" });
     });
-    expect(result.current.rules[0].name).toBe("Original");
+    expect(result.current.rules[0].name).toBe("Kept locally");
     expect(result.current.error).toMatch(/DB locked/);
+  });
+
+  it("update() merges `then` partials instead of replacing the whole action", async () => {
+    // PR #65 review R2: a patch like `{ then: { tagsFromCalendar: true } }`
+    // must NOT blow away `then.project`. Previously the contract was
+    // muddy — half the editor's onUpdate calls spread `...rule.then`
+    // explicitly to avoid this. The hook now does the merge.
+    ipcMock.__seed([
+      {
+        id: "r1",
+        name: "R",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: "cairn", tagsFromCalendar: false } },
+      },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(1));
+    await act(async () => {
+      await result.current.update("r1", { then: { tagsFromCalendar: true } });
+    });
+    // project must be preserved across the partial-then patch.
+    expect(result.current.rules[0].then.project).toBe("cairn");
+    expect(result.current.rules[0].then.tagsFromCalendar).toBe(true);
+  });
+
+  it("update() handles two rapid same-rule patches without losing either", async () => {
+    // PR #65 review R1: stale closure capture in `useCallback` could
+    // cause a second rapid `update` to overwrite the first because
+    // both built `next` from the same snapshot. The ref-based read
+    // means the second call sees the first call's optimistic write.
+    ipcMock.__seed([
+      {
+        id: "r1",
+        name: "Start",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(1));
+    await act(async () => {
+      // First patch lands and the ref is updated before the second
+      // patch is dispatched.
+      await result.current.update("r1", { name: "Step1" });
+      await result.current.update("r1", { enabled: false });
+    });
+    // Both patches must be reflected; neither overwrote the other.
+    expect(result.current.rules[0].name).toBe("Step1");
+    expect(result.current.rules[0].enabled).toBe(false);
   });
 
   it("remove() drops the rule and calls deleteRule IPC", async () => {

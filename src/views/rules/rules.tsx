@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
 import { Empty, ProjectChip, Tag } from "../../lib/components";
 import type {
   Density,
   Op,
+  Project,
   Rule,
   RuleCondition,
   RulesComplexity,
@@ -12,17 +13,18 @@ import type {
 import {
   LIVE_SIGNALS,
   OP_LABELS,
-  PROJECTS,
-  PROJECT_BY_ID,
   SIGNAL_LABELS,
 } from "../../test-fixtures/data";
 import {
   defaultOpForSignal,
+  type PatchRule,
   useRules,
   withConditionAdded,
   withConditionAt,
   withConditionRemoved,
 } from "../../lib/use-rules";
+import { useProjects } from "../../lib/use-projects";
+import { useDebouncedCallback } from "../../lib/use-debounced-callback";
 
 interface Props {
   complexity: RulesComplexity;
@@ -41,8 +43,28 @@ const SIGNAL_OPTIONS: SignalKind[] = [
   "app.name",
 ];
 
+/**
+ * Input-length caps that mirror the backend's `save_rule` validation
+ * (see `src-tauri/src/ipc.rs`). Frontend `maxLength` is a hint —
+ * the source of truth is the backend's bounded-size check.
+ */
+const MAX_RULE_NAME = 200;
+const MAX_CONDITION_VALUE = 500;
+const MAX_DESCRIPTION_TEMPLATE = 500;
+
+/** ms of quiet time before a text-input keystroke commits to the
+ *  backend. Short enough that the user-perceived save is "live",
+ *  long enough that typing a 12-char name doesn't fire 12 IPC
+ *  roundtrips + 12 rules-cache reloads. */
+const TEXT_COMMIT_DELAY_MS = 300;
+
 export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props) {
   const { rules, add, update, remove, duplicate } = useRules();
+  const projects = useProjects();
+  const projectById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects],
+  );
   const [expanded, setExpanded] = useState<string | null>(openRuleId);
   useEffect(() => {
     if (openRuleId) setExpanded(openRuleId);
@@ -132,6 +154,8 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
                 }
               }}
               complexity={complexity}
+              projects={projects}
+              projectById={projectById}
             />
           ))}
         </ul>
@@ -172,10 +196,12 @@ interface RuleRowProps {
   index: number;
   expanded: boolean;
   onToggle: () => void;
-  onUpdate: (patch: Partial<Rule>) => void;
+  onUpdate: (patch: PatchRule) => void;
   onDuplicate: () => void;
   onDelete: () => void;
   complexity: RulesComplexity;
+  projects: Project[];
+  projectById: Map<string, Project>;
 }
 
 function RuleRow({
@@ -187,8 +213,10 @@ function RuleRow({
   onDuplicate,
   onDelete,
   complexity,
+  projects,
+  projectById,
 }: RuleRowProps) {
-  const project = rule.then.project ? PROJECT_BY_ID[rule.then.project] : null;
+  const project = rule.then.project ? projectById.get(rule.then.project) : null;
   const stopBubble = (e: React.MouseEvent | React.KeyboardEvent) => e.stopPropagation();
 
   const setCondition = (idx: number, patch: Partial<RuleCondition>) =>
@@ -267,11 +295,12 @@ function RuleRow({
             <label className="rule-name-label" htmlFor={`rule-name-${rule.id}`}>
               Name
             </label>
-            <input
+            <DebouncedTextInput
               id={`rule-name-${rule.id}`}
               className="rule-name-input"
               value={rule.name}
-              onChange={(e) => onUpdate({ name: e.target.value })}
+              onCommit={(name) => onUpdate({ name })}
+              maxLength={MAX_RULE_NAME}
               onClick={stopBubble}
             />
           </div>
@@ -328,10 +357,11 @@ function RuleRow({
                     </option>
                   ))}
                 </select>
-                <input
+                <DebouncedTextInput
                   className="cond-val"
                   value={c.value}
-                  onChange={(e) => setCondition(i, { value: e.target.value })}
+                  onCommit={(value) => setCondition(i, { value })}
+                  maxLength={MAX_CONDITION_VALUE}
                   onClick={stopBubble}
                   aria-label="Value"
                 />
@@ -371,17 +401,12 @@ function RuleRow({
                 value={rule.then.project || ""}
                 onClick={stopBubble}
                 onChange={(e) =>
-                  onUpdate({
-                    then: {
-                      ...rule.then,
-                      project: e.target.value || null,
-                    },
-                  })
+                  onUpdate({ then: { project: e.target.value || null } })
                 }
                 aria-label="Project"
               >
                 <option value="">— don't change —</option>
-                {PROJECTS.map((p) => (
+                {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
@@ -390,16 +415,14 @@ function RuleRow({
             </div>
             <div className="then-row">
               <span className="then-key">Description</span>
-              <input
+              <DebouncedTextInput
                 className="then-val"
                 value={rule.then.descriptionTemplate ?? ""}
                 placeholder="e.g. Meeting: {calendar.event}"
-                onChange={(e) =>
+                maxLength={MAX_DESCRIPTION_TEMPLATE}
+                onCommit={(t) =>
                   onUpdate({
-                    then: {
-                      ...rule.then,
-                      descriptionTemplate: e.target.value || undefined,
-                    },
+                    then: { descriptionTemplate: t || undefined },
                   })
                 }
                 onClick={stopBubble}
@@ -413,12 +436,7 @@ function RuleRow({
                   type="checkbox"
                   checked={!!rule.then.tagsFromCalendar}
                   onChange={(e) =>
-                    onUpdate({
-                      then: {
-                        ...rule.then,
-                        tagsFromCalendar: e.target.checked,
-                      },
-                    })
+                    onUpdate({ then: { tagsFromCalendar: e.target.checked } })
                   }
                   onClick={stopBubble}
                 />
@@ -495,5 +513,49 @@ function BenchField({ label, value }: { label: string; value: string }) {
       <span className="bench-label">{label}</span>
       <input className="bench-input" defaultValue={value} />
     </label>
+  );
+}
+
+interface DebouncedTextInputProps
+  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "defaultValue"> {
+  value: string;
+  onCommit: (next: string) => void;
+}
+
+/**
+ * Controlled text input that batches keystrokes — local state
+ * updates immediately for snappy typing, but commits to the
+ * caller's `onCommit` only after `TEXT_COMMIT_DELAY_MS` of quiet
+ * time (or on blur). Without this, every keystroke would fire one
+ * `save_rule` IPC + one rules-cache reload (issue #55), which
+ * stalls under SQLite write contention and is a classic save-storm
+ * pattern.
+ */
+function DebouncedTextInput({
+  value,
+  onCommit,
+  ...rest
+}: DebouncedTextInputProps) {
+  const [local, setLocal] = useState(value);
+  // Sync if the external value changes (e.g. another mutator
+  // patched the same field). Skip while the input has focus to
+  // avoid clobbering keystrokes the user has typed but not yet
+  // committed.
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) setLocal(value);
+  }, [value]);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const commit = useDebouncedCallback(onCommit, TEXT_COMMIT_DELAY_MS);
+  return (
+    <input
+      {...rest}
+      ref={inputRef}
+      value={local}
+      onChange={(e) => {
+        setLocal(e.target.value);
+        commit(e.target.value);
+      }}
+      onBlur={() => commit.flush()}
+    />
   );
 }

@@ -119,18 +119,49 @@ describe("RulesView", () => {
     expect(toggle!.checked).toBe(!startedChecked);
   });
 
-  it("editing the name input updates the displayed name immediately", () => {
+  it("editing the name input commits via debounce; blur flushes immediately", async () => {
     const { container } = renderRules({ openRuleId: "r1" });
     const nameInput = container.querySelector<HTMLInputElement>(
       ".rule-name-input",
     );
     expect(nameInput).toBeTruthy();
+    // Local state updates synchronously so typing is snappy.
     fireEvent.change(nameInput!, { target: { value: "Renamed in test" } });
     expect(nameInput!.value).toBe("Renamed in test");
-    // Header name span also updates because both bind the same state.
-    expect(
-      container.querySelector(".rule.is-open .rule-name")?.textContent,
-    ).toBe("Renamed in test");
+    // Blur flushes the debounced commit to the hook → header updates.
+    fireEvent.blur(nameInput!);
+    await waitFor(() => {
+      expect(
+        container.querySelector(".rule.is-open .rule-name")?.textContent,
+      ).toBe("Renamed in test");
+    });
+  });
+
+  it("typing in the name input does NOT fire one save per keystroke", async () => {
+    // PR #65 review B1: debouncing protects against the save-storm.
+    // Reach in via `useRules` indirectly by counting `.rule-name`
+    // updates — without debounce, typing 'abc' fires 3 commits and
+    // the header reflects each interim value. With debounce, the
+    // header stays at the previous committed value until quiet
+    // time elapses (or blur flushes).
+    const { container } = renderRules({ openRuleId: "r1" });
+    const nameInput = container.querySelector<HTMLInputElement>(
+      ".rule-name-input",
+    );
+    const header = () =>
+      container.querySelector(".rule.is-open .rule-name")?.textContent;
+    const originalName = header();
+    fireEvent.change(nameInput!, { target: { value: "a" } });
+    fireEvent.change(nameInput!, { target: { value: "ab" } });
+    fireEvent.change(nameInput!, { target: { value: "abc" } });
+    // Without flushing or waiting past the debounce window, the
+    // header still shows the original name. Local input value has
+    // updated immediately though.
+    expect(nameInput!.value).toBe("abc");
+    expect(header()).toBe(originalName);
+    // Now flush and assert the FINAL value is what landed.
+    fireEvent.blur(nameInput!);
+    await waitFor(() => expect(header()).toBe("abc"));
   });
 
   it("clicking the AND / OR join label toggles a condition's `any` flag", () => {

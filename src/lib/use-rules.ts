@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteRule as deleteRuleIpc,
   inTauri,
@@ -36,7 +36,7 @@ export interface UseRules {
   refresh: () => Promise<void>;
   /** Create a blank rule with sensible defaults. Returns its id. */
   add: () => Promise<string>;
-  /** Patch the local rule + persist. Last-write-wins for now. */
+  /** Patch the local rule + persist. `then` is shallow-merged. */
   update: (id: string, patch: PatchRule) => Promise<void>;
   /** Drop a rule. */
   remove: (id: string) => Promise<void>;
@@ -50,13 +50,30 @@ export interface PatchRule {
   priority?: number;
   confidence?: Confidence;
   when?: RuleCondition[];
-  then?: RuleAction;
+  /** Shallow-merged into the existing `then` — pass only the fields you're changing. */
+  then?: Partial<RuleAction>;
 }
 
 export function useRules(): UseRules {
   const [rules, setRules] = useState<Rule[]>(inTauri ? [] : FIXTURE_RULES);
   const [loading, setLoading] = useState(inTauri);
   const [error, setError] = useState<string | null>(null);
+
+  // The mutators read the current rules through this ref so two
+  // rapid same-tick calls don't race on a stale `useCallback`
+  // closure. Without this, typing "ab" can save "a" twice instead
+  // of "a" then "ab" because both closures capture the same
+  // `rules` snapshot. `commit` below writes the ref *synchronously*
+  // before calling `setRules`, so even calls inside the same `act`
+  // / event handler see each other's effects.
+  const rulesRef = useRef(rules);
+  const commit = useCallback((updater: (prev: Rule[]) => Rule[]) => {
+    rulesRef.current = updater(rulesRef.current);
+    setRules(rulesRef.current);
+  }, []);
+  useEffect(() => {
+    rulesRef.current = rules;
+  }, [rules]);
 
   const refresh = useCallback(async () => {
     if (!inTauri) {
@@ -75,78 +92,87 @@ export function useRules(): UseRules {
   }, []);
 
   const add = useCallback(async (): Promise<string> => {
-    const draft = blankRule(rules);
-    const input = serializeRule(draft, null);
+    const draft = blankRule(rulesRef.current);
     if (!inTauri) {
-      setRules((prev) => [...prev, draft]);
+      commit((prev) => [...prev, draft]);
       return draft.id;
     }
-    const saved = await saveRuleIpc(input);
-    setRules((prev) => [...prev, deserializeRule(saved)]);
+    const saved = await saveRuleIpc(serializeRule(draft, null));
+    commit((prev) => [...prev, deserializeRule(saved)]);
     return saved.id;
-  }, [rules]);
+  }, [commit]);
 
   const update = useCallback(
     async (id: string, patch: PatchRule) => {
-      // Find existing rule locally so we can build the full save
-      // payload (the backend has no PATCH; it's INSERT-or-UPDATE
-      // on the whole row).
-      const current = rules.find((r) => r.id === id);
-      if (!current) return;
-      const next: Rule = { ...current, ...patch, then: patch.then ?? current.then };
-      // Optimistic local update so the UI doesn't lag the keystroke.
-      setRules((prev) => prev.map((r) => (r.id === id ? next : r)));
+      // `commit` runs the updater *and* writes the ref in the same
+      // synchronous step, so the next call sees the freshly-merged
+      // rule even when both fire inside the same React tick (e.g.
+      // a rapid sequence of `update(id, {name})` then
+      // `update(id, {enabled})`).
+      let next: Rule | undefined;
+      commit((prev) =>
+        prev.map((r) => {
+          if (r.id !== id) return r;
+          next = applyPatch(r, patch);
+          return next;
+        }),
+      );
+      if (!next) return; // rule was deleted between trigger and patch
       if (!inTauri) return;
       try {
-        const saved = await saveRuleIpc(serializeRule(next, id));
-        // Merge the backend echo back in case it normalized fields.
-        setRules((prev) =>
-          prev.map((r) => (r.id === id ? deserializeRule(saved) : r)),
-        );
+        await saveRuleIpc(serializeRule(next, id));
+        // No need to overwrite local state with the backend echo —
+        // the echo is the same data we just sent. Overwriting it
+        // on a slow save can clobber keystrokes the user already
+        // typed after the optimistic update committed.
       } catch (e) {
         setError(String(e));
-        // Roll back the optimistic update.
-        setRules((prev) => prev.map((r) => (r.id === id ? current : r)));
+        // Don't rollback. Rolling back here discards every
+        // keystroke the user typed after this save was queued.
+        // Surfacing the error and leaving local state alone is
+        // the safer default for a tool whose contract is "we
+        // don't lose your input" — the next mutation will retry
+        // the save with the latest local value.
       }
     },
-    [rules],
+    [commit],
   );
 
   const remove = useCallback(
     async (id: string) => {
-      const snapshot = rules;
-      setRules((prev) => prev.filter((r) => r.id !== id));
+      const before = rulesRef.current;
+      commit((prev) => prev.filter((r) => r.id !== id));
       if (!inTauri) return;
       try {
         await deleteRuleIpc(id);
       } catch (e) {
         setError(String(e));
-        setRules(snapshot);
+        commit(() => before);
       }
     },
-    [rules],
+    [commit],
   );
 
   const duplicate = useCallback(
     async (id: string): Promise<string> => {
-      const source = rules.find((r) => r.id === id);
+      const source = rulesRef.current.find((r) => r.id === id);
       if (!source) throw new Error(`rule ${id} not found`);
       const clone: Rule = {
         ...source,
         id: cryptoId(),
         name: `${source.name} (copy)`,
-        priority: nextPriority(rules),
+        priority: nextPriority(rulesRef.current),
         matchedToday: 0,
       };
       if (!inTauri) {
-        setRules((prev) => [...prev, clone]);
+        commit((prev) => [...prev, clone]);
         return clone.id;
       }
       const saved = await saveRuleIpc(serializeRule(clone, null));
-      setRules((prev) => [...prev, deserializeRule(saved)]);
+      commit((prev) => [...prev, deserializeRule(saved)]);
       return saved.id;
     },
-    [rules],
+    [commit],
   );
 
   useEffect(() => {
@@ -157,6 +183,19 @@ export function useRules(): UseRules {
     () => ({ rules, loading, error, refresh, add, update, remove, duplicate }),
     [rules, loading, error, refresh, add, update, remove, duplicate],
   );
+}
+
+/**
+ * Apply a `PatchRule` to an existing rule. Shallow-merges `then`
+ * so callers can patch individual `RuleAction` fields without
+ * having to spread the whole object.
+ */
+function applyPatch(rule: Rule, patch: PatchRule): Rule {
+  return {
+    ...rule,
+    ...patch,
+    then: patch.then ? { ...rule.then, ...patch.then } : rule.then,
+  };
 }
 
 // -----------------------------------------------------------------
@@ -180,15 +219,28 @@ export function serializeRule(rule: Rule, id: string | null): SaveRuleInput {
 }
 
 export function deserializeRule(backend: BackendRule): Rule {
-  const body = (backend.body ?? {}) as Partial<RuleBody>;
+  // The body field is `unknown` because it's the JSON column the
+  // backend stores opaquely. Defensive: arrays / strings / null
+  // collapse to the empty defaults below.
+  const raw = backend.body;
+  const body: Partial<RuleBody> =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Partial<RuleBody>)
+      : {};
   return {
     id: backend.id,
     name: backend.name,
     enabled: backend.enabled,
     priority: backend.priority,
     confidence: body.confidence,
-    when: body.when ?? [],
-    then: body.then ?? { project: null },
+    when: Array.isArray(body.when) ? body.when : [],
+    // `body.then` may be missing `project` (e.g. a hand-edited or
+    // partially-saved row); default it explicitly afterwards so
+    // every Rule the UI sees satisfies the `RuleAction` shape.
+    then:
+      body.then && typeof body.then === "object"
+        ? { ...body.then, project: body.then.project ?? null }
+        : { project: null },
     matchedToday: 0,
   };
 }
@@ -222,14 +274,10 @@ function nextPriority(rules: Rule[]): number {
 }
 
 function cryptoId(): string {
-  // Browser + Node 19+ + the JSDOM test env all provide
-  // `globalThis.crypto.randomUUID`. Fall back to Date.now() + Math
-  // only when neither exists (pre-Node 19 CI is the only known
-  // case; none of our targets).
-  if (typeof globalThis.crypto !== "undefined" && globalThis.crypto.randomUUID) {
-    return globalThis.crypto.randomUUID();
-  }
-  return `r-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  // Browser + Node 19+ + JSDOM all provide `globalThis.crypto`. We
+  // require Node 20+ per package.json; the fallback was dead code
+  // and would have produced non-uniform ids if reached.
+  return globalThis.crypto.randomUUID();
 }
 
 // -----------------------------------------------------------------
