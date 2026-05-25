@@ -75,19 +75,19 @@ export const WEEK: WeekDay[] = [
 
 export const RULES: Rule[] = [
   {
-    id: "r1", name: "Cairn dev work", enabled: true,
+    id: "r1", name: "Cairn dev work", enabled: true, priority: 10,
     when: [{ signal: "ide.folder", op: "contains", value: "cairn" }],
     then: { project: "cairn", taskId: "t-cairn-rules" },
     matchedToday: 3,
   },
   {
-    id: "r2", name: "Feature branch", enabled: true,
+    id: "r2", name: "Feature branch", enabled: true, priority: 20,
     when: [{ signal: "git.branch", op: "starts-with", value: "feat/" }],
     then: { project: null },
     matchedToday: 5,
   },
   {
-    id: "r3", name: "ACME work", enabled: true,
+    id: "r3", name: "ACME work", enabled: true, priority: 30,
     when: [
       { signal: "ide.folder",     op: "contains", value: "acme-web",            any: true },
       { signal: "browser.domain", op: "equals",   value: "acme.atlassian.net",  any: true },
@@ -97,13 +97,13 @@ export const RULES: Rule[] = [
     matchedToday: 12,
   },
   {
-    id: "r4", name: "Calendar meetings", enabled: true,
+    id: "r4", name: "Calendar meetings", enabled: true, priority: 40,
     when: [{ signal: "calendar.event", op: "is-active", value: "any" }],
     then: { project: "mtg", tagsFromCalendar: true },
     matchedToday: 1,
   },
   {
-    id: "r5", name: "Personal site", enabled: false,
+    id: "r5", name: "Personal site", enabled: false, priority: 50,
     when: [{ signal: "ide.folder", op: "contains", value: "personal-site" }],
     then: { project: "site" },
     matchedToday: 0,

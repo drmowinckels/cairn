@@ -535,11 +535,49 @@ fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
+/// Maximum character length for a rule's name. A compromised
+/// webview or held-down keypress could otherwise submit a multi-MB
+/// `name`; the matcher's `evaluate` would then walk it on every
+/// snapshot tick. Bounded so the worst-case storage + clone is
+/// trivial.
+pub const MAX_RULE_NAME_LEN: usize = 200;
+
+/// Maximum size (in bytes) of the serialized `body` JSON for a
+/// single rule. Keeps the rules cache + per-tick clone bounded.
+/// 16 KB is generous — a 32-condition rule with 500-char values
+/// fits comfortably under this.
+pub const MAX_RULE_BODY_BYTES: usize = 16 * 1024;
+
+/// Validate user-controlled inputs on `save_rule`. Front-line
+/// defence against DoS-by-pathological-payload (compromised webview
+/// or held-down keypress). Frontend mirrors these via `maxLength`
+/// for nice UX, but a frontend gate can always be bypassed — the
+/// backend is the source of truth.
+fn validate_rule_input(input: &RuleInput, body_str: &str) -> Result<(), String> {
+    if input.name.chars().count() > MAX_RULE_NAME_LEN {
+        return Err(format!(
+            "rule name too long: max {MAX_RULE_NAME_LEN} characters",
+        ));
+    }
+    if body_str.len() > MAX_RULE_BODY_BYTES {
+        return Err(format!(
+            "rule body too large: max {MAX_RULE_BODY_BYTES} bytes",
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_rule(state: State<'_, AppState>, rule: RuleInput) -> Result<Rule, String> {
-    let id = rule.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let now = Utc::now().to_rfc3339();
     let body_str = serde_json::to_string(&rule.body).map_err(err)?;
+
+    validate_rule_input(&rule, &body_str)?;
+
+    let id = rule
+        .id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     // Serialize (INSERT, reload) so concurrent mutator IPCs can't
     // interleave such that the rules cache ends up reflecting a
@@ -2028,6 +2066,60 @@ mod tests {
         delete_rule(state.clone(), made.id.clone()).await.unwrap();
         let after = list_rules(state).await.unwrap();
         assert!(after.iter().all(|r| r.id != made.id));
+    }
+
+    #[tokio::test]
+    async fn save_rule_rejects_name_over_max_length() {
+        // PR #65 security review: a compromised webview or held-down
+        // keypress could otherwise submit a multi-MB name, which the
+        // matcher walks on every snapshot tick.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let long_name = "a".repeat(super::MAX_RULE_NAME_LEN + 1);
+        let err = save_rule(state, rule_input(None, &long_name))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("name too long"),
+            "expected size-limit error, got {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn save_rule_rejects_body_over_max_bytes() {
+        // Sibling guard: cap the serialized body so a pathological
+        // 100k-element `when` array can't get stored.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let huge_value = "x".repeat(super::MAX_RULE_BODY_BYTES + 1);
+        let body = serde_json::json!({
+            "when": [{"signal": "ide.folder", "op": "contains", "value": huge_value}],
+            "then": { "project": "p", "tags": [], "tagsFromCalendar": false }
+        });
+        let input = RuleInput {
+            id: None,
+            name: "fits-but-body-doesnt".into(),
+            enabled: true,
+            priority: 0,
+            body,
+        };
+        let err = save_rule(state, input).await.unwrap_err();
+        assert!(
+            err.contains("body too large"),
+            "expected body-size error, got {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn save_rule_accepts_inputs_at_the_max_boundary() {
+        // Exactly-at-limit must succeed; off-by-one rejection would
+        // surprise users who hit the maxLength attribute on the
+        // frontend input.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let at_limit = "n".repeat(super::MAX_RULE_NAME_LEN);
+        let saved = save_rule(state, rule_input(None, &at_limit)).await.unwrap();
+        assert_eq!(saved.name.chars().count(), super::MAX_RULE_NAME_LEN);
     }
 
     #[tokio::test]
