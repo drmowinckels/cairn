@@ -68,7 +68,10 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
   const snapshot = useSnapshot();
   // Outside Tauri (Vite dev preview / Storybook / vitest with no IPC
   // mock) we fall back to the static demo fixture so the design
-  // remains explorable without a backend running.
+  // remains explorable without a backend running. `inTauri` is a
+  // module constant — included in the dep list so ESLint's
+  // exhaustive-deps stays happy and refactors that swap it for a
+  // hook value still re-memoize correctly.
   const liveSignals = useMemo(
     () => (inTauri ? snapshotToLiveSignals(snapshot) : FIXTURE_SIGNALS),
     [snapshot],
@@ -90,19 +93,35 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
     onOpenRule(id);
   };
 
+  // Mirror `rules` into a ref so `handleSignalClick` reads the
+  // latest committed state — without this, two rapid clicks
+  // before React commits each other's `update()` would both
+  // append against the same stale `rule.when`, losing one of them.
+  // The hook itself already does ref-based mutation; we keep our
+  // local ref so we can find the rule by id at click time.
+  const rulesRef = useRef(rules);
+  useEffect(() => {
+    rulesRef.current = rules;
+  }, [rules]);
+
   /**
    * Clicking a Live-signals row adds a condition with the prefilled
    * signal + value to the open rule. If no rule is currently open,
    * we create one and seed its first condition with the click. The
    * `op` is chosen by the same `defaultOpForSignal` rule the editor
    * uses, so the resulting rule is matchable without further edits.
+   *
+   * Each `update()` is awaited so a failure surfaces (the hook
+   * sets `error`) instead of being silently swallowed.
    */
   const handleSignalClick = async (signal: SignalKind, value: string) => {
     const op = defaultOpForSignal(signal);
     if (expanded) {
-      const rule = rules.find((r) => r.id === expanded);
+      // Read via ref so a second rapid click sees the first
+      // click's optimistic write to `when`.
+      const rule = rulesRef.current.find((r) => r.id === expanded);
       if (!rule) return;
-      update(expanded, {
+      await update(expanded, {
         when: [...rule.when, { signal, op, value }],
       });
       return;
@@ -113,7 +132,7 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
     // Seed the new rule's first condition with the click. The
     // blank-rule template starts with a single empty `ide.folder`
     // condition, so we replace the array rather than appending.
-    update(id, { when: [{ signal, op, value }] });
+    await update(id, { when: [{ signal, op, value }] });
   };
 
   return (

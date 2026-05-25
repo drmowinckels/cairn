@@ -283,17 +283,28 @@ describe("RulesView", () => {
     });
   });
 
-  it("clicking a Live-signals row with no rule open creates one (#12)", async () => {
+  it("clicking a Live-signals row with no rule open creates one + seeds the condition (#12)", async () => {
     const { container } = renderRules({ complexity: "medium" });
     const rulesBefore = container.querySelectorAll(".rule").length;
     const sigButtons = container.querySelectorAll<HTMLButtonElement>(
       ".sig-row--clickable",
     );
+    // The first fixture signal is `ide.folder` = "~/code/cairn".
     fireEvent.click(sigButtons[0]);
     await waitFor(() => {
       expect(container.querySelectorAll(".rule").length).toBe(rulesBefore + 1);
       // The new rule is auto-expanded so the user can edit/confirm.
       expect(container.querySelectorAll(".rule.is-open").length).toBe(1);
     });
+    // Verify the seed actually landed: the open rule's single
+    // condition has the clicked signal + value (not a placeholder
+    // ide.folder/contains/"" from the blank-rule template).
+    const openRule = container.querySelector(".rule.is-open")!;
+    const conditions = openRule.querySelectorAll(".cond");
+    expect(conditions.length).toBe(1);
+    const signalSel = openRule.querySelector<HTMLSelectElement>(".cond-sig-sel");
+    const valInput = openRule.querySelector<HTMLInputElement>(".cond-val");
+    expect(signalSel?.value).toBe("ide.folder");
+    expect(valInput?.value).toBe("~/code/cairn");
   });
 });

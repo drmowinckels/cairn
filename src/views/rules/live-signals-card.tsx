@@ -72,7 +72,10 @@ function SignalRow({ signal: s, onClick }: RowProps) {
         <SignalIcon kind={s.signal} />
         <span className="sig-label">{SIGNAL_LABELS[s.signal]}</span>
         <code className="sig-value">{s.value}</code>
-        <span className="sig-src">{s.app}</span>
+        {/* Hide the source-app cell entirely when the snapshot
+            didn't observe an app — an empty span eats the grid's
+            trailing `auto` column and pushes the layout. */}
+        {s.app ? <span className="sig-src">{s.app}</span> : <span />}
       </Wrapper>
     </li>
   );
