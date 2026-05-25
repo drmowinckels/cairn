@@ -45,6 +45,8 @@ const SIGNAL_OPTIONS: SignalKind[] = [
   "app.name",
 ];
 
+const CONFIDENCE_OPTIONS: Confidence[] = ["suggestive", "strict"];
+
 /**
  * Input-length caps that mirror the backend's `save_rule` validation
  * (see `src-tauri/src/ipc.rs`). Frontend `maxLength` is a hint —
@@ -258,6 +260,27 @@ function RuleRow({
 
   const setCondition = (idx: number, patch: Partial<RuleCondition>) =>
     onUpdate({ when: withConditionAt(rule.when, idx, patch) });
+
+  // Re-arm the warning only when the user transitions *into* strict
+  // from non-strict. A strict→strict reselect (keyboard cycling, no-
+  // op) doesn't clobber a prior dismissal; suggestive→suggestive is
+  // a no-op anyway since the warning needs strict to render. Also
+  // guards against a malformed value from a forged event.
+  const handleConfidenceChange = (raw: string) => {
+    const next: Confidence | null = CONFIDENCE_OPTIONS.includes(
+      raw as Confidence,
+    )
+      ? (raw as Confidence)
+      : null;
+    if (!next) return;
+    const wasStrict = rule.confidence === "strict";
+    const becomingStrict = next === "strict" && !wasStrict;
+    onUpdate(
+      becomingStrict
+        ? { confidence: next, confidenceWarningDismissed: false }
+        : { confidence: next },
+    );
+  };
 
   const handleSignalChange = (idx: number, signal: SignalKind) => {
     // Switching to/from `calendar.event` switches the op set —
@@ -490,18 +513,13 @@ function RuleRow({
                   className="rule-conf"
                   value={rule.confidence ?? "suggestive"}
                   onClick={stopBubble}
-                  onChange={(e) =>
-                    onUpdate({
-                      confidence: e.target.value as Confidence,
-                      // Re-arm the warning when the user touches
-                      // confidence — a fresh strict-toggle should
-                      // get a fresh chance to be flagged, even if
-                      // a previous strict-then-dismiss cycle left
-                      // the flag stale.
-                      confidenceWarningDismissed: false,
-                    })
-                  }
+                  onChange={(e) => handleConfidenceChange(e.target.value)}
                   aria-label="Confidence"
+                  aria-describedby={
+                    shouldWarnConfidence(rule)
+                      ? `rule-conf-warn-${rule.id}`
+                      : undefined
+                  }
                 >
                   <option value="suggestive">suggestive</option>
                   <option value="strict">strict</option>
@@ -509,9 +527,9 @@ function RuleRow({
               </div>
               {shouldWarnConfidence(rule) && (
                 <div
+                  id={`rule-conf-warn-${rule.id}`}
                   className="rule-meta-warn"
-                  role="alert"
-                  aria-label="Confidence warning"
+                  role="note"
                 >
                   <Icon name="info" size={12} className="warn-ic" />
                   <span className="warn-text">

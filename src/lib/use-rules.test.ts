@@ -125,23 +125,68 @@ describe("serializeRule / deserializeRule", () => {
   it("omits confidenceWarningDismissed from the body when false (keeps body lean)", () => {
     // Default-falsy doesn't need to take up a slot in the JSON;
     // older rows without the field deserialize cleanly to `false`.
+    // Also assert the positive shape so we don't accidentally drop
+    // other fields when trimming the dismissed flag.
     const original: Rule = {
       id: "r1",
       name: "n",
       enabled: true,
       priority: 10,
+      confidence: "suggestive",
       when: [],
-      then: { project: null },
+      then: { project: "p" },
       matchedToday: 0,
       confidenceWarningDismissed: false,
     };
     const ipcInput = serializeRule(original, "r1");
+    const body = ipcInput.body as Record<string, unknown>;
     expect(
-      Object.prototype.hasOwnProperty.call(
-        ipcInput.body as object,
-        "confidenceWarningDismissed",
-      ),
+      Object.prototype.hasOwnProperty.call(body, "confidenceWarningDismissed"),
     ).toBe(false);
+    expect(body.confidence).toBe("suggestive");
+    expect(body.when).toEqual([]);
+    expect(body.then).toEqual({ project: "p" });
+  });
+
+  it("deserializes a legacy rule (body has no confidenceWarningDismissed key) as not-dismissed", () => {
+    // Older rows persisted before #14 landed have no flag at all.
+    // The defensive `body.confidenceWarningDismissed === true`
+    // check in deserializeRule must produce `false`, not `undefined`.
+    const backend = {
+      id: "legacy",
+      name: "Cairn",
+      enabled: true,
+      priority: 10,
+      body: {
+        confidence: "strict",
+        when: [{ signal: "ide.folder", op: "contains", value: "cairn" }],
+        then: { project: "cairn" },
+      },
+    };
+    const r = deserializeRule(backend);
+    expect(r.confidenceWarningDismissed).toBe(false);
+    expect(r.confidence).toBe("strict");
+  });
+
+  it("ignores a malformed confidenceWarningDismissed value (string / array)", () => {
+    // A corrupted or hand-edited body could carry a non-boolean. The
+    // strict equality check guards the rest of the editor from a
+    // string like "yes" smuggling truthy state into shouldWarnConfidence.
+    for (const garbage of ["yes", 1, [], {}, null]) {
+      const r = deserializeRule({
+        id: "r",
+        name: "r",
+        enabled: true,
+        priority: 10,
+        body: {
+          confidence: "strict",
+          when: [],
+          then: { project: null },
+          confidenceWarningDismissed: garbage,
+        },
+      });
+      expect(r.confidenceWarningDismissed).toBe(false);
+    }
   });
 });
 

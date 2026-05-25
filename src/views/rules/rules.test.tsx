@@ -320,14 +320,12 @@ describe("RulesView", () => {
     expect(sel!.value).toBe("strict");
   });
 
-  it("re-arms the warning if the user toggles confidence after a dismiss", async () => {
+  it("re-arms the warning only on suggestive → strict transitions (not on every change)", async () => {
     const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
     const sel = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Confidence"]',
     );
-    // Strict → dismiss → suggestive → strict again must re-warn,
-    // otherwise the user can't ever see the warning again on a rule
-    // they once dismissed it on.
+    // Strict → dismiss → suggestive → strict again must re-warn.
     fireEvent.change(sel!, { target: { value: "strict" } });
     await waitFor(() =>
       expect(container.querySelector(".rule-meta-warn")).toBeTruthy(),
@@ -343,6 +341,53 @@ describe("RulesView", () => {
     await waitFor(() =>
       expect(container.querySelector(".rule-meta-warn")).toBeTruthy(),
     );
+  });
+
+  it("does NOT re-arm the warning on a strict → strict reselect", async () => {
+    // Keyboard cycling can fire onChange with the same value. A
+    // re-arm on every change would clobber the user's prior dismiss
+    // and resurface the warning they explicitly silenced.
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() =>
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy(),
+    );
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>(".warn-dismiss")!,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".rule-meta-warn")).toBeNull(),
+    );
+    // A second strict change (e.g. user reselects via keyboard).
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    // Warning stays dismissed — the prior user choice is respected.
+    expect(container.querySelector(".rule-meta-warn")).toBeNull();
+  });
+
+  it("the warning is wired to the select via aria-describedby (not role=alert spam)", async () => {
+    // role=alert announces every time the warning re-renders, which
+    // happens on every keystroke that touches `rule`. We use a
+    // persistent `role=note` + aria-describedby on the select so
+    // screen-reader users hear the advisory as part of the control's
+    // description, not as an interrupt.
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    // No warning → no describedby reference.
+    expect(sel!.getAttribute("aria-describedby")).toBeNull();
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() => {
+      const warn = container.querySelector(".rule-meta-warn");
+      expect(warn).toBeTruthy();
+      expect(warn!.getAttribute("role")).toBe("note");
+      const id = warn!.getAttribute("id");
+      expect(id).toBeTruthy();
+      expect(sel!.getAttribute("aria-describedby")).toBe(id);
+    });
   });
 
   // ---- #12: Live signals card integration -------------------------
