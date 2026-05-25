@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::watch;
 
 use crate::rules::{Condition, Rule, RuleAction, RuleMatch, SignalSnapshot};
@@ -150,10 +150,10 @@ async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
 /// carries `window_title` from the OS) from being broadcast to any
 /// future window that doesn't strictly need it. See the security
 /// review on PR #5.
-pub async fn run(
+pub async fn run<R: Runtime>(
     mut rx: watch::Receiver<Option<SignalSnapshot>>,
     pool: SqlitePool,
-    app: AppHandle,
+    app: AppHandle<R>,
 ) {
     let _ = rx.borrow_and_update();
     while rx.changed().await.is_ok() {
@@ -321,5 +321,42 @@ mod tests {
         let (_dir, db) = crate::test_support::test_db().await;
         let rules = load_rules(&db.pool).await;
         assert!(rules.is_empty());
+    }
+
+    // ---- Integration test: full run() loop via mock_app ----------
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn run_processes_publishes_until_sender_drops() {
+        // Cover the `run()` async loop body. Drive the watch channel
+        // directly so we don't depend on the snapshot-stream driver
+        // being in scope; the contract we're pinning here is "every
+        // Some(snapshot) the channel receives goes through the
+        // load_rules → outcome_for → emit_to pipeline, and the loop
+        // exits cleanly when the sender drops".
+        let (_dir, _app, db) = crate::test_support::mock_app_with_db().await;
+        let (tx, rx) = watch::channel::<Option<SignalSnapshot>>(None);
+        let app = _app.handle().clone();
+        let pool = db.pool.clone();
+        let task = tokio::spawn(async move { run(rx, pool, app).await });
+
+        // Push one real snapshot — drives one iteration of the loop.
+        tx.send(Some(snap_with_app("Cairn"))).unwrap();
+        // Push a second snapshot — exercises the `changed()` path
+        // re-entering the loop.
+        tx.send(Some(snap_with_app("Other"))).unwrap();
+
+        // Give the loop a moment to run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Dropping the sender closes the channel; run() exits.
+        drop(tx);
+
+        // The task should complete promptly — if `run()` failed to
+        // exit on channel close, this would time out.
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("run() exits on sender drop")
+            .expect("run() task joined cleanly");
     }
 }

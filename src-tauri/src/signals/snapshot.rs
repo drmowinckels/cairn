@@ -131,6 +131,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_handles_poisoned_exclusions_lock_fail_closed() {
+        // Cover the poisoned-RwLock branch in `build`: if the
+        // exclusions lock is poisoned (a writer panicked) the
+        // fallback must fail closed, returning a snapshot with no
+        // OS-derived fields. Otherwise an excluded app from the
+        // host could leak through during cold-start IPC.
+        let (_dir, db) = test_db().await;
+        let registry = CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds");
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let poisoner = exclusions.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = poisoner.write().unwrap();
+            panic!("simulated poison in test");
+        }));
+        assert!(
+            exclusions.read().is_err(),
+            "RwLock must be poisoned for the test to be meaningful"
+        );
+        let snap = build(&registry, &exclusions, Utc::now()).await;
+        // Fail-closed: every OS-derived field cleared.
+        assert!(snap.app_name.is_none());
+        assert!(snap.window_title.is_none());
+        assert!(snap.ide_folder.is_none());
+        assert!(snap.git_branch.is_none());
+        assert!(snap.browser_domain.is_none());
+    }
+
+    #[tokio::test]
     async fn build_redacts_excluded_app() {
         // Pin the cold-start privacy contract: if the window
         // collector returns an excluded app, the fallback snapshot
