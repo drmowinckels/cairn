@@ -356,3 +356,16 @@ export async function currentSnapshot(): Promise<SignalSnapshot | null> {
   if (!inTauri) return null;
   return invoke<SignalSnapshot>("current_snapshot");
 }
+
+export type IdleChoice = "keep" | "discard" | "break";
+
+export interface ResolveIdleInput {
+  entryId: string;
+  since: string;
+  until: string;
+  choice: IdleChoice;
+}
+
+export async function resolveIdle(input: ResolveIdleInput): Promise<BackendEntry | null> {
+  return invoke<BackendEntry | null>("resolve_idle", { input });
+}

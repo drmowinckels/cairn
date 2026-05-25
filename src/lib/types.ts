@@ -90,6 +90,18 @@ export interface Rule {
 }
 
 /**
+ * Payload of the `signal:idle-resume` Tauri event. The backend
+ * fires this when the user returns from an idle period that
+ * crossed the configured threshold (default 5 min). The Today
+ * view's idle modal listens via `useIdlePrompt`.
+ */
+export interface IdleResumeEvent {
+  since: string;
+  until: string;
+  durationSeconds: number;
+}
+
+/**
  * Payload of the `signal:match` Tauri event. The backend fires
  * this on every snapshot publish where a rule fires. The UI's
  * `useSuggestion` hook decides what to do based on

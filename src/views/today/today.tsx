@@ -4,6 +4,7 @@ import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { fmtClock, fmtHm, fmtRange } from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
 import { useSuggestion } from "../../lib/use-suggestion";
+import { useIdlePrompt } from "../../lib/use-idle-prompt";
 import type { Density, DetectionPrompts, LayoutVariant } from "../../lib/types";
 import {
   NOW_MIN,
@@ -43,6 +44,9 @@ export function TodayView({
   // first dismiss, even after the snooze expired.
   const { suggestion, confirm, dismiss } = useSuggestion({
     currentRunningRuleId: timer.running?.ruleId ?? null,
+  });
+  const idle = useIdlePrompt({
+    runningEntryId: timer.running?.id ?? null,
   });
 
   const [tick, setTick] = useState(0);
@@ -150,23 +154,57 @@ export function TodayView({
         </section>
       )}
 
-      {showIdleModal && (
+      {(showIdleModal || idle.prompt) && (
         <section className="idle" role="alertdialog" aria-labelledby="idle-h">
           <div className="idle-head">
             <Icon name="moon" size={14} /> <span id="idle-h">You were away</span>
           </div>
           <div className="idle-body">
-            No input detected from <strong>14:50</strong> to <strong>15:02</strong>
-            <span className="idle-dur">12 min</span>
+            {idle.prompt ? (
+              <>
+                No input detected from{" "}
+                <strong>{fmtClockFromIso(idle.prompt.since)}</strong> to{" "}
+                <strong>{fmtClockFromIso(idle.prompt.until)}</strong>
+                <span className="idle-dur">
+                  {fmtIdleDuration(idle.prompt.durationSeconds)}
+                </span>
+              </>
+            ) : (
+              // Legacy fixture path used by Storybook/preview when
+              // no live event arrives. Kept so the modal renders
+              // for design review.
+              <>
+                No input detected from <strong>14:50</strong> to <strong>15:02</strong>
+                <span className="idle-dur">12 min</span>
+              </>
+            )}
           </div>
           <div className="idle-actions">
-            <button className="btn btn--primary" onClick={() => setShowIdleModal(false)}>
+            <button
+              className="btn btn--primary"
+              onClick={() => {
+                void idle.keep();
+                setShowIdleModal(false);
+              }}
+            >
               Keep
             </button>
-            <button className="btn btn--ghost" onClick={() => setShowIdleModal(false)}>
+            <button
+              className="btn btn--ghost"
+              onClick={() => {
+                void idle.discard();
+                setShowIdleModal(false);
+              }}
+            >
               Discard idle
             </button>
-            <button className="btn btn--ghost" onClick={() => setShowIdleModal(false)}>
+            <button
+              className="btn btn--ghost"
+              onClick={() => {
+                void idle.moveToBreak();
+                setShowIdleModal(false);
+              }}
+            >
               Move to break
             </button>
           </div>
@@ -331,6 +369,20 @@ export function TodayView({
       </section>
     </div>
   );
+}
+
+function fmtClockFromIso(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function fmtIdleDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.floor(seconds)} sec`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rem = minutes % 60;
+  return rem === 0 ? `${hours} h` : `${hours} h ${rem} min`;
 }
 
 function deriveSource(entry: { source: string }): string {

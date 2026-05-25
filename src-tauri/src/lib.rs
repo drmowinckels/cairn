@@ -120,6 +120,7 @@ pub fn run() {
             ipc::stop_entry,
             ipc::update_entry,
             ipc::delete_entry,
+            ipc::resolve_idle,
             ipc::hide_popover,
             ipc::set_pinned,
             ipc::set_popover_size,
@@ -182,6 +183,15 @@ pub fn run() {
             let fanout_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 signals::fanout::run(fanout_rx, fanout_pool, fanout_handle).await;
+            });
+
+            // Idle-resume fan-out: re-emits each `Idle → Active`
+            // transition as `signal:idle-resume` to the popover so
+            // the Today view's modal can render.
+            let idle_rx = stream.subscribe_idle_resume();
+            let idle_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                signals::fanout::run_idle_resume(idle_rx, idle_handle).await;
             });
 
             app.manage(AppState {

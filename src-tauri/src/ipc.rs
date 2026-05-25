@@ -160,6 +160,43 @@ pub struct UpdateEntryInput {
     pub ended_at: Option<Option<String>>,
 }
 
+/// How the user resolved the idle-detection modal. Mirrors the three
+/// buttons in the Today view per issue #7. The IPC `resolve_idle`
+/// performs the appropriate combination of close-entry / start-entry
+/// / no-op atomically in a single transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IdleChoice {
+    /// User intends the idle period to count as work. No DB change.
+    Keep,
+    /// "Discard idle": trim the running entry's `ended_at` to
+    /// `since` so the [since, until] window doesn't count.
+    Discard,
+    /// "Move to break": close the running entry at `since`, insert
+    /// a no-project entry from `since → until` tagged
+    /// `source = "idle-break"`, then start a new entry at `until`
+    /// with the prior entry's project/task/description so the user
+    /// resumes the same work after the gap.
+    Break,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveIdleInput {
+    /// The entry that was running when the user went idle. Required
+    /// because the snapshot stream doesn't itself touch the DB.
+    pub entry_id: String,
+    /// Wall-clock when the idle period started (the `since` field
+    /// of the `signal:idle-resume` event). RFC 3339.
+    pub since: String,
+    /// Wall-clock when the user returned (`until` from the event).
+    /// RFC 3339. Required even for `keep` so the IPC payload shape
+    /// is uniform across choices.
+    pub until: String,
+    /// How the user resolved the modal.
+    pub choice: IdleChoice,
+}
+
 #[tauri::command]
 pub async fn list_clients(state: State<'_, AppState>) -> Result<Vec<Client>, String> {
     let rows = sqlx::query(
@@ -855,6 +892,160 @@ pub async fn delete_entry(state: State<'_, AppState>, id: String) -> Result<(), 
     Ok(())
 }
 
+/// Resolve the idle-detection modal. Performs the three button
+/// outcomes (Keep / Discard / Move-to-break) atomically so the
+/// entry rows are never in a half-applied state.
+///
+/// Returns the entry the user is "now running" after the action:
+/// - Keep: the same entry (still running).
+/// - Discard: the same entry with `ended_at = since`. The user has
+///   no running timer afterwards — the UI should reflect that.
+/// - Break: a new entry started at `until` with the same project /
+///   task / description as the entry that was running before the
+///   idle. That new entry is what's returned.
+#[tauri::command]
+pub async fn resolve_idle(
+    state: State<'_, AppState>,
+    input: ResolveIdleInput,
+) -> Result<Option<Entry>, String> {
+    // Validate timestamps up front — bad input shouldn't open a
+    // half-committed transaction.
+    let since: DateTime<Utc> = input
+        .since
+        .parse::<DateTime<Utc>>()
+        .map_err(|e| format!("invalid since: {e}"))?;
+    let until: DateTime<Utc> = input
+        .until
+        .parse::<DateTime<Utc>>()
+        .map_err(|e| format!("invalid until: {e}"))?;
+    if until < since {
+        return Err("until must be >= since".into());
+    }
+
+    // Fetch the entry the user was on so we can copy its
+    // project/task/description into the resumed entry on Break.
+    let row = sqlx::query(
+        "SELECT project_id, task_id, description, source, rule_id, started_at, ended_at \
+         FROM entries WHERE id = ?1",
+    )
+    .bind(&input.entry_id)
+    .fetch_optional(&state.db.pool)
+    .await
+    .map_err(err)?
+    .ok_or_else(|| format!("no entry with id {}", input.entry_id))?;
+
+    let project_id: Option<String> = row.get("project_id");
+    let task_id: Option<String> = row.get("task_id");
+    let description: String = row.get("description");
+    let started_at: DateTime<Utc> = parse_ts(row.get::<String, _>("started_at"))?;
+
+    // `since` must lie inside the entry's [started_at, until]
+    // window — otherwise the user is trying to resolve idle for
+    // an entry that never overlapped the idle period.
+    if since < started_at {
+        return Err("since precedes the entry's started_at".into());
+    }
+
+    let now_str = Utc::now().to_rfc3339();
+    let since_str = since.to_rfc3339();
+    let until_str = until.to_rfc3339();
+
+    let mut tx = state.db.pool.begin().await.map_err(err)?;
+
+    match input.choice {
+        IdleChoice::Keep => {
+            // No-op. Leave the entry untouched.
+            tx.commit().await.map_err(err)?;
+            current_running(state).await
+        }
+        IdleChoice::Discard => {
+            // Close the entry at `since`. Any idle time after that
+            // moment is dropped from the user's logged work.
+            sqlx::query(
+                "UPDATE entries SET ended_at = ?1, updated_at = ?2 WHERE id = ?3 \
+                 AND (ended_at IS NULL OR ended_at > ?1)",
+            )
+            .bind(&since_str)
+            .bind(&now_str)
+            .bind(&input.entry_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+            tx.commit().await.map_err(err)?;
+            // No new running entry — the user has to start the next
+            // work segment themselves.
+            Ok(None)
+        }
+        IdleChoice::Break => {
+            // 1. Close the original entry at `since`.
+            sqlx::query(
+                "UPDATE entries SET ended_at = ?1, updated_at = ?2 WHERE id = ?3 \
+                 AND (ended_at IS NULL OR ended_at > ?1)",
+            )
+            .bind(&since_str)
+            .bind(&now_str)
+            .bind(&input.entry_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+
+            // 2. Insert a [since, until] break entry (no project,
+            //    source = "idle-break") so the time accounts for the
+            //    period the user was away.
+            let break_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+                VALUES (?1, NULL, NULL, '', ?2, ?3, 'idle-break', NULL, ?4, ?4)
+                "#,
+            )
+            .bind(&break_id)
+            .bind(&since_str)
+            .bind(&until_str)
+            .bind(&now_str)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+
+            // 3. Start a new entry at `until` with the prior
+            //    entry's project/task/description so the user
+            //    resumes "the same work" after the gap. The source
+            //    is `"idle-resume"` so the resumed entry is
+            //    distinguishable in the timeline from a fresh
+            //    manual start.
+            let resumed_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'idle-resume', NULL, ?6, ?6)
+                "#,
+            )
+            .bind(&resumed_id)
+            .bind(&project_id)
+            .bind(&task_id)
+            .bind(&description)
+            .bind(&until_str)
+            .bind(&now_str)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+
+            tx.commit().await.map_err(err)?;
+
+            Ok(Some(Entry {
+                id: resumed_id,
+                project_id,
+                task_id,
+                description,
+                started_at: until,
+                ended_at: None,
+                source: "idle-resume".into(),
+                rule_id: None,
+            }))
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn hide_popover(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("popover") {
@@ -1005,6 +1196,228 @@ mod tests {
         let result = stop_entry(state, "does-not-exist".into()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does-not-exist"));
+    }
+
+    // ---------------- resolve_idle (M1 #7) ----------------
+
+    /// Helper: start an entry one minute ago, return the entry and
+    /// the canonical `since` / `until` timestamps an idle modal
+    /// would carry (5 minutes ago → 30 seconds ago).
+    async fn setup_idle_entry(
+        state: tauri::State<'_, crate::AppState>,
+    ) -> (Entry, DateTime<Utc>, DateTime<Utc>) {
+        // Start the entry "10 minutes ago" so the idle window
+        // (`since` 5 min ago) lies after `started_at`.
+        let started = Utc::now() - Duration::minutes(10);
+        let id = uuid::Uuid::new_v4().to_string();
+        let now_str = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+            VALUES (?1, 'cairn', NULL, 'work', ?2, NULL, 'manual', NULL, ?3, ?3)
+            "#,
+        )
+        .bind(&id)
+        .bind(started.to_rfc3339())
+        .bind(&now_str)
+        .execute(&state.db.pool)
+        .await
+        .unwrap();
+        let entry = current_running(state).await.unwrap().unwrap();
+        let since = Utc::now() - Duration::minutes(5);
+        let until = Utc::now() - Duration::seconds(30);
+        (entry, since, until)
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_keep_leaves_entry_running() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (entry, since, until) = setup_idle_entry(state.clone()).await;
+
+        let result = resolve_idle(
+            state.clone(),
+            ResolveIdleInput {
+                entry_id: entry.id.clone(),
+                since: since.to_rfc3339(),
+                until: until.to_rfc3339(),
+                choice: IdleChoice::Keep,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Keep returns the still-running entry.
+        let running = result.expect("Keep returns the same running entry");
+        assert_eq!(running.id, entry.id);
+        assert!(running.ended_at.is_none());
+
+        // DB state: entry untouched.
+        let still_running = current_running(state).await.unwrap().unwrap();
+        assert_eq!(still_running.id, entry.id);
+        assert!(still_running.ended_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_discard_trims_ended_at_to_since() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (entry, since, until) = setup_idle_entry(state.clone()).await;
+
+        let result = resolve_idle(
+            state.clone(),
+            ResolveIdleInput {
+                entry_id: entry.id.clone(),
+                since: since.to_rfc3339(),
+                until: until.to_rfc3339(),
+                choice: IdleChoice::Discard,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Discard leaves no running entry.
+        assert!(result.is_none());
+        let running = current_running(state.clone()).await.unwrap();
+        assert!(running.is_none());
+
+        // The original entry exists but is closed at `since`.
+        let row = sqlx::query("SELECT ended_at FROM entries WHERE id = ?1")
+            .bind(&entry.id)
+            .fetch_one(&state.db.pool)
+            .await
+            .unwrap();
+        let ended_at: String = row.get::<Option<String>, _>("ended_at").unwrap();
+        let parsed: DateTime<Utc> = ended_at.parse().unwrap();
+        // Allow 1s slop for the comparison since we round-trip via
+        // RFC3339.
+        assert!(
+            (parsed - since).num_seconds().abs() <= 1,
+            "ended_at {parsed} should be close to since {since}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_break_closes_inserts_break_and_resumes() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (entry, since, until) = setup_idle_entry(state.clone()).await;
+
+        let result = resolve_idle(
+            state.clone(),
+            ResolveIdleInput {
+                entry_id: entry.id.clone(),
+                since: since.to_rfc3339(),
+                until: until.to_rfc3339(),
+                choice: IdleChoice::Break,
+            },
+        )
+        .await
+        .unwrap();
+
+        let resumed = result.expect("Break returns the resumed entry");
+        assert_eq!(resumed.project_id.as_deref(), Some("cairn"));
+        assert_eq!(resumed.source, "idle-resume");
+        assert!(resumed.ended_at.is_none());
+        // The resumed entry starts at `until`.
+        assert!((resumed.started_at - until).num_seconds().abs() <= 1);
+
+        // The original entry is now closed at `since`.
+        let row = sqlx::query("SELECT ended_at FROM entries WHERE id = ?1")
+            .bind(&entry.id)
+            .fetch_one(&state.db.pool)
+            .await
+            .unwrap();
+        let orig_ended: String = row.get::<Option<String>, _>("ended_at").unwrap();
+        let orig_ended_dt: DateTime<Utc> = orig_ended.parse().unwrap();
+        assert!((orig_ended_dt - since).num_seconds().abs() <= 1);
+
+        // A break entry exists between since and until with source=idle-break.
+        let break_row = sqlx::query(
+            "SELECT id, project_id, started_at, ended_at, source FROM entries \
+             WHERE source = 'idle-break' AND id != ?1 AND id != ?2",
+        )
+        .bind(&entry.id)
+        .bind(&resumed.id)
+        .fetch_one(&state.db.pool)
+        .await
+        .unwrap();
+        let break_started: DateTime<Utc> =
+            break_row.get::<String, _>("started_at").parse().unwrap();
+        let break_ended: DateTime<Utc> = break_row
+            .get::<Option<String>, _>("ended_at")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let break_project: Option<String> = break_row.get("project_id");
+        assert!(break_project.is_none(), "break entry must have no project");
+        assert!((break_started - since).num_seconds().abs() <= 1);
+        assert!((break_ended - until).num_seconds().abs() <= 1);
+
+        // current_running now reflects the resumed entry.
+        let running = current_running(state).await.unwrap().unwrap();
+        assert_eq!(running.id, resumed.id);
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_rejects_unknown_entry() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let since = Utc::now() - Duration::minutes(5);
+        let until = Utc::now();
+        let result = resolve_idle(
+            state,
+            ResolveIdleInput {
+                entry_id: "does-not-exist".into(),
+                since: since.to_rfc3339(),
+                until: until.to_rfc3339(),
+                choice: IdleChoice::Keep,
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does-not-exist"));
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_rejects_inverted_window() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (entry, since, until) = setup_idle_entry(state.clone()).await;
+        // Swap since and until so since > until.
+        let result = resolve_idle(
+            state,
+            ResolveIdleInput {
+                entry_id: entry.id,
+                since: until.to_rfc3339(),
+                until: since.to_rfc3339(),
+                choice: IdleChoice::Discard,
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("until"));
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_rejects_since_before_entry_start() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (entry, _since, until) = setup_idle_entry(state.clone()).await;
+        // `since` 30 minutes ago — before the entry started 10 min ago.
+        let bad_since = Utc::now() - Duration::minutes(30);
+        let result = resolve_idle(
+            state,
+            ResolveIdleInput {
+                entry_id: entry.id,
+                since: bad_since.to_rfc3339(),
+                until: until.to_rfc3339(),
+                choice: IdleChoice::Discard,
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("started_at"));
     }
 
     #[test]
