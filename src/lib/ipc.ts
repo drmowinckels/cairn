@@ -369,3 +369,27 @@ export interface ResolveIdleInput {
 export async function resolveIdle(input: ResolveIdleInput): Promise<BackendEntry | null> {
   return invoke<BackendEntry | null>("resolve_idle", { input });
 }
+
+export interface SnoozeSnapshot {
+  rules: Array<[string, string]>;
+  global: string | null;
+}
+
+export async function snoozeRule(ruleId: string, durationSeconds: number): Promise<void> {
+  await invoke("snooze_rule", {
+    input: { ruleId, durationSeconds },
+  });
+}
+
+export async function snoozeAll(durationSeconds: number): Promise<void> {
+  await invoke("snooze_all", { input: { durationSeconds } });
+}
+
+export async function unsnoozeAll(): Promise<void> {
+  await invoke("unsnooze_all");
+}
+
+export async function listSnoozes(): Promise<SnoozeSnapshot> {
+  if (!inTauri) return { rules: [], global: null };
+  return invoke<SnoozeSnapshot>("list_snoozes");
+}

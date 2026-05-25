@@ -102,6 +102,7 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         stream,
         exclusions,
         exclusions_mutator: tokio::sync::Mutex::new(()),
+        snoozer: Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new())),
     });
     (dir, app, db)
 }

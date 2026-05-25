@@ -9,6 +9,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod snoozer;
+pub use snoozer::{SnoozeSnapshot, Snoozer};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SignalSnapshot {
@@ -146,9 +149,35 @@ pub fn evaluate<'a, I>(rules: I, snapshot: &SignalSnapshot) -> Option<RuleMatch>
 where
     I: IntoIterator<Item = &'a Rule>,
 {
+    evaluate_with_snoozer(rules, snapshot, None, chrono::Utc::now())
+}
+
+/// Same as `evaluate` but with snooze-gating. Rules that are
+/// currently snoozed (per-rule or globally) are skipped. The fanout
+/// passes a `Some(snoozer)` so the live evaluate path respects
+/// dismissed suggestions; tests that don't care about snooze pass
+/// `None` to keep the call site terse.
+///
+/// `now` is taken as a parameter so tests can pin a deterministic
+/// time without monkey-patching `Utc::now()`.
+pub fn evaluate_with_snoozer<'a, I>(
+    rules: I,
+    snapshot: &SignalSnapshot,
+    snoozer: Option<&mut Snoozer>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<RuleMatch>
+where
+    I: IntoIterator<Item = &'a Rule>,
+{
+    let mut snoozer = snoozer;
     for rule in rules {
         if !rule.enabled {
             continue;
+        }
+        if let Some(s) = snoozer.as_deref_mut() {
+            if s.is_snoozed(&rule.id, now) {
+                continue;
+            }
         }
         if matches(rule, snapshot) {
             return Some(RuleMatch {
@@ -270,6 +299,87 @@ mod tests {
         // timer unless the user explicitly opts into Strict. Default
         // is Suggestive — pin that.
         assert_eq!(Confidence::default(), Confidence::Suggestive);
+    }
+
+    #[test]
+    fn evaluate_with_snoozer_skips_snoozed_rules() {
+        let rule = Rule {
+            id: "r-snoozed".into(),
+            name: "Snoozed".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Suggestive,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("cairn".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+            },
+        };
+        let snap_v = snap();
+        let now = chrono::Utc::now();
+        let mut snoozer = Snoozer::new();
+        snoozer.snooze_rule("r-snoozed", chrono::Duration::seconds(3600), now);
+        // Without snoozer: rule fires.
+        assert!(evaluate([&rule], &snap_v).is_some());
+        // With snoozer: rule is skipped.
+        assert!(
+            evaluate_with_snoozer([&rule], &snap_v, Some(&mut snoozer), now).is_none(),
+            "snoozed rule must be skipped"
+        );
+        // After the snooze window expires, the rule fires again.
+        let later = now + chrono::Duration::seconds(7200);
+        assert!(evaluate_with_snoozer([&rule], &snap_v, Some(&mut snoozer), later).is_some());
+    }
+
+    #[test]
+    fn evaluate_with_snoozer_global_silences_all_rules() {
+        let r1 = Rule {
+            id: "r1".into(),
+            name: "A".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Suggestive,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("cairn".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+            },
+        };
+        let r2 = Rule {
+            id: "r2".into(),
+            name: "B".into(),
+            enabled: true,
+            priority: 1,
+            confidence: Confidence::Suggestive,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("other".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+            },
+        };
+        let snap_v = snap();
+        let now = chrono::Utc::now();
+        let mut snoozer = Snoozer::new();
+        snoozer.snooze_all(chrono::Duration::seconds(3600), now);
+        assert!(
+            evaluate_with_snoozer([&r1, &r2], &snap_v, Some(&mut snoozer), now).is_none(),
+            "snooze_all must silence every rule"
+        );
     }
 
     #[test]

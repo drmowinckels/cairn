@@ -1288,6 +1288,111 @@ mod tests {
         (entry, since, until)
     }
 
+    // ---------------- snooze IPCs (M1 #9) ----------------
+
+    #[tokio::test]
+    async fn snooze_rule_silences_the_rule_via_snoozer() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        snooze_rule(
+            state.clone(),
+            SnoozeRuleInput {
+                rule_id: "r1".into(),
+                duration_seconds: 300,
+            },
+        )
+        .await
+        .unwrap();
+        let snapshot = list_snoozes(state).await.unwrap();
+        assert_eq!(snapshot.rules.len(), 1);
+        assert_eq!(snapshot.rules[0].0, "r1");
+        assert!(snapshot.global.is_none());
+    }
+
+    #[tokio::test]
+    async fn snooze_all_records_global_expiration() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        snooze_all(
+            state.clone(),
+            SnoozeAllInput {
+                duration_seconds: 3600,
+            },
+        )
+        .await
+        .unwrap();
+        let snapshot = list_snoozes(state).await.unwrap();
+        assert!(snapshot.global.is_some());
+    }
+
+    #[tokio::test]
+    async fn unsnooze_all_clears_per_rule_and_global() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        snooze_rule(
+            state.clone(),
+            SnoozeRuleInput {
+                rule_id: "r1".into(),
+                duration_seconds: 300,
+            },
+        )
+        .await
+        .unwrap();
+        snooze_all(
+            state.clone(),
+            SnoozeAllInput {
+                duration_seconds: 3600,
+            },
+        )
+        .await
+        .unwrap();
+        unsnooze_all(state.clone()).await.unwrap();
+        let snapshot = list_snoozes(state).await.unwrap();
+        assert!(snapshot.rules.is_empty());
+        assert!(snapshot.global.is_none());
+    }
+
+    #[tokio::test]
+    async fn snooze_rule_rejects_zero_or_negative_duration() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let r0 = snooze_rule(
+            state.clone(),
+            SnoozeRuleInput {
+                rule_id: "r1".into(),
+                duration_seconds: 0,
+            },
+        )
+        .await;
+        assert!(r0.is_err());
+        let rn = snooze_rule(
+            state,
+            SnoozeRuleInput {
+                rule_id: "r1".into(),
+                duration_seconds: -1,
+            },
+        )
+        .await;
+        assert!(rn.is_err());
+    }
+
+    #[tokio::test]
+    async fn snooze_rule_rejects_absurdly_long_duration() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // 30 days — far past the 7-day cap.
+        let result = snooze_rule(
+            state,
+            SnoozeRuleInput {
+                rule_id: "r1".into(),
+                duration_seconds: 30 * 24 * 3600,
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("7 days"));
+    }
+
     #[tokio::test]
     async fn resolve_idle_keep_leaves_entry_running() {
         let (_dir, app, _db) = mock_app_with_db().await;
@@ -2546,6 +2651,94 @@ pub async fn current_calendar_events(
 #[tauri::command]
 pub async fn calendar_sync_status(state: State<'_, AppState>) -> Result<Vec<SyncStatus>, String> {
     Ok(state.calendar.sync_status().await)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnoozeRuleInput {
+    pub rule_id: String,
+    /// Snooze duration in seconds. Validated to be `>= 1` and
+    /// `<= 7 days` so a malformed payload can't silence rules
+    /// effectively forever.
+    pub duration_seconds: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnoozeAllInput {
+    pub duration_seconds: i64,
+}
+
+/// Per-rule snooze. The matcher will skip this rule until the
+/// duration elapses (or `unsnooze_all` is called). Re-snoozing the
+/// same rule with a longer duration extends; a shorter duration
+/// is ignored (later wins).
+#[tauri::command]
+pub async fn snooze_rule(state: State<'_, AppState>, input: SnoozeRuleInput) -> Result<(), String> {
+    let dur = validate_snooze_duration(input.duration_seconds)?;
+    let mut guard = state
+        .snoozer
+        .lock()
+        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    guard.snooze_rule(&input.rule_id, dur, Utc::now());
+    Ok(())
+}
+
+/// Global "snooze everything" — silences every rule for the
+/// duration. Same later-wins semantics as `snooze_rule`.
+#[tauri::command]
+pub async fn snooze_all(state: State<'_, AppState>, input: SnoozeAllInput) -> Result<(), String> {
+    let dur = validate_snooze_duration(input.duration_seconds)?;
+    let mut guard = state
+        .snoozer
+        .lock()
+        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    guard.snooze_all(dur, Utc::now());
+    Ok(())
+}
+
+/// Clear every snooze. Used by the "un-snooze everything"
+/// affordance in Settings.
+#[tauri::command]
+pub async fn unsnooze_all(state: State<'_, AppState>) -> Result<(), String> {
+    let mut guard = state
+        .snoozer
+        .lock()
+        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    guard.unsnooze_all();
+    Ok(())
+}
+
+/// Snapshot the un-expired snooze map. The Rules view uses this
+/// to render "snoozed until …" badges on rule rows.
+#[tauri::command]
+pub async fn list_snoozes(
+    state: State<'_, AppState>,
+) -> Result<crate::rules::SnoozeSnapshot, String> {
+    let guard = state
+        .snoozer
+        .lock()
+        .map_err(|_| "snoozer lock poisoned".to_string())?;
+    Ok(guard.snapshot(Utc::now()))
+}
+
+fn validate_snooze_duration(seconds: i64) -> Result<chrono::Duration, String> {
+    // Clamp the inputs the IPC could conceivably receive — a
+    // negative duration means "snooze for 0" (no-op), a huge value
+    // means "silence forever" which contradicts the "fresh app
+    // launch = fresh attention" design (snoozes don't persist
+    // across launches, but a 24-day snooze inside one launch is
+    // effectively persistence).
+    const MAX_SNOOZE_SECS: i64 = 7 * 24 * 3600;
+    if seconds < 1 {
+        return Err("duration_seconds must be >= 1".into());
+    }
+    if seconds > MAX_SNOOZE_SECS {
+        return Err(format!(
+            "duration_seconds must be <= {MAX_SNOOZE_SECS} (7 days)"
+        ));
+    }
+    Ok(chrono::Duration::seconds(seconds))
 }
 
 #[tauri::command]

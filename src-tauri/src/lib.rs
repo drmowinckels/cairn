@@ -18,6 +18,7 @@ use tauri_plugin_log::{Target, TargetKind};
 
 pub use db::Db;
 
+use rules::Snoozer;
 use signals::calendar::CalendarRegistry;
 use signals::exclusions::ExclusionMatcher;
 use signals::stream::SnapshotStream;
@@ -39,6 +40,11 @@ pub struct AppState {
     /// reflecting a stale DB snapshot. tokio Mutex (not std) so
     /// the await across the lock + DB roundtrip is non-blocking.
     pub exclusions_mutator: tokio::sync::Mutex<()>,
+    /// Per-rule + global snooze map. The fanout's matcher consults
+    /// this on every snapshot publish; snooze IPC mutators write to
+    /// it. `std::sync::Mutex` because every critical section is a
+    /// bounded `HashMap` operation with no `.await` inside.
+    pub snoozer: Arc<std::sync::Mutex<Snoozer>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -132,6 +138,10 @@ pub fn run() {
             ipc::current_calendar_events,
             ipc::calendar_sync_status,
             ipc::current_snapshot,
+            ipc::snooze_rule,
+            ipc::snooze_all,
+            ipc::unsnooze_all,
+            ipc::list_snoozes,
             backup::data_paths,
             backup::export_backup,
             backup::stage_import,
@@ -177,12 +187,16 @@ pub fn run() {
             // Tauri fan-out: every published snapshot is evaluated
             // against the rules in the DB and emitted as
             // `signal:snapshot` / `signal:match` to the popover
-            // window. Exits on driver shutdown.
+            // window. The snoozer gates the matcher so dismissed-
+            // banner rules stay quiet. Exits on driver shutdown.
             let fanout_rx = stream.subscribe();
             let fanout_pool = db.pool.clone();
             let fanout_handle = app.handle().clone();
+            let snoozer_for_fanout = Arc::new(std::sync::Mutex::new(Snoozer::new()));
+            let snoozer_for_state = snoozer_for_fanout.clone();
             tauri::async_runtime::spawn(async move {
-                signals::fanout::run(fanout_rx, fanout_pool, fanout_handle).await;
+                signals::fanout::run(fanout_rx, fanout_pool, snoozer_for_fanout, fanout_handle)
+                    .await;
             });
 
             // Idle-resume fan-out: re-emits each `Idle → Active`
@@ -201,6 +215,7 @@ pub fn run() {
                 stream,
                 exclusions,
                 exclusions_mutator: tokio::sync::Mutex::new(()),
+                snoozer: snoozer_for_state,
             });
 
             tray::setup(app.handle())?;
