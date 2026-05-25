@@ -55,13 +55,8 @@ pub fn current() -> Option<FrontWindow> {
     None
 }
 
-// -----------------------------------------------------------------
-// IDE folder derivation lives in `signals::ide` now. Keeping a
-// re-export here for callers that haven't migrated yet.
-// -----------------------------------------------------------------
-
-#[allow(unused_imports)]
-pub use crate::signals::ide::derive_ide_folder;
+// IDE folder derivation moved to `signals::ide` — all call sites
+// now use `crate::signals::ide::derive_ide_folder` directly.
 
 // -----------------------------------------------------------------
 // macOS

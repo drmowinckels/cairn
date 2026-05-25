@@ -14,24 +14,25 @@
 //!
 //! 1. **Title parsing.** Recognises common IDE title formats: VS
 //!    Code (`file - project - Visual Studio Code`), Zed (`file —
-//!    project`), JetBrains (`file – project` with EN-dash, plus the
-//!    `file — project` EM-dash variant some setups emit), Sublime,
-//!    Xcode, RStudio, Nova, Emacs. Returns the project / folder
-//!    name as it appears in the title.
+//!    project`), JetBrains / Sublime (`file – project [path]` with
+//!    EN-dash, plus the `file — project` EM-dash variant some setups
+//!    emit), Xcode, RStudio, Nova, Emacs. Returns the project /
+//!    folder name as it appears in the title.
 //! 2. **Longest-prefix fallback.** When the title doesn't fit any
 //!    known pattern but the user has configured *discovery roots*
-//!    (the same roots #4's git watcher uses), we try matching the
-//!    title against each root: if a root's last segment appears as
-//!    a substring of the title, return that root's basename. This
-//!    catches editors with custom title templates or terminal-
+//!    (the same roots #4's git watcher uses), we look for the
+//!    longest root whose absolute-path string appears as a
+//!    substring of the title (the title typically contains the full
+//!    open-file path, e.g. `~/code/cairn/src/lib.rs - VSCodium`).
+//!    Catches editors with custom title templates and terminal-
 //!    based editors (Vim / Neovim) where the title is whatever the
-//!    user's `vimrc` set.
+//!    user's config set.
 //!
 //! Both stages are pure functions over strings + slices — no IO,
 //! no OS calls. The matcher is deterministic and the tests cover
 //! every supported editor pattern without touching the filesystem.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// From a frontmost window's `app_name` + `title`, derive the
 /// project folder the editor is showing. `repo_paths` is the
@@ -57,15 +58,15 @@ pub fn derive_ide_folder(app_name: &str, title: &str, repo_paths: &[PathBuf]) ->
 /// fallback (e.g. cold-start `snapshot::build`).
 pub fn derive_from_title(app_name: &str, title: &str) -> Option<PathBuf> {
     let candidate = match app_name {
-        // Zed, Sublime, RustRover, IntelliJ family, PyCharm, WebStorm,
-        // GoLand, RubyMine, CLion, Android Studio (EM-dash builds),
-        // Nova, Emacs — all use `file — project`.
-        "Zed" | "Sublime Text" | "Nova" | "Emacs" | "GNU Emacs" => extract_after_em_dash(title),
-        // JetBrains family. The default JetBrains title is
-        // `file – project [path]` with EN-dash (`–`). Some setups
-        // (mostly older or with the project-name plugin) emit
-        // `file — project` with EM-dash. Try both.
-        "RustRover"
+        // Zed / Nova / Emacs: `file — project` with EM-dash.
+        "Zed" | "Nova" | "Emacs" | "GNU Emacs" => extract_after_em_dash(title),
+        // JetBrains family + Sublime Text: default title is
+        // `file – project [path]` with EN-dash (U+2013). Some setups
+        // (older versions or with custom title plugins) emit
+        // `file — project` with EM-dash. The combined splitter
+        // accepts either separator.
+        "Sublime Text"
+        | "RustRover"
         | "IntelliJ IDEA"
         | "IntelliJ IDEA Ultimate"
         | "IntelliJ IDEA Community Edition"
@@ -80,19 +81,15 @@ pub fn derive_from_title(app_name: &str, title: &str) -> Option<PathBuf> {
         // VS Code / Cursor / Code — OSS: "file - project - Visual Studio Code"
         "Code" | "Visual Studio Code" | "Cursor" | "VSCodium" => extract_vscode_project(title),
         // Xcode: "Cairn — main — file.swift" → project is first segment
-        "Xcode" => extract_first_em_dash_segment(title),
+        "Xcode" => extract_segment_after_first_em_dash(title),
         // RStudio: "project - RStudio" or "~/path/to/file — project — RStudio"
         "RStudio" => extract_rstudio_project(title),
-        // Helix is a popular Rust-written editor; modal-line title
-        // typically shows the working dir as the trailing segment
-        // when set via `set window-title`. Falls back to the EM-dash
-        // pattern most setups emit when nothing custom is configured.
-        "Helix" | "hx" => extract_after_em_dash(title),
-        // Neovim / Vim run in a terminal — the title shape depends
-        // on the user's vimrc. No reliable parsing without prior
-        // configuration. The fallback path (longest-prefix match
-        // against discovery roots) is the only meaningful coverage
-        // here.
+        // Terminal-based editors (Vim / Neovim / Helix) and
+        // anything else: the title shape depends on the user's
+        // config and isn't reliably parseable. We rely on the
+        // discovery-roots fallback (`derive_from_repo_paths`) to
+        // catch these — the title often contains the open file's
+        // full path.
         _ => None,
     }?;
     let trimmed = candidate.trim();
@@ -104,37 +101,37 @@ pub fn derive_from_title(app_name: &str, title: &str) -> Option<PathBuf> {
 }
 
 /// Longest-prefix fallback: for each path in `repo_paths`, if the
-/// path's last segment (basename) appears as a substring of `title`,
-/// it's a candidate. Returns the longest-matching path so that a
-/// deeper / more specific root wins (e.g. with roots
-/// `~/code/cairn` and `~/code/cairn/docs`, a title mentioning
-/// "docs" picks the docs root).
+/// *full string form* of the path appears as a substring of `title`,
+/// it's a candidate. Returns the longest matching path by
+/// *character length* — a deeper / more specific root wins
+/// because its string form is necessarily longer than any prefix
+/// of it. Ties (rare in practice — two roots with the same
+/// `to_str().len()`) break to the first match in the slice;
+/// callers that want determinism should sort their input.
+///
+/// Matching against the absolute-path string (not just the
+/// basename) avoids the false-positive footgun where a repo named
+/// `cairn` matches a window title mentioning `cairn-app`.
 fn derive_from_repo_paths(title: &str, repo_paths: &[PathBuf]) -> Option<PathBuf> {
-    let mut best: Option<&PathBuf> = None;
+    let mut best: Option<(&PathBuf, usize)> = None;
     for root in repo_paths {
-        let Some(name) = root.file_name().and_then(|s| s.to_str()) else {
+        let Some(root_str) = root.to_str() else {
             continue;
         };
-        if name.is_empty() {
+        if root_str.is_empty() {
             continue;
         }
-        if !title.contains(name) {
+        if !title.contains(root_str) {
             continue;
         }
+        let len = root_str.len();
         match best {
-            None => best = Some(root),
-            Some(b) => {
-                if path_depth(root) > path_depth(b) {
-                    best = Some(root);
-                }
-            }
+            None => best = Some((root, len)),
+            Some((_, prev_len)) if len > prev_len => best = Some((root, len)),
+            _ => {}
         }
     }
-    best.cloned()
-}
-
-fn path_depth(p: &Path) -> usize {
-    p.components().count()
+    best.map(|(p, _)| p.clone())
 }
 
 /// "file.tsx — cairn"  →  "cairn"
@@ -144,27 +141,38 @@ fn extract_after_em_dash(title: &str) -> Option<String> {
     Some(after.split(" — ").next().unwrap_or(after).to_string())
 }
 
-/// "file.tsx — cairn"  →  "cairn" (alias for clarity at the call site)
-fn extract_first_em_dash_segment(title: &str) -> Option<String> {
+/// "Cairn — main — AppDelegate.swift" → "main" (the segment that
+/// follows the *first* EM-dash). Used for Xcode where the project
+/// is in slot 0, the branch in slot 1, and the file in slot 2.
+fn extract_segment_after_first_em_dash(title: &str) -> Option<String> {
     title.split(" — ").nth(1).map(str::to_string)
 }
 
-/// JetBrains: default title is `file – project` or `file – project [path]`
-/// (EN-dash). Some configurations or older IDEs emit `file — project`
-/// (EM-dash). Both forms accepted. The `[path]` suffix is stripped if
-/// present.
+/// JetBrains + Sublime: default title is `file – project` or
+/// `file – project [path]` (EN-dash, U+2013). Some configurations
+/// or older IDEs emit `file — project` (EM-dash, U+2014). Both
+/// forms accepted. The `[path]` suffix is stripped if present.
+///
+/// Crucially, the separator that splits the file from the project
+/// is also used to split the project from any trailing segments —
+/// mixing them produces wrong results. We pick the *one* separator
+/// that actually matches and use it consistently.
 fn extract_jetbrains_project(title: &str) -> Option<String> {
-    // Try EN-dash first (default JetBrains shape).
-    let after = title
-        .split(" \u{2013} ")
-        .nth(1)
-        .or_else(|| title.split(" — ").nth(1))?;
-    // Trim trailing `[path]` annotation that newer JetBrains IDEs
+    // Try EN-dash first (default JetBrains shape). Remember which
+    // separator matched so the post-split trimming uses the same
+    // one and a `file — project — branch`-shape title's "branch"
+    // doesn't leak into the result.
+    let (after, sep) = if let Some(rest) = title.split(" \u{2013} ").nth(1) {
+        (rest, " \u{2013} ")
+    } else {
+        (title.split(" — ").nth(1)?, " — ")
+    };
+    // Strip trailing `[path]` annotation that newer JetBrains IDEs
     // append: `file – project [~/code/project]` → `project`.
     let before_bracket = after.split('[').next().unwrap_or(after);
     Some(
         before_bracket
-            .split(" \u{2013} ")
+            .split(sep)
             .next()
             .unwrap_or(before_bracket)
             .trim()
@@ -269,6 +277,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn jetbrains_en_dash_with_three_segments_picks_project_not_branch() {
+        // `file – project – branch` shape: must NOT leak the
+        // trailing branch into the result. Regression for the
+        // EN/EM-dash separator-asymmetry bug.
+        assert_eq!(
+            from_title("RustRover", "main.rs \u{2013} cairn \u{2013} feat/x"),
+            Some(PathBuf::from("cairn"))
+        );
+    }
+
+    #[test]
+    fn jetbrains_em_dash_with_three_segments_picks_project_not_branch() {
+        // Same as above but with EM-dash throughout. The fix has
+        // to pick a single separator and use it consistently for
+        // both splits.
+        assert_eq!(
+            from_title("RustRover", "main.rs — cairn — feat/x"),
+            Some(PathBuf::from("cairn"))
+        );
+    }
+
+    #[test]
+    fn sublime_uses_jetbrains_en_dash_default() {
+        // Sublime's default title is `file – project` with
+        // EN-dash, same shape as JetBrains.
+        assert_eq!(
+            from_title("Sublime Text", "main.rs \u{2013} cairn"),
+            Some(PathBuf::from("cairn"))
+        );
+    }
+
     // -- VS Code-family --
 
     #[test]
@@ -320,21 +360,15 @@ mod tests {
         );
     }
 
-    // -- Helix --
-
-    #[test]
-    fn helix_em_dash_pattern() {
-        assert_eq!(
-            from_title("Helix", "main.rs — cairn"),
-            Some(PathBuf::from("cairn"))
-        );
-    }
-
     // -- Unknown app + edge cases --
 
     #[test]
     fn unknown_app_returns_none() {
+        // Helix, terminal-based editors, and anything else not in
+        // the explicit allow-list fall through to the
+        // discovery-roots fallback (covered below).
         assert!(from_title("CompletelyUnknownEditor", "foo.tsx — cairn").is_none());
+        assert!(from_title("Helix", "main.rs — cairn").is_none());
     }
 
     #[test]
@@ -355,7 +389,7 @@ mod tests {
     // -- Longest-prefix fallback against discovery roots --
 
     #[test]
-    fn repo_paths_fallback_when_title_has_no_known_pattern() {
+    fn repo_paths_fallback_when_title_contains_full_root_path() {
         // Terminal-based editor (Neovim in iTerm), title set by the
         // user's vimrc to include the working dir.
         let roots = [PathBuf::from("/home/u/code/cairn")];
@@ -364,15 +398,47 @@ mod tests {
     }
 
     #[test]
-    fn repo_paths_fallback_chooses_deeper_root_when_multiple_match() {
-        // Roots `~/code/cairn` and `~/code/cairn/docs`. A title that
-        // mentions "docs" should pick the deeper one.
+    fn repo_paths_fallback_picks_longest_matching_root() {
+        // Roots `/code/cairn` and `/code/cairn/docs`. A title that
+        // contains the docs root must pick the longer one because
+        // it's a more specific prefix.
+        let roots = [
+            PathBuf::from("/code/cairn"),
+            PathBuf::from("/code/cairn/docs"),
+        ];
+        let title = "nvim: /code/cairn/docs/index.md";
+        let result = derive_ide_folder("Alacritty", title, &roots);
+        assert_eq!(result, Some(PathBuf::from("/code/cairn/docs")));
+    }
+
+    #[test]
+    fn repo_paths_fallback_distinguishes_same_basename_different_paths() {
+        // Two roots whose *basenames* collide (`cairn`) but absolute
+        // paths differ. Substring-matching against the full path
+        // ensures the title's actual path picks the right root —
+        // the old basename-only approach would have picked one of
+        // these non-deterministically.
         let roots = [
             PathBuf::from("/home/u/code/cairn"),
-            PathBuf::from("/home/u/code/cairn/docs"),
+            PathBuf::from("/home/u/work/cairn"),
         ];
-        let result = derive_ide_folder("Alacritty", "nvim: cairn / docs / index.md", &roots);
-        assert_eq!(result, Some(PathBuf::from("/home/u/code/cairn/docs")));
+        let title = "nvim: /home/u/work/cairn/src/lib.rs";
+        let result = derive_ide_folder("Alacritty", title, &roots);
+        assert_eq!(result, Some(PathBuf::from("/home/u/work/cairn")));
+    }
+
+    #[test]
+    fn repo_paths_fallback_no_false_positive_on_basename_substring() {
+        // Old basename-`contains` behaviour would match "cairn"
+        // inside "cairn-app" and return the wrong root. Switching
+        // to full-path-substring fixes this.
+        let roots = [PathBuf::from("/home/u/code/cairn")];
+        let title = "nvim: ~/elsewhere/cairn-app/foo.rs";
+        let result = derive_ide_folder("iTerm2", title, &roots);
+        assert!(
+            result.is_none(),
+            "must not match `cairn` against `cairn-app`",
+        );
     }
 
     #[test]
@@ -388,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_paths_fallback_returns_none_when_no_root_basename_in_title() {
+    fn repo_paths_fallback_returns_none_when_no_root_in_title() {
         let roots = [PathBuf::from("/home/u/code/cairn")];
         let result = derive_ide_folder("iTerm2", "nvim: ~/scratch/foo.rs", &roots);
         assert!(result.is_none());
@@ -401,8 +467,10 @@ mod tests {
     }
 
     #[test]
-    fn repo_paths_skip_roots_with_unparseable_filename() {
-        // Root with no basename (e.g. "/") shouldn't crash.
+    fn repo_paths_handles_root_like_slash_safely() {
+        // A pathological root like "/" exists in the slice but
+        // doesn't appear as a substring of titles that don't
+        // start with "/". Must not crash and must not match.
         let roots = [PathBuf::from("/")];
         let result = derive_ide_folder("iTerm2", "something", &roots);
         assert!(result.is_none());
