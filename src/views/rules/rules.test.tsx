@@ -265,4 +265,65 @@ describe("RulesView", () => {
     const opSel = container.querySelector<HTMLSelectElement>(".cond-op");
     expect(opSel?.value).toBe("is-active");
   });
+
+  // ---- #12: Live signals card integration -------------------------
+
+  it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const conditionsBefore = container.querySelectorAll(".cond").length;
+    // The card renders signal rows as buttons when an onSignalClick
+    // handler is wired in. Click the first one.
+    const sigButtons = container.querySelectorAll<HTMLButtonElement>(
+      ".sig-row--clickable",
+    );
+    expect(sigButtons.length).toBeGreaterThan(0);
+    fireEvent.click(sigButtons[0]);
+    await waitFor(() => {
+      expect(container.querySelectorAll(".cond").length).toBe(conditionsBefore + 1);
+    });
+  });
+
+  it("clicking a Live-signals row is a no-op if the expanded id is stale", () => {
+    // If `openRuleId` references a rule that doesn't exist (e.g. the
+    // user deleted it from another view while Rules was open), the
+    // handler must short-circuit: no new rule, no exception.
+    const { container } = renderRules({
+      openRuleId: "does-not-exist",
+      complexity: "medium",
+    });
+    const rulesBefore = container.querySelectorAll(".rule").length;
+    const sigButtons = container.querySelectorAll<HTMLButtonElement>(
+      ".sig-row--clickable",
+    );
+    expect(sigButtons.length).toBeGreaterThan(0);
+    fireEvent.click(sigButtons[0]);
+    // Same rule count; the click didn't fall through to the
+    // "create new rule" path either.
+    expect(container.querySelectorAll(".rule").length).toBe(rulesBefore);
+  });
+
+  it("clicking a Live-signals row with no rule open creates one + seeds the condition (#12)", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const rulesBefore = container.querySelectorAll(".rule").length;
+    const sigButtons = container.querySelectorAll<HTMLButtonElement>(
+      ".sig-row--clickable",
+    );
+    // The first fixture signal is `ide.folder` = "~/code/cairn".
+    fireEvent.click(sigButtons[0]);
+    await waitFor(() => {
+      expect(container.querySelectorAll(".rule").length).toBe(rulesBefore + 1);
+      // The new rule is auto-expanded so the user can edit/confirm.
+      expect(container.querySelectorAll(".rule.is-open").length).toBe(1);
+    });
+    // Verify the seed actually landed: the open rule's single
+    // condition has the clicked signal + value (not a placeholder
+    // ide.folder/contains/"" from the blank-rule template).
+    const openRule = container.querySelector(".rule.is-open")!;
+    const conditions = openRule.querySelectorAll(".cond");
+    expect(conditions.length).toBe(1);
+    const signalSel = openRule.querySelector<HTMLSelectElement>(".cond-sig-sel");
+    const valInput = openRule.querySelector<HTMLInputElement>(".cond-val");
+    expect(signalSel?.value).toBe("ide.folder");
+    expect(valInput?.value).toBe("~/code/cairn");
+  });
 });

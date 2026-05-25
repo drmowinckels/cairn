@@ -1230,13 +1230,43 @@ body {
   padding: 0;
 }
 .sig-item {
+  font-size: 13px;
+  padding: 3px 0;
+  color: var(--ink-soft);
+}
+/* The four cells (icon / label / value / source) are direct
+   children of `.sig-row`, not `.sig-item`, so the grid lives one
+   level deeper than its container. Same layout applies to both
+   the plain `<div>` and the `<button>` variant. */
+.sig-row {
   display: grid;
   grid-template-columns: 14px 110px 1fr auto;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  padding: 3px 0;
-  color: var(--ink-soft);
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: inherit;
+  font: inherit;
+  color: inherit;
+}
+.sig-row--clickable {
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sig-row--clickable:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.08));
+}
+.sig-row--clickable:focus-visible {
+  outline: 2px solid var(--focus, currentColor);
+  outline-offset: 1px;
+}
+.sig-empty {
+  font-size: 12px;
+  color: var(--ink-mute);
+  padding: 6px 0;
+  margin: 0;
 }
 .sig-label {
   color: var(--ink-mute);

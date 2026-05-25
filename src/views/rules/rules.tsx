@@ -10,11 +10,7 @@ import type {
   RulesComplexity,
   SignalKind,
 } from "../../lib/types";
-import {
-  LIVE_SIGNALS,
-  OP_LABELS,
-  SIGNAL_LABELS,
-} from "../../test-fixtures/data";
+import { OP_LABELS, SIGNAL_LABELS } from "../../test-fixtures/data";
 import {
   defaultOpForSignal,
   type PatchRule,
@@ -25,6 +21,10 @@ import {
 } from "../../lib/use-rules";
 import { useProjects } from "../../lib/use-projects";
 import { useDebouncedCallback } from "../../lib/use-debounced-callback";
+import { selectLiveSignals, useSnapshot } from "../../lib/use-snapshot";
+import { LiveSignalsCard } from "./live-signals-card";
+import { LIVE_SIGNALS as FIXTURE_SIGNALS } from "../../test-fixtures/data";
+import { inTauri } from "../../lib/ipc";
 
 interface Props {
   complexity: RulesComplexity;
@@ -65,6 +65,11 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
     () => new Map(projects.map((p) => [p.id, p])),
     [projects],
   );
+  const snapshot = useSnapshot();
+  const liveSignals = useMemo(
+    () => selectLiveSignals(snapshot, FIXTURE_SIGNALS, inTauri),
+    [snapshot],
+  );
   const [expanded, setExpanded] = useState<string | null>(openRuleId);
   useEffect(() => {
     if (openRuleId) setExpanded(openRuleId);
@@ -80,6 +85,48 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
     const id = await add();
     setExpanded(id);
     onOpenRule(id);
+  };
+
+  // Mirror `rules` into a ref so `handleSignalClick` reads the
+  // latest committed state — without this, two rapid clicks
+  // before React commits each other's `update()` would both
+  // append against the same stale `rule.when`, losing one of them.
+  // The hook itself already does ref-based mutation; we keep our
+  // local ref so we can find the rule by id at click time.
+  const rulesRef = useRef(rules);
+  useEffect(() => {
+    rulesRef.current = rules;
+  }, [rules]);
+
+  /**
+   * Clicking a Live-signals row adds a condition with the prefilled
+   * signal + value to the open rule. If no rule is currently open,
+   * we create one and seed its first condition with the click. The
+   * `op` is chosen by the same `defaultOpForSignal` rule the editor
+   * uses, so the resulting rule is matchable without further edits.
+   *
+   * Each `update()` is awaited so a failure surfaces (the hook
+   * sets `error`) instead of being silently swallowed.
+   */
+  const handleSignalClick = async (signal: SignalKind, value: string) => {
+    const op = defaultOpForSignal(signal);
+    if (expanded) {
+      // Read via ref so a second rapid click sees the first
+      // click's optimistic write to `when`.
+      const rule = rulesRef.current.find((r) => r.id === expanded);
+      if (!rule) return;
+      await update(expanded, {
+        when: [...rule.when, { signal, op, value }],
+      });
+      return;
+    }
+    const id = await add();
+    setExpanded(id);
+    onOpenRule(id);
+    // Seed the new rule's first condition with the click. The
+    // blank-rule template starts with a single empty `ide.folder`
+    // condition, so we replace the array rather than appending.
+    await update(id, { when: [{ signal, op, value }] });
   };
 
   return (
@@ -102,22 +149,10 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
       </header>
 
       {complexity !== "light" && (
-        <section className="signals" aria-label="Live signals">
-          <div className="sect-label">
-            <span>Live signals</span>
-            <span className="sect-meta">use these in conditions</span>
-          </div>
-          <ul className="sig-list">
-            {LIVE_SIGNALS.map((s, i) => (
-              <li key={i} className="sig-item">
-                <SignalIcon kind={s.signal} />
-                <span className="sig-label">{SIGNAL_LABELS[s.signal]}</span>
-                <code className="sig-value">{s.value}</code>
-                <span className="sig-src">{s.app}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <LiveSignalsCard
+          signals={liveSignals}
+          onSignalClick={handleSignalClick}
+        />
       )}
 
       {rules.length === 0 ? (
