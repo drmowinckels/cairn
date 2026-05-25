@@ -79,9 +79,19 @@ pub async fn test_db_at(path: &Path) -> Db {
 /// `tauri = { features = ["test"] }` dev-dep for the rationale.
 #[cfg(not(target_os = "windows"))]
 pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
+    use std::sync::RwLock;
+
     let (dir, db) = test_db().await;
     let calendar =
         Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+    let exclusions = Arc::new(RwLock::new(
+        crate::signals::exclusions::ExclusionMatcher::load(&db.pool).await,
+    ));
+    let stream = Arc::new(crate::signals::stream::spawn(
+        calendar.clone(),
+        exclusions.clone(),
+        std::time::Duration::from_millis(50),
+    ));
     let app = mock_builder()
         .build(mock_context(noop_assets()))
         .expect("mock_app builds");
@@ -89,6 +99,9 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         db: db.clone(),
         pinned: AtomicBool::new(false),
         calendar,
+        stream,
+        exclusions,
+        exclusions_mutator: tokio::sync::Mutex::new(()),
     });
     (dir, app, db)
 }

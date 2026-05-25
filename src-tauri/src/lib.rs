@@ -10,7 +10,7 @@ mod tray;
 mod test_support;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -19,11 +19,26 @@ use tauri_plugin_log::{Target, TargetKind};
 pub use db::Db;
 
 use signals::calendar::CalendarRegistry;
+use signals::exclusions::ExclusionMatcher;
+use signals::stream::SnapshotStream;
 
 pub struct AppState {
     pub db: Db,
     pub pinned: AtomicBool,
     pub calendar: Arc<CalendarRegistry>,
+    pub stream: Arc<SnapshotStream>,
+    /// Live exclusion-list snapshot. The snapshot-stream driver
+    /// consults this on every `Window` event to drop signals from
+    /// excluded apps / window titles before they reach the rules
+    /// engine. Mutators (`save_exclusion` / `delete_exclusion` IPC)
+    /// reload it after a write.
+    pub exclusions: Arc<RwLock<ExclusionMatcher>>,
+    /// Serializes `(DB write, exclusions reload)` pairs so two
+    /// concurrent `save_exclusion` / `delete_exclusion` IPC calls
+    /// can't interleave such that the in-memory matcher ends up
+    /// reflecting a stale DB snapshot. tokio Mutex (not std) so
+    /// the await across the lock + DB roundtrip is non-blocking.
+    pub exclusions_mutator: tokio::sync::Mutex<()>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -145,10 +160,37 @@ pub fn run() {
                 Arc::new(CalendarRegistry::new(db.pool.clone()).expect("init calendar registry"));
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
 
+            // Load the exclusion list once at startup; mutator IPC
+            // handlers replace the contents under the same `Arc`.
+            let exclusions =
+                tauri::async_runtime::block_on(async { ExclusionMatcher::load(&db.pool).await });
+            let exclusions = Arc::new(RwLock::new(exclusions));
+
+            let stream = Arc::new(signals::stream::spawn(
+                calendar.clone(),
+                exclusions.clone(),
+                signals::stream::DEFAULT_DEBOUNCE,
+            ));
+            signals::stream::spawn_default_sources(&stream);
+
+            // Tauri fan-out: every published snapshot is evaluated
+            // against the rules in the DB and emitted as
+            // `signal:snapshot` / `signal:match` to the popover
+            // window. Exits on driver shutdown.
+            let fanout_rx = stream.subscribe();
+            let fanout_pool = db.pool.clone();
+            let fanout_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                signals::fanout::run(fanout_rx, fanout_pool, fanout_handle).await;
+            });
+
             app.manage(AppState {
                 db,
                 pinned: AtomicBool::new(false),
                 calendar,
+                stream,
+                exclusions,
+                exclusions_mutator: tokio::sync::Mutex::new(()),
             });
 
             tray::setup(app.handle())?;

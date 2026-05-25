@@ -595,6 +595,9 @@ pub async fn save_exclusion(
     if !matches!(kind.as_str(), "app" | "domain" | "window") {
         return Err(format!("unknown exclusion kind: {kind}"));
     }
+    // Serialize (INSERT, reload) so concurrent mutator IPCs can't
+    // interleave such that the matcher ends up stale.
+    let _mutator = state.exclusions_mutator.lock().await;
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO exclusions (id, kind, value) VALUES (?1, ?2, ?3)")
         .bind(&id)
@@ -603,17 +606,38 @@ pub async fn save_exclusion(
         .execute(&state.db.pool)
         .await
         .map_err(err)?;
+    reload_exclusions(&state).await;
     Ok(Exclusion { id, kind, value })
 }
 
 #[tauri::command]
 pub async fn delete_exclusion(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let _mutator = state.exclusions_mutator.lock().await;
     sqlx::query("DELETE FROM exclusions WHERE id = ?1")
         .bind(&id)
         .execute(&state.db.pool)
         .await
         .map_err(err)?;
+    reload_exclusions(&state).await;
     Ok(())
+}
+
+/// Reload the in-memory exclusion matcher from the DB. Called after
+/// every `save_exclusion` / `delete_exclusion` so the snapshot
+/// stream driver sees the new state on the very next event.
+async fn reload_exclusions(state: &State<'_, AppState>) {
+    let fresh = crate::signals::exclusions::ExclusionMatcher::load(&state.db.pool).await;
+    match state.exclusions.write() {
+        Ok(mut guard) => *guard = fresh,
+        Err(poisoned) => {
+            // RwLock poisoning means a previous writer panicked.
+            // Replace the contents anyway — the lock is logically
+            // valid; the panic was in user code, not in us.
+            let mut guard = poisoned.into_inner();
+            *guard = fresh;
+            log::warn!("exclusions: recovered from poisoned RwLock and reloaded");
+        }
+    }
 }
 
 #[tauri::command]
@@ -1950,5 +1974,15 @@ pub async fn calendar_sync_status(state: State<'_, AppState>) -> Result<Vec<Sync
 pub async fn current_snapshot(
     state: State<'_, AppState>,
 ) -> Result<crate::rules::SignalSnapshot, String> {
-    Ok(crate::signals::snapshot::build(&state.calendar, Utc::now()).await)
+    // Prefer the stream's live cache (O(1), matches what the rules
+    // engine just evaluated and is already exclusion-filtered). On
+    // cold start — before the driver has published its first
+    // snapshot — fall back to a synchronous `snapshot::build` which
+    // also applies exclusions internally so a popover opened in
+    // the first ~1.5s never sees an excluded app's title.
+    if let Some(snap) = state.stream.current() {
+        Ok(snap)
+    } else {
+        Ok(crate::signals::snapshot::build(&state.calendar, &state.exclusions, Utc::now()).await)
+    }
 }
