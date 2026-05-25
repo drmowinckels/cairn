@@ -75,17 +75,32 @@ export interface RuleCondition {
 
 export type Confidence = "suggestive" | "strict";
 
+export interface RuleAction {
+  project: ProjectId | null;
+  taskId?: TaskId | null;
+  tagsFromCalendar?: boolean;
+  /**
+   * Optional template string for the resulting time entry's
+   * description. Tokens like `{calendar.event}` get substituted
+   * at match time. Empty / absent ⇒ no description.
+   */
+  descriptionTemplate?: string;
+}
+
 export interface Rule {
   id: string;
   name: string;
   enabled: boolean;
+  /**
+   * Lower is earlier-evaluated. The matcher iterates rules in
+   * priority order (asc) and returns the first match — so a lower
+   * priority means a rule "wins" against a later one. The drag-to-
+   * reorder UI in #15 will rewrite priorities transactionally.
+   */
+  priority: number;
   confidence?: Confidence;
   when: RuleCondition[];
-  then: {
-    project: ProjectId | null;
-    taskId?: TaskId | null;
-    tagsFromCalendar?: boolean;
-  };
+  then: RuleAction;
   matchedToday: number;
 }
 

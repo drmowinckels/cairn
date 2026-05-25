@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { RulesView } from "./index";
 
@@ -85,5 +85,153 @@ describe("RulesView", () => {
     ) as HTMLElement;
     fireEvent.click(head);
     expect(onOpenRule).toHaveBeenLastCalledWith(null);
+  });
+
+  // ---- #11: editor wiring -----------------------------------------
+
+  it("editor exposes a name input, an enabled toggle, and a project select", () => {
+    const { container } = renderRules({ openRuleId: "r1" });
+    // Name input lives inside the expanded body row.
+    expect(container.querySelector(".rule-name-input")).toBeTruthy();
+    // Enabled checkbox in the rule head.
+    expect(
+      container.querySelector<HTMLInputElement>(
+        '.rule-toggle input[type="checkbox"]',
+      ),
+    ).toBeTruthy();
+    // Project select inside the Then block.
+    expect(container.querySelector('select[aria-label="Project"]')).toBeTruthy();
+  });
+
+  it("toggling the enabled checkbox flips the rule's class without bubbling to expand", () => {
+    const { container } = renderRules(); // start with all rules collapsed
+    const firstRule = container.querySelector(".rule") as HTMLElement;
+    const toggle = firstRule.querySelector<HTMLInputElement>(
+      '.rule-toggle input[type="checkbox"]',
+    );
+    expect(toggle).toBeTruthy();
+    const startedChecked = toggle!.checked;
+    fireEvent.click(toggle!);
+    // Click on the checkbox must not toggle expansion (stopBubble).
+    expect(firstRule.classList.contains("is-open")).toBe(false);
+    // The local state reflects the new value (no Tauri so optimistic
+    // update sticks).
+    expect(toggle!.checked).toBe(!startedChecked);
+  });
+
+  it("editing the name input updates the displayed name immediately", () => {
+    const { container } = renderRules({ openRuleId: "r1" });
+    const nameInput = container.querySelector<HTMLInputElement>(
+      ".rule-name-input",
+    );
+    expect(nameInput).toBeTruthy();
+    fireEvent.change(nameInput!, { target: { value: "Renamed in test" } });
+    expect(nameInput!.value).toBe("Renamed in test");
+    // Header name span also updates because both bind the same state.
+    expect(
+      container.querySelector(".rule.is-open .rule-name")?.textContent,
+    ).toBe("Renamed in test");
+  });
+
+  it("clicking the AND / OR join label toggles a condition's `any` flag", () => {
+    const { container } = renderRules({ openRuleId: "r3", complexity: "heavy" });
+    // r3 has 3 conditions with `any: true` ⇒ join shows OR.
+    const firstJoin = container.querySelector(".cond-join") as HTMLElement;
+    expect(firstJoin.textContent).toBe("OR");
+    fireEvent.click(firstJoin);
+    // After clicking, that specific condition flips to AND.
+    expect(
+      (container.querySelector(".cond-join") as HTMLElement).textContent,
+    ).toBe("AND");
+  });
+
+  it("'add condition' appends a condition (medium / heavy only)", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const before = container.querySelectorAll(".cond").length;
+    const addBtn = container.querySelector(".add-cond") as HTMLElement;
+    expect(addBtn).toBeTruthy();
+    fireEvent.click(addBtn);
+    const after = container.querySelectorAll(".cond").length;
+    expect(after).toBe(before + 1);
+  });
+
+  it("'add condition' is hidden in light complexity (single-condition rules only)", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "light" });
+    expect(container.querySelector(".add-cond")).toBeNull();
+  });
+
+  it("clicking the × on a condition removes it (when >1 conditions remain)", () => {
+    const { container } = renderRules({ openRuleId: "r3", complexity: "medium" });
+    const before = container.querySelectorAll(".cond").length;
+    const removeBtn = container.querySelector(
+      ".cond-x",
+    ) as HTMLElement;
+    expect(removeBtn).toBeTruthy();
+    fireEvent.click(removeBtn);
+    expect(container.querySelectorAll(".cond").length).toBe(before - 1);
+  });
+
+  it("the × is hidden when the rule has exactly one condition (can't drop to zero)", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    // r1 has a single condition; removing it would leave the rule
+    // with no `when` array — refuse at the UI level so the user
+    // doesn't accidentally create an always-match rule.
+    expect(container.querySelectorAll(".cond").length).toBe(1);
+    expect(container.querySelector(".cond-x")).toBeNull();
+  });
+
+  it("Delete removes the rule from the visible list", () => {
+    const { container } = renderRules({ openRuleId: "r1" });
+    const before = container.querySelectorAll(".rule").length;
+    const deleteBtn = Array.from(
+      container.querySelectorAll<HTMLElement>(".link-btn--danger"),
+    ).find((b) => b.textContent === "Delete");
+    expect(deleteBtn).toBeTruthy();
+    fireEvent.click(deleteBtn!);
+    expect(container.querySelectorAll(".rule").length).toBe(before - 1);
+  });
+
+  it("Duplicate adds a new rule with the same body + '(copy)' suffix", () => {
+    const { container } = renderRules({ openRuleId: "r1" });
+    const before = container.querySelectorAll(".rule").length;
+    const dupBtn = Array.from(
+      container.querySelectorAll<HTMLElement>(".link-btn"),
+    ).find((b) => b.textContent === "Duplicate");
+    expect(dupBtn).toBeTruthy();
+    fireEvent.click(dupBtn!);
+    expect(container.querySelectorAll(".rule").length).toBe(before + 1);
+    // The new rule's name is the original + " (copy)".
+    expect(
+      Array.from(container.querySelectorAll(".rule-name")).some(
+        (n) => n.textContent?.endsWith("(copy)"),
+      ),
+    ).toBe(true);
+  });
+
+  it("'New' creates a fresh rule and expands it", async () => {
+    const { container } = renderRules();
+    const before = container.querySelectorAll(".rule").length;
+    fireEvent.click(screen.getByRole("button", { name: /new rule/i }));
+    await waitFor(() => {
+      expect(container.querySelectorAll(".rule").length).toBe(before + 1);
+    });
+    // The newly created rule is expanded so the user can edit it.
+    await waitFor(() => {
+      expect(container.querySelectorAll(".rule.is-open").length).toBe(1);
+    });
+  });
+
+  it("changing the signal select normalises the op for calendar.event", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const signalSel = container.querySelector<HTMLSelectElement>(
+      ".cond-sig-sel",
+    );
+    expect(signalSel).toBeTruthy();
+    fireEvent.change(signalSel!, { target: { value: "calendar.event" } });
+    // The op select must have switched to "is-active" (the only
+    // sensible op for calendar conditions); otherwise the resulting
+    // rule would be unmatchable.
+    const opSel = container.querySelector<HTMLSelectElement>(".cond-op");
+    expect(opSel?.value).toBe("is-active");
   });
 });
