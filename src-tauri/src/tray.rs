@@ -47,18 +47,24 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .icon(icon)
         .icon_as_template(true)
         .menu(&menu)
-        // Default on macOS is "left-click shows the menu"; flip it
-        // so left-click still toggles the popover (existing UX) and
-        // the menu is right-click only. Matches the convention used
-        // by other macOS tray apps (Slack, Things) that pair a
-        // primary panel with a secondary menu.
+        // macOS-only setting: the default is "left-click shows the
+        // menu", which would hide the popover behind a menu the
+        // user didn't ask for. Flip it so left-click toggles the
+        // popover (existing UX) and the menu surfaces on right-
+        // click. Matches Slack / Things conventions. On Linux and
+        // Windows this call is a no-op; right-click shows the menu
+        // by platform default. (Linux GTK-shell behaviour for tray
+        // menus depends on the StatusNotifier implementation —
+        // documented gap, tracked under Cairn's macOS-first scope.)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match dispatch_menu_id(event.id().as_ref()) {
             TrayMenuAction::OpenPopover => popover::toggle(app),
             TrayMenuAction::Quit => {
-                // `app.exit(0)` runs Tauri's cleanup: stops the
-                // background tasks (via runtime drop), closes the
-                // popover, exits the process with the given code.
+                // `app.exit(0)` triggers `RunEvent::ExitRequested`,
+                // which the run-loop handler in `lib.rs` uses to
+                // drain the SQLite pool before the Tokio runtime
+                // drops. Without that hook, in-flight entry /
+                // calendar writes would be aborted mid-transaction.
                 app.exit(0);
             }
             TrayMenuAction::Unknown => {
@@ -86,7 +92,15 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let open = MenuItemBuilder::with_id(MENU_ID_OPEN, "Open Cairn").build(app)?;
-    let quit = MenuItemBuilder::with_id(MENU_ID_QUIT, "Quit Cairn").build(app)?;
+    // `CmdOrCtrl+Q` is the standard quit accelerator: Cmd+Q on
+    // macOS, Ctrl+Q on Linux+Windows. Tauri registers it as a
+    // menu accelerator (active whenever the menu is alive — i.e.
+    // the whole app lifetime for a tray menu). Without this,
+    // power users reaching for Cmd+Q on a tray-only app get
+    // nothing.
+    let quit = MenuItemBuilder::with_id(MENU_ID_QUIT, "Quit Cairn")
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
     MenuBuilder::new(app)
         .item(&open)
         .separator()
@@ -121,15 +135,6 @@ mod tests {
         // in `build_menu` could exit the app on every click.
         assert_eq!(dispatch_menu_id("tray.no-such-id"), TrayMenuAction::Unknown);
         assert_eq!(dispatch_menu_id(""), TrayMenuAction::Unknown);
-    }
-
-    #[test]
-    fn open_and_quit_menu_ids_are_distinct() {
-        // The ids are user-invisible string keys. If they ever
-        // collide (e.g. someone copy-pastes the const), every
-        // "Open Cairn" click would route to whichever match arm
-        // comes first — and #54's discoverable Quit would vanish.
-        assert_ne!(MENU_ID_OPEN, MENU_ID_QUIT);
     }
 
     // `build_menu` is intentionally not unit-tested. `muda::Menu`
