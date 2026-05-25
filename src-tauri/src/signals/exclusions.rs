@@ -22,8 +22,14 @@
 
 use sqlx::{Row, SqlitePool};
 
-use crate::rules::SignalSnapshot;
+use crate::rules::{AttendeeExclusionCheck, SignalSnapshot};
 use crate::signals::window::FrontWindow;
+
+impl AttendeeExclusionCheck for ExclusionMatcher {
+    fn attendee_is_excluded(&self, attendee: &str) -> bool {
+        self.matches_attendee(attendee)
+    }
+}
 
 /// Snapshot of the exclusions table at a point in time. The driver
 /// takes a read-lock to consult this on every `Window` event; cost
@@ -90,6 +96,26 @@ impl ExclusionMatcher {
     /// UI doesn't expose them either).
     pub fn matches_domain(&self, domain: &str) -> bool {
         self.domains.iter().any(|d| d == domain)
+    }
+
+    /// True iff this calendar attendee should be excluded from
+    /// `RuleMatch.tags`. Strips a `mailto:` prefix if present,
+    /// then matches the email's domain part against the user's
+    /// `domain` exclusion list — same opt-out the browser
+    /// collector consults. Per M1 #10 + `docs/PRIVACY.md`:
+    /// attendee emails reach the rules engine only when
+    /// `tagsFromCalendar = true`, and never persist if the user
+    /// has excluded the domain.
+    pub fn matches_attendee(&self, attendee: &str) -> bool {
+        let raw = attendee.strip_prefix("mailto:").unwrap_or(attendee);
+        let Some(at_idx) = raw.rfind('@') else {
+            return false;
+        };
+        let domain = &raw[at_idx + 1..];
+        if domain.is_empty() {
+            return false;
+        }
+        self.matches_domain(domain)
     }
 
     /// Filter a composed `SignalSnapshot` through the exclusion
@@ -306,6 +332,27 @@ mod tests {
         let m = ExclusionMatcher::default();
         assert!(!m.matches_window(&fw("anything", Some("anywhere"))));
         assert!(!m.matches_domain("any.example.com"));
+    }
+
+    #[test]
+    fn matches_attendee_strips_mailto_and_matches_domain() {
+        let m = ExclusionMatcher::for_test(&[], &[], &["blocked.com"]);
+        // Bare email + domain match.
+        assert!(m.matches_attendee("alice@blocked.com"));
+        // `mailto:` prefix stripped.
+        assert!(m.matches_attendee("mailto:bob@blocked.com"));
+        // Different domain not excluded.
+        assert!(!m.matches_attendee("carol@allowed.com"));
+        // No `@` → can't extract domain → not excluded.
+        assert!(!m.matches_attendee("not-an-email"));
+        // Empty domain after `@` → not excluded.
+        assert!(!m.matches_attendee("dangling@"));
+    }
+
+    #[test]
+    fn matches_attendee_returns_false_when_domain_not_in_exclusion_list() {
+        let m = ExclusionMatcher::for_test(&[], &[], &["other.com"]);
+        assert!(!m.matches_attendee("alice@blocked.com"));
     }
 
     #[test]
