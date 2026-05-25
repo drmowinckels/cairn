@@ -55,11 +55,11 @@ impl ExclusionMatcher {
             return true;
         }
         if let Some(title) = fw.title.as_deref() {
-            let title_lower = title.to_ascii_lowercase();
+            let title_lower = title.to_lowercase();
             if self
                 .windows
                 .iter()
-                .any(|w| title_lower.contains(&w.to_ascii_lowercase()))
+                .any(|w| title_lower.contains(&w.to_lowercase()))
             {
                 return true;
             }
@@ -79,10 +79,10 @@ impl ExclusionMatcher {
     /// exclusion. Same case-insensitive substring rule as
     /// `matches_window`.
     pub fn matches_title(&self, title: &str) -> bool {
-        let title_lower = title.to_ascii_lowercase();
+        let title_lower = title.to_lowercase();
         self.windows
             .iter()
-            .any(|w| title_lower.contains(&w.to_ascii_lowercase()))
+            .any(|w| title_lower.contains(&w.to_lowercase()))
     }
 
     /// True iff the given browser domain matches any `domain`

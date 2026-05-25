@@ -50,3 +50,14 @@ ignore:
   - "src-tauri/gen/**"
   - "scripts/**"
   - "docs/**"
+  # Tauri runtime entry-point — can't be unit-tested because
+  # `tauri::Builder::default()…run(generate_context!())` requires a
+  # real event loop. Coverage of `lib.rs::run()` is whatever
+  # integration tests exercise via `mock_app`, which doesn't go
+  # through the Builder. See M0 testing-infra discussion.
+  - "src-tauri/src/lib.rs"
+  # Tray menu / popover-window setup — same: Tauri-only wiring.
+  - "src-tauri/src/tray.rs"
+  - "src-tauri/src/popover.rs"
+  # Test-only support module is exempt from coverage of itself.
+  - "src-tauri/src/test_support.rs"

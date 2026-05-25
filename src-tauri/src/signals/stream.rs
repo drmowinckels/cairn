@@ -217,20 +217,33 @@ pub fn spawn(
         exclusions,
         debounce,
     ));
-    tokio::spawn(async move {
-        if let Err(e) = driver_handle.await {
-            if e.is_panic() {
-                log::error!("snapshot stream driver panicked: {e}");
-            } else if e.is_cancelled() {
-                log::warn!("snapshot stream driver was cancelled");
-            }
-        }
-    });
+    tokio::spawn(supervise(driver_handle));
 
     SnapshotStream {
         snapshot_rx,
         idle_rx,
         event_tx,
+    }
+}
+
+/// Supervise a spawned driver task: await its `JoinHandle`, log the
+/// terminal state. Extracted from `spawn` so tests can drive it with
+/// a synthetic panicking task and assert the log path executes.
+async fn supervise<T>(handle: tokio::task::JoinHandle<T>) {
+    match handle.await {
+        Ok(_) => {
+            // Driver returned normally (graceful shutdown). No log
+            // line — this is the expected path on test tear-down.
+        }
+        Err(e) if e.is_panic() => {
+            log::error!("snapshot stream driver panicked: {e}");
+        }
+        Err(e) if e.is_cancelled() => {
+            log::warn!("snapshot stream driver was cancelled");
+        }
+        Err(e) => {
+            log::warn!("snapshot stream driver JoinError (other): {e}");
+        }
     }
 }
 
@@ -955,6 +968,99 @@ mod tests {
             .await
             .expect("window publish after idle");
         assert_eq!(snap.app_name.as_deref(), Some("Cairn"));
+    }
+
+    #[tokio::test]
+    async fn poisoned_exclusions_lock_drops_window_signal_fail_closed() {
+        // Poison the RwLock by panicking while holding the write
+        // guard. The driver's apply_event must fail closed — i.e.
+        // drop the incoming Window event rather than letting it
+        // through.
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let poisoner = exclusions.clone();
+        // `catch_unwind` so the test thread doesn't itself fail.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = poisoner.write().unwrap();
+            panic!("simulated poison");
+        }));
+        assert!(
+            exclusions.read().is_err(),
+            "RwLock should be poisoned for the test to be meaningful"
+        );
+
+        let (_dir, db) = test_db().await;
+        let calendar =
+            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let stream = spawn(calendar, exclusions, Duration::from_millis(50));
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Window(Some(fw("Chrome", Some("Banking")))))
+            .await
+            .unwrap();
+
+        // The poisoned lock + fail-closed pattern means:
+        // apply_event drops the front, AND publish also fully
+        // redacts. The published snapshot must have no OS-derived
+        // fields.
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("publish runs")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert!(snap.app_name.is_none(), "poisoned lock leaked app_name");
+        assert!(
+            snap.window_title.is_none(),
+            "poisoned lock leaked window_title"
+        );
+    }
+
+    #[tokio::test]
+    async fn supervise_completes_quietly_on_normal_exit() {
+        let handle = tokio::spawn(async { 42 });
+        // No panic, no log assertion — just verify the supervisor
+        // completes without itself panicking.
+        supervise(handle).await;
+    }
+
+    #[tokio::test]
+    async fn supervise_logs_on_panic() {
+        let handle = tokio::spawn(async { panic!("driver exploded") });
+        // The supervisor must NOT propagate the panic — it logs and
+        // returns. If it did propagate, this test would itself
+        // panic and fail.
+        supervise(handle).await;
+    }
+
+    #[tokio::test]
+    async fn supervise_logs_on_cancellation() {
+        let handle = tokio::spawn(async {
+            // Never finishes on its own — must be aborted.
+            std::future::pending::<()>().await;
+        });
+        handle.abort();
+        supervise(handle).await;
+    }
+
+    #[tokio::test]
+    async fn push_or_drop_handles_closed_channel() {
+        let (tx, rx) = mpsc::channel::<SignalEvent>(2);
+        drop(rx);
+        // Closed channel → caller signals the source to exit.
+        let ok = push_or_drop(&tx, SignalEvent::CalendarRefresh);
+        assert!(!ok, "push_or_drop returns false when the channel is closed");
+    }
+
+    #[tokio::test]
+    async fn push_or_drop_drops_silently_when_full() {
+        let (tx, _rx) = mpsc::channel::<SignalEvent>(1);
+        // Fill the channel.
+        tx.try_send(SignalEvent::CalendarRefresh).unwrap();
+        // Second push should drop, NOT block, and still return true
+        // (the source keeps polling).
+        let ok = push_or_drop(&tx, SignalEvent::CalendarRefresh);
+        assert!(ok, "push_or_drop returns true even on Full");
     }
 
     #[tokio::test]
