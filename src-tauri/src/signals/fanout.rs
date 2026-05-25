@@ -1,14 +1,16 @@
 //! Fan-out from the snapshot stream to consumers:
 //!  - Tauri events `signal:snapshot` and `signal:match`, consumed by
 //!    the suggestion banner (#6) and the Live Signals card.
-//!  - Rules-engine evaluation against the rules currently in the DB.
+//!  - Rules-engine evaluation against the engine-shape rules cached
+//!    in `AppState.rules_cache` (loaded once at startup, refreshed
+//!    by `save_rule` / `delete_rule` IPC mutators — see issue #55).
 //!
 //! Kept separate from `stream.rs` so the stream itself can stay
 //! pure-tokio (DB + Tauri free) and remain unit-testable on every
 //! platform. The pure projection helpers here (`project_rules`,
 //! `outcome_for`) are independently testable; the async loop that
-//! wires DB + AppHandle is exercised by integration tests gated off
-//! Windows (same constraint as `tauri::test::mock_app`).
+//! wires the rules-cache + AppHandle is exercised by integration tests
+//! gated off Windows (same constraint as `tauri::test::mock_app`).
 
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -132,26 +134,35 @@ pub fn outcome_for_full(
     }
 }
 
-/// Load every rule from the DB, in priority order, in the IPC
-/// shape. Used by the fan-out task on each snapshot tick. Kept
-/// parallel to `ipc::list_rules` (which is gated behind a Tauri
-/// `State`) so the fan-out loop can run without a `State`.
+/// One-shot load of the rules table in the engine shape. Used at
+/// startup (`lib.rs::setup`) and by IPC mutators
+/// (`save_rule` / `delete_rule`) to refresh the
+/// `AppState.rules_cache` after a write. The fanout itself never
+/// calls this — it reads the cache instead, per issue #55.
 ///
-/// `pub(crate)` so other backend tasks (e.g. `calendar_autostop`)
-/// can reuse the same query + parse logic instead of duplicating.
-pub(crate) async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
-    let rows = match sqlx::query(
-        "SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC",
-    )
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            log::warn!("fanout: rules query failed: {e}");
-            return Vec::new();
-        }
-    };
+/// Returns `Err` on SQL failure so callers can distinguish
+/// "no rules" from "the query failed and we don't actually know
+/// what's in the table." Critical for `reload_rules`: writing an
+/// empty `Vec` to the cache on a transient `SQLITE_BUSY` would
+/// silently disable every rule until the next mutator runs.
+pub async fn load_engine_rules(pool: &SqlitePool) -> Result<Vec<Rule>, sqlx::Error> {
+    let ipc_rules = load_rules(pool).await?;
+    Ok(project_rules(ipc_rules))
+}
+
+/// Load every rule from the DB, in priority order, in the IPC
+/// shape. Returns `Err` on SQL failure; rows whose `body` column
+/// can't be parsed as JSON are dropped (with a warn-log keyed by
+/// `rule_id` — body strings can carry user-entered patterns that
+/// may include PII so we never log them).
+///
+/// `pub(crate)` so other backend tasks can reuse the same query +
+/// parse logic instead of duplicating.
+pub(crate) async fn load_rules(pool: &SqlitePool) -> Result<Vec<crate::ipc::Rule>, sqlx::Error> {
+    let rows =
+        sqlx::query("SELECT id, name, enabled, priority, body FROM rules ORDER BY priority ASC")
+            .fetch_all(pool)
+            .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let id: String = r.get("id");
@@ -175,7 +186,7 @@ pub(crate) async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
             body,
         });
     }
-    out
+    Ok(out)
 }
 
 /// Run the fan-out loop. Exits cleanly when the upstream
@@ -193,7 +204,7 @@ pub(crate) async fn load_rules(pool: &SqlitePool) -> Vec<crate::ipc::Rule> {
 /// review on PR #5.
 pub async fn run<R: Runtime>(
     mut rx: watch::Receiver<Option<SignalSnapshot>>,
-    pool: SqlitePool,
+    rules_cache: std::sync::Arc<std::sync::RwLock<Vec<Rule>>>,
     snoozer: std::sync::Arc<std::sync::Mutex<crate::rules::Snoozer>>,
     exclusions: std::sync::Arc<std::sync::RwLock<crate::signals::exclusions::ExclusionMatcher>>,
     app: AppHandle<R>,
@@ -206,8 +217,21 @@ pub async fn run<R: Runtime>(
             // defensive.
             continue;
         };
-        let rules = load_rules(&pool).await;
-        let parsed = project_rules(rules);
+        // Snapshot the rules cache into a local clone so the read-
+        // lock is released before any subsequent locking. Cache is
+        // refreshed by `ipc::save_rule` / `ipc::delete_rule` after
+        // each write (see issue #55).
+        let parsed: Vec<Rule> = match rules_cache.read() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                // Lock poisoned (panic inside a mutator). Fall back
+                // to the empty-rules path so the matcher still runs
+                // — emitting `signal:snapshot` is more useful than
+                // dropping the tick.
+                log::warn!("fanout: rules cache lock poisoned, evaluating against empty rules");
+                Vec::new()
+            }
+        };
         // Snapshot the exclusion matcher into a local clone so the
         // read-lock is released before we acquire the snoozer mutex
         // (avoids deadlock potential if a future refactor mixes lock
@@ -407,7 +431,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let rules = load_rules(&db.pool).await;
+        let rules = load_rules(&db.pool).await.expect("load_rules ok");
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].id, "early");
         assert_eq!(rules[1].id, "late");
@@ -417,8 +441,26 @@ mod tests {
     #[tokio::test]
     async fn load_rules_returns_empty_on_fresh_db() {
         let (_dir, db) = crate::test_support::test_db().await;
-        let rules = load_rules(&db.pool).await;
+        let rules = load_rules(&db.pool).await.expect("load_rules ok");
         assert!(rules.is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn load_rules_errors_when_pool_is_closed() {
+        // Pin the regression that the round-1 review caught: previously
+        // `load_rules` swallowed SQL errors and returned `Vec::new()`,
+        // which `reload_rules` would happily write into the cache —
+        // silently disabling every rule on a transient `SQLITE_BUSY`.
+        // Now SQL failures bubble; the caller decides what to do.
+        let (_dir, db) = crate::test_support::test_db().await;
+        db.pool.close().await;
+        let res = load_rules(&db.pool).await;
+        assert!(
+            res.is_err(),
+            "load_rules must return Err on SQL failure so reload_rules \
+             can keep the cache intact instead of blanking it",
+        );
     }
 
     // ---- Integration test: full run() loop via mock_app ----------
@@ -432,15 +474,16 @@ mod tests {
         // Some(snapshot) the channel receives goes through the
         // load_rules → outcome_for → emit_to pipeline, and the loop
         // exits cleanly when the sender drops".
-        let (_dir, _app, db) = crate::test_support::mock_app_with_db().await;
+        let (_dir, _app, _db) = crate::test_support::mock_app_with_db().await;
         let (tx, rx) = watch::channel::<Option<SignalSnapshot>>(None);
         let app = _app.handle().clone();
-        let pool = db.pool.clone();
+        let rules_cache = std::sync::Arc::new(std::sync::RwLock::new(Vec::<Rule>::new()));
         let snoozer = std::sync::Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new()));
         let exclusions = std::sync::Arc::new(std::sync::RwLock::new(
             crate::signals::exclusions::ExclusionMatcher::default(),
         ));
-        let task = tokio::spawn(async move { run(rx, pool, snoozer, exclusions, app).await });
+        let task =
+            tokio::spawn(async move { run(rx, rules_cache, snoozer, exclusions, app).await });
 
         // Push one real snapshot — drives one iteration of the loop.
         tx.send(Some(snap_with_app("Cairn"))).unwrap();
@@ -459,6 +502,50 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(2), task)
             .await
             .expect("run() exits on sender drop")
+            .expect("run() task joined cleanly");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn run_does_not_touch_db_pool() {
+        // Pin issue #55's contract: the fanout evaluates against
+        // `rules_cache`, never the DB. To prove it, close the DB
+        // pool *before* starting the fanout — if `run()` were still
+        // querying the rules table on every tick, the closed-pool
+        // error would surface in the logs and the loop would
+        // either panic or never reach `emit_to`. The loop must
+        // continue to process snapshots cleanly and exit on
+        // sender drop.
+        let (_dir, _app, db) = crate::test_support::mock_app_with_db().await;
+        // Insert a rule into the DB *and* the cache. With the cache
+        // wired correctly, only the cached projection is used.
+        let rules_cache = std::sync::Arc::new(std::sync::RwLock::new(project_rules(vec![
+            rule_matching_app("cached", "Cached", "from-cache"),
+        ])));
+        // Close the DB pool — any subsequent SQL would error.
+        db.pool.close().await;
+
+        let (tx, rx) = watch::channel::<Option<SignalSnapshot>>(None);
+        let app_handle = _app.handle().clone();
+        let snoozer = std::sync::Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new()));
+        let exclusions = std::sync::Arc::new(std::sync::RwLock::new(
+            crate::signals::exclusions::ExclusionMatcher::default(),
+        ));
+        let task =
+            tokio::spawn(
+                async move { run(rx, rules_cache, snoozer, exclusions, app_handle).await },
+            );
+
+        // Drive the loop through several iterations — with the pool
+        // closed, any per-tick DB read would now fail visibly.
+        for app in ["Cached", "Other", "Cached"] {
+            tx.send(Some(snap_with_app(app))).unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(tx);
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("run() exits on sender drop even with closed pool")
             .expect("run() task joined cleanly");
     }
 }
