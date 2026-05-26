@@ -683,6 +683,15 @@ describe("useRules hook", () => {
   });
 
   it("changing defaultAmbiguity does NOT mutate existing rules (#71 acceptance criterion)", async () => {
+    // Seed with `"skip"` so the existing rule's pref differs from
+    // BOTH the initial global default (`"prompt"`) and the new one
+    // (`"log-to-uncategorized"`). A hypothetical bug that rewrites
+    // every rule to the current default would mutate the seeded
+    // `"skip"` to `"prompt"` on mount AND to `"log-to-uncategorized"`
+    // after the rerender — either failure would surface as a wrong
+    // value. The earlier shape of this test seeded `"prompt"` and
+    // only asserted `"prompt"` post-rerender, which the same bug
+    // would still pass.
     ipcMock.__seed([
       {
         id: "existing",
@@ -691,7 +700,7 @@ describe("useRules hook", () => {
         priority: 10,
         body: {
           confidence: "suggestive",
-          ambiguityBehavior: "prompt",
+          ambiguityBehavior: "skip",
           when: [],
           then: { project: "p" },
         },
@@ -703,12 +712,20 @@ describe("useRules hook", () => {
       { initialProps: { defaultAmbiguity: "prompt" as AmbiguityBehavior } },
     );
     await waitFor(() => expect(result.current.rules).toHaveLength(1));
-    expect(result.current.rules[0].ambiguityBehavior).toBe("prompt");
+    expect(result.current.rules[0].ambiguityBehavior).toBe("skip");
     // User changes the global default via Settings.
     rerender({ defaultAmbiguity: "log-to-uncategorized" });
     // The existing rule's pref is untouched — only NEW rules pick
     // up the new global default.
-    expect(result.current.rules[0].ambiguityBehavior).toBe("prompt");
+    expect(result.current.rules[0].ambiguityBehavior).toBe("skip");
+    // And a fresh `add()` after the rerender uses the NEW default,
+    // so we also pin "new rules DO inherit the change" in the same
+    // test scenario.
+    await act(async () => {
+      await result.current.add();
+    });
+    const created = result.current.rules.find((r) => r.id !== "existing");
+    expect(created?.ambiguityBehavior).toBe("log-to-uncategorized");
   });
 });
 

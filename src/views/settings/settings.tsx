@@ -9,6 +9,7 @@ import type {
   DetectionPrompts,
   TextScale,
 } from "../../lib/types";
+import { AMBIGUITY_OPTIONS as AMBIGUITY_VALUES } from "../../lib/use-rules";
 
 interface Props {
   density: Density;
@@ -28,14 +29,26 @@ const DETECTION_OPTIONS: Array<{ value: DetectionPrompts; label: string }> = [
   { value: "modal", label: "Modal" },
 ];
 
+/**
+ * Settings-specific labels for each `AmbiguityBehavior`. Derived
+ * from the canonical `AMBIGUITY_VALUES` so a future fourth variant
+ * forces this map to grow (TS will error: missing key). Without the
+ * derivation, a new variant could land in `use-rules.ts` and silently
+ * miss the Settings UI.
+ */
+const AMBIGUITY_LABELS: Record<AmbiguityBehavior, string> = {
+  prompt: "Prompt",
+  skip: "Skip",
+  "log-to-uncategorized": "Uncategorized",
+};
+
 const AMBIGUITY_OPTIONS: Array<{
   value: AmbiguityBehavior;
   label: string;
-}> = [
-  { value: "prompt", label: "Prompt" },
-  { value: "skip", label: "Skip" },
-  { value: "log-to-uncategorized", label: "Uncategorized" },
-];
+}> = AMBIGUITY_VALUES.map((value) => ({
+  value,
+  label: AMBIGUITY_LABELS[value],
+}));
 
 export function SettingsView({ density, a11y }: Props) {
   const backup = useBackup();

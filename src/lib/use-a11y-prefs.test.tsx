@@ -121,4 +121,25 @@ describe("useA11yPrefs", () => {
     const { result } = renderHook(() => useA11yPrefs());
     expect(result.current.ambiguityDefault).toBe("prompt");
   });
+
+  it("coerces a tampered ambiguityDefault to 'prompt' (security-review on #71)", () => {
+    // A hand-edited / corrupted blob could carry garbage. Without
+    // the load-time coercion, this value would propagate to
+    // `useRules.defaultAmbiguity` → `blankRule` → the rule body's
+    // `ambiguityBehavior`, ending up persisted via `serializeRule`
+    // (which only filters out `"prompt"`, not invalid strings).
+    // Pin the boundary coercion so a tampered blob never reaches
+    // `blankRule`.
+    for (const garbage of [
+      '{"ambiguityDefault":"yes"}',
+      '{"ambiguityDefault":"LOG-TO-UNCATEGORIZED"}',
+      '{"ambiguityDefault":null}',
+      '{"ambiguityDefault":[]}',
+      '{"ambiguityDefault":42}',
+    ]) {
+      localStorage.setItem("cairn:a11y-prefs:v1", garbage);
+      const { result } = renderHook(() => useA11yPrefs());
+      expect(result.current.ambiguityDefault).toBe("prompt");
+    }
+  });
 });
