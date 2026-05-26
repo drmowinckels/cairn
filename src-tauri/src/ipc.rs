@@ -2861,12 +2861,9 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         // No rules in DB → no match regardless of snapshot.
-        let result = dry_run_rules(
-            state,
-            dry_run_snapshot(Some("~/code/cairn"), None, None),
-        )
-        .await
-        .unwrap();
+        let result = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -2884,13 +2881,10 @@ mod tests {
         r2.body = dry_run_rule_body("ide.folder", "contains", "code", "misc");
         let _ = save_rule(state.clone(), r2).await.unwrap();
 
-        let m = dry_run_rules(
-            state,
-            dry_run_snapshot(Some("~/code/cairn"), None, None),
-        )
-        .await
-        .unwrap()
-        .expect("a rule should match");
+        let m = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap()
+            .expect("a rule should match");
         // Priority 10 wins over priority 20 even though both rules' bodies
         // contain "cairn"/"code" patterns the snapshot satisfies.
         assert_eq!(m.rule_name, "Cairn dev");
@@ -2905,13 +2899,10 @@ mod tests {
         r.body = dry_run_rule_body("git.branch", "starts-with", "feat/", "cairn");
         let _ = save_rule(state.clone(), r).await.unwrap();
 
-        let m = dry_run_rules(
-            state,
-            dry_run_snapshot(None, Some("feat/rules-ui"), None),
-        )
-        .await
-        .unwrap()
-        .expect("branch starting with feat/ should match");
+        let m = dry_run_rules(state, dry_run_snapshot(None, Some("feat/rules-ui"), None))
+            .await
+            .unwrap()
+            .expect("branch starting with feat/ should match");
         assert_eq!(m.rule_name, "Feature branch work");
     }
 
@@ -2950,12 +2941,9 @@ mod tests {
         r.body = dry_run_rule_body("ide.folder", "contains", "cairn", "cairn");
         let _ = save_rule(state.clone(), r).await.unwrap();
 
-        let result = dry_run_rules(
-            state,
-            dry_run_snapshot(Some("~/code/cairn"), None, None),
-        )
-        .await
-        .unwrap();
+        let result = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap();
         // A disabled rule must not contribute a match — same contract
         // as the live engine path.
         assert!(result.is_none());
@@ -2969,12 +2957,9 @@ mod tests {
         // inputs are bounded by the frontend `maxLength`; this is
         // the backend gate against a forged invocation.
         let too_long = "a".repeat(MAX_DRY_RUN_FIELD_LEN + 1);
-        let err = dry_run_rules(
-            state,
-            dry_run_snapshot(Some(&too_long), None, None),
-        )
-        .await
-        .unwrap_err();
+        let err = dry_run_rules(state, dry_run_snapshot(Some(&too_long), None, None))
+            .await
+            .unwrap_err();
         assert!(
             err.contains("ideFolder"),
             "error should name the offending field, got: {err}"
@@ -2987,11 +2972,7 @@ mod tests {
         let state = app.state::<crate::AppState>();
         // Exactly at the cap — must not trigger the validation error.
         let at_limit = "x".repeat(MAX_DRY_RUN_FIELD_LEN);
-        let ok = dry_run_rules(
-            state,
-            dry_run_snapshot(Some(&at_limit), None, None),
-        )
-        .await;
+        let ok = dry_run_rules(state, dry_run_snapshot(Some(&at_limit), None, None)).await;
         assert!(ok.is_ok(), "boundary value should pass validation: {ok:?}");
     }
 
