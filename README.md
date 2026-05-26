@@ -107,3 +107,4 @@ See `docs/DESIGN_SPEC.md` for the full token map (semantic colors, density scale
 ## License
 
 [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+
