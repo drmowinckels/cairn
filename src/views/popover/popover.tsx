@@ -124,6 +124,7 @@ export function Popover({
               openRuleId={openRuleId}
               onOpenRule={setOpenRuleId}
               density={density}
+              ambiguityDefault={a11y.ambiguityDefault}
             />
           </ErrorBoundary>
         )}

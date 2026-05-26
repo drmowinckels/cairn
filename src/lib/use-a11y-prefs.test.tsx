@@ -84,4 +84,62 @@ describe("useA11yPrefs", () => {
     act(() => result.current.setAlwaysFocusRing(false));
     expect(document.documentElement.dataset.focusRing).toBe("kbd");
   });
+
+  // ---- #71: global ambiguity default --------------------------------
+
+  it("seeds ambiguityDefault to 'prompt' on first mount", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.ambiguityDefault).toBe("prompt");
+  });
+
+  it("setAmbiguityDefault persists the change to localStorage", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    act(() => result.current.setAmbiguityDefault("log-to-uncategorized"));
+    expect(result.current.ambiguityDefault).toBe("log-to-uncategorized");
+    const stored = JSON.parse(
+      localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}",
+    );
+    expect(stored.ambiguityDefault).toBe("log-to-uncategorized");
+  });
+
+  it("restores ambiguityDefault from localStorage on remount", () => {
+    localStorage.setItem(
+      "cairn:a11y-prefs:v1",
+      JSON.stringify({ ambiguityDefault: "skip" }),
+    );
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.ambiguityDefault).toBe("skip");
+  });
+
+  it("falls back to 'prompt' when stored ambiguityDefault is missing (legacy a11y blob)", () => {
+    // Older localStorage payloads predate #71 and don't carry the
+    // field. The defaults merge must fill it in.
+    localStorage.setItem(
+      "cairn:a11y-prefs:v1",
+      JSON.stringify({ textScale: "lg", detectionPrompts: "modal" }),
+    );
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.ambiguityDefault).toBe("prompt");
+  });
+
+  it("coerces a tampered ambiguityDefault to 'prompt' (security-review on #71)", () => {
+    // A hand-edited / corrupted blob could carry garbage. Without
+    // the load-time coercion, this value would propagate to
+    // `useRules.defaultAmbiguity` → `blankRule` → the rule body's
+    // `ambiguityBehavior`, ending up persisted via `serializeRule`
+    // (which only filters out `"prompt"`, not invalid strings).
+    // Pin the boundary coercion so a tampered blob never reaches
+    // `blankRule`.
+    for (const garbage of [
+      '{"ambiguityDefault":"yes"}',
+      '{"ambiguityDefault":"LOG-TO-UNCATEGORIZED"}',
+      '{"ambiguityDefault":null}',
+      '{"ambiguityDefault":[]}',
+      '{"ambiguityDefault":42}',
+    ]) {
+      localStorage.setItem("cairn:a11y-prefs:v1", garbage);
+      const { result } = renderHook(() => useA11yPrefs());
+      expect(result.current.ambiguityDefault).toBe("prompt");
+    }
+  });
 });

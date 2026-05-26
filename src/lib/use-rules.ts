@@ -92,7 +92,19 @@ export interface PatchRule {
   confidenceWarningDismissed?: boolean;
 }
 
-export function useRules(): UseRules {
+export interface UseRulesOpts {
+  /**
+   * Default `ambiguityBehavior` applied to newly-created blank
+   * rules (issue #71). Existing rules are not touched. Falls back
+   * to `"prompt"` if not provided — the safe default that never
+   * auto-starts a timer behind the user's back.
+   */
+  defaultAmbiguity?: AmbiguityBehavior;
+}
+
+export function useRules(opts: UseRulesOpts = {}): UseRules {
+  const defaultAmbiguity: AmbiguityBehavior =
+    opts.defaultAmbiguity ?? "prompt";
   const [rules, setRules] = useState<Rule[]>(inTauri ? [] : FIXTURE_RULES);
   const [loading, setLoading] = useState(inTauri);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +142,7 @@ export function useRules(): UseRules {
   }, []);
 
   const add = useCallback(async (): Promise<string> => {
-    const draft = blankRule(rulesRef.current);
+    const draft = blankRule(rulesRef.current, defaultAmbiguity);
     if (!inTauri) {
       commit((prev) => [...prev, draft]);
       return draft.id;
@@ -138,7 +150,7 @@ export function useRules(): UseRules {
     const saved = await saveRuleIpc(serializeRule(draft, null));
     commit((prev) => [...prev, deserializeRule(saved)]);
     return saved.id;
-  }, [commit]);
+  }, [commit, defaultAmbiguity]);
 
   const update = useCallback(
     async (id: string, patch: PatchRule) => {
@@ -365,12 +377,29 @@ export const DEFAULT_CONDITION: RuleCondition = {
   value: "",
 };
 
-function blankRule(existing: Rule[]): Rule {
+/**
+ * Construct a fresh rule with sensible defaults. The
+ * `ambiguityBehavior` parameter is the user's app-wide preference
+ * for what to do on a Suggestive match (#71); the rule stores it
+ * inline so a later change to the global default doesn't mutate
+ * existing rules — only new ones inherit the new pref.
+ *
+ * `existing` is consulted to assign the new rule a priority below
+ * the current max — so the user's brand-new rule slots in at the
+ * bottom of the list, not the top.
+ *
+ * Exported so unit tests can pin the contract.
+ */
+export function blankRule(
+  existing: Rule[],
+  ambiguityBehavior: AmbiguityBehavior = "prompt",
+): Rule {
   return {
     id: cryptoId(),
     name: "New rule",
     enabled: true,
     priority: nextPriority(existing),
+    ambiguityBehavior,
     when: [{ ...DEFAULT_CONDITION }],
     then: { project: null },
     matchedToday: 0,

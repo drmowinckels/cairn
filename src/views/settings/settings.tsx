@@ -3,7 +3,13 @@ import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
 import { useBackup } from "../../lib/use-backup";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
-import type { Density, DetectionPrompts, TextScale } from "../../lib/types";
+import type {
+  AmbiguityBehavior,
+  Density,
+  DetectionPrompts,
+  TextScale,
+} from "../../lib/types";
+import { AMBIGUITY_OPTIONS as AMBIGUITY_VALUES } from "../../lib/use-rules";
 
 interface Props {
   density: Density;
@@ -22,6 +28,27 @@ const DETECTION_OPTIONS: Array<{ value: DetectionPrompts; label: string }> = [
   { value: "subtle", label: "Subtle" },
   { value: "modal", label: "Modal" },
 ];
+
+/**
+ * Settings-specific labels for each `AmbiguityBehavior`. Derived
+ * from the canonical `AMBIGUITY_VALUES` so a future fourth variant
+ * forces this map to grow (TS will error: missing key). Without the
+ * derivation, a new variant could land in `use-rules.ts` and silently
+ * miss the Settings UI.
+ */
+const AMBIGUITY_LABELS: Record<AmbiguityBehavior, string> = {
+  prompt: "Prompt",
+  skip: "Skip",
+  "log-to-uncategorized": "Uncategorized",
+};
+
+const AMBIGUITY_OPTIONS: Array<{
+  value: AmbiguityBehavior;
+  label: string;
+}> = AMBIGUITY_VALUES.map((value) => ({
+  value,
+  label: AMBIGUITY_LABELS[value],
+}));
 
 export function SettingsView({ density, a11y }: Props) {
   const backup = useBackup();
@@ -246,6 +273,29 @@ export function SettingsView({ density, a11y }: Props) {
                 aria-checked={a11y.detectionPrompts === opt.value}
                 className={`seg-btn${a11y.detectionPrompts === opt.value ? " is-on" : ""}`}
                 onClick={() => a11y.setDetectionPrompts(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </SetRow>
+
+        <SetRow
+          label="Default ambiguity behaviour"
+          hint="What to do when a Suggestive rule matches. Applies to new rules only."
+        >
+          <div
+            className="seg seg--sm"
+            role="radiogroup"
+            aria-label="Default ambiguity behaviour"
+          >
+            {AMBIGUITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                role="radio"
+                aria-checked={a11y.ambiguityDefault === opt.value}
+                className={`seg-btn${a11y.ambiguityDefault === opt.value ? " is-on" : ""}`}
+                onClick={() => a11y.setAmbiguityDefault(opt.value)}
               >
                 {opt.label}
               </button>

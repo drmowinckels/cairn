@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import type { A11yPrefs, DetectionPrompts, TextScale } from "./types";
+import type {
+  A11yPrefs,
+  AmbiguityBehavior,
+  DetectionPrompts,
+  TextScale,
+} from "./types";
+import { coerceAmbiguity } from "./use-rules";
 
 const STORAGE_KEY = "cairn:a11y-prefs:v1";
 
@@ -12,6 +18,7 @@ const DEFAULTS: A11yPrefs = {
   announce: true,
   alwaysFocusRing: false,
   detectionPrompts: "subtle",
+  ambiguityDefault: "prompt",
 };
 
 function matchesReduceMotion(): boolean {
@@ -25,7 +32,16 @@ function load(): A11yPrefs {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULTS;
     const parsed = JSON.parse(raw) as Partial<A11yPrefs>;
-    return { ...DEFAULTS, ...parsed };
+    // Coerce `ambiguityDefault` at the input boundary so a tampered
+    // localStorage blob (`"yes"`, arrays, null) can't smuggle an
+    // out-of-range value into `blankRule()` via `useRules`. Mirrors
+    // the same guard the body deserializer uses on round-trip
+    // (issue #16, security-review on #71).
+    return {
+      ...DEFAULTS,
+      ...parsed,
+      ambiguityDefault: coerceAmbiguity(parsed?.ambiguityDefault),
+    };
   } catch {
     return DEFAULTS;
   }
@@ -39,6 +55,7 @@ export interface UseA11yPrefs extends A11yPrefs {
   setAnnounce: (v: boolean) => void;
   setAlwaysFocusRing: (v: boolean) => void;
   setDetectionPrompts: (v: DetectionPrompts) => void;
+  setAmbiguityDefault: (v: AmbiguityBehavior) => void;
 }
 
 export function useA11yPrefs(): UseA11yPrefs {
@@ -74,5 +91,6 @@ export function useA11yPrefs(): UseA11yPrefs {
     setAnnounce: (v) => patch("announce", v),
     setAlwaysFocusRing: (v) => patch("alwaysFocusRing", v),
     setDetectionPrompts: (v) => patch("detectionPrompts", v),
+    setAmbiguityDefault: (v) => patch("ambiguityDefault", v),
   };
 }

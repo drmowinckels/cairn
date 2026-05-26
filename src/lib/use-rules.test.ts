@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 import {
+  blankRule,
   defaultOpForSignal,
   deserializeRule,
   moveByIndex,
@@ -12,7 +13,7 @@ import {
   withConditionAt,
   withConditionRemoved,
 } from "./use-rules";
-import type { Rule, RuleCondition } from "./types";
+import type { AmbiguityBehavior, Rule, RuleCondition } from "./types";
 
 // Mock the IPC layer. We test the hook end-to-end against an
 // in-memory backend so we cover the optimistic-update + rollback
@@ -653,5 +654,89 @@ describe("useRules hook", () => {
     expect(clone?.name).toBe("Original (copy)");
     expect(clone?.priority).toBeGreaterThan(10);
     expect(clone?.when[0].value).toBe("cairn");
+  });
+
+  // ---- #71: global ambiguity default ------------------------------
+
+  it("add() applies the defaultAmbiguity option to the new rule", async () => {
+    const { result } = renderHook(() =>
+      useRules({ defaultAmbiguity: "log-to-uncategorized" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let id = "";
+    await act(async () => {
+      id = await result.current.add();
+    });
+    const created = result.current.rules.find((r) => r.id === id);
+    expect(created?.ambiguityBehavior).toBe("log-to-uncategorized");
+  });
+
+  it("add() falls back to 'prompt' when no defaultAmbiguity is provided", async () => {
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let id = "";
+    await act(async () => {
+      id = await result.current.add();
+    });
+    const created = result.current.rules.find((r) => r.id === id);
+    expect(created?.ambiguityBehavior).toBe("prompt");
+  });
+
+  it("changing defaultAmbiguity does NOT mutate existing rules (#71 acceptance criterion)", async () => {
+    // Seed with `"skip"` so the existing rule's pref differs from
+    // BOTH the initial global default (`"prompt"`) and the new one
+    // (`"log-to-uncategorized"`). A hypothetical bug that rewrites
+    // every rule to the current default would mutate the seeded
+    // `"skip"` to `"prompt"` on mount AND to `"log-to-uncategorized"`
+    // after the rerender — either failure would surface as a wrong
+    // value. The earlier shape of this test seeded `"prompt"` and
+    // only asserted `"prompt"` post-rerender, which the same bug
+    // would still pass.
+    ipcMock.__seed([
+      {
+        id: "existing",
+        name: "Existing",
+        enabled: true,
+        priority: 10,
+        body: {
+          confidence: "suggestive",
+          ambiguityBehavior: "skip",
+          when: [],
+          then: { project: "p" },
+        },
+      },
+    ]);
+    const { result, rerender } = renderHook(
+      ({ defaultAmbiguity }: { defaultAmbiguity: AmbiguityBehavior }) =>
+        useRules({ defaultAmbiguity }),
+      { initialProps: { defaultAmbiguity: "prompt" as AmbiguityBehavior } },
+    );
+    await waitFor(() => expect(result.current.rules).toHaveLength(1));
+    expect(result.current.rules[0].ambiguityBehavior).toBe("skip");
+    // User changes the global default via Settings.
+    rerender({ defaultAmbiguity: "log-to-uncategorized" });
+    // The existing rule's pref is untouched — only NEW rules pick
+    // up the new global default.
+    expect(result.current.rules[0].ambiguityBehavior).toBe("skip");
+    // And a fresh `add()` after the rerender uses the NEW default,
+    // so we also pin "new rules DO inherit the change" in the same
+    // test scenario.
+    await act(async () => {
+      await result.current.add();
+    });
+    const created = result.current.rules.find((r) => r.id !== "existing");
+    expect(created?.ambiguityBehavior).toBe("log-to-uncategorized");
+  });
+});
+
+describe("blankRule (#71)", () => {
+  it("defaults the ambiguityBehavior to 'prompt' when no override is passed", () => {
+    const r = blankRule([]);
+    expect(r.ambiguityBehavior).toBe("prompt");
+  });
+
+  it("uses the supplied ambiguityBehavior when provided", () => {
+    const r = blankRule([], "skip");
+    expect(r.ambiguityBehavior).toBe("skip");
   });
 });

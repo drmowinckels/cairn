@@ -206,4 +206,12 @@ export interface A11yPrefs {
   announce: boolean;
   alwaysFocusRing: boolean;
   detectionPrompts: DetectionPrompts;
+  /**
+   * Default `ambiguityBehavior` applied to *new* rules created from
+   * this app session onwards (issue #71). Does NOT mutate existing
+   * rules — only the rule template the editor uses for "New rule"
+   * and signal-click creation. Defaults to `"prompt"` (the safe
+   * default that never auto-starts a timer behind the user's back).
+   */
+  ambiguityDefault: AmbiguityBehavior;
 }
