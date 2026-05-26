@@ -834,6 +834,38 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     }
   });
 
+  it("suggestion banner has role=alertdialog when detectionPrompts=modal", () => {
+    suggestionOverride = SUGGESTION_FIXTURE;
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+        detectionPrompts="modal"
+      />,
+    );
+    expect(
+      screen.getByRole("alertdialog", { name: /auto-detected work/i }),
+    ).toBeTruthy();
+  });
+
+  it("suggestion banner renders generic 'Detected' label when suggestion has no project", () => {
+    suggestionOverride = { ...SUGGESTION_FIXTURE, project: null };
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    const body = document.querySelector(".suggest-body");
+    expect(body?.textContent ?? "").toMatch(/^Detected/);
+  });
+
   it("renders the timer error banner and Retry calls timer.refresh", async () => {
     let firstCall = true;
     const invoke = vi.fn(async (cmd: string) => {
