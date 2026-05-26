@@ -398,6 +398,35 @@ describe("useSuggestion (disabled)", () => {
     expect(harness.unlisten).toHaveBeenCalledTimes(1);
   });
 
+  it("calls un() if the hook unmounts before listen resolves (race-safe cleanup)", async () => {
+    // The effect's `listen().then(...)` arm checks a `cancelled`
+    // flag and calls `un()` directly when the hook unmounted
+    // before the listener promise settled. Without this, the
+    // resolved unlisten handle would leak. Force the race:
+    // hold the listen promise open, unmount, then resolve.
+    let resolveListen: ((un: () => void) => void) | null = null;
+    const un = vi.fn();
+    const listen = (
+      _name: string,
+      _cb: (event: { payload: unknown }) => void,
+    ): Promise<() => void> =>
+      new Promise<() => void>((resolve) => {
+        resolveListen = resolve;
+      });
+    const { useSuggestion } = await import("./use-suggestion");
+    const { unmount } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    // listen promise is parked; unmount first.
+    unmount();
+    expect(resolveListen).not.toBeNull();
+    resolveListen!(un);
+    // Microtask flush for the .then arm.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(un).toHaveBeenCalledOnce();
+  });
+
   it("does not subscribe by default when running outside Tauri (enabled defaults to inTauri)", async () => {
     // Reviewer feedback on #16: the other tests in this file force
     // `enabled: true` to bypass the inTauri guard. This test omits
@@ -521,6 +550,40 @@ describe("useSuggestion (ambiguity dispatch, #16)", () => {
     });
     // Same rule already running → don't restart, no churn.
     expect(startEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("'log-to-uncategorized' surfaces a start_entry failure via console.error", async () => {
+    // Mirror the Strict path's error handling: a rejected
+    // `start_entry` from the auto-start branch logs to the console
+    // (the user-visible UX for this failure is a follow-up issue).
+    // Pin so a future regression that silently swallows the error
+    // shows up in tests.
+    const { listen, harness } = makeListenHarness();
+    startEntryMock.mockRejectedValueOnce(new Error("DB locked"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { useSuggestion } = await import("./use-suggestion");
+    renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Tag-only rule",
+        confidence: "suggestive",
+        ambiguityBehavior: "log-to-uncategorized",
+        project: null,
+        tags: [],
+        description: "",
+      });
+    });
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("log-to-uncategorized"),
+        expect.any(Error),
+      );
+    });
+    errorSpy.mockRestore();
   });
 
   it("missing ambiguityBehavior on the payload defaults to 'prompt' (legacy event safety)", async () => {
