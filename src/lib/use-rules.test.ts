@@ -5,12 +5,13 @@ import {
   defaultOpForSignal,
   deserializeRule,
   serializeRule,
+  shouldWarnConfidence,
   useRules,
   withConditionAdded,
   withConditionAt,
   withConditionRemoved,
 } from "./use-rules";
-import type { Rule } from "./types";
+import type { Rule, RuleCondition } from "./types";
 
 // Mock the IPC layer. We test the hook end-to-end against an
 // in-memory backend so we cover the optimistic-update + rollback
@@ -88,6 +89,104 @@ describe("serializeRule / deserializeRule", () => {
     const r = deserializeRule(backend);
     expect(r.when).toEqual([]);
     expect(r.then).toEqual({ project: null });
+  });
+
+  it("round-trips the confidenceWarningDismissed flag through the body", () => {
+    // The dismissal is per-rule + persisted (see #14). It lives in
+    // the body JSON, which the backend stores as opaque text — so
+    // it has to make it both *into* the body on serialize and
+    // *back out* on deserialize.
+    const original: Rule = {
+      id: "r1",
+      name: "n",
+      enabled: true,
+      priority: 10,
+      confidence: "strict",
+      when: [{ signal: "ide.folder", op: "contains", value: "x" }],
+      then: { project: null },
+      matchedToday: 0,
+      confidenceWarningDismissed: true,
+    };
+    const ipcInput = serializeRule(original, "r1");
+    expect(
+      (ipcInput.body as { confidenceWarningDismissed?: boolean })
+        .confidenceWarningDismissed,
+    ).toBe(true);
+    const round = deserializeRule({
+      id: "r1",
+      name: ipcInput.name,
+      enabled: ipcInput.enabled,
+      priority: ipcInput.priority,
+      body: ipcInput.body,
+    });
+    expect(round.confidenceWarningDismissed).toBe(true);
+  });
+
+  it("omits confidenceWarningDismissed from the body when false (keeps body lean)", () => {
+    // Default-falsy doesn't need to take up a slot in the JSON;
+    // older rows without the field deserialize cleanly to `false`.
+    // Also assert the positive shape so we don't accidentally drop
+    // other fields when trimming the dismissed flag.
+    const original: Rule = {
+      id: "r1",
+      name: "n",
+      enabled: true,
+      priority: 10,
+      confidence: "suggestive",
+      when: [],
+      then: { project: "p" },
+      matchedToday: 0,
+      confidenceWarningDismissed: false,
+    };
+    const ipcInput = serializeRule(original, "r1");
+    const body = ipcInput.body as Record<string, unknown>;
+    expect(
+      Object.prototype.hasOwnProperty.call(body, "confidenceWarningDismissed"),
+    ).toBe(false);
+    expect(body.confidence).toBe("suggestive");
+    expect(body.when).toEqual([]);
+    expect(body.then).toEqual({ project: "p" });
+  });
+
+  it("deserializes a legacy rule (body has no confidenceWarningDismissed key) as not-dismissed", () => {
+    // Older rows persisted before #14 landed have no flag at all.
+    // The defensive `body.confidenceWarningDismissed === true`
+    // check in deserializeRule must produce `false`, not `undefined`.
+    const backend = {
+      id: "legacy",
+      name: "Cairn",
+      enabled: true,
+      priority: 10,
+      body: {
+        confidence: "strict",
+        when: [{ signal: "ide.folder", op: "contains", value: "cairn" }],
+        then: { project: "cairn" },
+      },
+    };
+    const r = deserializeRule(backend);
+    expect(r.confidenceWarningDismissed).toBe(false);
+    expect(r.confidence).toBe("strict");
+  });
+
+  it("ignores a malformed confidenceWarningDismissed value (string / array)", () => {
+    // A corrupted or hand-edited body could carry a non-boolean. The
+    // strict equality check guards the rest of the editor from a
+    // string like "yes" smuggling truthy state into shouldWarnConfidence.
+    for (const garbage of ["yes", 1, [], {}, null]) {
+      const r = deserializeRule({
+        id: "r",
+        name: "r",
+        enabled: true,
+        priority: 10,
+        body: {
+          confidence: "strict",
+          when: [],
+          then: { project: null },
+          confidenceWarningDismissed: garbage,
+        },
+      });
+      expect(r.confidenceWarningDismissed).toBe(false);
+    }
   });
 });
 
@@ -269,6 +368,80 @@ describe("useRules hook", () => {
     });
     expect(result.current.rules.map((r) => r.id)).toEqual(["r2"]);
     expect(ipc.deleteRule).toHaveBeenCalledWith("r1");
+  });
+
+  it("shouldWarnConfidence covers every branch of the heuristic", () => {
+    // The pure helper backs the editor warning (issue #14, spec §5).
+    // The truth table:
+    //   suggestive → never warn (regardless of conditions)
+    //   strict + <2 conditions → warn
+    //   strict + ≥2 conditions all "contains" → warn
+    //   strict + ≥2 conditions mixed ops → no warn
+    //   any rule with confidenceWarningDismissed → no warn
+    const base = (overrides: Partial<Rule>): Rule => ({
+      id: "r",
+      name: "r",
+      enabled: true,
+      priority: 10,
+      when: [],
+      then: { project: null },
+      matchedToday: 0,
+      ...overrides,
+    });
+    const ide: RuleCondition = {
+      signal: "ide.folder",
+      op: "contains",
+      value: "x",
+    };
+    const branch: RuleCondition = {
+      signal: "git.branch",
+      op: "equals",
+      value: "main",
+    };
+
+    // Suggestive: never warns, even with the spec's danger shape.
+    expect(
+      shouldWarnConfidence(
+        base({ confidence: "suggestive", when: [ide] }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldWarnConfidence(
+        base({ confidence: undefined, when: [ide] }),
+      ),
+    ).toBe(false);
+
+    // Strict + 0 or 1 conditions: warns.
+    expect(shouldWarnConfidence(base({ confidence: "strict" }))).toBe(true);
+    expect(
+      shouldWarnConfidence(base({ confidence: "strict", when: [ide] })),
+    ).toBe(true);
+
+    // Strict + 2+ all-contains: warns.
+    expect(
+      shouldWarnConfidence(
+        base({ confidence: "strict", when: [ide, { ...ide, value: "y" }] }),
+      ),
+    ).toBe(true);
+
+    // Strict + 2+ mixed ops: no warn (a contains-mixed-with-equals
+    // rule is specific enough to escape the heuristic).
+    expect(
+      shouldWarnConfidence(
+        base({ confidence: "strict", when: [ide, branch] }),
+      ),
+    ).toBe(false);
+
+    // Dismissed: silenced regardless of shape.
+    expect(
+      shouldWarnConfidence(
+        base({
+          confidence: "strict",
+          when: [ide],
+          confidenceWarningDismissed: true,
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("duplicate() creates a new rule with the original's body + '(copy)' suffix", async () => {

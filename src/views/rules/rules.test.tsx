@@ -266,6 +266,155 @@ describe("RulesView", () => {
     expect(opSel?.value).toBe("is-active");
   });
 
+  // ---- #14: Confidence heuristic warning --------------------------
+
+  it("editor exposes a confidence select at complexity=heavy", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    expect(sel).toBeTruthy();
+    // Default for fixture rules is suggestive (no `confidence` set).
+    expect(sel!.value).toBe("suggestive");
+  });
+
+  it("does not show the confidence warning for a default (suggestive) rule", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    expect(container.querySelector(".rule-meta-warn")).toBeNull();
+  });
+
+  it("shows the warning after switching a 1-condition rule to strict", async () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    // r1 in the fixture has a single condition with op=contains, which
+    // is the heuristic's full danger shape.
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() => {
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy();
+    });
+    expect(
+      container.querySelector(".rule-meta-warn .warn-text")?.textContent,
+    ).toMatch(/may auto-start aggressively/i);
+  });
+
+  it("clicking Dismiss removes the warning + persists the per-rule flag", async () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() => {
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy();
+    });
+    const dismiss = container.querySelector<HTMLButtonElement>(
+      ".rule-meta-warn .warn-dismiss",
+    );
+    expect(dismiss).toBeTruthy();
+    fireEvent.click(dismiss!);
+    await waitFor(() => {
+      expect(container.querySelector(".rule-meta-warn")).toBeNull();
+    });
+    // The rule stays strict — only the warning is dismissed.
+    expect(sel!.value).toBe("strict");
+  });
+
+  it("re-arms the warning only on suggestive → strict transitions (not on every change)", async () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    // Strict → dismiss → suggestive → strict again must re-warn.
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() =>
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy(),
+    );
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>(".warn-dismiss")!,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".rule-meta-warn")).toBeNull(),
+    );
+    fireEvent.change(sel!, { target: { value: "suggestive" } });
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() =>
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy(),
+    );
+  });
+
+  it("does NOT re-arm the warning on a strict → strict reselect", async () => {
+    // Keyboard cycling can fire onChange with the same value. A
+    // re-arm on every change would clobber the user's prior dismiss
+    // and resurface the warning they explicitly silenced.
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() =>
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy(),
+    );
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>(".warn-dismiss")!,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".rule-meta-warn")).toBeNull(),
+    );
+    // A second strict change (e.g. user reselects via keyboard).
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    // Warning stays dismissed — the prior user choice is respected.
+    expect(container.querySelector(".rule-meta-warn")).toBeNull();
+  });
+
+  it("the warning is wired to the select via aria-describedby (not role=alert spam)", async () => {
+    // role=alert announces every time the warning re-renders, which
+    // happens on every keystroke that touches `rule`. We use a
+    // persistent `role=note` + aria-describedby on the select so
+    // screen-reader users hear the advisory as part of the control's
+    // description, not as an interrupt.
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    // No warning → no describedby reference.
+    expect(sel!.getAttribute("aria-describedby")).toBeNull();
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() => {
+      const warn = container.querySelector(".rule-meta-warn");
+      expect(warn).toBeTruthy();
+      expect(warn!.getAttribute("role")).toBe("note");
+      const id = warn!.getAttribute("id");
+      expect(id).toBeTruthy();
+      expect(sel!.getAttribute("aria-describedby")).toBe(id);
+    });
+  });
+
+  it("drops a confidence value that isn't in CONFIDENCE_OPTIONS (forged event guard)", async () => {
+    // The handler validates the select's value against an allow-list
+    // before persisting. A synthetic change event (or a future third
+    // <option>) that lands an unknown string must NOT write into the
+    // rule body — otherwise garbage would round-trip through the
+    // SQLite-stored JSON. Pin the negative path so a regression on
+    // the guard surfaces in CI.
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    fireEvent.change(sel!, {
+      target: { value: "definitely-not-a-confidence" },
+    });
+    // No warning — the bogus value never made it through the guard
+    // (warning needs `strict`, which the guard refused to set).
+    expect(container.querySelector(".rule-meta-warn")).toBeNull();
+    // And a subsequent legitimate change still works, proving the
+    // guard returned early without throwing.
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() => {
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy();
+    });
+  });
+
   // ---- #12: Live signals card integration -------------------------
 
   it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {

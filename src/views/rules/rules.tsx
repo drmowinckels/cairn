@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
 import { Empty, ProjectChip, Tag } from "../../lib/components";
 import type {
+  Confidence,
   Density,
   Op,
   Project,
@@ -14,6 +15,7 @@ import { OP_LABELS, SIGNAL_LABELS } from "../../test-fixtures/data";
 import {
   defaultOpForSignal,
   type PatchRule,
+  shouldWarnConfidence,
   useRules,
   withConditionAdded,
   withConditionAt,
@@ -42,6 +44,8 @@ const SIGNAL_OPTIONS: SignalKind[] = [
   "calendar.event",
   "app.name",
 ];
+
+const CONFIDENCE_OPTIONS: Confidence[] = ["suggestive", "strict"];
 
 /**
  * Input-length caps that mirror the backend's `save_rule` validation
@@ -256,6 +260,27 @@ function RuleRow({
 
   const setCondition = (idx: number, patch: Partial<RuleCondition>) =>
     onUpdate({ when: withConditionAt(rule.when, idx, patch) });
+
+  // Re-arm the warning only when the user transitions *into* strict
+  // from non-strict. A strict→strict reselect (keyboard cycling, no-
+  // op) doesn't clobber a prior dismissal; suggestive→suggestive is
+  // a no-op anyway since the warning needs strict to render. Also
+  // guards against a malformed value from a forged event.
+  const handleConfidenceChange = (raw: string) => {
+    const next: Confidence | null = CONFIDENCE_OPTIONS.includes(
+      raw as Confidence,
+    )
+      ? (raw as Confidence)
+      : null;
+    if (!next) return;
+    const wasStrict = rule.confidence === "strict";
+    const becomingStrict = next === "strict" && !wasStrict;
+    onUpdate(
+      becomingStrict
+        ? { confidence: next, confidenceWarningDismissed: false }
+        : { confidence: next },
+    );
+  };
 
   const handleSignalChange = (idx: number, signal: SignalKind) => {
     // Switching to/from `calendar.event` switches the op set —
@@ -484,8 +509,46 @@ function RuleRow({
             <div className="rule-meta">
               <div className="rule-meta-row">
                 <span>Confidence threshold</span>
-                <span className="rule-conf">{rule.confidence ?? "suggestive"}</span>
+                <select
+                  className="rule-conf"
+                  value={rule.confidence ?? "suggestive"}
+                  onClick={stopBubble}
+                  onChange={(e) => handleConfidenceChange(e.target.value)}
+                  aria-label="Confidence"
+                  aria-describedby={
+                    shouldWarnConfidence(rule)
+                      ? `rule-conf-warn-${rule.id}`
+                      : undefined
+                  }
+                >
+                  <option value="suggestive">suggestive</option>
+                  <option value="strict">strict</option>
+                </select>
               </div>
+              {shouldWarnConfidence(rule) && (
+                <div
+                  id={`rule-conf-warn-${rule.id}`}
+                  className="rule-meta-warn"
+                  role="note"
+                >
+                  <Icon name="info" size={12} className="warn-ic" />
+                  <span className="warn-text">
+                    This rule may auto-start aggressively. Consider switching to{" "}
+                    <em>Suggestive</em>.
+                  </span>
+                  <button
+                    type="button"
+                    className="warn-dismiss"
+                    aria-label="Dismiss warning"
+                    onClick={(e) => {
+                      stopBubble(e);
+                      onUpdate({ confidenceWarningDismissed: true });
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
               <div className="rule-meta-row">
                 <span>If ambiguous</span>
                 <span className="rule-amb">prompt me</span>
