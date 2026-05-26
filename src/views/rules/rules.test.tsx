@@ -508,10 +508,13 @@ describe("RulesView", () => {
     );
     expect(rules.length).toBeGreaterThan(1);
     const firstName = rules[0].querySelector(".rule-name")?.textContent;
-    // Source-index is held in a parent ref (the dataTransfer write
-    // is just there to keep Firefox happy). The drop handler reads
-    // the ref, so we don't need a working DataTransfer here.
-    fireEvent.dragStart(rules[0]);
+    // `draggable` lives on the .rule-head (the visible drag grip);
+    // the drop target is the whole .rule <li>. Source index is held
+    // in a parent ref (the dataTransfer write is just there to keep
+    // Firefox happy). The drop handler reads the ref, so we don't
+    // need a working DataTransfer here.
+    const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
+    fireEvent.dragStart(firstHead);
     fireEvent.dragOver(rules[1]);
     fireEvent.drop(rules[1]);
     await waitFor(() => {
@@ -520,6 +523,83 @@ describe("RulesView", () => {
         ?.textContent;
       expect(newFirst).not.toBe(firstName);
     });
+  });
+
+  it("dropping a rule onto itself is a no-op (from === target)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    const firstNameBefore = rules[0]
+      .querySelector(".rule-name")
+      ?.textContent;
+    const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
+    fireEvent.dragStart(firstHead);
+    fireEvent.dragOver(rules[0]);
+    fireEvent.drop(rules[0]);
+    const firstNameAfter = container.querySelector(
+      ".rule:first-child .rule-name",
+    )?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("dragend without drop resets the source-index ref (Escape / off-window)", () => {
+    // If onDragStart fires but the drag ends outside any drop target
+    // (user pressed Escape, dragged off the window), the source-index
+    // ref must reset. Otherwise a subsequent drop on an unrelated
+    // element would fire with a stale `from`.
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    const firstNameBefore = rules[0]
+      .querySelector(".rule-name")
+      ?.textContent;
+    const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
+    fireEvent.dragStart(firstHead);
+    fireEvent.dragEnd(firstHead); // user aborted the drag
+    // Now a drop on rule 2 (without a fresh dragStart) must NOT
+    // reorder, because the ref was reset.
+    fireEvent.drop(rules[1]);
+    const firstNameAfter = container.querySelector(
+      ".rule:first-child .rule-name",
+    )?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("the rule head exposes the Alt+arrow shortcut via aria-keyshortcuts (not in the visible label)", () => {
+    // role=alert spam was the same anti-pattern; here the concern is
+    // that announcing 'Use Alt+Up or Alt+Down' on every rule focus is
+    // verbose for a 50-rule list. aria-keyshortcuts is the platform-
+    // standard way to tell ATs about a shortcut without putting it
+    // in the visible / spoken label.
+    const { container } = renderRules({ complexity: "medium" });
+    const head = container.querySelector(".rule-head") as HTMLElement;
+    expect(head.getAttribute("aria-keyshortcuts")).toBe(
+      "Alt+ArrowUp Alt+ArrowDown",
+    );
+    // The visible label is just the rule's name + index — no shortcut
+    // hint baked into it.
+    const label = head.getAttribute("aria-label") ?? "";
+    expect(label).not.toMatch(/Alt/);
+  });
+
+  it("expanded editor inputs aren't draggable (text selection isn't hijacked)", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const nameInput = container.querySelector<HTMLInputElement>(
+      ".rule-name-input",
+    );
+    expect(nameInput).toBeTruthy();
+    // `draggable` lives only on the rule-head, not the <li> or the
+    // body. Inputs inside a draggable ancestor have their text
+    // selection hijacked by the browser's drag handler on macOS /
+    // Windows. Walking up the ancestors must find no draggable
+    // element before the <li>.
+    let node: HTMLElement | null = nameInput;
+    while (node && !node.classList.contains("rule")) {
+      expect(node.getAttribute("draggable")).not.toBe("true");
+      node = node.parentElement;
+    }
   });
 
   // ---- #12: Live signals card integration -------------------------

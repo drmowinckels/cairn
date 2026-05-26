@@ -107,8 +107,15 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
   // refuses to round-trip getData/setData reliably, and a ref is
   // simpler than the MIME-type dance. We still call setData on
   // dragstart so Firefox actually initiates the drag (it refuses
-  // without anything on the transfer object).
+  // without anything on the transfer object). Convention: a value
+  // of -1 means "no drag in flight" — `onDragEnd` resets to that.
   const dragFromIdx = useRef<number | null>(null);
+
+  // Live region for SR announcements after a successful move. Keeps
+  // sighted users uninterrupted while screen-reader users hear
+  // "Rule X moved to position Y" without taking focus from the
+  // active control.
+  const [moveAnnouncement, setMoveAnnouncement] = useState("");
 
   /**
    * Clicking a Live-signals row adds a condition with the prefilled
@@ -143,6 +150,16 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
 
   return (
     <div className="view view-rules" data-density={density}>
+      {/* SR-only live region for reorder announcements. polite =
+          announce after current speech, not interrupting. */}
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {moveAnnouncement}
+      </div>
       <header className="view-head">
         <div>
           <h2 className="view-title">Rules</h2>
@@ -201,15 +218,25 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
                   onOpenRule(null);
                 }
               }}
-              onMove={(to) => move(idx, to)}
-              onDragStartIndex={(i) => {
-                dragFromIdx.current = i;
+              onMove={async (to) => {
+                await move(idx, to);
+                setMoveAnnouncement(
+                  `Rule ${r.name} moved to position ${to + 1}`,
+                );
               }}
-              onDropAtIndex={(target) => {
+              onDragStartIndex={(i) => {
+                // `i === -1` is the dragend reset sentinel; anything
+                // ≥ 0 is a real source index.
+                dragFromIdx.current = i < 0 ? null : i;
+              }}
+              onDropAtIndex={async (target) => {
                 const from = dragFromIdx.current;
                 dragFromIdx.current = null;
                 if (from === null || from === target) return;
-                move(from, target);
+                await move(from, target);
+                setMoveAnnouncement(
+                  `Rule moved from position ${from + 1} to position ${target + 1}`,
+                );
               }}
               complexity={complexity}
               projects={projects}
@@ -328,47 +355,71 @@ function RuleRow({
   const removeCondition = (idx: number) =>
     onUpdate({ when: withConditionRemoved(rule.when, idx) });
 
+  const [dragOver, setDragOver] = useState(false);
+
   return (
     <li
       className={`rule${expanded ? " is-open" : ""}${rule.enabled ? "" : " is-off"}`}
-      draggable
-      onDragStart={(e) => {
-        // Stash the source index in the parent ref. We also touch
-        // `dataTransfer` with a token string so Firefox actually
-        // initiates the drag — it refuses to start without
-        // *something* on the transfer object.
-        try {
-          e.dataTransfer.setData("text/plain", String(index));
-          e.dataTransfer.effectAllowed = "move";
-        } catch {
-          // jsdom / some browsers throw on dataTransfer access in
-          // certain modes — ignore; the ref-based source-index path
-          // doesn't need this to succeed.
-        }
-        onDragStartIndex(index);
-      }}
+      data-drag-over={dragOver || undefined}
       onDragOver={(e) => {
         // Allow drop on every row in the list. The default action
         // is to refuse, so we have to preventDefault explicitly.
         e.preventDefault();
+        if (!dragOver) setDragOver(true);
+      }}
+      onDragLeave={() => {
+        if (dragOver) setDragOver(false);
       }}
       onDrop={(e) => {
         e.preventDefault();
+        setDragOver(false);
         onDropAtIndex(index);
       }}
     >
       <header
         className="rule-head"
+        // `draggable` lives on the header, not the whole <li>. The
+        // expanded body has text inputs and selects — putting
+        // `draggable` on their ancestor hijacks text selection on
+        // macOS/Windows and makes the inputs feel broken. With the
+        // header as the drag handle, the user can only initiate a
+        // drag from the visible "grip" area, which matches the
+        // grab-cursor affordance on `.rule-drag`.
+        draggable
+        onDragStart={(e) => {
+          // Stash the source index in the parent ref. We also touch
+          // `dataTransfer` with a token string so Firefox actually
+          // initiates the drag — it refuses to start without
+          // *something* on the transfer object.
+          try {
+            e.dataTransfer.setData("text/plain", String(index));
+            e.dataTransfer.effectAllowed = "move";
+          } catch {
+            // jsdom / some browsers throw on dataTransfer access in
+            // certain modes — ignore; the ref-based source-index path
+            // doesn't need this to succeed.
+          }
+          onDragStartIndex(index);
+        }}
+        onDragEnd={() => {
+          // Reset the source-index ref even when the drag ends
+          // outside any drop target (Escape, drag-off-window).
+          // Without this a follow-up drop on an unrelated element
+          // would fire with a stale `from` index.
+          onDragStartIndex(-1);
+          setDragOver(false);
+        }}
         onClick={onToggle}
         tabIndex={0}
         role="button"
         aria-expanded={expanded}
-        aria-label={`Rule ${index + 1}: ${rule.name}. Use Alt+Up or Alt+Down to reorder.`}
+        aria-label={`Rule ${index + 1}: ${rule.name}`}
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onKeyDown={(e) => {
           // Alt+↑/↓: keyboard alternative to the drag handle. The
           // spec requires this so power users without a mouse can
-          // still order their rules. Bounds are clamped by `onMove`
-          // (which is a no-op for out-of-range targets in the hook).
+          // still order their rules. Bounds-checked so a no-op key
+          // press at the top/bottom doesn't fire a useless IPC.
           if (e.altKey && e.key === "ArrowUp" && index > 0) {
             e.preventDefault();
             onMove(index - 1);

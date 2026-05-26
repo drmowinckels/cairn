@@ -633,6 +633,11 @@ pub async fn delete_rule(state: State<'_, AppState>, id: String) -> Result<(), S
 /// invocation from triggering an unbounded SQL transaction.
 pub const MAX_REORDER_RULES: usize = 10_000;
 
+/// Max length of a single rule id (in bytes). Real ids are 36-char
+/// UUIDs — 128 leaves headroom for any future id scheme while still
+/// providing a tight bound against forged megastrings.
+pub const MAX_RULE_ID_LEN: usize = 128;
+
 /// Reorder rules by rewriting their `priority` columns in a single
 /// transaction (issue #15). The caller supplies the desired order as
 /// a list of rule ids; the backend assigns priorities `10, 20, 30, …`
@@ -654,6 +659,17 @@ pub async fn reorder_rules(state: State<'_, AppState>, ids: Vec<String>) -> Resu
         return Err(format!(
             "reorder_rules: too many ids (max {MAX_REORDER_RULES})"
         ));
+    }
+    // Per-id length cap. Real rule ids are 36-char UUIDs; reject
+    // anything noticeably longer before allocating the dedup HashSet,
+    // so a forged caller passing 10k × MB-sized strings can't OOM us
+    // before the count check helps.
+    for id in &ids {
+        if id.len() > MAX_RULE_ID_LEN {
+            return Err(format!(
+                "reorder_rules: id too long (max {MAX_RULE_ID_LEN} bytes)"
+            ));
+        }
     }
     let mut seen = std::collections::HashSet::with_capacity(ids.len());
     for id in &ids {
@@ -2455,6 +2471,80 @@ mod tests {
             err.contains("too many"),
             "expected too-many-ids error, got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_rejects_overlong_id() {
+        // Security-review suggestion: cap each id's length so a
+        // forged caller can't OOM us with 10k × MB-sized strings
+        // before the dedup HashSet allocates. Real ids are 36-char
+        // UUIDs; the cap is 128.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let big_id = "a".repeat(MAX_RULE_ID_LEN + 1);
+        let err = reorder_rules(state, vec![big_id]).await.unwrap_err();
+        assert!(
+            err.contains("too long"),
+            "expected id-too-long error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_priorities_stay_dense_across_many_moves() {
+        // Invariant test per #15 acceptance criterion: "all priorities
+        // unique and dense." Seed 20 rules, run 50 deterministic
+        // pseudo-random reorders, and after EACH assert the priority
+        // sequence is exactly [10, 20, …, 200] AND the id-set is
+        // unchanged. Catches off-by-one in the priority math + any
+        // silent drop/duplicate the validation forgot.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let mut ids = Vec::with_capacity(20);
+        for i in 0..20 {
+            let r = save_rule(state.clone(), rule_input(None, &format!("R{i}")))
+                .await
+                .unwrap();
+            ids.push(r.id);
+        }
+        let initial_id_set: std::collections::HashSet<String> = ids.iter().cloned().collect();
+
+        // Cheap deterministic PRNG so the test is reproducible.
+        let mut rng_state: u64 = 0x9e3779b97f4a7c15;
+        let mut rand = || {
+            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            rng_state
+        };
+
+        for _ in 0..50 {
+            // Fisher-Yates one swap (shuffle in place).
+            let i = (rand() as usize) % ids.len();
+            let j = (rand() as usize) % ids.len();
+            ids.swap(i, j);
+            reorder_rules(state.clone(), ids.clone()).await.unwrap();
+            let listed = list_rules(state.clone()).await.unwrap();
+            // Priorities must be exactly 10..=200, stepped by 10.
+            let priorities: Vec<i64> = listed.iter().map(|r| r.priority).collect();
+            let expected: Vec<i64> = (1..=20).map(|n| n * 10).collect();
+            assert_eq!(
+                priorities, expected,
+                "priorities must be dense+unique after every reorder",
+            );
+            // ID set must be conserved — no leak, no drop.
+            let listed_ids: std::collections::HashSet<String> =
+                listed.iter().map(|r| r.id.clone()).collect();
+            assert_eq!(
+                listed_ids, initial_id_set,
+                "the set of ids must be conserved across reorders",
+            );
+            // The DB's listed order (by priority asc) must match
+            // the order we sent in — proves the priorities ARE
+            // assigned in the caller's order.
+            let listed_order: Vec<String> = listed.iter().map(|r| r.id.clone()).collect();
+            assert_eq!(
+                listed_order, ids,
+                "DB ordering must match the supplied id sequence",
+            );
+        }
     }
 
     // ---------------- exclusions CRUD ----------------

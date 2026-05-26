@@ -1336,8 +1336,28 @@ body {
 .rule:focus-within .rule-drag {
   color: var(--ink-mute);
 }
-.rule[draggable="true"]:active .rule-drag {
+.rule .rule-head[draggable="true"]:active .rule-drag {
   cursor: grabbing;
+}
+.rule[data-drag-over] {
+  /* Visible drop-target indicator for the row currently under the
+     dragged item. A top accent bar reads as "insertion point" — the
+     pattern most users have seen on file managers and code editors. */
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+
+/* Screen-reader-only utility — visible to AT, hidden visually.
+   Used for the rule-reorder aria-live announcement. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .rule-num {
   font-family: var(--mono);
