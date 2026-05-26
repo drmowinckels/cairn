@@ -42,6 +42,7 @@ describe("useTimer (outside Tauri)", () => {
     const { result } = renderHook(() => useTimer());
     expect(result.current.running).toBeNull();
     expect(result.current.loading).toBe(false);
+    expect(result.current.elapsedMs).toBe(0);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
@@ -113,7 +114,7 @@ describe("useTimer (inside Tauri)", () => {
   });
 
   it("stop() is a no-op when no entry is running", async () => {
-    invokeMock.mockResolvedValue(null); // current_running
+    invokeMock.mockResolvedValue(null);
     const { useTimer } = await import("./use-timer");
     const { result } = renderHook(() => useTimer());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -122,13 +123,12 @@ describe("useTimer (inside Tauri)", () => {
       await result.current.stop();
     });
 
-    // current_running was the only call
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 
   it("stop() calls stop_entry with the running id and clears state", async () => {
-    invokeMock.mockResolvedValueOnce(ENTRY); // current_running
-    invokeMock.mockResolvedValueOnce({ ...ENTRY, endedAt: "2026-05-23T11:00:00Z" }); // stop_entry
+    invokeMock.mockResolvedValueOnce(ENTRY);
+    invokeMock.mockResolvedValueOnce({ ...ENTRY, endedAt: "2026-05-23T11:00:00Z" });
     const { useTimer } = await import("./use-timer");
     const { result } = renderHook(() => useTimer());
     await waitFor(() => expect(result.current.running).not.toBeNull());
@@ -139,5 +139,203 @@ describe("useTimer (inside Tauri)", () => {
 
     expect(result.current.running).toBeNull();
     expect(invokeMock).toHaveBeenCalledWith("stop_entry", { id: "e1" });
+  });
+});
+
+describe("useTimer elapsed + tick", () => {
+  it("computes elapsedMs from started_at on first read", async () => {
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockReturnValue(new Date("2026-01-01T10:00:30Z").getTime());
+    try {
+      const { useTimer } = await import("./use-timer");
+      const fetchCurrent = vi.fn(async () => ({
+        ...ENTRY,
+        startedAt: "2026-01-01T10:00:00Z",
+      }));
+      const { result } = renderHook(() =>
+        useTimer({
+          enabled: true,
+          listen: vi.fn(async () => () => {}) as unknown as typeof import(
+            "@tauri-apps/api/event"
+          ).listen,
+          fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+          tickMs: 60_000,
+        }),
+      );
+      await waitFor(() => expect(result.current.running).not.toBeNull());
+      expect(result.current.elapsedMs).toBe(30_000);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("does not drift across long hide/show gaps (reads Date.now() on each tick)", async () => {
+    const startedAtMs = new Date("2026-01-01T10:00:00Z").getTime();
+    vi.useFakeTimers({ now: startedAtMs + 10_000 });
+    try {
+      const { useTimer } = await import("./use-timer");
+      const fetchCurrent = vi.fn(async () => ({
+        ...ENTRY,
+        startedAt: "2026-01-01T10:00:00Z",
+      }));
+      const { result } = renderHook(() =>
+        useTimer({
+          enabled: true,
+          listen: vi.fn(async () => () => {}) as unknown as typeof import(
+            "@tauri-apps/api/event"
+          ).listen,
+          fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+          tickMs: 1000,
+        }),
+      );
+      await vi.waitFor(() => expect(result.current.running).not.toBeNull());
+      expect(result.current.elapsedMs).toBe(10_000);
+
+      vi.setSystemTime(startedAtMs + 600_000);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      // After a 10-minute jump the next tick reads Date.now() afresh
+      // and reports the real elapsed (~600s, ±a tick's worth of slack).
+      expect(result.current.elapsedMs).toBeGreaterThanOrEqual(600_000);
+      expect(result.current.elapsedMs).toBeLessThan(602_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("elapsedMs is 0 when no entry is running (idle)", async () => {
+    const { useTimer } = await import("./use-timer");
+    const fetchCurrent = vi.fn(async () => null);
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.elapsedMs).toBe(0);
+  });
+});
+
+describe("useTimer snapshot subscription + update + onStopped", () => {
+  it("refetches current_running when signal:snapshot fires", async () => {
+    type SnapshotListener = (event: { payload: unknown }) => void;
+    let handler: SnapshotListener | null = null;
+    const listenFn = vi.fn(async (_event: string, cb: SnapshotListener) => {
+      handler = cb;
+      return () => {};
+    });
+    type Entry = typeof ENTRY | null;
+    const fetchCurrent = vi.fn<() => Promise<Entry>>(async () => null);
+    const { useTimer } = await import("./use-timer");
+    renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+      }),
+    );
+    await waitFor(() => expect(handler).not.toBeNull());
+    fetchCurrent.mockClear();
+    fetchCurrent.mockResolvedValueOnce(ENTRY);
+    act(() => {
+      handler!({ payload: {} });
+    });
+    await waitFor(() => expect(fetchCurrent).toHaveBeenCalledTimes(1));
+  });
+
+  it("update() patches the running entry via update_entry IPC", async () => {
+    const fetchCurrent = vi.fn(async () => ENTRY);
+    const updateFn = vi.fn(async () => ({ ...ENTRY, description: "patched" }));
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        updateEntry: updateFn as unknown as typeof import("./ipc").updateEntry,
+      }),
+    );
+    await waitFor(() => expect(result.current.running?.id).toBe("e1"));
+    await act(async () => {
+      await result.current.update({ description: "patched" });
+    });
+    expect(updateFn).toHaveBeenCalledWith({ id: "e1", description: "patched" });
+    expect(result.current.running?.description).toBe("patched");
+  });
+
+  it("update() is a no-op when nothing is running", async () => {
+    const fetchCurrent = vi.fn(async () => null);
+    const updateFn = vi.fn();
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        updateEntry: updateFn as unknown as typeof import("./ipc").updateEntry,
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      await result.current.update({ description: "ghost" });
+    });
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("stop() invokes onStopped with the stopped entry", async () => {
+    const stopped = { ...ENTRY, endedAt: "2026-05-23T11:00:00Z" };
+    const fetchCurrent = vi.fn(async () => ENTRY);
+    const stopFn = vi.fn(async () => stopped);
+    const onStopped = vi.fn();
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        stopEntry: stopFn as unknown as typeof import("./ipc").stopEntry,
+        onStopped,
+      }),
+    );
+    await waitFor(() => expect(result.current.running?.id).toBe("e1"));
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(onStopped).toHaveBeenCalledWith(stopped);
+  });
+
+  it("start() returns the entry and updates state", async () => {
+    const fetchCurrent = vi.fn(async () => null);
+    const startFn = vi.fn(async () => ENTRY);
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        startEntry: startFn as unknown as typeof import("./ipc").startEntry,
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let returned: unknown = null;
+    await act(async () => {
+      returned = await result.current.start({ projectId: "p1" });
+    });
+    expect(returned).toEqual(ENTRY);
+    expect(result.current.running?.id).toBe("e1");
   });
 });
