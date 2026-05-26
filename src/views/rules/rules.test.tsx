@@ -638,6 +638,48 @@ describe("RulesView", () => {
     }
   });
 
+  // ---- #16: Ambiguity per-rule selector ----------------------------
+
+  it("editor exposes an Ambiguity-behaviour select at complexity=heavy", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Ambiguity behaviour"]',
+    );
+    expect(sel).toBeTruthy();
+    // Default for fixture rules (no field set) is "prompt".
+    expect(sel!.value).toBe("prompt");
+    const options = Array.from(sel!.options).map((o) => o.value);
+    expect(options).toEqual(["prompt", "skip", "log-to-uncategorized"]);
+  });
+
+  it("changing the ambiguity select persists the new value", async () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Ambiguity behaviour"]',
+    );
+    fireEvent.change(sel!, { target: { value: "log-to-uncategorized" } });
+    await waitFor(() => {
+      expect(sel!.value).toBe("log-to-uncategorized");
+    });
+    // And a second change cycles to a third value.
+    fireEvent.change(sel!, { target: { value: "skip" } });
+    await waitFor(() => {
+      expect(sel!.value).toBe("skip");
+    });
+  });
+
+  it("drops an ambiguity value that isn't in AMBIGUITY_OPTIONS (forged event guard)", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Ambiguity behaviour"]',
+    );
+    fireEvent.change(sel!, {
+      target: { value: "definitely-not-an-ambiguity-value" },
+    });
+    // Guard rejects — value stays at the default "prompt".
+    expect(sel!.value).toBe("prompt");
+  });
+
   // ---- #12: Live signals card integration -------------------------
 
   it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {

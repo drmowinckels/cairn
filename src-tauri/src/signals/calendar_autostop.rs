@@ -284,6 +284,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -305,6 +306,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),

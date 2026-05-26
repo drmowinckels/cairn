@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
 import { Empty, ProjectChip } from "../../lib/components";
 import type {
+  AmbiguityBehavior,
   Confidence,
   Density,
   Op,
@@ -47,6 +48,11 @@ const SIGNAL_OPTIONS: SignalKind[] = [
 ];
 
 const CONFIDENCE_OPTIONS: Confidence[] = ["suggestive", "strict"];
+const AMBIGUITY_OPTIONS: AmbiguityBehavior[] = [
+  "prompt",
+  "skip",
+  "log-to-uncategorized",
+];
 
 /**
  * Input-length caps that mirror the backend's `save_rule` validation
@@ -651,8 +657,31 @@ function RuleRow({
                 </div>
               )}
               <div className="rule-meta-row">
-                <span>If ambiguous</span>
-                <span className="rule-amb">prompt me</span>
+                <label htmlFor={`rule-amb-${rule.id}`}>If ambiguous</label>
+                <select
+                  id={`rule-amb-${rule.id}`}
+                  className="rule-amb"
+                  value={rule.ambiguityBehavior ?? "prompt"}
+                  onClick={stopBubble}
+                  onChange={(e) => {
+                    // Guard against a forged event value the same
+                    // way the confidence select does. Out-of-range
+                    // strings drop on the floor.
+                    const next = AMBIGUITY_OPTIONS.includes(
+                      e.target.value as AmbiguityBehavior,
+                    )
+                      ? (e.target.value as AmbiguityBehavior)
+                      : null;
+                    if (next) onUpdate({ ambiguityBehavior: next });
+                  }}
+                  aria-label="Ambiguity behaviour"
+                >
+                  <option value="prompt">prompt me</option>
+                  <option value="skip">skip</option>
+                  <option value="log-to-uncategorized">
+                    log to uncategorized
+                  </option>
+                </select>
               </div>
             </div>
           )}

@@ -398,3 +398,127 @@ describe("useSuggestion (disabled)", () => {
     expect(harness.unlisten).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useSuggestion (ambiguity dispatch, #16)", () => {
+  it("'prompt' ambiguity surfaces the banner (default behaviour)", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive",
+        ambiguityBehavior: "prompt",
+        project: "cairn",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).not.toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("'skip' ambiguity drops the match silently — no banner, no start_entry", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive",
+        ambiguityBehavior: "skip",
+        project: "cairn",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+    expect(snoozeRuleMock).not.toHaveBeenCalled();
+  });
+
+  it("'log-to-uncategorized' auto-starts with projectId=null + source=rule", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Tag-only rule",
+        confidence: "suggestive",
+        ambiguityBehavior: "log-to-uncategorized",
+        project: "cairn", // Even with a project on the match, behaviour discards it.
+        tags: [],
+        description: "",
+      });
+    });
+    // No banner — the user already opted in to the uncategorized path.
+    expect(result.current.suggestion).toBeNull();
+    expect(startEntryMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        projectId: null,
+        source: "rule",
+        ruleId: "r1",
+      }),
+    );
+  });
+
+  it("'log-to-uncategorized' is de-duped against currentRunningRuleId (no churn)", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    renderHook(() =>
+      useSuggestion(
+        defaultOpts({
+          listen: listen as never,
+          currentRunningRuleId: "r1",
+        }),
+      ),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Tag-only rule",
+        confidence: "suggestive",
+        ambiguityBehavior: "log-to-uncategorized",
+        project: null,
+        tags: [],
+        description: "",
+      });
+    });
+    // Same rule already running → don't restart, no churn.
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("missing ambiguityBehavior on the payload defaults to 'prompt' (legacy event safety)", async () => {
+    // Older fanouts / replayed match events may lack the field.
+    // The hook must default to the safe path (banner), not skip or
+    // auto-start.
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Legacy",
+        confidence: "suggestive",
+        project: "cairn",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).not.toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
+});

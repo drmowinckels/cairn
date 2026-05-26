@@ -9,6 +9,7 @@ import {
   type SaveRuleInput,
 } from "./ipc";
 import type {
+  AmbiguityBehavior,
   Confidence,
   Op,
   Rule,
@@ -26,10 +27,17 @@ import { RULES as FIXTURE_RULES } from "../test-fixtures/data";
  */
 interface RuleBody {
   confidence?: Confidence;
+  ambiguityBehavior?: AmbiguityBehavior;
   when: RuleCondition[];
   then: RuleAction;
   confidenceWarningDismissed?: boolean;
 }
+
+const AMBIGUITY_OPTIONS: readonly AmbiguityBehavior[] = [
+  "prompt",
+  "skip",
+  "log-to-uncategorized",
+] as const;
 
 export interface UseRules {
   rules: Rule[];
@@ -55,6 +63,7 @@ export interface PatchRule {
   enabled?: boolean;
   priority?: number;
   confidence?: Confidence;
+  ambiguityBehavior?: AmbiguityBehavior;
   when?: RuleCondition[];
   /** Shallow-merged into the existing `then` — pass only the fields you're changing. */
   then?: Partial<RuleAction>;
@@ -257,6 +266,11 @@ export function serializeRule(rule: Rule, id: string | null): SaveRuleInput {
     confidence: rule.confidence,
     when: rule.when,
     then: rule.then,
+    // Only persist non-default ambiguityBehavior so legacy rule
+    // bodies stay lean and the JSON diff stays small for git review.
+    ...(rule.ambiguityBehavior && rule.ambiguityBehavior !== "prompt"
+      ? { ambiguityBehavior: rule.ambiguityBehavior }
+      : {}),
     ...(rule.confidenceWarningDismissed
       ? { confidenceWarningDismissed: true }
       : {}),
@@ -295,7 +309,22 @@ export function deserializeRule(backend: BackendRule): Rule {
         : { project: null },
     matchedToday: 0,
     confidenceWarningDismissed: body.confidenceWarningDismissed === true,
+    ambiguityBehavior: validAmbiguityBehavior(body.ambiguityBehavior),
   };
+}
+
+/**
+ * Coerce an unknown body field into a valid `AmbiguityBehavior`.
+ * Defaults to `"prompt"` for missing / malformed values — the spec's
+ * safe default. The defensive guard prevents a corrupted body
+ * (string "yes", array, null) from smuggling unexpected state into
+ * the suggestion dispatcher.
+ */
+function validAmbiguityBehavior(raw: unknown): AmbiguityBehavior {
+  return typeof raw === "string" &&
+    AMBIGUITY_OPTIONS.includes(raw as AmbiguityBehavior)
+    ? (raw as AmbiguityBehavior)
+    : "prompt";
 }
 
 /**

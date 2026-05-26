@@ -150,6 +150,7 @@ pub fn make_rule(id: &str, name: &str) -> Rule {
         enabled: true,
         priority: 0,
         confidence: Confidence::Suggestive,
+        ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
         when: vec![],
         then: RuleAction {
             project: None,
@@ -168,6 +169,7 @@ pub fn ide_folder_rule(id: &str, project: &str, value: &str) -> Rule {
         enabled: true,
         priority: 0,
         confidence: Confidence::Suggestive,
+        ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
         when: vec![Condition::IdeFolder {
             op: Op::Contains,
             value: value.into(),

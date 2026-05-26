@@ -75,6 +75,17 @@ export interface RuleCondition {
 
 export type Confidence = "suggestive" | "strict";
 
+/**
+ * What to do for a `Suggestive` match (RULES_ENGINE.md §4, issue #16):
+ * - `prompt` (default): show the suggestion banner; user confirms.
+ * - `skip`: drop the match silently.
+ * - `log-to-uncategorized`: auto-start a timer with `projectId = null`
+ *   and `source = "rule"` so the entry surfaces uncategorized.
+ *
+ * Strict matches always auto-start and ignore this field.
+ */
+export type AmbiguityBehavior = "prompt" | "skip" | "log-to-uncategorized";
+
 export interface RuleAction {
   project: ProjectId | null;
   taskId?: TaskId | null;
@@ -99,6 +110,12 @@ export interface Rule {
    */
   priority: number;
   confidence?: Confidence;
+  /**
+   * Per-rule "if ambiguous" behaviour (RULES_ENGINE.md §4, #16).
+   * Defaults to `"prompt"` for rules persisted before this field
+   * existed.
+   */
+  ambiguityBehavior?: AmbiguityBehavior;
   when: RuleCondition[];
   then: RuleAction;
   matchedToday: number;
@@ -132,6 +149,12 @@ export interface RuleMatchEvent {
   ruleId: string;
   ruleName: string;
   confidence: Confidence;
+  /**
+   * Per-rule ambiguity behaviour (#16). `useSuggestion` dispatches
+   * on this for `confidence: "suggestive"` matches; strict matches
+   * ignore the field.
+   */
+  ambiguityBehavior: AmbiguityBehavior;
   project: ProjectId | null;
   tags: string[];
   /**
