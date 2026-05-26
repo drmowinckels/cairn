@@ -349,4 +349,481 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       }),
     );
   });
+
+  it("mousedown inside the picker does NOT close it (target contained by ref)", async () => {
+    await freshRender("manual");
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    const list = await screen.findByRole("listbox");
+    expect(list).toBeTruthy();
+    fireEvent.mouseDown(list);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+  });
+
+  it("debounced update rejection is logged via console.error (catch branch)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let updateShouldFail = false;
+      const running = {
+        id: "e1",
+        projectId: "cairn",
+        taskId: null,
+        description: "live work",
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        endedAt: null,
+        source: "manual",
+        ruleId: null,
+      };
+      const invoke = vi.fn(async (cmd: string) => {
+        if (cmd === "current_running") return running;
+        if (cmd === "list_today") return [running];
+        if (cmd === "list_projects")
+          return [{ id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false }];
+        if (cmd === "update_entry") {
+          if (updateShouldFail) throw new Error("update boom");
+          return running;
+        }
+        return null;
+      });
+      vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="default"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      const input = (await screen.findByLabelText(/task description/i)) as HTMLInputElement;
+      updateShouldFail = true;
+      fireEvent.change(input, { target: { value: "trigger failure" } });
+      await vi.advanceTimersByTimeAsync(450);
+      await waitFor(() =>
+        expect(errSpy).toHaveBeenCalledWith(
+          "update_entry failed",
+          expect.any(Error),
+        ),
+      );
+    } finally {
+      errSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("project-pick rejection is logged via console.error (onPickProject catch)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const running = {
+        id: "e1",
+        projectId: "cairn",
+        taskId: null,
+        description: "live work",
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        endedAt: null,
+        source: "manual",
+        ruleId: null,
+      };
+      const invoke = vi.fn(async (cmd: string) => {
+        if (cmd === "current_running") return running;
+        if (cmd === "list_today") return [running];
+        if (cmd === "list_projects")
+          return [
+            { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+            { id: "ops", name: "Operations", clientId: null, color: "#def", archived: false },
+          ];
+        if (cmd === "update_entry") throw new Error("pick boom");
+        return null;
+      });
+      vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="default"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      const chip = await screen.findByRole("button", {
+        name: /project: cairn\. change project/i,
+      });
+      fireEvent.click(chip);
+      const opsOpt = await screen.findByRole("option", { name: /operations/i });
+      fireEvent.click(opsOpt.querySelector("button") as HTMLElement);
+      await waitFor(() =>
+        expect(errSpy).toHaveBeenCalledWith(
+          "update_entry failed",
+          expect.any(Error),
+        ),
+      );
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("quick-start rejection is logged via console.error (start catch)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const invoke = vi.fn(async (cmd: string) => {
+        if (cmd === "current_running") return null;
+        if (cmd === "list_today") return [];
+        if (cmd === "list_projects")
+          return [
+            { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          ];
+        if (cmd === "start_entry") throw new Error("start boom");
+        return null;
+      });
+      vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="projects-first"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("current_running"),
+      );
+      const card = (await waitFor(() => {
+        const c = document.querySelector(".quick-card");
+        expect(c).toBeTruthy();
+        return c as HTMLElement;
+      })) as HTMLElement;
+      fireEvent.click(card);
+      await waitFor(() => {
+        const calls = invoke.mock.calls.filter(([c]) => c === "start_entry");
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+      });
+      await waitFor(() =>
+        expect(errSpy).toHaveBeenCalledWith(
+          "start failed",
+          expect.any(Error),
+        ),
+      );
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("renders the picker fallback labels when no project is selected", async () => {
+    const running = {
+      id: "e1",
+      projectId: null,
+      taskId: null,
+      description: "no project",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return running;
+      if (cmd === "list_today") return [running];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: /choose a project/i }),
+    ).toBeTruthy();
+    const chipName = document.querySelector(".now-picker .proj-chip-name");
+    expect(chipName?.textContent).toBe("No project");
+  });
+
+  it("renders Recent / Timeline entries that have no projectId (null branch)", async () => {
+    const orphan = {
+      id: "e-orphan",
+      projectId: null,
+      taskId: null,
+      description: "uncategorized work",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 120_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [orphan];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".dt-seg").length).toBe(1),
+    );
+    expect(screen.getByText(/uncategorized work/i)).toBeTruthy();
+  });
+
+  it("renders rule and calendar source icons in the Recent list", async () => {
+    const ruleEntry = {
+      id: "e-rule",
+      projectId: "cairn",
+      taskId: null,
+      description: "rule work",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 120_000).toISOString(),
+      source: "rule:branch=foo",
+      ruleId: "r1",
+    };
+    const calEntry = {
+      ...ruleEntry,
+      id: "e-cal",
+      description: "cal event",
+      source: "calendar",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [ruleEntry, calEntry];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".entries .entry").length).toBe(2),
+    );
+    expect(document.querySelectorAll(".entry-src").length).toBe(2);
+  });
+
+  it("timeline aria-live is 'off' when announce={false}", async () => {
+    const running = {
+      id: "e1",
+      projectId: "cairn",
+      taskId: null,
+      description: "quiet",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return running;
+      if (cmd === "list_today") return [running];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+        announce={false}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".dt-seg").length).toBe(1),
+    );
+    const needle = document.querySelector(".dt-now");
+    expect(needle?.getAttribute("aria-live")).toBe("off");
+    const elapsed = document.querySelector(".now-time");
+    expect(elapsed?.getAttribute("aria-live")).toBe("off");
+  });
+
+  it("Recent list resolves project via PROJECT_BY_ID when not in live projects", async () => {
+    const entry = {
+      id: "e-fixture",
+      projectId: "cairn",
+      taskId: null,
+      description: "cairn work",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 120_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [entry];
+      // live projects deliberately empty — useProjects falls back to fixture.
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".entries .entry").length).toBe(1),
+    );
+    const dot = document.querySelector(".entries .entry .proj-dot") as HTMLElement;
+    expect(dot.getAttribute("style") ?? "").not.toContain("var(--ink-mute)");
+  });
+
+  it("DayTimeline falls back to --ink-mute when a segment's projectId is unknown", async () => {
+    const orphan = {
+      id: "e-ghost",
+      projectId: "deleted-project",
+      taskId: null,
+      description: "ghost project work",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return orphan;
+      if (cmd === "list_today") return [orphan];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".dt-seg").length).toBe(1),
+    );
+    const seg = document.querySelector(".dt-seg") as HTMLElement;
+    expect(seg.getAttribute("style") ?? "").toContain("var(--ink-mute)");
+  });
+
+  it("project picker falls back to fixture PROJECTS when useProjects yields [] and an entry is running", async () => {
+    const running = {
+      id: "e-pick",
+      projectId: "cairn",
+      taskId: null,
+      description: "live",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return running;
+      if (cmd === "list_today") return [running];
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    vi.doMock("../../lib/use-projects", () => ({
+      useProjects: () => [],
+    }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    const list = await screen.findByRole("listbox");
+    expect(list.querySelectorAll("[role='option']").length).toBeGreaterThan(0);
+  });
+
+  it("picker mousedown listener ignores events whose target is not a DOM Node", async () => {
+    await freshRender("manual");
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+    const evt = new Event("mousedown", { bubbles: true });
+    Object.defineProperty(evt, "target", { value: null, configurable: true });
+    document.dispatchEvent(evt);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+  });
+
+  it("quick-start grid falls back to fixture projects when useProjects yields []", async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [];
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    vi.doMock("../../lib/use-projects", () => ({
+      useProjects: () => [],
+    }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="projects-first"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".quick-card").length).toBe(4),
+    );
+  });
 });

@@ -60,7 +60,6 @@ export function TodayView({
 
   const runningProject = timer.running?.projectId ?? null;
   const runningTask = timer.running?.description ?? "";
-  const runningTags: string[] = [];
   const runningSource = timer.running ? deriveSource(timer.running) : "manual";
 
   const totalSec = Math.floor(timer.elapsedMs / 1000);
@@ -289,9 +288,6 @@ export function TodayView({
                   setOpen={setPickerOpen}
                   onPick={onPickProject}
                 />
-                {runningTags.map((t) => (
-                  <Tag key={t}>{t}</Tag>
-                ))}
               </div>
               <button
                 className="btn btn--stop"
@@ -459,8 +455,9 @@ function ProjectPickerChip({
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (e.target instanceof Node && !ref.current.contains(e.target)) {
+      const node = ref.current;
+      if (!node || !(e.target instanceof Node)) return;
+      if (!node.contains(e.target)) {
         setOpen(false);
       }
     };

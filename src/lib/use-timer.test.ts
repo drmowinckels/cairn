@@ -338,4 +338,49 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     expect(returned).toEqual(ENTRY);
     expect(result.current.running?.id).toBe("e1");
   });
+
+  it("calls unlisten on unmount when the listen promise resolved before unmount", async () => {
+    const unlistenSpy = vi.fn();
+    const listenFn = vi.fn(async () => unlistenSpy);
+    const fetchCurrent = vi.fn(async () => null);
+    const { useTimer } = await import("./use-timer");
+    const { unmount, result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(listenFn).toHaveBeenCalled());
+    unmount();
+    expect(unlistenSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("unmounting before listen resolves still tears down the subscription", async () => {
+    const unlistenSpy = vi.fn();
+    let resolveListen: ((un: () => void) => void) | null = null;
+    const listenFn = vi.fn(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveListen = resolve;
+        }),
+    );
+    const fetchCurrent = vi.fn(async () => null);
+    const { useTimer } = await import("./use-timer");
+    const { unmount, result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(listenFn).toHaveBeenCalled());
+    unmount();
+    await act(async () => {
+      resolveListen!(unlistenSpy);
+    });
+    expect(unlistenSpy).toHaveBeenCalledTimes(1);
+  });
 });
