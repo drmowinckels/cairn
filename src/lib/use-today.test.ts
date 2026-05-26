@@ -50,6 +50,16 @@ describe("useToday", () => {
     expect(result.current.error).toContain("db gone");
   });
 
+  it("stringifies non-Error rejections via String(e)", async () => {
+    const fetcher = vi.fn(async () => {
+      throw "string-rejection";
+    });
+    const { result } = renderHook(() =>
+      useToday({ enabled: true, fetcher: fetcher as unknown as typeof import("./ipc").listToday }),
+    );
+    await waitFor(() => expect(result.current.error).toBe("string-rejection"));
+  });
+
   it("refresh() refetches on demand", async () => {
     const fetcher = vi.fn<() => Promise<BackendEntry[]>>(async () => []);
     const { result } = renderHook(() =>

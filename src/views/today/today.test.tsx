@@ -833,4 +833,39 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       vi.doUnmock("../../lib/use-projects");
     }
   });
+
+  it("renders the timer error banner and Retry calls timer.refresh", async () => {
+    let firstCall = true;
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") {
+        if (firstCall) {
+          firstCall = false;
+          throw new Error("db unreachable");
+        }
+        return null;
+      }
+      if (cmd === "list_today") return [];
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    const banner = await screen.findByText(/couldn't reach the local timer/i);
+    expect(banner).toBeTruthy();
+    const retry = screen.getByRole("button", { name: /try again/i });
+    fireEvent.click(retry);
+    await waitFor(() => {
+      const calls = invoke.mock.calls.filter(([c]) => c === "current_running");
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

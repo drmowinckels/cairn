@@ -249,6 +249,49 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     await waitFor(() => expect(fetchCurrent).toHaveBeenCalledTimes(1));
   });
 
+  it("throttles snapshot-driven refetches to ≥ 2s apart", async () => {
+    type SnapshotListener = (event: { payload: unknown }) => void;
+    let handler: SnapshotListener | null = null;
+    const listenFn = vi.fn(async (_event: string, cb: SnapshotListener) => {
+      handler = cb;
+      return () => {};
+    });
+    const fetchCurrent = vi.fn(async () => null);
+    const { useTimer } = await import("./use-timer");
+    renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+      }),
+    );
+    await waitFor(() => expect(handler).not.toBeNull());
+    fetchCurrent.mockClear();
+    act(() => {
+      handler!({ payload: {} });
+      handler!({ payload: {} });
+      handler!({ payload: {} });
+    });
+    await waitFor(() => expect(fetchCurrent).toHaveBeenCalledTimes(1));
+  });
+
+  it("setError stringifies non-Error rejections via String(e)", async () => {
+    const fetchCurrent = vi.fn(async () => {
+      throw "string-rejection";
+    });
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+      }),
+    );
+    await waitFor(() => expect(result.current.error).toBe("string-rejection"));
+  });
+
   it("update() patches the running entry via update_entry IPC", async () => {
     const fetchCurrent = vi.fn(async () => ENTRY);
     const updateFn = vi.fn(async () => ({ ...ENTRY, description: "patched" }));
