@@ -621,6 +621,47 @@ mod tests {
     }
 
     #[test]
+    fn rule_deserializes_body_with_skip_ambiguity_and_default_confidence() {
+        // Reviewer-flagged combination: body sets `ambiguityBehavior:
+        // "skip"` but omits `confidence`. The defaults compose to
+        // (Suggestive, Skip) — a "silent drop" rule. Pinned end-to-end
+        // through `evaluate` so a regression on the serde default
+        // can't quietly start auto-firing rules the user expected to
+        // be silenced.
+        let body = serde_json::json!({
+            "id": "r-skip",
+            "name": "Skip-by-default",
+            "enabled": true,
+            "priority": 10,
+            "ambiguityBehavior": "skip",
+            "when": [{
+                "signal": "app.name",
+                "op": "equals",
+                "value": "Zed"
+            }],
+            "then": { "project": "cairn", "tags": [], "tagsFromCalendar": false }
+        });
+        let r: Rule = serde_json::from_value(body).unwrap();
+        assert_eq!(r.confidence, Confidence::Suggestive);
+        assert_eq!(r.ambiguity_behavior, AmbiguityBehavior::Skip);
+
+        // The emitted RuleMatch must carry the combination through
+        // to the frontend dispatcher (where suggestive + skip ⇒
+        // silent drop).
+        let snap = SignalSnapshot {
+            ide_folder: None,
+            git_branch: None,
+            window_title: None,
+            app_name: Some("Zed".into()),
+            browser_domain: None,
+            calendar: vec![],
+        };
+        let m = evaluate(std::iter::once(&r), &snap).expect("rule matches");
+        assert_eq!(m.confidence, Confidence::Suggestive);
+        assert_eq!(m.ambiguity_behavior, AmbiguityBehavior::Skip);
+    }
+
+    #[test]
     fn evaluate_with_snoozer_skips_snoozed_rules() {
         let rule = Rule {
             id: "r-snoozed".into(),

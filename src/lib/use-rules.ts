@@ -33,11 +33,33 @@ interface RuleBody {
   confidenceWarningDismissed?: boolean;
 }
 
-const AMBIGUITY_OPTIONS: readonly AmbiguityBehavior[] = [
+/**
+ * The closed set of valid `AmbiguityBehavior` values. Exported so
+ * the rule editor + the suggestion dispatcher use a single source
+ * of truth: a new variant added here is automatically reachable by
+ * every coercion path. Reviewer feedback on #16.
+ */
+export const AMBIGUITY_OPTIONS: readonly AmbiguityBehavior[] = [
   "prompt",
   "skip",
   "log-to-uncategorized",
 ] as const;
+
+/**
+ * Coerce an unknown value into a valid `AmbiguityBehavior`,
+ * defaulting to `"prompt"` for anything outside the closed set.
+ * The spec's safe default (banner; never auto-starts behind the
+ * user's back). Used on every input boundary — IPC payloads, body
+ * deserialization, and the suggestion event handler — so a
+ * malformed value can't smuggle unexpected state into the editor
+ * or dispatcher.
+ */
+export function coerceAmbiguity(raw: unknown): AmbiguityBehavior {
+  return typeof raw === "string" &&
+    AMBIGUITY_OPTIONS.includes(raw as AmbiguityBehavior)
+    ? (raw as AmbiguityBehavior)
+    : "prompt";
+}
 
 export interface UseRules {
   rules: Rule[];
@@ -309,22 +331,8 @@ export function deserializeRule(backend: BackendRule): Rule {
         : { project: null },
     matchedToday: 0,
     confidenceWarningDismissed: body.confidenceWarningDismissed === true,
-    ambiguityBehavior: validAmbiguityBehavior(body.ambiguityBehavior),
+    ambiguityBehavior: coerceAmbiguity(body.ambiguityBehavior),
   };
-}
-
-/**
- * Coerce an unknown body field into a valid `AmbiguityBehavior`.
- * Defaults to `"prompt"` for missing / malformed values — the spec's
- * safe default. The defensive guard prevents a corrupted body
- * (string "yes", array, null) from smuggling unexpected state into
- * the suggestion dispatcher.
- */
-function validAmbiguityBehavior(raw: unknown): AmbiguityBehavior {
-  return typeof raw === "string" &&
-    AMBIGUITY_OPTIONS.includes(raw as AmbiguityBehavior)
-    ? (raw as AmbiguityBehavior)
-    : "prompt";
 }
 
 /**

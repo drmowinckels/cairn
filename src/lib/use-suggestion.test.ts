@@ -397,6 +397,30 @@ describe("useSuggestion (disabled)", () => {
     unmount();
     expect(harness.unlisten).toHaveBeenCalledTimes(1);
   });
+
+  it("does not subscribe by default when running outside Tauri (enabled defaults to inTauri)", async () => {
+    // Reviewer feedback on #16: the other tests in this file force
+    // `enabled: true` to bypass the inTauri guard. This test omits
+    // `enabled` so the hook falls back to the module-level `inTauri`
+    // constant — which is `false` in vitest because the test
+    // environment doesn't expose `window.__TAURI_INTERNALS__`.
+    // Pins the disabled-by-default contract so a future polyfill
+    // change that flips inTauri to true under jsdom can't silently
+    // start firing real IPC calls during tests.
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    renderHook(() =>
+      useSuggestion({
+        startEntry: startEntryMock as never,
+        snoozeRule: snoozeRuleMock as never,
+        snoozeAll: snoozeAllMock as never,
+        listen: listen as never,
+        // No `enabled` field — falls back to inTauri (false in jsdom).
+      }),
+    );
+    expect(harness.handler).toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("useSuggestion (ambiguity dispatch, #16)", () => {

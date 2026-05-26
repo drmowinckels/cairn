@@ -643,7 +643,7 @@ describe("RulesView", () => {
   it("editor exposes an Ambiguity-behaviour select at complexity=heavy", () => {
     const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
     const sel = container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Ambiguity behaviour"]',
+      "select#rule-amb-r1",
     );
     expect(sel).toBeTruthy();
     // Default for fixture rules (no field set) is "prompt".
@@ -655,7 +655,7 @@ describe("RulesView", () => {
   it("changing the ambiguity select persists the new value", async () => {
     const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
     const sel = container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Ambiguity behaviour"]',
+      "select#rule-amb-r1",
     );
     fireEvent.change(sel!, { target: { value: "log-to-uncategorized" } });
     await waitFor(() => {
@@ -671,7 +671,7 @@ describe("RulesView", () => {
   it("drops an ambiguity value that isn't in AMBIGUITY_OPTIONS (forged event guard)", () => {
     const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
     const sel = container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Ambiguity behaviour"]',
+      "select#rule-amb-r1",
     );
     fireEvent.change(sel!, {
       target: { value: "definitely-not-an-ambiguity-value" },

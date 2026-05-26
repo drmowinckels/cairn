@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { inTauri, snoozeAll, snoozeRule, startEntry } from "./ipc";
 import type { Confidence, RuleMatchEvent } from "./types";
+import { coerceAmbiguity } from "./use-rules";
 
 /** A suggestion the UI should display in the `.suggest` banner. */
 export type Suggestion = RuleMatchEvent;
@@ -146,10 +147,11 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
       // - "log-to-uncategorized": auto-start a timer with no project,
       //   `source: "rule"`. Same de-dup against the running ruleId
       //   as the Strict path so we don't churn zero-second entries.
-      // Default to "prompt" for legacy payloads where the field is
-      // missing — never silently start a timer behind the user's
-      // back when the contract is ambiguous.
-      const behavior = payload.ambiguityBehavior ?? "prompt";
+      // `coerceAmbiguity` is the same guard the save path uses, so a
+      // malformed event payload (forged or replayed from before #16)
+      // falls through to "prompt" — the safe default that never
+      // starts a timer behind the user's back.
+      const behavior = coerceAmbiguity(payload.ambiguityBehavior);
       if (behavior === "skip") return;
       if (behavior === "log-to-uncategorized") {
         if (currentRunningRuleIdRef.current === payload.ruleId) return;

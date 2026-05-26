@@ -14,6 +14,8 @@ import type {
 } from "../../lib/types";
 import { OP_LABELS, SIGNAL_LABELS } from "../../test-fixtures/data";
 import {
+  AMBIGUITY_OPTIONS,
+  coerceAmbiguity,
   defaultOpForSignal,
   type PatchRule,
   shouldWarnConfidence,
@@ -48,11 +50,6 @@ const SIGNAL_OPTIONS: SignalKind[] = [
 ];
 
 const CONFIDENCE_OPTIONS: Confidence[] = ["suggestive", "strict"];
-const AMBIGUITY_OPTIONS: AmbiguityBehavior[] = [
-  "prompt",
-  "skip",
-  "log-to-uncategorized",
-];
 
 /**
  * Input-length caps that mirror the backend's `save_rule` validation
@@ -657,6 +654,9 @@ function RuleRow({
                 </div>
               )}
               <div className="rule-meta-row">
+                {/* Label text matches the spoken accessible name — the
+                    `<label htmlFor>` association IS the SR-name source
+                    of truth, so we drop the (mismatched) `aria-label`. */}
                 <label htmlFor={`rule-amb-${rule.id}`}>If ambiguous</label>
                 <select
                   id={`rule-amb-${rule.id}`}
@@ -664,17 +664,17 @@ function RuleRow({
                   value={rule.ambiguityBehavior ?? "prompt"}
                   onClick={stopBubble}
                   onChange={(e) => {
-                    // Guard against a forged event value the same
-                    // way the confidence select does. Out-of-range
-                    // strings drop on the floor.
+                    // Guard against a forged event value via the
+                    // shared `coerceAmbiguity` helper — same source
+                    // of truth as the body deserializer. An unknown
+                    // value coerces to "prompt" (the safe default).
                     const next = AMBIGUITY_OPTIONS.includes(
                       e.target.value as AmbiguityBehavior,
                     )
-                      ? (e.target.value as AmbiguityBehavior)
+                      ? coerceAmbiguity(e.target.value)
                       : null;
                     if (next) onUpdate({ ambiguityBehavior: next });
                   }}
-                  aria-label="Ambiguity behaviour"
                 >
                   <option value="prompt">prompt me</option>
                   <option value="skip">skip</option>
