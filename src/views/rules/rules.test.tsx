@@ -390,6 +390,31 @@ describe("RulesView", () => {
     });
   });
 
+  it("drops a confidence value that isn't in CONFIDENCE_OPTIONS (forged event guard)", async () => {
+    // The handler validates the select's value against an allow-list
+    // before persisting. A synthetic change event (or a future third
+    // <option>) that lands an unknown string must NOT write into the
+    // rule body — otherwise garbage would round-trip through the
+    // SQLite-stored JSON. Pin the negative path so a regression on
+    // the guard surfaces in CI.
+    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const sel = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Confidence"]',
+    );
+    fireEvent.change(sel!, {
+      target: { value: "definitely-not-a-confidence" },
+    });
+    // No warning — the bogus value never made it through the guard
+    // (warning needs `strict`, which the guard refused to set).
+    expect(container.querySelector(".rule-meta-warn")).toBeNull();
+    // And a subsequent legitimate change still works, proving the
+    // guard returned early without throwing.
+    fireEvent.change(sel!, { target: { value: "strict" } });
+    await waitFor(() => {
+      expect(container.querySelector(".rule-meta-warn")).toBeTruthy();
+    });
+  });
+
   // ---- #12: Live signals card integration -------------------------
 
   it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {
