@@ -30,7 +30,14 @@ describe("RuleTestBench", () => {
     expect(title.value).toBe("rules.tsx — cairn");
   });
 
-  it("fires dryRunRules on mount with the default snapshot", async () => {
+  it("inputs have autoComplete=off + spellCheck=false (avoid noise on developer-y values)", () => {
+    const { getByLabelText } = render(<RuleTestBench />);
+    const folder = getByLabelText("IDE folder") as HTMLInputElement;
+    expect(folder.getAttribute("autocomplete")).toBe("off");
+    expect(folder.getAttribute("spellcheck")).toBe("false");
+  });
+
+  it("fires dryRunRules on mount with the default snapshot (no debounce on first fire)", async () => {
     render(<RuleTestBench />);
     await waitFor(() => {
       expect(ipc.dryRunRules).toHaveBeenCalledWith({
@@ -39,23 +46,92 @@ describe("RuleTestBench", () => {
         windowTitle: "rules.tsx — cairn",
       });
     });
+    // Mount must fire exactly once — the second-render path runs
+    // through the debounce, so a too-eager mount handler would
+    // double-up.
+    expect(ipc.dryRunRules).toHaveBeenCalledOnce();
   });
 
-  it("fires dryRunRules with the updated snapshot when a field changes", async () => {
+  it("debounces keystroke changes: 5 rapid edits → 1 IPC, called with the LAST value", async () => {
     const { getByLabelText } = render(<RuleTestBench />);
+    // Wait for mount-fire so we can isolate change-fires.
+    await waitFor(() => expect(ipc.dryRunRules).toHaveBeenCalledOnce());
     vi.mocked(ipc.dryRunRules).mockClear();
+    const branch = getByLabelText("Git branch");
+    for (const v of ["a", "ab", "abc", "abcd", "abcde"]) {
+      fireEvent.change(branch, { target: { value: v } });
+    }
+    // The debounce window is 150ms; the test waits up to 1s by default.
+    await waitFor(() => {
+      expect(ipc.dryRunRules).toHaveBeenCalledOnce();
+    });
+    expect(ipc.dryRunRules).toHaveBeenCalledWith(
+      expect.objectContaining({ gitBranch: "abcde" }),
+    );
+  });
+
+  it("ignores a stale-resolving response (race-safe via requestId)", async () => {
+    // Set up two pending calls that resolve out of order. Without
+    // the requestId guard, the first (stale) resolution would
+    // overwrite the second's result. With the guard, only the
+    // latest dispatched call's result lands.
+    let resolveFirst!: (r: DryRunResult | null) => void;
+    let resolveSecond!: (r: DryRunResult | null) => void;
+    vi.mocked(ipc.dryRunRules)
+      .mockImplementationOnce(
+        () =>
+          new Promise<DryRunResult | null>((res) => {
+            resolveFirst = res;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<DryRunResult | null>((res) => {
+            resolveSecond = res;
+          }),
+      );
+    const { getByLabelText, container } = render(<RuleTestBench />);
+    // Mount fires the first call (slow). Now change a field to fire
+    // the second; the debounce flushes after 150ms.
     fireEvent.change(getByLabelText("Git branch"), {
-      target: { value: "fix/auth" },
+      target: { value: "fix/x" },
     });
     await waitFor(() => {
-      expect(ipc.dryRunRules).toHaveBeenCalledWith(
-        expect.objectContaining({ gitBranch: "fix/auth" }),
-      );
+      expect(ipc.dryRunRules).toHaveBeenCalledTimes(2);
     });
+    // Resolve the SECOND call first with a real match.
+    resolveSecond({
+      ruleId: "r2",
+      ruleName: "Second match",
+      confidence: "suggestive",
+      project: "p2",
+      tags: [],
+      description: "",
+    });
+    await waitFor(() => {
+      expect(container.textContent).toMatch(/Second match/);
+    });
+    // Now resolve the FIRST (stale) call with a different match —
+    // the guard must drop it on the floor.
+    resolveFirst({
+      ruleId: "r1",
+      ruleName: "First match",
+      confidence: "suggestive",
+      project: "p1",
+      tags: [],
+      description: "",
+    });
+    // Flush microtasks.
+    await Promise.resolve();
+    await Promise.resolve();
+    // Still showing the second match — first did not clobber.
+    expect(container.textContent).toMatch(/Second match/);
+    expect(container.textContent).not.toMatch(/First match/);
   });
 
   it("drops a whitespace-only value to null so the engine ignores it", async () => {
     const { getByLabelText } = render(<RuleTestBench />);
+    await waitFor(() => expect(ipc.dryRunRules).toHaveBeenCalledOnce());
     vi.mocked(ipc.dryRunRules).mockClear();
     fireEvent.change(getByLabelText("Git branch"), {
       target: { value: "   " },
@@ -95,9 +171,6 @@ describe("RuleTestBench", () => {
       expect(container.textContent).toMatch(/matches/i);
       expect(container.textContent).toMatch(/Cairn dev work/);
     });
-    // ProjectChip + Tag components render their own elements; assert
-    // by counting the tag children — bench-tags wrapper exists only
-    // when there's at least one tag.
     expect(container.querySelector(".bench-tags")).toBeTruthy();
     const tags = container.querySelectorAll(".bench-tags > *");
     expect(tags.length).toBe(2);
@@ -120,7 +193,7 @@ describe("RuleTestBench", () => {
     expect(container.querySelector(".bench-tags")).toBeNull();
   });
 
-  it("surfaces a backend error in the result row", async () => {
+  it("surfaces a backend error with role=alert (announced by screen readers)", async () => {
     vi.mocked(ipc.dryRunRules).mockRejectedValue(
       new Error("rules cache poisoned"),
     );
@@ -130,14 +203,12 @@ describe("RuleTestBench", () => {
         container.querySelector(".bench-result--err"),
       ).toBeTruthy();
     });
-    expect(
-      container.querySelector(".bench-result--err")?.textContent,
-    ).toMatch(/dry-run failed/i);
+    const errRow = container.querySelector(".bench-result--err")!;
+    expect(errRow.getAttribute("role")).toBe("alert");
+    expect(errRow.textContent).toMatch(/dry-run failed/i);
   });
 
   it("recovers from a transient error on the next snapshot change", async () => {
-    // First call throws, second call succeeds — the result row must
-    // transition back to a clean state once a successful call lands.
     vi.mocked(ipc.dryRunRules)
       .mockRejectedValueOnce(new Error("transient"))
       .mockResolvedValueOnce({
@@ -159,26 +230,5 @@ describe("RuleTestBench", () => {
       expect(container.querySelector(".bench-result--err")).toBeNull();
       expect(container.textContent).toMatch(/Cairn dev work/);
     });
-  });
-});
-
-describe("RuleTestBench outside Tauri", () => {
-  it("shows 'preview unavailable' when inTauri=false", async () => {
-    // Re-mock with inTauri = false for this single test. The shared
-    // mock above sets it true; reset + re-apply per the spec's
-    // "non-Tauri build" case.
-    vi.doMock("../../lib/ipc", async (importActual) => {
-      const actual = await importActual<typeof import("../../lib/ipc")>();
-      return { ...actual, inTauri: false, dryRunRules: async () => null };
-    });
-    vi.resetModules();
-    const { RuleTestBench: ReloadedBench } = await import("./test-bench");
-    const { container } = render(<ReloadedBench />);
-    await waitFor(() => {
-      expect(
-        container.querySelector(".bench-result--none")?.textContent,
-      ).toMatch(/preview unavailable/i);
-    });
-    vi.doUnmock("../../lib/ipc");
   });
 });

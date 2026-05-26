@@ -678,18 +678,21 @@ pub async fn list_rules(state: State<'_, AppState>) -> Result<Vec<Rule>, String>
         .collect()
 }
 
-/// Maximum length (in chars) of a single field on a dry-run snapshot.
-/// The bench inputs are bounded by `maxLength` on the frontend; this
-/// is the backend-side cap so a forged invocation can't pass a 1MB
-/// "window title" and burn CPU on `str::contains` walks. 2 KB is
-/// generous — real titles + folders + branches are well under this.
+/// Maximum length of a single field on a dry-run snapshot, counted
+/// in UTF-16 code units to match the DOM `<input maxLength>`
+/// semantics the frontend bench uses (see `src/views/rules/test-bench.tsx`).
+/// The bench's `MAX_BENCH_FIELD` mirrors this number. Without the
+/// same unit on both sides, an emoji-heavy paste could pass the
+/// frontend cap and fail the backend's, producing a confusing error.
+/// 2048 UTF-16 code units is generous — real titles + folders +
+/// branches are well under this.
 pub const MAX_DRY_RUN_FIELD_LEN: usize = 2 * 1024;
 
 fn dry_run_field_too_long(field: &str, value: &Option<String>) -> Option<String> {
     if let Some(v) = value {
-        if v.chars().count() > MAX_DRY_RUN_FIELD_LEN {
+        if v.encode_utf16().count() > MAX_DRY_RUN_FIELD_LEN {
             return Some(format!(
-                "dry_run_rules: {field} too long (max {MAX_DRY_RUN_FIELD_LEN} chars)"
+                "dry_run_rules: {field} too long (max {MAX_DRY_RUN_FIELD_LEN} UTF-16 units)"
             ));
         }
     }
@@ -2910,6 +2913,32 @@ mod tests {
         .unwrap()
         .expect("branch starting with feat/ should match");
         assert_eq!(m.rule_name, "Feature branch work");
+    }
+
+    #[tokio::test]
+    async fn dry_run_priority_decides_when_both_rules_match() {
+        // Stricter variant of the earlier priority test: BOTH rules
+        // explicitly match the snapshot (same signal, same value), so
+        // the only thing left to decide the outcome is `priority` —
+        // not "rule 1 happened to match first." This pins the
+        // priority-asc semantics the live engine guarantees.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let mut high = rule_input(None, "High priority");
+        high.priority = 5;
+        high.body = dry_run_rule_body("ide.folder", "contains", "cairn", "alpha");
+        let _ = save_rule(state.clone(), high).await.unwrap();
+        let mut low = rule_input(None, "Low priority");
+        low.priority = 20;
+        low.body = dry_run_rule_body("ide.folder", "contains", "cairn", "beta");
+        let _ = save_rule(state.clone(), low).await.unwrap();
+
+        let m = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap()
+            .expect("both match; lower-priority value wins");
+        assert_eq!(m.rule_name, "High priority");
+        assert_eq!(m.project.as_deref(), Some("alpha"));
     }
 
     #[tokio::test]
