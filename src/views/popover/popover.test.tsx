@@ -6,7 +6,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // The popover transitively mounts Reports / Settings which both call
 // useBackup, which dynamically imports the dialog + opener plugins.
@@ -146,5 +146,54 @@ describe("Density propagation", () => {
     expect(container.querySelector(".pop")?.getAttribute("data-density")).toBe(
       "comfy",
     );
+  });
+});
+
+describe("Global ambiguity default → new rule (#71)", () => {
+  beforeEach(() => {
+    // Each test starts from a clean a11y pref blob so the localStorage
+    // load doesn't drag state from a sibling test.
+    localStorage.clear();
+  });
+
+  it("changing the default in Settings is honoured by a New rule in Rules (end-to-end)", async () => {
+    // Reviewer asked for the user-visible flow: open Settings, flip
+    // the radio, switch to Rules, click "New", assert the new rule's
+    // ambiguity `<select>` shows the new default. Exercises the
+    // `useA11yPrefs` → `Popover` → `RulesView` → `useRules` →
+    // `blankRule` chain in one shot — the seam the per-layer tests
+    // skip past.
+    render(<Popover initialView="settings" ruleComplexity="heavy" />);
+
+    // 1) Settings → flip "Default ambiguity behaviour" to Uncategorized.
+    const group = screen.getByRole("radiogroup", {
+      name: /default ambiguity behaviour/i,
+    });
+    const uncategorized = Array.from(
+      group.querySelectorAll<HTMLElement>('[role="radio"]'),
+    ).find((b) => b.textContent === "Uncategorized")!;
+    expect(uncategorized).toBeTruthy();
+    fireEvent.click(uncategorized);
+
+    // 2) Switch to Rules.
+    const rulesTab = screen
+      .getAllByRole("tab")
+      .find((t) => /rules/i.test(t.textContent ?? ""))!;
+    fireEvent.click(rulesTab);
+
+    // 3) Click "New rule" — async (the hook's add() resolves on the
+    //    next microtask).
+    fireEvent.click(screen.getByRole("button", { name: /new rule/i }));
+
+    // 4) The newly-expanded rule's ambiguity select should reflect
+    //    the new default. The id is generated; query by class +
+    //    open-rule scope. Wait for the optimistic add + auto-expand
+    //    to commit.
+    await waitFor(() => {
+      const sel = document.querySelector<HTMLSelectElement>(
+        ".rule.is-open select.rule-amb",
+      );
+      expect(sel?.value).toBe("log-to-uncategorized");
+    });
   });
 });
