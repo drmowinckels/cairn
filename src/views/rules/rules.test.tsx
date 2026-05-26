@@ -7,10 +7,13 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+import type { AmbiguityBehavior } from "../../lib/types";
+
 function renderRules(
   overrides: Partial<{
     complexity: "light" | "medium" | "heavy";
     openRuleId: string | null;
+    ambiguityDefault: AmbiguityBehavior;
   }> = {},
 ) {
   const onOpenRule = vi.fn();
@@ -20,6 +23,7 @@ function renderRules(
       openRuleId={overrides.openRuleId ?? null}
       onOpenRule={onOpenRule}
       density="comfy"
+      ambiguityDefault={overrides.ambiguityDefault}
     />,
   );
   return { ...utils, onOpenRule };
@@ -678,6 +682,20 @@ describe("RulesView", () => {
     });
     // Guard rejects — value stays at the default "prompt".
     expect(sel!.value).toBe("prompt");
+  });
+
+  it("'New' rule inherits the ambiguityDefault prop (#71)", async () => {
+    const { container } = renderRules({
+      complexity: "heavy",
+      ambiguityDefault: "log-to-uncategorized",
+    });
+    fireEvent.click(screen.getByRole("button", { name: /new rule/i }));
+    await waitFor(() => {
+      const sel = container.querySelector<HTMLSelectElement>(
+        ".rule.is-open select[id^='rule-amb-']",
+      );
+      expect(sel?.value).toBe("log-to-uncategorized");
+    });
   });
 
   // ---- #12: Live signals card integration -------------------------

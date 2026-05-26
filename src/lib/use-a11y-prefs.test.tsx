@@ -84,4 +84,41 @@ describe("useA11yPrefs", () => {
     act(() => result.current.setAlwaysFocusRing(false));
     expect(document.documentElement.dataset.focusRing).toBe("kbd");
   });
+
+  // ---- #71: global ambiguity default --------------------------------
+
+  it("seeds ambiguityDefault to 'prompt' on first mount", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.ambiguityDefault).toBe("prompt");
+  });
+
+  it("setAmbiguityDefault persists the change to localStorage", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    act(() => result.current.setAmbiguityDefault("log-to-uncategorized"));
+    expect(result.current.ambiguityDefault).toBe("log-to-uncategorized");
+    const stored = JSON.parse(
+      localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}",
+    );
+    expect(stored.ambiguityDefault).toBe("log-to-uncategorized");
+  });
+
+  it("restores ambiguityDefault from localStorage on remount", () => {
+    localStorage.setItem(
+      "cairn:a11y-prefs:v1",
+      JSON.stringify({ ambiguityDefault: "skip" }),
+    );
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.ambiguityDefault).toBe("skip");
+  });
+
+  it("falls back to 'prompt' when stored ambiguityDefault is missing (legacy a11y blob)", () => {
+    // Older localStorage payloads predate #71 and don't carry the
+    // field. The defaults merge must fill it in.
+    localStorage.setItem(
+      "cairn:a11y-prefs:v1",
+      JSON.stringify({ textScale: "lg", detectionPrompts: "modal" }),
+    );
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.ambiguityDefault).toBe("prompt");
+  });
 });

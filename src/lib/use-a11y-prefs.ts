@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import type { A11yPrefs, DetectionPrompts, TextScale } from "./types";
+import type {
+  A11yPrefs,
+  AmbiguityBehavior,
+  DetectionPrompts,
+  TextScale,
+} from "./types";
 
 const STORAGE_KEY = "cairn:a11y-prefs:v1";
 
@@ -12,6 +17,7 @@ const DEFAULTS: A11yPrefs = {
   announce: true,
   alwaysFocusRing: false,
   detectionPrompts: "subtle",
+  ambiguityDefault: "prompt",
 };
 
 function matchesReduceMotion(): boolean {
@@ -39,6 +45,7 @@ export interface UseA11yPrefs extends A11yPrefs {
   setAnnounce: (v: boolean) => void;
   setAlwaysFocusRing: (v: boolean) => void;
   setDetectionPrompts: (v: DetectionPrompts) => void;
+  setAmbiguityDefault: (v: AmbiguityBehavior) => void;
 }
 
 export function useA11yPrefs(): UseA11yPrefs {
@@ -74,5 +81,6 @@ export function useA11yPrefs(): UseA11yPrefs {
     setAnnounce: (v) => patch("announce", v),
     setAlwaysFocusRing: (v) => patch("alwaysFocusRing", v),
     setDetectionPrompts: (v) => patch("detectionPrompts", v),
+    setAmbiguityDefault: (v) => patch("ambiguityDefault", v),
   };
 }

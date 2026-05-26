@@ -37,6 +37,12 @@ interface Props {
   openRuleId: string | null;
   onOpenRule: (id: string | null) => void;
   density: Density;
+  /**
+   * App-wide default for new rules' `ambiguityBehavior` (#71).
+   * Falls through to the hook's own `"prompt"` fallback when omitted.
+   * Existing rules are never mutated when this changes.
+   */
+  ambiguityDefault?: AmbiguityBehavior;
 }
 
 const SIGNAL_OPTIONS: SignalKind[] = [
@@ -66,8 +72,16 @@ const MAX_DESCRIPTION_TEMPLATE = 500;
  *  roundtrips + 12 rules-cache reloads. */
 const TEXT_COMMIT_DELAY_MS = 300;
 
-export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props) {
-  const { rules, add, update, remove, duplicate, move } = useRules();
+export function RulesView({
+  complexity,
+  openRuleId,
+  onOpenRule,
+  density,
+  ambiguityDefault,
+}: Props) {
+  const { rules, add, update, remove, duplicate, move } = useRules({
+    defaultAmbiguity: ambiguityDefault,
+  });
   const projects = useProjects();
   const projectById = useMemo(
     () => new Map(projects.map((p) => [p.id, p])),

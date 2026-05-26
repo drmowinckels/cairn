@@ -34,6 +34,7 @@ function stubA11y(overrides: Partial<UseA11yPrefs> = {}): UseA11yPrefs {
     announce: true,
     alwaysFocusRing: false,
     detectionPrompts: "subtle",
+    ambiguityDefault: "prompt",
     setTextScale: vi.fn(),
     setHighContrast: vi.fn(),
     setReduceMotion: vi.fn(),
@@ -41,6 +42,7 @@ function stubA11y(overrides: Partial<UseA11yPrefs> = {}): UseA11yPrefs {
     setAnnounce: vi.fn(),
     setAlwaysFocusRing: vi.fn(),
     setDetectionPrompts: vi.fn(),
+    setAmbiguityDefault: vi.fn(),
     ...overrides,
   };
 }
@@ -115,6 +117,36 @@ describe("SettingsView (browser-dev mode)", () => {
       group.querySelectorAll<HTMLElement>('[role="radio"]'),
     ).find((b) => b.getAttribute("aria-checked") === "true");
     expect(active).toBeTruthy();
+  });
+
+  it("renders the Default ambiguity behaviour segmented control with the active option highlighted", () => {
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y({ ambiguityDefault: "log-to-uncategorized" })}
+      />,
+    );
+    const group = screen.getByRole("radiogroup", {
+      name: /default ambiguity behaviour/i,
+    });
+    const active = Array.from(
+      group.querySelectorAll<HTMLElement>('[role="radio"]'),
+    ).find((b) => b.getAttribute("aria-checked") === "true");
+    expect(active?.textContent).toMatch(/Uncategorized/i);
+  });
+
+  it("clicking an ambiguity option calls setAmbiguityDefault with the new value", () => {
+    const a11y = stubA11y({ ambiguityDefault: "prompt" });
+    render(<SettingsView density="comfy" a11y={a11y} />);
+    const group = screen.getByRole("radiogroup", {
+      name: /default ambiguity behaviour/i,
+    });
+    const skipBtn = Array.from(
+      group.querySelectorAll<HTMLElement>('[role="radio"]'),
+    ).find((b) => b.textContent === "Skip");
+    expect(skipBtn).toBeTruthy();
+    fireEvent.click(skipBtn!);
+    expect(a11y.setAmbiguityDefault).toHaveBeenCalledExactlyOnceWith("skip");
   });
 
   it("does not call IPC in browser-dev mode", async () => {
