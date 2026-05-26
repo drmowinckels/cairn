@@ -127,6 +127,7 @@ pub fn run() {
             ipc::list_rules,
             ipc::save_rule,
             ipc::delete_rule,
+            ipc::reorder_rules,
             ipc::list_exclusions,
             ipc::save_exclusion,
             ipc::delete_exclusion,

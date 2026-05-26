@@ -1330,9 +1330,14 @@ body {
 }
 .rule-drag {
   color: var(--ink-faint);
+  cursor: grab;
 }
-.rule:hover .rule-drag {
+.rule:hover .rule-drag,
+.rule:focus-within .rule-drag {
   color: var(--ink-mute);
+}
+.rule[draggable="true"]:active .rule-drag {
+  cursor: grabbing;
 }
 .rule-num {
   font-family: var(--mono);

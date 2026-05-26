@@ -628,6 +628,85 @@ pub async fn delete_rule(state: State<'_, AppState>, id: String) -> Result<(), S
     Ok(())
 }
 
+/// Maximum length of an ids list on `reorder_rules`. Two orders of
+/// magnitude over any realistic rule count — keeps a forged
+/// invocation from triggering an unbounded SQL transaction.
+pub const MAX_REORDER_RULES: usize = 10_000;
+
+/// Reorder rules by rewriting their `priority` columns in a single
+/// transaction (issue #15). The caller supplies the desired order as
+/// a list of rule ids; the backend assigns priorities `10, 20, 30, …`
+/// in that order — dense, unique, evenly spaced so future inserts
+/// between two existing rules don't need a renumber.
+///
+/// Validation rules:
+/// - `ids` must contain every existing rule id exactly once. A
+///   partial or duplicate list is rejected — silently dropping an id
+///   would make a rule un-orderable from the UI, and tolerating
+///   duplicates would assign two priorities to one rule.
+/// - Empty `ids` is only allowed when the DB itself has zero rules.
+///
+/// On success, the rules cache is reloaded so the matcher uses the
+/// new order on the next snapshot tick. No app restart required.
+#[tauri::command]
+pub async fn reorder_rules(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), String> {
+    if ids.len() > MAX_REORDER_RULES {
+        return Err(format!(
+            "reorder_rules: too many ids (max {MAX_REORDER_RULES})"
+        ));
+    }
+    let mut seen = std::collections::HashSet::with_capacity(ids.len());
+    for id in &ids {
+        if !seen.insert(id) {
+            return Err(format!("reorder_rules: duplicate id {id}"));
+        }
+    }
+
+    let _guard = state.rules_mutator.lock().await;
+
+    // Cross-check against the DB: caller's ids must equal the DB's
+    // id set exactly. Anything else (extra id, missing id) is a
+    // logic error and we refuse to write a partial reorder.
+    let rows = sqlx::query("SELECT id FROM rules")
+        .fetch_all(&state.db.pool)
+        .await
+        .map_err(err)?;
+    let db_ids: std::collections::HashSet<String> =
+        rows.iter().map(|r| r.get::<String, _>("id")).collect();
+    if db_ids.len() != ids.len() {
+        return Err(format!(
+            "reorder_rules: ids length {} != db count {}",
+            ids.len(),
+            db_ids.len()
+        ));
+    }
+    for id in &ids {
+        if !db_ids.contains(id) {
+            return Err(format!("reorder_rules: unknown id {id}"));
+        }
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut tx = state.db.pool.begin().await.map_err(err)?;
+    for (idx, id) in ids.iter().enumerate() {
+        // 1-based × 10: priorities are dense (10, 20, 30, …) and
+        // never collide with the "+10 above max" pattern `add()`
+        // uses for new rules. Inserts after a reorder land below
+        // the reordered set, which is the natural read-order.
+        let priority: i64 = ((idx as i64) + 1) * 10;
+        sqlx::query("UPDATE rules SET priority = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind(priority)
+            .bind(&now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+    }
+    tx.commit().await.map_err(err)?;
+    reload_rules(&state).await;
+    Ok(())
+}
+
 /// Reload the in-memory rules cache from the DB. Called after every
 /// `save_rule` / `delete_rule` so the fanout and calendar-autostop
 /// tasks see the new state on the very next tick. Mirrors
@@ -2246,6 +2325,135 @@ mod tests {
         assert!(
             state.rules_cache.read().unwrap().is_empty(),
             "cache should reflect the delete on next read",
+        );
+    }
+
+    // ---------------- reorder_rules (#15) ----------------
+
+    async fn seed_three_rules(
+        state: tauri::State<'_, crate::AppState>,
+    ) -> (String, String, String) {
+        let a = save_rule(state.clone(), rule_input(None, "A"))
+            .await
+            .unwrap();
+        let b = save_rule(state.clone(), rule_input(None, "B"))
+            .await
+            .unwrap();
+        let c = save_rule(state.clone(), rule_input(None, "C"))
+            .await
+            .unwrap();
+        (a.id, b.id, c.id)
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_writes_dense_unique_priorities() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (a, b, c) = seed_three_rules(state.clone()).await;
+        // Reverse the order: C, B, A.
+        reorder_rules(state.clone(), vec![c.clone(), b.clone(), a.clone()])
+            .await
+            .unwrap();
+        // list_rules orders by priority ASC, so the first element is
+        // the new top (priority 10).
+        let listed = list_rules(state).await.unwrap();
+        let names: Vec<&str> = listed.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["C", "B", "A"]);
+        let priorities: Vec<i64> = listed.iter().map(|r| r.priority).collect();
+        assert_eq!(priorities, vec![10, 20, 30]);
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_refreshes_rules_cache() {
+        // The fanout reads from `rules_cache`; after a reorder, the
+        // cache must reflect the new priority ordering on the very
+        // next snapshot tick.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (a, b, _c) = seed_three_rules(state.clone()).await;
+        reorder_rules(
+            state.clone(),
+            vec![b.clone(), a.clone(), {
+                // grab id of c by re-listing
+                list_rules(state.clone())
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|r| r.name == "C")
+                    .unwrap()
+                    .id
+            }],
+        )
+        .await
+        .unwrap();
+        let cache = state.rules_cache.read().unwrap();
+        let names: Vec<&str> = cache.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["B", "A", "C"]);
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_rejects_partial_id_list() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (a, b, _c) = seed_three_rules(state.clone()).await;
+        // Two ids for a three-rule DB → reject. A silent drop would
+        // make rule c un-orderable from the UI.
+        let err = reorder_rules(state, vec![a, b]).await.unwrap_err();
+        assert!(
+            err.contains("length"),
+            "expected length-mismatch error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_rejects_duplicate_ids() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (a, b, _c) = seed_three_rules(state.clone()).await;
+        // Duplicate `a` in the list → reject. Tolerating duplicates
+        // would assign two priorities to one rule.
+        let err = reorder_rules(state, vec![a.clone(), b, a])
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("duplicate"),
+            "expected duplicate-id error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_rejects_unknown_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (a, b, c) = seed_three_rules(state.clone()).await;
+        let err = reorder_rules(state, vec![a, b, c, "ghost-id".into()])
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("length") || err.contains("unknown"),
+            "expected unknown-id error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_accepts_empty_list_on_empty_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // No rules in DB → empty reorder is a no-op, not an error.
+        reorder_rules(state, vec![]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reorder_rules_rejects_oversized_input() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let ids: Vec<String> = (0..MAX_REORDER_RULES + 1)
+            .map(|i| format!("ghost-{i}"))
+            .collect();
+        let err = reorder_rules(state, ids).await.unwrap_err();
+        assert!(
+            err.contains("too many"),
+            "expected too-many-ids error, got: {err}"
         );
     }
 

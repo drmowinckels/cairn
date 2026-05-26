@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   defaultOpForSignal,
   deserializeRule,
+  moveByIndex,
   serializeRule,
   shouldWarnConfidence,
   useRules,
@@ -33,6 +34,13 @@ vi.mock("./ipc", async () => {
     }),
     deleteRule: vi.fn(async (id: string) => {
       store.delete(id);
+    }),
+    reorderRules: vi.fn(async (ids: string[]) => {
+      // Mirror the backend contract: dense 10,20,30,… in the given order.
+      ids.forEach((id, i) => {
+        const row = store.get(id);
+        if (row) store.set(id, { ...row, priority: (i + 1) * 10 });
+      });
     }),
     __reset: () => store.clear(),
     __seed: (rules: Array<{ id: string; name: string; enabled: boolean; priority: number; body: unknown }>) => {
@@ -187,6 +195,28 @@ describe("serializeRule / deserializeRule", () => {
       });
       expect(r.confidenceWarningDismissed).toBe(false);
     }
+  });
+});
+
+describe("moveByIndex", () => {
+  it("moves an item forward through the list", () => {
+    expect(moveByIndex(["a", "b", "c", "d"], 0, 2)).toEqual(["b", "c", "a", "d"]);
+  });
+
+  it("moves an item backward through the list", () => {
+    expect(moveByIndex(["a", "b", "c", "d"], 3, 0)).toEqual(["d", "a", "b", "c"]);
+  });
+
+  it("returns the same array reference for from===to (callers use === to detect no-op)", () => {
+    const arr = ["a", "b"];
+    expect(moveByIndex(arr, 1, 1)).toBe(arr);
+  });
+
+  it("returns the same array reference for out-of-range indices", () => {
+    const arr = ["a", "b"];
+    expect(moveByIndex(arr, -1, 0)).toBe(arr);
+    expect(moveByIndex(arr, 0, 5)).toBe(arr);
+    expect(moveByIndex(arr, 5, 0)).toBe(arr);
   });
 });
 
@@ -442,6 +472,61 @@ describe("useRules hook", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it("move() reorders rules locally + persists via reorderRules IPC with new ids", async () => {
+    ipcMock.__seed([
+      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
+      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+      { id: "c", name: "C", enabled: true, priority: 30, body: { when: [], then: { project: null } } },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(3));
+    // Move A from index 0 to index 2 → order becomes B, C, A.
+    await act(async () => {
+      await result.current.move(0, 2);
+    });
+    expect(result.current.rules.map((r) => r.id)).toEqual(["b", "c", "a"]);
+    // Priorities dense + unique 10, 20, 30 (the contract for the backend).
+    expect(result.current.rules.map((r) => r.priority)).toEqual([10, 20, 30]);
+    // The IPC was called with the new id order — not the old one.
+    expect(ipc.reorderRules).toHaveBeenCalledExactlyOnceWith([
+      "b",
+      "c",
+      "a",
+    ]);
+  });
+
+  it("move() is a no-op when from === to (skips the IPC call entirely)", async () => {
+    ipcMock.__seed([
+      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
+      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(2));
+    await act(async () => {
+      await result.current.move(1, 1);
+    });
+    expect(ipc.reorderRules).not.toHaveBeenCalled();
+  });
+
+  it("move() keeps the local change on IPC failure (no destructive rollback)", async () => {
+    // Mirror the policy other mutators use: the next reorder
+    // retries with whatever the user has by then. Rolling back
+    // would visually snap rules back to a stale position the
+    // user has already moved past.
+    ipcMock.__seed([
+      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
+      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(2));
+    vi.mocked(ipc.reorderRules).mockRejectedValueOnce(new Error("DB locked"));
+    await act(async () => {
+      await result.current.move(0, 1);
+    });
+    expect(result.current.rules.map((r) => r.id)).toEqual(["b", "a"]);
+    expect(result.current.error).toMatch(/DB locked/);
   });
 
   it("duplicate() creates a new rule with the original's body + '(copy)' suffix", async () => {

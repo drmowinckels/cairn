@@ -3,6 +3,7 @@ import {
   deleteRule as deleteRuleIpc,
   inTauri,
   listRules,
+  reorderRules as reorderRulesIpc,
   saveRule as saveRuleIpc,
   type BackendRule,
   type SaveRuleInput,
@@ -43,6 +44,10 @@ export interface UseRules {
   remove: (id: string) => Promise<void>;
   /** Clone the rule under a new id, suffixing the name with "(copy)". */
   duplicate: (id: string) => Promise<string>;
+  /** Move the rule at `from` to position `to` and persist the new
+   *  priority order. Pure index-based swap; the backend rewrites
+   *  every priority transactionally on success. */
+  move: (from: number, to: number) => Promise<void>;
 }
 
 export interface PatchRule {
@@ -177,14 +182,56 @@ export function useRules(): UseRules {
     [commit],
   );
 
+  const move = useCallback(
+    async (from: number, to: number) => {
+      if (from === to) return;
+      const before = rulesRef.current;
+      const reordered = moveByIndex(before, from, to);
+      if (reordered === before) return; // out-of-range no-op
+      // Rewrite priorities locally so the UI's render order (which
+      // sorts by `priority` upstream) reflects the optimistic move
+      // before the IPC round-trip lands. Backend writes 10/20/30…
+      // and we mirror that here.
+      const renumbered = reordered.map((r, i) => ({
+        ...r,
+        priority: (i + 1) * 10,
+      }));
+      commit(() => renumbered);
+      if (!inTauri) return;
+      try {
+        await reorderRulesIpc(renumbered.map((r) => r.id));
+      } catch (e) {
+        setError(String(e));
+        // Mirror update()'s policy: don't roll back. The next move
+        // call retries with the latest local order.
+      }
+    },
+    [commit],
+  );
+
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   return useMemo(
-    () => ({ rules, loading, error, refresh, add, update, remove, duplicate }),
-    [rules, loading, error, refresh, add, update, remove, duplicate],
+    () => ({ rules, loading, error, refresh, add, update, remove, duplicate, move }),
+    [rules, loading, error, refresh, add, update, remove, duplicate, move],
   );
+}
+
+/**
+ * Pure index-based move. Returns the original array (referentially)
+ * when the move would be a no-op (out-of-range `from` / `to`, or
+ * `from === to`) so callers can use === to detect "nothing changed."
+ */
+export function moveByIndex<T>(arr: T[], from: number, to: number): T[] {
+  if (from === to) return arr;
+  if (from < 0 || from >= arr.length) return arr;
+  if (to < 0 || to >= arr.length) return arr;
+  const next = arr.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
 }
 
 /**

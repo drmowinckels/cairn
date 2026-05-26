@@ -415,6 +415,113 @@ describe("RulesView", () => {
     });
   });
 
+  // ---- #15: drag-to-reorder + keyboard alternative -----------------
+
+  it("reorders rules via Alt+ArrowDown when the rule head is focused", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    expect(heads.length).toBeGreaterThan(1);
+    const firstName = heads[0].querySelector(".rule-name")?.textContent;
+    heads[0].focus();
+    fireEvent.keyDown(heads[0], { key: "ArrowDown", altKey: true });
+    await waitFor(() => {
+      const newFirst = container
+        .querySelector<HTMLElement>(".rule:nth-child(1) .rule-name")
+        ?.textContent;
+      // The original first rule is no longer at the top.
+      expect(newFirst).not.toBe(firstName);
+    });
+  });
+
+  it("reorders rules via Alt+ArrowUp when the rule head is focused", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const lastName =
+      heads[heads.length - 1].querySelector(".rule-name")?.textContent;
+    heads[heads.length - 1].focus();
+    fireEvent.keyDown(heads[heads.length - 1], {
+      key: "ArrowUp",
+      altKey: true,
+    });
+    await waitFor(() => {
+      const newLast = container.querySelector<HTMLElement>(
+        ".rule:last-child .rule-name",
+      )?.textContent;
+      expect(newLast).not.toBe(lastName);
+    });
+  });
+
+  it("Alt+ArrowUp on the first rule is a no-op (already at top)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const firstNameBefore = heads[0].querySelector(".rule-name")?.textContent;
+    heads[0].focus();
+    fireEvent.keyDown(heads[0], { key: "ArrowUp", altKey: true });
+    const firstNameAfter = container
+      .querySelector(".rule:first-child .rule-name")
+      ?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("Alt+ArrowDown on the last rule is a no-op (already at bottom)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const lastNameBefore =
+      heads[heads.length - 1].querySelector(".rule-name")?.textContent;
+    heads[heads.length - 1].focus();
+    fireEvent.keyDown(heads[heads.length - 1], {
+      key: "ArrowDown",
+      altKey: true,
+    });
+    const lastNameAfter = container.querySelector(
+      ".rule:last-child .rule-name",
+    )?.textContent;
+    expect(lastNameAfter).toBe(lastNameBefore);
+  });
+
+  it("ArrowDown WITHOUT alt does NOT reorder (Alt is the spec's required modifier)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const firstNameBefore = heads[0].querySelector(".rule-name")?.textContent;
+    heads[0].focus();
+    fireEvent.keyDown(heads[0], { key: "ArrowDown" });
+    const firstNameAfter = container
+      .querySelector(".rule:first-child .rule-name")
+      ?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("dropping rule 1 onto rule 2 reorders via the drag handler", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    expect(rules.length).toBeGreaterThan(1);
+    const firstName = rules[0].querySelector(".rule-name")?.textContent;
+    // Source-index is held in a parent ref (the dataTransfer write
+    // is just there to keep Firefox happy). The drop handler reads
+    // the ref, so we don't need a working DataTransfer here.
+    fireEvent.dragStart(rules[0]);
+    fireEvent.dragOver(rules[1]);
+    fireEvent.drop(rules[1]);
+    await waitFor(() => {
+      const newFirst = container
+        .querySelector(".rule:first-child .rule-name")
+        ?.textContent;
+      expect(newFirst).not.toBe(firstName);
+    });
+  });
+
   // ---- #12: Live signals card integration -------------------------
 
   it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {

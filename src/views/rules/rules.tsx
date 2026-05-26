@@ -63,7 +63,7 @@ const MAX_DESCRIPTION_TEMPLATE = 500;
 const TEXT_COMMIT_DELAY_MS = 300;
 
 export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props) {
-  const { rules, add, update, remove, duplicate } = useRules();
+  const { rules, add, update, remove, duplicate, move } = useRules();
   const projects = useProjects();
   const projectById = useMemo(
     () => new Map(projects.map((p) => [p.id, p])),
@@ -101,6 +101,14 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
   useEffect(() => {
     rulesRef.current = rules;
   }, [rules]);
+
+  // Source index of an in-flight drag (HTML5 drag protocol). Tracked
+  // in a ref rather than DataTransfer because jsdom's DragEvent
+  // refuses to round-trip getData/setData reliably, and a ref is
+  // simpler than the MIME-type dance. We still call setData on
+  // dragstart so Firefox actually initiates the drag (it refuses
+  // without anything on the transfer object).
+  const dragFromIdx = useRef<number | null>(null);
 
   /**
    * Clicking a Live-signals row adds a condition with the prefilled
@@ -177,6 +185,7 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
               key={r.id}
               rule={r}
               index={idx}
+              total={rules.length}
               expanded={expanded === r.id}
               onToggle={() => toggleExpanded(r.id)}
               onUpdate={(patch) => update(r.id, patch)}
@@ -191,6 +200,16 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
                   setExpanded(null);
                   onOpenRule(null);
                 }
+              }}
+              onMove={(to) => move(idx, to)}
+              onDragStartIndex={(i) => {
+                dragFromIdx.current = i;
+              }}
+              onDropAtIndex={(target) => {
+                const from = dragFromIdx.current;
+                dragFromIdx.current = null;
+                if (from === null || from === target) return;
+                move(from, target);
               }}
               complexity={complexity}
               projects={projects}
@@ -233,11 +252,17 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
 interface RuleRowProps {
   rule: Rule;
   index: number;
+  total: number;
   expanded: boolean;
   onToggle: () => void;
   onUpdate: (patch: PatchRule) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Move this row to position `to`. Index-based; parent maps to ids. */
+  onMove: (to: number) => void;
+  /** Drag protocol hooks (parent owns the source-index ref). */
+  onDragStartIndex: (from: number) => void;
+  onDropAtIndex: (target: number) => void;
   complexity: RulesComplexity;
   projects: Project[];
   projectById: Map<string, Project>;
@@ -246,11 +271,15 @@ interface RuleRowProps {
 function RuleRow({
   rule,
   index,
+  total,
   expanded,
   onToggle,
   onUpdate,
   onDuplicate,
   onDelete,
+  onMove,
+  onDragStartIndex,
+  onDropAtIndex,
   complexity,
   projects,
   projectById,
@@ -302,6 +331,31 @@ function RuleRow({
   return (
     <li
       className={`rule${expanded ? " is-open" : ""}${rule.enabled ? "" : " is-off"}`}
+      draggable
+      onDragStart={(e) => {
+        // Stash the source index in the parent ref. We also touch
+        // `dataTransfer` with a token string so Firefox actually
+        // initiates the drag — it refuses to start without
+        // *something* on the transfer object.
+        try {
+          e.dataTransfer.setData("text/plain", String(index));
+          e.dataTransfer.effectAllowed = "move";
+        } catch {
+          // jsdom / some browsers throw on dataTransfer access in
+          // certain modes — ignore; the ref-based source-index path
+          // doesn't need this to succeed.
+        }
+        onDragStartIndex(index);
+      }}
+      onDragOver={(e) => {
+        // Allow drop on every row in the list. The default action
+        // is to refuse, so we have to preventDefault explicitly.
+        e.preventDefault();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDropAtIndex(index);
+      }}
     >
       <header
         className="rule-head"
@@ -309,14 +363,34 @@ function RuleRow({
         tabIndex={0}
         role="button"
         aria-expanded={expanded}
+        aria-label={`Rule ${index + 1}: ${rule.name}. Use Alt+Up or Alt+Down to reorder.`}
         onKeyDown={(e) => {
+          // Alt+↑/↓: keyboard alternative to the drag handle. The
+          // spec requires this so power users without a mouse can
+          // still order their rules. Bounds are clamped by `onMove`
+          // (which is a no-op for out-of-range targets in the hook).
+          if (e.altKey && e.key === "ArrowUp" && index > 0) {
+            e.preventDefault();
+            onMove(index - 1);
+            return;
+          }
+          if (e.altKey && e.key === "ArrowDown" && index < total - 1) {
+            e.preventDefault();
+            onMove(index + 1);
+            return;
+          }
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onToggle();
           }
         }}
       >
-        <Icon name="drag" size={14} className="rule-drag" />
+        <Icon
+          name="drag"
+          size={14}
+          className="rule-drag"
+          aria-hidden="true"
+        />
         <span className="rule-num">{index + 1}</span>
         <span className="rule-name">{rule.name}</span>
         <span className="rule-summary">
