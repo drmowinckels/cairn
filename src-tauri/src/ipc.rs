@@ -2977,6 +2977,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dry_run_recovers_from_poisoned_rules_cache() {
+        // The IPC's RwLock recovery branch only fires when another
+        // thread has panicked while holding the write lock. Force
+        // that condition deterministically: spawn a thread, take
+        // the write lock, panic. The thread's join handle returns
+        // Err and the lock is now poisoned. dry_run_rules must still
+        // answer correctly (with whatever was in the cache before
+        // the panic).
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let mut r = rule_input(None, "Cairn dev");
+        r.body = dry_run_rule_body("ide.folder", "contains", "cairn", "cairn");
+        let _ = save_rule(state.clone(), r).await.unwrap();
+
+        let cache = state.rules_cache.clone();
+        let handle = std::thread::spawn(move || {
+            let _g = cache.write().unwrap();
+            panic!("intentional poison for test");
+        });
+        let _ = handle.join();
+        assert!(
+            state.rules_cache.read().is_err(),
+            "lock must be poisoned for this test to be meaningful",
+        );
+
+        let m = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap()
+            .expect("rule should match even after lock poison");
+        assert_eq!(m.rule_name, "Cairn dev");
+    }
+
+    #[tokio::test]
     async fn active_calendar_event_from_active_event_preserves_fields() {
         // Construct the conversion through `From` so the field-by-field
         // shape stays pinned. The IPC handler wraps `ActiveEvent`s the

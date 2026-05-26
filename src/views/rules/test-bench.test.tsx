@@ -193,6 +193,58 @@ describe("RuleTestBench", () => {
     expect(container.querySelector(".bench-tags")).toBeNull();
   });
 
+  it("renders a match without a project (no chip, no '→ assigns' phrase)", async () => {
+    // The `then.project` field is optional — a rule can set tags
+    // without changing the project. The match row must handle that
+    // branch cleanly (project? : null on both the chip and the
+    // 'assigns' phrase).
+    const match: DryRunResult = {
+      ruleId: "r1",
+      ruleName: "Tag-only rule",
+      confidence: "suggestive",
+      project: null,
+      tags: ["meeting"],
+      description: "",
+    };
+    vi.mocked(ipc.dryRunRules).mockResolvedValue(match);
+    const { container } = render(<RuleTestBench />);
+    await waitFor(() => {
+      expect(container.textContent).toMatch(/Tag-only rule/);
+    });
+    // No assigns phrase + no project chip.
+    expect(container.textContent).not.toMatch(/→ assigns/);
+    // Tags wrapper still renders (the rule has one tag).
+    expect(container.querySelector(".bench-tags")).toBeTruthy();
+  });
+
+  it("re-fires dryRunRules when the IDE folder field changes", async () => {
+    const { getByLabelText } = render(<RuleTestBench />);
+    await waitFor(() => expect(ipc.dryRunRules).toHaveBeenCalledOnce());
+    vi.mocked(ipc.dryRunRules).mockClear();
+    fireEvent.change(getByLabelText("IDE folder"), {
+      target: { value: "~/code/other" },
+    });
+    await waitFor(() => {
+      expect(ipc.dryRunRules).toHaveBeenCalledWith(
+        expect.objectContaining({ ideFolder: "~/code/other" }),
+      );
+    });
+  });
+
+  it("re-fires dryRunRules when the Window title field changes", async () => {
+    const { getByLabelText } = render(<RuleTestBench />);
+    await waitFor(() => expect(ipc.dryRunRules).toHaveBeenCalledOnce());
+    vi.mocked(ipc.dryRunRules).mockClear();
+    fireEvent.change(getByLabelText("Window title"), {
+      target: { value: "new title" },
+    });
+    await waitFor(() => {
+      expect(ipc.dryRunRules).toHaveBeenCalledWith(
+        expect.objectContaining({ windowTitle: "new title" }),
+      );
+    });
+  });
+
   it("surfaces a backend error with role=alert (announced by screen readers)", async () => {
     vi.mocked(ipc.dryRunRules).mockRejectedValue(
       new Error("rules cache poisoned"),
