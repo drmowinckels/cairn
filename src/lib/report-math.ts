@@ -73,7 +73,7 @@ export function weekdayLabel(isoDate: string): string {
   const [y, m, d] = isoDate.split("-").map(Number);
   if (!y || !m || !d) return "";
   const date = new Date(y, m - 1, d);
-  return WEEKDAY_LABELS[date.getDay()] ?? "";
+  return WEEKDAY_LABELS[date.getDay()];
 }
 
 const MONTH_LABELS = [

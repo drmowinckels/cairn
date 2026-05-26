@@ -196,11 +196,237 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     );
   });
 
-  it("Copy summary writes to clipboard once data is loaded", async () => {
+  it("Copy summary writes to clipboard and resets the Copied state after 2s", async () => {
     writeText.mockResolvedValue(undefined);
     const summary: ReportSummary = {
       totalSeconds: 3600,
       prevTotalSeconds: 1800,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [{ projectId: "cairn", seconds: 3600 }],
+        },
+      ],
+      byProject: [{ projectId: "cairn", seconds: 3600 }],
+      bySource: { rule: 3600, calendar: 0, manual: 0 },
+    };
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await renderWithSummary(summary);
+      await waitFor(() => {
+        const btn = screen.getByRole("button", {
+          name: /copy summary/i,
+        }) as HTMLButtonElement;
+        expect(btn.disabled).toBe(false);
+      });
+      fireEvent.click(screen.getByRole("button", { name: /copy summary/i }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /copied/i })).toBeTruthy(),
+      );
+      await vi.advanceTimersByTimeAsync(2100);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /copy summary/i }),
+        ).toBeTruthy(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Copy summary handles >7-day ranges and null project slices", async () => {
+    writeText.mockResolvedValue(undefined);
+    const today = new Date();
+    const byDay = Array.from({ length: 10 }, (_v, i) => ({
+      date: formatIso(addDays(today, i - 9)),
+      byProject: [{ projectId: i === 0 ? null : "cairn", seconds: 600 }],
+    }));
+    const summary: ReportSummary = {
+      totalSeconds: 6000,
+      prevTotalSeconds: 0,
+      byDay,
+      byProject: [
+        { projectId: "cairn", seconds: 5400 },
+        { projectId: null, seconds: 600 },
+      ],
+      bySource: { rule: 0, calendar: 0, manual: 6000 },
+    };
+    await renderWithSummary(summary);
+    await waitFor(() => {
+      const btn = screen.getByRole("button", {
+        name: /copy summary/i,
+      }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /copy summary/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const text = writeText.mock.calls[0]![0] as string;
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it("renders the ErrorBanner and retries via refresh", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "report_summary") return Promise.reject(new Error("db down"));
+      if (cmd === "data_paths")
+        return Promise.resolve({ dataDir: "", dbPath: "", pendingImport: null });
+      if (cmd === "list_projects") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    const { ReportsView: View } = await import("./reports");
+    render(<View density="comfy" />);
+    await waitFor(() => expect(screen.getByText(/db down/i)).toBeTruthy());
+  });
+
+  it("renders the down arrow and percent for a shrinking range", async () => {
+    const summary: ReportSummary = {
+      totalSeconds: 1800,
+      prevTotalSeconds: 3600,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [{ projectId: "cairn", seconds: 1800 }],
+        },
+      ],
+      byProject: [{ projectId: "cairn", seconds: 1800 }],
+      bySource: { rule: 0, calendar: 0, manual: 1800 },
+    };
+    const { container } = await renderWithSummary(summary);
+    await waitFor(() => {
+      const downArrow = container.querySelector(".rep-delta--down .rep-delta-arrow");
+      expect(downArrow).toBeTruthy();
+      expect(downArrow!.textContent).toBe("▼");
+    });
+  });
+
+  it("renders the flat marker when current equals previous", async () => {
+    const summary: ReportSummary = {
+      totalSeconds: 3600,
+      prevTotalSeconds: 3600,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [{ projectId: "cairn", seconds: 3600 }],
+        },
+      ],
+      byProject: [{ projectId: "cairn", seconds: 3600 }],
+      bySource: { rule: 3600, calendar: 0, manual: 0 },
+    };
+    const { container } = await renderWithSummary(summary);
+    await waitFor(() => {
+      const flat = container.querySelector(".rep-delta--flat .rep-delta-arrow");
+      expect(flat).toBeTruthy();
+      expect(flat!.textContent).toBe("◆");
+    });
+  });
+
+  it("falls back to the project id when projectsById has no entry for the slice", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "report_summary")
+        return Promise.resolve({
+          totalSeconds: 3600,
+          prevTotalSeconds: 0,
+          byDay: [
+            {
+              date: formatIso(new Date()),
+              byProject: [{ projectId: "unknown-proj", seconds: 3600 }],
+            },
+          ],
+          byProject: [{ projectId: "unknown-proj", seconds: 3600 }],
+          bySource: { rule: 0, calendar: 0, manual: 3600 },
+        } satisfies ReportSummary);
+      if (cmd === "data_paths")
+        return Promise.resolve({ dataDir: "", dbPath: "", pendingImport: null });
+      if (cmd === "list_projects")
+        return Promise.resolve([
+          {
+            id: "other",
+            name: "Other",
+            clientId: null,
+            color: "#123456",
+            archived: false,
+          },
+        ]);
+      return Promise.resolve(null);
+    });
+    const { ReportsView: View } = await import("./reports");
+    const { container } = render(<View density="comfy" />);
+    await waitFor(() =>
+      expect(container.querySelector(".bd-name")?.textContent).toBe("unknown-proj"),
+    );
+    const dot = container.querySelector(".proj-dot") as HTMLElement;
+    expect(dot.style.background).toContain("var(--ink-faint)");
+  });
+
+  it("uses the project's own color and name when projectsById has the entry", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "report_summary")
+        return Promise.resolve({
+          totalSeconds: 3600,
+          prevTotalSeconds: 0,
+          byDay: [
+            {
+              date: formatIso(new Date()),
+              byProject: [{ projectId: "cairn", seconds: 3600 }],
+            },
+          ],
+          byProject: [{ projectId: "cairn", seconds: 3600 }],
+          bySource: { rule: 3600, calendar: 0, manual: 0 },
+        } satisfies ReportSummary);
+      if (cmd === "data_paths")
+        return Promise.resolve({ dataDir: "", dbPath: "", pendingImport: null });
+      if (cmd === "list_projects")
+        return Promise.resolve([
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abcdef",
+            archived: false,
+          },
+        ]);
+      return Promise.resolve(null);
+    });
+    const { ReportsView: View } = await import("./reports");
+    const { container } = render(<View density="comfy" />);
+    await waitFor(() =>
+      expect(container.querySelector(".bd-name")?.textContent).toBe("Cairn"),
+    );
+    const dot = container.querySelector(".proj-dot") as HTMLElement;
+    expect(dot.style.background.toLowerCase()).toContain("#abcdef");
+  });
+
+  it("renders a 'No project' row for slices with a null projectId", async () => {
+    const summary: ReportSummary = {
+      totalSeconds: 7200,
+      prevTotalSeconds: 0,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [
+            { projectId: null, seconds: 3600 },
+            { projectId: "cairn", seconds: 3600 },
+          ],
+        },
+      ],
+      byProject: [
+        { projectId: null, seconds: 3600 },
+        { projectId: "cairn", seconds: 3600 },
+      ],
+      bySource: { rule: 0, calendar: 0, manual: 7200 },
+    };
+    await renderWithSummary(summary);
+    await waitFor(() =>
+      expect(screen.getByText(/no project/i)).toBeTruthy(),
+    );
+  });
+
+  it("logs to console.error when clipboard write rejects", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    writeText.mockRejectedValue(new Error("denied"));
+    const summary: ReportSummary = {
+      totalSeconds: 3600,
+      prevTotalSeconds: 0,
       byDay: [
         {
           date: formatIso(new Date()),
@@ -218,7 +444,13 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
       expect(btn.disabled).toBe(false);
     });
     fireEvent.click(screen.getByRole("button", { name: /copy summary/i }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(consoleError).toHaveBeenCalledWith(
+        "clipboard write failed",
+        expect.any(Error),
+      ),
+    );
+    consoleError.mockRestore();
   });
 });
 

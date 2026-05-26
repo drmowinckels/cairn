@@ -56,6 +56,39 @@ describe("useReportSummary", () => {
     expect(result.current.data).toBeNull();
   });
 
+  it("stringifies non-Error rejections", async () => {
+    const fetchFn = vi.fn().mockRejectedValue("kaboom");
+    const { result } = renderHook(() =>
+      useReportSummary("week", { enabled: true, fetch: fetchFn }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBe("kaboom");
+  });
+
+  it("ignores stale rejections when a newer request resolves first", async () => {
+    let rejectFirst: (reason: unknown) => void = () => {};
+    let resolveSecond: (v: ReportSummary | null) => void = () => {};
+    const fetchFn = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ReportSummary | null>((_res, rej) => (rejectFirst = rej)),
+      )
+      .mockImplementationOnce(
+        () => new Promise<ReportSummary | null>((r) => (resolveSecond = r)),
+      );
+    const { result } = renderHook(() =>
+      useReportSummary("week", { enabled: true, fetch: fetchFn }),
+    );
+    act(() => result.current.refresh());
+    act(() => resolveSecond(sample(42)));
+    await waitFor(() => expect(result.current.data?.totalSeconds).toBe(42));
+    act(() => rejectFirst(new Error("stale")));
+    await Promise.resolve();
+    expect(result.current.error).toBeNull();
+    expect(result.current.data?.totalSeconds).toBe(42);
+  });
+
   it("refresh() re-invokes the fetch", async () => {
     const fetchFn = vi
       .fn()

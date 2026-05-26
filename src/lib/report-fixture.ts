@@ -54,9 +54,10 @@ export function fixtureReportSummary(range: ReportRange): ReportSummary {
   // Day / Month flatten the same data so the picker has something
   // visible; the real backend differentiates.
   if (range === "day") {
-    const todayBucket = byDay.find(
-      (d) => d.date === isoDate(today),
-    ) ?? byDay[byDay.length - 1];
+    // `byDay` is monday..sunday for the current week, so today's offset is
+    // `(getDay() + 6) % 7` (Mon=0..Sun=6).
+    const todayOffset = (today.getDay() + 6) % 7;
+    const todayBucket = byDay[todayOffset]!;
     return {
       totalSeconds: todayBucket.byProject.reduce((a, b) => a + b.seconds, 0),
       prevTotalSeconds: 0,

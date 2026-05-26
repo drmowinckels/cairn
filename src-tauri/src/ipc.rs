@@ -3462,6 +3462,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn report_summary_splits_multi_day_entries_across_buckets() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let monday_local = monday_of(Local::now().date_naive());
+        let start = local_midnight_utc(monday_local) + Duration::hours(22);
+        let end = start + Duration::hours(4);
+        insert_entry(&state.db.pool, Some("cairn"), start, Some(end), "manual").await;
+        let summary = report_summary(state, ReportRange::Week).await.unwrap();
+        assert_eq!(summary.total_seconds, 4 * 3600);
+        let non_empty: Vec<_> = summary
+            .by_day
+            .iter()
+            .filter(|d| !d.by_project.is_empty())
+            .collect();
+        assert_eq!(
+            non_empty.len(),
+            2,
+            "expected the entry to span two day buckets"
+        );
+    }
+
+    #[tokio::test]
+    async fn report_summary_clamps_entry_starting_before_window() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let monday_local = monday_of(Local::now().date_naive());
+        let pre_window = local_midnight_utc(monday_local) - Duration::hours(2);
+        let end = local_midnight_utc(monday_local) + Duration::hours(1);
+        insert_entry(&state.db.pool, Some("cairn"), pre_window, Some(end), "manual").await;
+        let summary = report_summary(state, ReportRange::Week).await.unwrap();
+        assert_eq!(summary.total_seconds, 3600);
+        let monday_bucket = summary
+            .by_day
+            .iter()
+            .find(|d| d.date == monday_local)
+            .expect("monday bucket exists");
+        assert_eq!(
+            monday_bucket.by_project.iter().map(|p| p.seconds).sum::<i64>(),
+            3600
+        );
+    }
+
+    #[tokio::test]
     async fn report_summary_skips_zero_or_negative_intervals() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();

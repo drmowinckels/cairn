@@ -61,8 +61,10 @@ export function ReportsView({ density }: Props) {
   };
 
   const onCopySummary = async () => {
-    if (!data) return;
-    const week: WeekDay[] = data.byDay.map((d, i) => {
+    // The button is `disabled={!hasData}` and `hasData` is false whenever
+    // `data` is null, so this handler runs only when `data` is non-null.
+    const summaryData = data!;
+    const week: WeekDay[] = summaryData.byDay.map((d, i) => {
       const segments: Array<[string, number]> = d.byProject.map((s) => [
         s.projectId ?? "_none",
         secondsToHours(s.seconds),
@@ -75,7 +77,7 @@ export function ReportsView({ density }: Props) {
       };
     });
     const summary = buildWeekSummary({
-      weekLabel: formatRangeLabel(data),
+      weekLabel: formatRangeLabel(summaryData),
       week,
       projectsById: {
         ...projectsById,
