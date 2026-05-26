@@ -2452,6 +2452,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reorder_rules_rejects_unknown_id_with_matching_length() {
+        // Same total count as the DB (so the length check passes)
+        // but one of the ids has been substituted for a ghost id —
+        // this is the *per-id* membership check, not the length
+        // check. Without an explicit test of this path the
+        // "unknown id" error string is never reached.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (a, b, _c) = seed_three_rules(state.clone()).await;
+        let err = reorder_rules(state, vec![a, b, "ghost-id".into()])
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("unknown"),
+            "expected unknown-id error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn reorder_rules_accepts_empty_list_on_empty_db() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();

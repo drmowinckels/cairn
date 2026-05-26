@@ -584,6 +584,31 @@ describe("RulesView", () => {
     expect(label).not.toMatch(/Alt/);
   });
 
+  it("hovering a drop target toggles data-drag-over on, dragleave toggles it off", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    expect(rules[1].getAttribute("data-drag-over")).toBeNull();
+    fireEvent.dragOver(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBe("true");
+    fireEvent.dragLeave(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBeNull();
+  });
+
+  it("Enter or Space on the focused rule head toggles expansion (keyboard-accessible)", () => {
+    const { container, onOpenRule } = renderRules();
+    const head = container.querySelector(".rule-head") as HTMLElement;
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    head.focus();
+    fireEvent.keyDown(head, { key: "Enter" });
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(onOpenRule).toHaveBeenCalled();
+    // And Space toggles it back closed.
+    fireEvent.keyDown(head, { key: " " });
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("expanded editor inputs aren't draggable (text selection isn't hijacked)", () => {
     const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
     const nameInput = container.querySelector<HTMLInputElement>(

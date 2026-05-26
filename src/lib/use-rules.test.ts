@@ -510,6 +510,21 @@ describe("useRules hook", () => {
     expect(ipc.reorderRules).not.toHaveBeenCalled();
   });
 
+  it("move() with out-of-range indices is a no-op (no IPC, no state change)", async () => {
+    ipcMock.__seed([
+      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
+      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(2));
+    const before = result.current.rules.map((r) => r.id);
+    await act(async () => {
+      await result.current.move(0, 999); // out-of-range `to`
+    });
+    expect(result.current.rules.map((r) => r.id)).toEqual(before);
+    expect(ipc.reorderRules).not.toHaveBeenCalled();
+  });
+
   it("move() keeps the local change on IPC failure (no destructive rollback)", async () => {
     // Mirror the policy other mutators use: the next reorder
     // retries with whatever the user has by then. Rolling back
