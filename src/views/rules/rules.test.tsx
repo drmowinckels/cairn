@@ -585,6 +585,11 @@ describe("RulesView", () => {
   });
 
   it("hovering a drop target toggles data-drag-over on, dragleave toggles it off", () => {
+    // Cover both arms of the dragOver / dragLeave guards:
+    // - dragOver while NOT already set → set true
+    // - dragOver while already set → no-op (the if-guard's false arm)
+    // - dragLeave while set → set false
+    // - dragLeave while NOT set → no-op (the if-guard's false arm)
     const { container } = renderRules({ complexity: "medium" });
     const rules = Array.from(
       container.querySelectorAll<HTMLElement>(".rule"),
@@ -592,6 +597,12 @@ describe("RulesView", () => {
     expect(rules[1].getAttribute("data-drag-over")).toBeNull();
     fireEvent.dragOver(rules[1]);
     expect(rules[1].getAttribute("data-drag-over")).toBe("true");
+    // Second dragOver hits the !dragOver===false arm (no-op).
+    fireEvent.dragOver(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBe("true");
+    fireEvent.dragLeave(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBeNull();
+    // Second dragLeave hits the dragOver===false arm (no-op).
     fireEvent.dragLeave(rules[1]);
     expect(rules[1].getAttribute("data-drag-over")).toBeNull();
   });
