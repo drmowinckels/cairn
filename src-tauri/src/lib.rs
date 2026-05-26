@@ -124,6 +124,7 @@ pub fn run() {
             ipc::delete_task,
             ipc::list_today,
             ipc::list_week,
+            ipc::report_summary,
             ipc::list_rules,
             ipc::save_rule,
             ipc::delete_rule,

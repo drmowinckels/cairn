@@ -964,6 +964,23 @@ body {
   font-size: var(--font-small);
   color: var(--teal);
   font-weight: 500;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+}
+.rep-delta--up {
+  color: var(--teal);
+}
+.rep-delta--down {
+  color: var(--accent);
+}
+.rep-delta--flat,
+.rep-delta--none {
+  color: var(--ink-mute);
+}
+.rep-delta-arrow {
+  font-size: 11px;
+  line-height: 1;
 }
 
 /* Segmented control */
@@ -1210,6 +1227,11 @@ body {
 }
 
 /* ─── HONESTY METER ─────────────────────────────────────────────────── */
+.honesty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .honesty-bar {
   display: flex;
   height: 8px;
