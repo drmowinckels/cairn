@@ -32,7 +32,7 @@ export function useToday(opts: UseTodayOpts = {}): UseTodayState {
       setEntries(rows);
       setError(null);
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }

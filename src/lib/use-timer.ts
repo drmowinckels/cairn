@@ -69,7 +69,7 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
       setRunning(entry);
       setError(null);
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -84,11 +84,21 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
     onStoppedRef.current = onStopped;
   }, [onStopped]);
 
+  // The snapshot stream fires every ~500ms; refetching current_running
+  // every tick would hammer SQLite with no payoff (the running entry
+  // only changes on user/rule action). Throttle to ≥ 2 seconds — enough
+  // to keep rule-driven starts visible within 2s, sparse enough to
+  // stop the popover acting as a 2 Hz polling client. Replace with a
+  // dedicated entry:changed event in a follow-up.
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
+    let lastRefresh = 0;
     void listenFn(SIGNAL_SNAPSHOT_EVENT, () => {
+      const now = Date.now();
+      if (now - lastRefresh < 2_000) return;
+      lastRefresh = now;
       void refresh();
     }).then((un) => {
       if (cancelled) un();

@@ -22,11 +22,7 @@ import {
 } from "../../lib/timeline";
 import type { BackendEntry } from "../../lib/ipc";
 import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
-import {
-  PROJECT_BY_ID,
-  PROJECTS,
-  UPCOMING,
-} from "../../test-fixtures/data";
+import { UPCOMING } from "../../test-fixtures/data";
 
 interface Props {
   density: Density;
@@ -78,11 +74,12 @@ export function TodayView({
   const onPickProject = useCallback(
     (id: string) => {
       setPickerOpen(false);
+      debouncedDesc.flush();
       timer
         .update({ projectId: id })
         .catch((e) => console.error("update_entry failed", e));
     },
-    [timer],
+    [debouncedDesc, timer],
   );
 
   const onStop = useCallback(() => {
@@ -98,6 +95,16 @@ export function TodayView({
   };
 
   const todayEntries = today.entries;
+  const projectsById = useMemo(() => projectById(projects), [projects]);
+
+  useEffect(() => {
+    if (!suggestion || detectionPrompts === "off") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismiss();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [suggestion, detectionPrompts, dismiss]);
 
   return (
     <div className="view view-today" data-density={density}>
@@ -107,13 +114,6 @@ export function TodayView({
           aria-label="Auto-detected work"
           aria-live={announce ? "polite" : "off"}
           role={detectionPrompts === "modal" ? "alertdialog" : undefined}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              dismiss();
-            } else if (e.key === "Enter") {
-              void confirm();
-            }
-          }}
         >
           <div className="suggest-head">
             <Icon name="sparkle" size={13} />
@@ -321,21 +321,29 @@ export function TodayView({
       {layoutVariant === "projects-first" && (
         <section className="quick" aria-label="Quick-start a project">
           <div className="sect-label">Quick start</div>
-          <div className="quick-grid">
-            {(projects.length ? projects : PROJECTS).slice(0, 4).map((p) => (
-              <button
-                key={p.id}
-                className="quick-card"
-                onClick={() => onQuickStart(p.id)}
-              >
-                <span
-                  className="proj-dot"
-                  style={{ background: p.color, width: 8, height: 8 }}
-                />
-                <span className="quick-name">{p.name}</span>
-              </button>
-            ))}
-          </div>
+          {projects.length === 0 ? (
+            <Empty
+              title="No projects yet"
+              body="Add a project from Settings to quick-start a timer."
+              tone="soft"
+            />
+          ) : (
+            <div className="quick-grid">
+              {projects.slice(0, 4).map((p) => (
+                <button
+                  key={p.id}
+                  className="quick-card"
+                  onClick={() => onQuickStart(p.id)}
+                >
+                  <span
+                    className="proj-dot"
+                    style={{ background: p.color, width: 8, height: 8 }}
+                  />
+                  <span className="quick-name">{p.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -359,15 +367,12 @@ export function TodayView({
           ) : (
             <ul className="entries">
               {[...todayEntries]
-                .slice()
                 .reverse()
                 .slice(0, 4)
                 .map((e) => {
                   const startMin = minutesOfDay(e.startedAt);
                   const endMin = e.endedAt ? minutesOfDay(e.endedAt) : startMin;
-                  const proj = e.projectId
-                    ? (projectById(projects)[e.projectId] ?? PROJECT_BY_ID[e.projectId])
-                    : undefined;
+                  const proj = e.projectId ? projectsById[e.projectId] : undefined;
                   return (
                     <li key={e.id} className="entry">
                       <span className="entry-time">{fmtClock(startMin)}</span>
@@ -380,10 +385,20 @@ export function TodayView({
                         {fmtHm(Math.max(0, Math.round(endMin - startMin)))}
                       </span>
                       {e.source.startsWith("rule") && (
-                        <Icon name="sparkle" size={10} className="entry-src" />
+                        <Icon
+                          name="sparkle"
+                          size={10}
+                          className="entry-src"
+                          aria-label="rule-detected"
+                        />
                       )}
                       {e.source === "calendar" && (
-                        <Icon name="calendar" size={10} className="entry-src" />
+                        <Icon
+                          name="calendar"
+                          size={10}
+                          className="entry-src"
+                          aria-label="calendar event"
+                        />
                       )}
                     </li>
                   );
@@ -448,9 +463,9 @@ function ProjectPickerChip({
   setOpen,
   onPick,
 }: ProjectPickerChipProps) {
-  const fallback = projects.length ? projects : PROJECTS;
-  const current = projectId ? fallback.find((p) => p.id === projectId) : undefined;
+  const current = projectId ? projects.find((p) => p.id === projectId) : undefined;
   const ref = useRef<HTMLDivElement>(null);
+  const hasProjects = projects.length > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -472,10 +487,11 @@ function ProjectPickerChip({
         className="proj-chip is-interactive"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-disabled={!hasProjects}
         aria-label={
           current ? `Project: ${current.name}. Change project` : "Choose a project"
         }
-        onClick={() => setOpen(!open)}
+        onClick={() => hasProjects && setOpen(!open)}
       >
         <span
           className="proj-dot"
@@ -483,9 +499,9 @@ function ProjectPickerChip({
         />
         <span className="proj-chip-name">{current?.name ?? "No project"}</span>
       </button>
-      {open && (
+      {open && hasProjects && (
         <ul className="now-picker-list" role="listbox">
-          {fallback.map((p) => (
+          {projects.map((p) => (
             <li key={p.id} role="option" aria-selected={p.id === projectId}>
               <button
                 type="button"
@@ -612,8 +628,6 @@ function DayTimeline({ segments, projects, nowMin, announce }: DayTimelineProps)
                 background: color,
               }}
               title={label}
-              tabIndex={0}
-              role="button"
               aria-label={label}
             />
           );

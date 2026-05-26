@@ -749,7 +749,20 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     expect(seg.getAttribute("style") ?? "").toContain("var(--ink-mute)");
   });
 
-  it("project picker falls back to fixture PROJECTS when useProjects yields [] and an entry is running", async () => {
+  it("picker mousedown listener ignores events whose target is not a DOM Node", async () => {
+    await freshRender("manual");
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+    const evt = new Event("mousedown", { bubbles: true });
+    Object.defineProperty(evt, "target", { value: null, configurable: true });
+    document.dispatchEvent(evt);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+  });
+
+  it("project picker stays inert when useProjects yields [] (no fixture leak)", async () => {
     const running = {
       id: "e-pick",
       projectId: "cairn",
@@ -770,38 +783,27 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     vi.doMock("../../lib/use-projects", () => ({
       useProjects: () => [],
     }));
-    const { TodayView } = await import("./today");
-    render(
-      <TodayView
-        density="comfy"
-        layoutVariant="default"
-        onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
-      />,
-    );
-    const chip = await screen.findByRole("button", {
-      name: /project: cairn\. change project/i,
-    });
-    fireEvent.click(chip);
-    const list = await screen.findByRole("listbox");
-    expect(list.querySelectorAll("[role='option']").length).toBeGreaterThan(0);
+    try {
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="default"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      const chip = await screen.findByRole("button", { name: /choose a project/i });
+      expect(chip.getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(chip);
+      expect(screen.queryByRole("listbox")).toBeNull();
+    } finally {
+      vi.doUnmock("../../lib/use-projects");
+    }
   });
 
-  it("picker mousedown listener ignores events whose target is not a DOM Node", async () => {
-    await freshRender("manual");
-    const chip = await screen.findByRole("button", {
-      name: /project: cairn\. change project/i,
-    });
-    fireEvent.click(chip);
-    expect(screen.queryByRole("listbox")).toBeTruthy();
-    const evt = new Event("mousedown", { bubbles: true });
-    Object.defineProperty(evt, "target", { value: null, configurable: true });
-    document.dispatchEvent(evt);
-    expect(screen.queryByRole("listbox")).toBeTruthy();
-  });
-
-  it("quick-start grid falls back to fixture projects when useProjects yields []", async () => {
+  it("quick-start grid renders an empty state when useProjects yields []", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
       if (cmd === "list_today") return [];
@@ -812,18 +814,23 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     vi.doMock("../../lib/use-projects", () => ({
       useProjects: () => [],
     }));
-    const { TodayView } = await import("./today");
-    render(
-      <TodayView
-        density="comfy"
-        layoutVariant="projects-first"
-        onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
-      />,
-    );
-    await waitFor(() =>
-      expect(document.querySelectorAll(".quick-card").length).toBe(4),
-    );
+    try {
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="projects-first"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      await waitFor(() =>
+        expect(screen.getByText(/no projects yet/i)).toBeTruthy(),
+      );
+      expect(document.querySelectorAll(".quick-card").length).toBe(0);
+    } finally {
+      vi.doUnmock("../../lib/use-projects");
+    }
   });
 });
