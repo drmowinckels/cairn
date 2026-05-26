@@ -357,6 +357,46 @@ export async function currentSnapshot(): Promise<SignalSnapshot | null> {
   return invoke<SignalSnapshot>("current_snapshot");
 }
 
+/** Payload of a `dry_run_rules` IPC result. Mirrors `rules::RuleMatch`. */
+export interface DryRunResult {
+  ruleId: string;
+  ruleName: string;
+  confidence: "suggestive" | "strict";
+  project: string | null;
+  tags: string[];
+  /** Pre-substituted description (no `{tokens}` left). Empty when the
+   *  rule has no `descriptionTemplate`. */
+  description: string;
+}
+
+/** Snapshot fields the Test bench sends to the backend. Mirrors
+ *  `rules::SignalSnapshot` for the fields the bench exposes today
+ *  (folder / branch / title); the other fields default server-side. */
+export interface DryRunSnapshot {
+  ideFolder?: string | null;
+  gitBranch?: string | null;
+  windowTitle?: string | null;
+  appName?: string | null;
+  browserDomain?: string | null;
+}
+
+/**
+ * Evaluate the current rule set against a user-constructed snapshot.
+ * Powers the rule editor's Test bench (issue #13). Returns `null`
+ * when no rule matches — the bench renders a "no match" row in that
+ * case so the user knows the call landed.
+ *
+ * Outside Tauri (Vite dev / vitest with no IPC mock) we return
+ * `null` instead of throwing, so the bench in a fixture-only build
+ * shows the no-match state instead of an error.
+ */
+export async function dryRunRules(
+  snapshot: DryRunSnapshot,
+): Promise<DryRunResult | null> {
+  if (!inTauri) return null;
+  return invoke<DryRunResult | null>("dry_run_rules", { snapshot });
+}
+
 export type IdleChoice = "keep" | "discard" | "break";
 
 export interface ResolveIdleInput {

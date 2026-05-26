@@ -147,6 +147,7 @@ pub fn run() {
             ipc::current_calendar_events,
             ipc::calendar_sync_status,
             ipc::current_snapshot,
+            ipc::dry_run_rules,
             ipc::snooze_rule,
             ipc::snooze_all,
             ipc::unsnooze_all,
