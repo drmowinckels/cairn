@@ -678,6 +678,68 @@ pub async fn list_rules(state: State<'_, AppState>) -> Result<Vec<Rule>, String>
         .collect()
 }
 
+/// Maximum length of a single field on a dry-run snapshot, counted
+/// in UTF-16 code units to match the DOM `<input maxLength>`
+/// semantics the frontend bench uses (see `src/views/rules/test-bench.tsx`).
+/// The bench's `MAX_BENCH_FIELD` mirrors this number. Without the
+/// same unit on both sides, an emoji-heavy paste could pass the
+/// frontend cap and fail the backend's, producing a confusing error.
+/// 2048 UTF-16 code units is generous — real titles + folders +
+/// branches are well under this.
+pub const MAX_DRY_RUN_FIELD_LEN: usize = 2 * 1024;
+
+fn dry_run_field_too_long(field: &str, value: &Option<String>) -> Option<String> {
+    if let Some(v) = value {
+        if v.encode_utf16().count() > MAX_DRY_RUN_FIELD_LEN {
+            return Some(format!(
+                "dry_run_rules: {field} too long (max {MAX_DRY_RUN_FIELD_LEN} UTF-16 units)"
+            ));
+        }
+    }
+    None
+}
+
+/// Evaluate the current rule set against a user-supplied snapshot —
+/// the engine path that powers the Test bench (#13).
+///
+/// Uses the same `evaluate` codepath the live fanout uses, but with
+/// no snoozer (dry-runs aren't user-triggered timer starts and
+/// shouldn't be suppressed by a dismissed suggestion) and no
+/// attendee filter (the bench doesn't yet surface calendar events).
+///
+/// Returns `Some(RuleMatch)` for the first matching rule (priority
+/// asc), `None` for no match.
+#[tauri::command]
+pub async fn dry_run_rules(
+    state: State<'_, AppState>,
+    snapshot: crate::rules::SignalSnapshot,
+) -> Result<Option<crate::rules::RuleMatch>, String> {
+    for (label, val) in [
+        ("ideFolder", &snapshot.ide_folder),
+        ("gitBranch", &snapshot.git_branch),
+        ("windowTitle", &snapshot.window_title),
+        ("appName", &snapshot.app_name),
+        ("browserDomain", &snapshot.browser_domain),
+    ] {
+        if let Some(err) = dry_run_field_too_long(label, val) {
+            return Err(err);
+        }
+    }
+
+    // Clone out of the cache so we don't hold the RwLock across the
+    // evaluate call (evaluate is pure CPU — no awaits — but keeping
+    // the read window narrow is good hygiene).
+    let rules: Vec<crate::rules::Rule> = match state.rules_cache.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => {
+            let guard = poisoned.into_inner();
+            log::warn!("dry_run_rules: recovered from poisoned RwLock");
+            guard.clone()
+        }
+    };
+    Ok(crate::rules::evaluate(&rules, &snapshot))
+}
+
 #[tauri::command]
 pub async fn list_exclusions(state: State<'_, AppState>) -> Result<Vec<Exclusion>, String> {
     let rows = sqlx::query("SELECT id, kind, value FROM exclusions ORDER BY kind ASC, value ASC")
@@ -2768,6 +2830,183 @@ mod tests {
         assert!(snap.browser_domain.is_none());
         assert!(snap.git_branch.is_none());
         assert!(snap.ide_folder.is_none());
+    }
+
+    // ---------------- dry_run_rules (#13) ----------------
+
+    fn dry_run_snapshot(
+        ide: Option<&str>,
+        branch: Option<&str>,
+        title: Option<&str>,
+    ) -> crate::rules::SignalSnapshot {
+        crate::rules::SignalSnapshot {
+            ide_folder: ide.map(str::to_owned),
+            git_branch: branch.map(str::to_owned),
+            window_title: title.map(str::to_owned),
+            app_name: None,
+            browser_domain: None,
+            calendar: vec![],
+        }
+    }
+
+    fn dry_run_rule_body(signal: &str, op: &str, value: &str, project: &str) -> serde_json::Value {
+        serde_json::json!({
+            "when": [{ "signal": signal, "op": op, "value": value }],
+            "then": { "project": project, "tags": [], "tagsFromCalendar": false }
+        })
+    }
+
+    #[tokio::test]
+    async fn dry_run_returns_none_when_no_rules_match() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // No rules in DB → no match regardless of snapshot.
+        let result = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn dry_run_returns_first_priority_match() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Two rules: cairn-folder (priority 10) and any-folder (priority 20).
+        let mut r1 = rule_input(None, "Cairn dev");
+        r1.priority = 10;
+        r1.body = dry_run_rule_body("ide.folder", "contains", "cairn", "cairn");
+        let _ = save_rule(state.clone(), r1).await.unwrap();
+        let mut r2 = rule_input(None, "Any folder fallback");
+        r2.priority = 20;
+        r2.body = dry_run_rule_body("ide.folder", "contains", "code", "misc");
+        let _ = save_rule(state.clone(), r2).await.unwrap();
+
+        let m = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap()
+            .expect("a rule should match");
+        // Priority 10 wins over priority 20 even though both rules' bodies
+        // contain "cairn"/"code" patterns the snapshot satisfies.
+        assert_eq!(m.rule_name, "Cairn dev");
+        assert_eq!(m.project.as_deref(), Some("cairn"));
+    }
+
+    #[tokio::test]
+    async fn dry_run_matches_git_branch_condition() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let mut r = rule_input(None, "Feature branch work");
+        r.body = dry_run_rule_body("git.branch", "starts-with", "feat/", "cairn");
+        let _ = save_rule(state.clone(), r).await.unwrap();
+
+        let m = dry_run_rules(state, dry_run_snapshot(None, Some("feat/rules-ui"), None))
+            .await
+            .unwrap()
+            .expect("branch starting with feat/ should match");
+        assert_eq!(m.rule_name, "Feature branch work");
+    }
+
+    #[tokio::test]
+    async fn dry_run_priority_decides_when_both_rules_match() {
+        // Stricter variant of the earlier priority test: BOTH rules
+        // explicitly match the snapshot (same signal, same value), so
+        // the only thing left to decide the outcome is `priority` —
+        // not "rule 1 happened to match first." This pins the
+        // priority-asc semantics the live engine guarantees.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let mut high = rule_input(None, "High priority");
+        high.priority = 5;
+        high.body = dry_run_rule_body("ide.folder", "contains", "cairn", "alpha");
+        let _ = save_rule(state.clone(), high).await.unwrap();
+        let mut low = rule_input(None, "Low priority");
+        low.priority = 20;
+        low.body = dry_run_rule_body("ide.folder", "contains", "cairn", "beta");
+        let _ = save_rule(state.clone(), low).await.unwrap();
+
+        let m = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap()
+            .expect("both match; lower-priority value wins");
+        assert_eq!(m.rule_name, "High priority");
+        assert_eq!(m.project.as_deref(), Some("alpha"));
+    }
+
+    #[tokio::test]
+    async fn dry_run_skips_disabled_rules() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let mut r = rule_input(None, "Cairn dev");
+        r.enabled = false;
+        r.body = dry_run_rule_body("ide.folder", "contains", "cairn", "cairn");
+        let _ = save_rule(state.clone(), r).await.unwrap();
+
+        let result = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap();
+        // A disabled rule must not contribute a match — same contract
+        // as the live engine path.
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn dry_run_rejects_overlong_field() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // 2 KB+1 chars: just over the bench input cap. Real user
+        // inputs are bounded by the frontend `maxLength`; this is
+        // the backend gate against a forged invocation.
+        let too_long = "a".repeat(MAX_DRY_RUN_FIELD_LEN + 1);
+        let err = dry_run_rules(state, dry_run_snapshot(Some(&too_long), None, None))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("ideFolder"),
+            "error should name the offending field, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dry_run_accepts_field_at_the_max_boundary() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Exactly at the cap — must not trigger the validation error.
+        let at_limit = "x".repeat(MAX_DRY_RUN_FIELD_LEN);
+        let ok = dry_run_rules(state, dry_run_snapshot(Some(&at_limit), None, None)).await;
+        assert!(ok.is_ok(), "boundary value should pass validation: {ok:?}");
+    }
+
+    #[tokio::test]
+    async fn dry_run_recovers_from_poisoned_rules_cache() {
+        // The IPC's RwLock recovery branch only fires when another
+        // thread has panicked while holding the write lock. Force
+        // that condition deterministically: spawn a thread, take
+        // the write lock, panic. The thread's join handle returns
+        // Err and the lock is now poisoned. dry_run_rules must still
+        // answer correctly (with whatever was in the cache before
+        // the panic).
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let mut r = rule_input(None, "Cairn dev");
+        r.body = dry_run_rule_body("ide.folder", "contains", "cairn", "cairn");
+        let _ = save_rule(state.clone(), r).await.unwrap();
+
+        let cache = state.rules_cache.clone();
+        let handle = std::thread::spawn(move || {
+            let _g = cache.write().unwrap();
+            panic!("intentional poison for test");
+        });
+        let _ = handle.join();
+        assert!(
+            state.rules_cache.read().is_err(),
+            "lock must be poisoned for this test to be meaningful",
+        );
+
+        let m = dry_run_rules(state, dry_run_snapshot(Some("~/code/cairn"), None, None))
+            .await
+            .unwrap()
+            .expect("rule should match even after lock poison");
+        assert_eq!(m.rule_name, "Cairn dev");
     }
 
     #[tokio::test]

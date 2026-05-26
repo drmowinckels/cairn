@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
-import { Empty, ProjectChip, Tag } from "../../lib/components";
+import { Empty, ProjectChip } from "../../lib/components";
 import type {
   Confidence,
   Density,
@@ -25,6 +25,7 @@ import { useProjects } from "../../lib/use-projects";
 import { useDebouncedCallback } from "../../lib/use-debounced-callback";
 import { selectLiveSignals, useSnapshot } from "../../lib/use-snapshot";
 import { LiveSignalsCard } from "./live-signals-card";
+import { RuleTestBench } from "./test-bench";
 import { LIVE_SIGNALS as FIXTURE_SIGNALS } from "../../test-fixtures/data";
 import { inTauri } from "../../lib/ipc";
 
@@ -200,32 +201,7 @@ export function RulesView({ complexity, openRuleId, onOpenRule, density }: Props
         </ul>
       )}
 
-      {complexity === "heavy" && (
-        <section className="test-bench" aria-label="Test bench">
-          <div className="sect-label">
-            <span>Test bench</span>
-            <span className="sect-meta">Simulate signals against your rules</span>
-          </div>
-          <div className="bench-inputs">
-            <BenchField label="IDE folder" value="~/code/cairn" />
-            <BenchField label="Git branch" value="feat/rules-ui" />
-            <BenchField label="Window title" value="rules.tsx — cairn" />
-          </div>
-          <div className="bench-result">
-            <span className="bench-arrow">
-              <Icon name="arrow-right" size={12} />
-            </span>
-            <span>
-              matches <strong>Cairn dev work</strong> → assigns{" "}
-            </span>
-            <ProjectChip id="cairn" />
-            <span className="bench-tags">
-              <Tag>dev</Tag>
-              <Tag>feature</Tag>
-            </span>
-          </div>
-        </section>
-      )}
+      {complexity === "heavy" && <RuleTestBench />}
     </div>
   );
 }
@@ -603,15 +579,6 @@ function SignalIcon({ kind, small }: { kind: SignalKind; small?: boolean }) {
     : kind === "calendar.event" ? "calendar"
     : "info";
   return <Icon name={name} size={small ? 11 : 12} className="sig-ic" />;
-}
-
-function BenchField({ label, value }: { label: string; value: string }) {
-  return (
-    <label className="bench-field">
-      <span className="bench-label">{label}</span>
-      <input className="bench-input" defaultValue={value} />
-    </label>
-  );
 }
 
 interface DebouncedTextInputProps
