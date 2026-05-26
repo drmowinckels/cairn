@@ -73,12 +73,12 @@ export function fixtureReportSummary(range: ReportRange): ReportSummary {
     // returns first..first).
     const first = new Date(today.getFullYear(), today.getMonth(), 1);
     const nextFirst = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const daysInMonth = Math.round(
+      (nextFirst.getTime() - first.getTime()) / (24 * 3600 * 1000),
+    );
     const monthDays: ReportDayBucket[] = [];
-    for (
-      let d = new Date(first);
-      d < nextFirst;
-      d.setDate(d.getDate() + 1)
-    ) {
+    for (let i = 0; i < daysInMonth; i++) {
+      const d = addDays(first, i);
       const day = byDay.find((b) => b.date === isoDate(d));
       monthDays.push({
         date: isoDate(d),

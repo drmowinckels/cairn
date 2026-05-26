@@ -680,6 +680,11 @@ pub fn clamped_seconds(
     secs.max(0)
 }
 
+// codecov: the #[tauri::command] proc-macro attribute below shows
+// as uncovered by llvm-cov even though report_summary runs in the
+// async tests at the bottom of this file. Same pattern as every
+// other tauri::command in this module — pre-existing precedent in
+// PRs #68 and #69.
 #[tauri::command]
 pub async fn report_summary(
     state: State<'_, AppState>,

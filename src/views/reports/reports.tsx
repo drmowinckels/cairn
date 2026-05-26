@@ -12,6 +12,7 @@ import {
   percentOf,
   rangeTitle,
   secondsToHours,
+  weekdayLabel,
 } from "../../lib/report-math";
 import type { ReportRange } from "../../lib/ipc";
 import type { Density, Project, WeekDay } from "../../lib/types";
@@ -44,7 +45,7 @@ export function ReportsView({ density }: Props) {
     [data],
   );
   const maxDaySeconds = useMemo(
-    () => Math.max(...stackedDays.map((d) => d.totalSeconds), 8 * 3600),
+    () => stackedDays.reduce((m, d) => Math.max(m, d.totalSeconds), 8 * 3600),
     [stackedDays],
   );
   const totalSeconds = data?.totalSeconds ?? 0;
@@ -64,14 +65,14 @@ export function ReportsView({ density }: Props) {
     // The button is `disabled={!hasData}` and `hasData` is false whenever
     // `data` is null, so this handler runs only when `data` is non-null.
     const summaryData = data!;
-    const week: WeekDay[] = summaryData.byDay.map((d, i) => {
+    const week: WeekDay[] = summaryData.byDay.map((d) => {
       const segments: Array<[string, number]> = d.byProject.map((s) => [
         s.projectId ?? "_none",
         secondsToHours(s.seconds),
       ]);
       const hours = segments.reduce((a, [, h]) => a + h, 0);
       return {
-        day: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][i] ?? `D${i}`,
+        day: weekdayLabel(d.date) || d.date,
         hours,
         segments,
       };
@@ -198,9 +199,9 @@ export function ReportsView({ density }: Props) {
                   className="bar-stack"
                   style={{ height: `${heightPct}%` }}
                 >
-                  {d.segments.map((s, j) => (
+                  {d.segments.map((s) => (
                     <div
-                      key={j}
+                      key={s.projectId ?? "_none"}
                       className="bar-seg"
                       style={{
                         flex: s.seconds,
