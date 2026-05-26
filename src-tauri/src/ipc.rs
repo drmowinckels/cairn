@@ -3490,7 +3490,14 @@ mod tests {
         let monday_local = monday_of(Local::now().date_naive());
         let pre_window = local_midnight_utc(monday_local) - Duration::hours(2);
         let end = local_midnight_utc(monday_local) + Duration::hours(1);
-        insert_entry(&state.db.pool, Some("cairn"), pre_window, Some(end), "manual").await;
+        insert_entry(
+            &state.db.pool,
+            Some("cairn"),
+            pre_window,
+            Some(end),
+            "manual",
+        )
+        .await;
         let summary = report_summary(state, ReportRange::Week).await.unwrap();
         assert_eq!(summary.total_seconds, 3600);
         let monday_bucket = summary
@@ -3499,7 +3506,11 @@ mod tests {
             .find(|d| d.date == monday_local)
             .expect("monday bucket exists");
         assert_eq!(
-            monday_bucket.by_project.iter().map(|p| p.seconds).sum::<i64>(),
+            monday_bucket
+                .by_project
+                .iter()
+                .map(|p| p.seconds)
+                .sum::<i64>(),
             3600
         );
     }
