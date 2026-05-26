@@ -52,7 +52,7 @@ describe("minutesOfDay", () => {
     expect(min).toBeLessThan(9 * 60 + 31);
   });
 
-  it("returns 0 for an unparseable string", () => {
+  it("returns 0 for an unparsable string", () => {
     expect(minutesOfDay("not-a-date")).toBe(0);
   });
 });
@@ -72,31 +72,31 @@ function entry(id: string, projectId: string | null, start: string, end: string 
 
 describe("entriesToSegments", () => {
   it("maps each entry to a segment, marking the running one", () => {
-    const segs = entriesToSegments(
+    const segments = entriesToSegments(
       [
         entry("a", "p1", "2026-05-23T09:00:00", "2026-05-23T10:00:00"),
         entry("b", "p1", "2026-05-23T14:48:00", null),
       ],
       15 * 60 + 2,
     );
-    expect(segs).toHaveLength(2);
-    expect(segs[0].running).toBe(false);
-    expect(segs[1].running).toBe(true);
-    expect(segs[1].endMin).toBe(15 * 60 + 2);
+    expect(segments).toHaveLength(2);
+    expect(segments[0].running).toBe(false);
+    expect(segments[1].running).toBe(true);
+    expect(segments[1].endMin).toBe(15 * 60 + 2);
   });
 
   it("never lets a running endMin fall below its startMin", () => {
-    const segs = entriesToSegments(
+    const segments = entriesToSegments(
       [entry("a", "p1", "2026-05-23T14:48:00", null)],
       10 * 60,
     );
-    expect(segs[0].endMin).toBe(segs[0].startMin);
+    expect(segments[0].endMin).toBe(segments[0].startMin);
   });
 });
 
 describe("legendFromSegments", () => {
   it("emits one row per distinct project, in first-seen order", () => {
-    const segs = entriesToSegments(
+    const segments = entriesToSegments(
       [
         entry("a", "p1", "2026-05-23T09:00:00", "2026-05-23T10:00:00"),
         entry("b", "p2", "2026-05-23T10:00:00", "2026-05-23T10:30:00"),
@@ -104,24 +104,24 @@ describe("legendFromSegments", () => {
       ],
       12 * 60,
     );
-    const legend = legendFromSegments(segs, PROJECTS);
+    const legend = legendFromSegments(segments, PROJECTS);
     expect(legend.map((l) => l.projectId)).toEqual(["p1", "p2"]);
     expect(legend[0]).toEqual({ projectId: "p1", color: "#abc", name: "Cairn" });
   });
 
   it("skips segments without a project (uncategorized)", () => {
-    const segs = entriesToSegments(
+    const segments = entriesToSegments(
       [entry("a", null, "2026-05-23T09:00:00", "2026-05-23T10:00:00")],
       12 * 60,
     );
-    expect(legendFromSegments(segs, PROJECTS)).toEqual([]);
+    expect(legendFromSegments(segments, PROJECTS)).toEqual([]);
   });
 
   it("skips segments whose projectId isn't in the project list", () => {
-    const segs = entriesToSegments(
+    const segments = entriesToSegments(
       [entry("a", "ghost", "2026-05-23T09:00:00", "2026-05-23T10:00:00")],
       12 * 60,
     );
-    expect(legendFromSegments(segs, PROJECTS)).toEqual([]);
+    expect(legendFromSegments(segments, PROJECTS)).toEqual([]);
   });
 });

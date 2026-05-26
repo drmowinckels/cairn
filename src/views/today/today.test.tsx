@@ -278,8 +278,8 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
   it("renders the timeline segments + 6 axis ticks + a running stripe class", async () => {
     await freshRender("manual");
     await waitFor(() => {
-      const segs = document.querySelectorAll(".dt-seg");
-      expect(segs.length).toBe(2);
+      const segments = document.querySelectorAll(".dt-seg");
+      expect(segments.length).toBe(2);
     });
     expect(document.querySelectorAll(".dt-tick").length).toBe(6);
     expect(document.querySelectorAll(".dt-seg.is-running").length).toBe(1);
@@ -320,21 +320,17 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
   });
 
   it("description input onBlur flushes the pending debounced update", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const { invoke } = await freshRender("manual");
-      const input = (await screen.findByLabelText(
-        /task description/i,
-      )) as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "flush me" } });
-      fireEvent.blur(input);
-      await waitFor(() => {
-        const updates = invoke.mock.calls.filter(([c]) => c === "update_entry");
-        expect(updates.length).toBeGreaterThanOrEqual(1);
-      });
-    } finally {
-      vi.useRealTimers();
-    }
+    const { invoke } = await freshRender("manual");
+    const input = (await screen.findByLabelText(
+      /task description/i,
+    )) as HTMLInputElement;
+    invoke.mockClear();
+    fireEvent.change(input, { target: { value: "flush me" } });
+    fireEvent.blur(input);
+    await waitFor(() => {
+      const updates = invoke.mock.calls.filter(([c]) => c === "update_entry");
+      expect(updates.length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it("clicking the project chip opens a listbox of projects and picking one calls update_entry", async () => {
