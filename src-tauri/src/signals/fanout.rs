@@ -60,6 +60,12 @@ pub struct MatchOutcome {
 struct RuleBody {
     #[serde(default)]
     confidence: Confidence,
+    /// Per `docs/RULES_ENGINE.md` §4 + #16. `serde(default)` so older
+    /// body JSON rows persisted before this field existed deserialize
+    /// cleanly to `Prompt` — never silently changes a rule's behavior
+    /// on app upgrade.
+    #[serde(default, rename = "ambiguityBehavior")]
+    ambiguity_behavior: crate::rules::AmbiguityBehavior,
     #[serde(default)]
     when: Vec<Condition>,
     then: RuleAction,
@@ -80,6 +86,7 @@ pub fn project_rules(rules: Vec<crate::ipc::Rule>) -> Vec<Rule> {
                 enabled: r.enabled,
                 priority: r.priority,
                 confidence: body.confidence,
+                ambiguity_behavior: body.ambiguity_behavior,
                 when: body.when,
                 then: body.then,
             }),

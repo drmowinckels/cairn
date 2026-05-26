@@ -397,4 +397,215 @@ describe("useSuggestion (disabled)", () => {
     unmount();
     expect(harness.unlisten).toHaveBeenCalledTimes(1);
   });
+
+  it("calls un() if the hook unmounts before listen resolves (race-safe cleanup)", async () => {
+    // The effect's `listen().then(...)` arm checks a `cancelled`
+    // flag and calls `un()` directly when the hook unmounted
+    // before the listener promise settled. Without this, the
+    // resolved unlisten handle would leak. Force the race:
+    // hold the listen promise open, unmount, then resolve.
+    let resolveListen: ((un: () => void) => void) | null = null;
+    const un = vi.fn();
+    const listen = (
+      _name: string,
+      _cb: (event: { payload: unknown }) => void,
+    ): Promise<() => void> =>
+      new Promise<() => void>((resolve) => {
+        resolveListen = resolve;
+      });
+    const { useSuggestion } = await import("./use-suggestion");
+    const { unmount } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    // listen promise is parked; unmount first.
+    unmount();
+    expect(resolveListen).not.toBeNull();
+    resolveListen!(un);
+    // Microtask flush for the .then arm.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(un).toHaveBeenCalledOnce();
+  });
+
+  it("does not subscribe by default when running outside Tauri (enabled defaults to inTauri)", async () => {
+    // Reviewer feedback on #16: the other tests in this file force
+    // `enabled: true` to bypass the inTauri guard. This test omits
+    // `enabled` so the hook falls back to the module-level `inTauri`
+    // constant — which is `false` in vitest because the test
+    // environment doesn't expose `window.__TAURI_INTERNALS__`.
+    // Pins the disabled-by-default contract so a future polyfill
+    // change that flips inTauri to true under jsdom can't silently
+    // start firing real IPC calls during tests.
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    renderHook(() =>
+      useSuggestion({
+        startEntry: startEntryMock as never,
+        snoozeRule: snoozeRuleMock as never,
+        snoozeAll: snoozeAllMock as never,
+        listen: listen as never,
+        // No `enabled` field — falls back to inTauri (false in jsdom).
+      }),
+    );
+    expect(harness.handler).toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSuggestion (ambiguity dispatch, #16)", () => {
+  it("'prompt' ambiguity surfaces the banner (default behaviour)", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive",
+        ambiguityBehavior: "prompt",
+        project: "cairn",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).not.toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("'skip' ambiguity drops the match silently — no banner, no start_entry", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive",
+        ambiguityBehavior: "skip",
+        project: "cairn",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+    expect(snoozeRuleMock).not.toHaveBeenCalled();
+  });
+
+  it("'log-to-uncategorized' auto-starts with projectId=null + source=rule", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Tag-only rule",
+        confidence: "suggestive",
+        ambiguityBehavior: "log-to-uncategorized",
+        project: "cairn", // Even with a project on the match, behaviour discards it.
+        tags: [],
+        description: "",
+      });
+    });
+    // No banner — the user already opted in to the uncategorized path.
+    expect(result.current.suggestion).toBeNull();
+    expect(startEntryMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        projectId: null,
+        source: "rule",
+        ruleId: "r1",
+      }),
+    );
+  });
+
+  it("'log-to-uncategorized' is de-duped against currentRunningRuleId (no churn)", async () => {
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    renderHook(() =>
+      useSuggestion(
+        defaultOpts({
+          listen: listen as never,
+          currentRunningRuleId: "r1",
+        }),
+      ),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Tag-only rule",
+        confidence: "suggestive",
+        ambiguityBehavior: "log-to-uncategorized",
+        project: null,
+        tags: [],
+        description: "",
+      });
+    });
+    // Same rule already running → don't restart, no churn.
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("'log-to-uncategorized' surfaces a start_entry failure via console.error", async () => {
+    // Mirror the Strict path's error handling: a rejected
+    // `start_entry` from the auto-start branch logs to the console
+    // (the user-visible UX for this failure is a follow-up issue).
+    // Pin so a future regression that silently swallows the error
+    // shows up in tests.
+    const { listen, harness } = makeListenHarness();
+    startEntryMock.mockRejectedValueOnce(new Error("DB locked"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { useSuggestion } = await import("./use-suggestion");
+    renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Tag-only rule",
+        confidence: "suggestive",
+        ambiguityBehavior: "log-to-uncategorized",
+        project: null,
+        tags: [],
+        description: "",
+      });
+    });
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("log-to-uncategorized"),
+        expect.any(Error),
+      );
+    });
+    errorSpy.mockRestore();
+  });
+
+  it("missing ambiguityBehavior on the payload defaults to 'prompt' (legacy event safety)", async () => {
+    // Older fanouts / replayed match events may lack the field.
+    // The hook must default to the safe path (banner), not skip or
+    // auto-start.
+    const { listen, harness } = makeListenHarness();
+    const { useSuggestion } = await import("./use-suggestion");
+    const { result } = renderHook(() =>
+      useSuggestion(defaultOpts({ listen: listen as never })),
+    );
+    await waitFor(() => expect(harness.handler).not.toBeNull());
+    act(() => {
+      harness.emit({
+        ruleId: "r1",
+        ruleName: "Legacy",
+        confidence: "suggestive",
+        project: "cairn",
+        tags: [],
+      });
+    });
+    expect(result.current.suggestion).not.toBeNull();
+    expect(startEntryMock).not.toHaveBeenCalled();
+  });
 });

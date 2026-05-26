@@ -156,6 +156,91 @@ describe("serializeRule / deserializeRule", () => {
     expect(body.then).toEqual({ project: "p" });
   });
 
+  it("round-trips a non-default ambiguityBehavior through the body (#16)", () => {
+    const original: Rule = {
+      id: "r1",
+      name: "n",
+      enabled: true,
+      priority: 10,
+      confidence: "suggestive",
+      ambiguityBehavior: "log-to-uncategorized",
+      when: [],
+      then: { project: null },
+      matchedToday: 0,
+    };
+    const ipcInput = serializeRule(original, "r1");
+    expect(
+      (ipcInput.body as { ambiguityBehavior?: string }).ambiguityBehavior,
+    ).toBe("log-to-uncategorized");
+    const round = deserializeRule({
+      id: "r1",
+      name: ipcInput.name,
+      enabled: ipcInput.enabled,
+      priority: ipcInput.priority,
+      body: ipcInput.body,
+    });
+    expect(round.ambiguityBehavior).toBe("log-to-uncategorized");
+  });
+
+  it("omits ambiguityBehavior from the body when it's the default 'prompt'", () => {
+    // Legacy rules persisted before #16 don't carry the field;
+    // omitting the default keeps body JSON small and round-trip
+    // diffs minimal.
+    const original: Rule = {
+      id: "r1",
+      name: "n",
+      enabled: true,
+      priority: 10,
+      ambiguityBehavior: "prompt",
+      when: [],
+      then: { project: null },
+      matchedToday: 0,
+    };
+    const ipcInput = serializeRule(original, "r1");
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        ipcInput.body as object,
+        "ambiguityBehavior",
+      ),
+    ).toBe(false);
+  });
+
+  it("deserializes a legacy rule (no ambiguityBehavior key) as 'prompt'", () => {
+    // Rule bodies persisted before #16 must default to 'prompt' on
+    // load — never silently change a rule's behaviour on app upgrade.
+    const backend = {
+      id: "legacy",
+      name: "Cairn",
+      enabled: true,
+      priority: 10,
+      body: {
+        confidence: "suggestive",
+        when: [],
+        then: { project: "p" },
+      },
+    };
+    const r = deserializeRule(backend);
+    expect(r.ambiguityBehavior).toBe("prompt");
+  });
+
+  it("ignores a malformed ambiguityBehavior value (coerces to 'prompt')", () => {
+    for (const garbage of ["yes", "PROMPT", 1, [], null]) {
+      const r = deserializeRule({
+        id: "r",
+        name: "r",
+        enabled: true,
+        priority: 10,
+        body: {
+          confidence: "suggestive",
+          when: [],
+          then: { project: null },
+          ambiguityBehavior: garbage,
+        },
+      });
+      expect(r.ambiguityBehavior).toBe("prompt");
+    }
+  });
+
   it("deserializes a legacy rule (body has no confidenceWarningDismissed key) as not-dismissed", () => {
     // Older rows persisted before #14 landed have no flag at all.
     // The defensive `body.confidenceWarningDismissed === true`

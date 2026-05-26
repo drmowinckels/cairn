@@ -9,6 +9,7 @@ import {
   type SaveRuleInput,
 } from "./ipc";
 import type {
+  AmbiguityBehavior,
   Confidence,
   Op,
   Rule,
@@ -26,9 +27,38 @@ import { RULES as FIXTURE_RULES } from "../test-fixtures/data";
  */
 interface RuleBody {
   confidence?: Confidence;
+  ambiguityBehavior?: AmbiguityBehavior;
   when: RuleCondition[];
   then: RuleAction;
   confidenceWarningDismissed?: boolean;
+}
+
+/**
+ * The closed set of valid `AmbiguityBehavior` values. Exported so
+ * the rule editor + the suggestion dispatcher use a single source
+ * of truth: a new variant added here is automatically reachable by
+ * every coercion path. Reviewer feedback on #16.
+ */
+export const AMBIGUITY_OPTIONS: readonly AmbiguityBehavior[] = [
+  "prompt",
+  "skip",
+  "log-to-uncategorized",
+] as const;
+
+/**
+ * Coerce an unknown value into a valid `AmbiguityBehavior`,
+ * defaulting to `"prompt"` for anything outside the closed set.
+ * The spec's safe default (banner; never auto-starts behind the
+ * user's back). Used on every input boundary — IPC payloads, body
+ * deserialization, and the suggestion event handler — so a
+ * malformed value can't smuggle unexpected state into the editor
+ * or dispatcher.
+ */
+export function coerceAmbiguity(raw: unknown): AmbiguityBehavior {
+  return typeof raw === "string" &&
+    AMBIGUITY_OPTIONS.includes(raw as AmbiguityBehavior)
+    ? (raw as AmbiguityBehavior)
+    : "prompt";
 }
 
 export interface UseRules {
@@ -55,6 +85,7 @@ export interface PatchRule {
   enabled?: boolean;
   priority?: number;
   confidence?: Confidence;
+  ambiguityBehavior?: AmbiguityBehavior;
   when?: RuleCondition[];
   /** Shallow-merged into the existing `then` — pass only the fields you're changing. */
   then?: Partial<RuleAction>;
@@ -257,6 +288,11 @@ export function serializeRule(rule: Rule, id: string | null): SaveRuleInput {
     confidence: rule.confidence,
     when: rule.when,
     then: rule.then,
+    // Only persist non-default ambiguityBehavior so legacy rule
+    // bodies stay lean and the JSON diff stays small for git review.
+    ...(rule.ambiguityBehavior && rule.ambiguityBehavior !== "prompt"
+      ? { ambiguityBehavior: rule.ambiguityBehavior }
+      : {}),
     ...(rule.confidenceWarningDismissed
       ? { confidenceWarningDismissed: true }
       : {}),
@@ -295,6 +331,7 @@ export function deserializeRule(backend: BackendRule): Rule {
         : { project: null },
     matchedToday: 0,
     confidenceWarningDismissed: body.confidenceWarningDismissed === true,
+    ambiguityBehavior: coerceAmbiguity(body.ambiguityBehavior),
   };
 }
 

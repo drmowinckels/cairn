@@ -97,6 +97,26 @@ pub enum Op {
     IsActive,
 }
 
+/// What to do when a `Suggestive` rule matches a snapshot —
+/// the "ambiguity" gate per `docs/RULES_ENGINE.md` §4 + issue #16.
+/// `Strict` matches bypass this gate (they always auto-start).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AmbiguityBehavior {
+    /// Show the user a suggestion banner; on confirm, start a timer.
+    /// On dismiss, snooze the rule. The spec's safe default — never
+    /// starts a timer behind the user's back.
+    #[default]
+    Prompt,
+    /// Drop the match silently. Useful for rules the user wants to
+    /// disable temporarily but keep in the list.
+    Skip,
+    /// Auto-start a timer with `project_id = NULL` and `source = 'rule'`.
+    /// The entry surfaces in Today as uncategorized; the user can
+    /// later assign a project from the editor.
+    LogToUncategorized,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Confidence {
@@ -122,6 +142,12 @@ pub struct Rule {
     /// starts a timer behind the user's back unless they opt in.
     #[serde(default)]
     pub confidence: Confidence,
+    /// What to do for a `Suggestive` match: `Prompt` (default, banner),
+    /// `Skip` (drop), or `LogToUncategorized` (auto-start with no
+    /// project). Ignored for `Strict` matches, which always auto-start.
+    /// Issue #16.
+    #[serde(default, rename = "ambiguityBehavior")]
+    pub ambiguity_behavior: AmbiguityBehavior,
     pub when: Vec<Condition>,
     pub then: RuleAction,
 }
@@ -150,6 +176,13 @@ pub struct RuleMatch {
     pub rule_id: String,
     pub rule_name: String,
     pub confidence: Confidence,
+    /// Per-rule ambiguity behaviour (`Prompt` | `Skip` |
+    /// `LogToUncategorized`). The frontend's `useSuggestion` hook
+    /// dispatches on this for `Suggestive` matches; `Strict` matches
+    /// ignore it. Defaults to `Prompt` for legacy rule bodies that
+    /// don't carry the field. Issue #16.
+    #[serde(default)]
+    pub ambiguity_behavior: AmbiguityBehavior,
     pub project: Option<String>,
     pub tags: Vec<String>,
     /// Pre-substituted description (template placeholders already
@@ -274,6 +307,7 @@ where
                 rule_id: rule.id.clone(),
                 rule_name: rule.name.clone(),
                 confidence: rule.confidence,
+                ambiguity_behavior: rule.ambiguity_behavior,
                 project: rule.then.project.clone(),
                 tags,
                 description,
@@ -503,6 +537,131 @@ mod tests {
     }
 
     #[test]
+    fn ambiguity_behavior_serialises_to_kebab_case() {
+        // Pins the TS-side wire format. The frontend's
+        // AmbiguityBehavior union must match these strings exactly.
+        assert_eq!(
+            serde_json::to_string(&AmbiguityBehavior::Prompt).unwrap(),
+            "\"prompt\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AmbiguityBehavior::Skip).unwrap(),
+            "\"skip\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AmbiguityBehavior::LogToUncategorized).unwrap(),
+            "\"log-to-uncategorized\""
+        );
+    }
+
+    #[test]
+    fn ambiguity_behavior_default_is_prompt() {
+        // Same privacy guarantee as confidence: a rule without an
+        // explicit ambiguity behaviour falls back to Prompt — the
+        // banner-and-confirm flow. Skip would silently drop matches;
+        // LogToUncategorized would start timers behind the user's
+        // back. Both require an explicit opt-in.
+        assert_eq!(AmbiguityBehavior::default(), AmbiguityBehavior::Prompt);
+    }
+
+    #[test]
+    fn rule_match_carries_ambiguity_behavior_from_rule() {
+        // The fanout path emits `signal:match` events whose payload
+        // includes `ambiguityBehavior`. Pin that the matcher actually
+        // populates it from the rule (rather than hardcoding a
+        // default), so the frontend's useSuggestion dispatcher sees
+        // the right value.
+        let rule = Rule {
+            id: "r1".into(),
+            name: "Cairn dev".into(),
+            enabled: true,
+            priority: 10,
+            confidence: Confidence::Suggestive,
+            ambiguity_behavior: AmbiguityBehavior::LogToUncategorized,
+            when: vec![Condition::AppName {
+                op: Op::Equals,
+                value: "Zed".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("cairn".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: None,
+            },
+        };
+        let snap = SignalSnapshot {
+            ide_folder: None,
+            git_branch: None,
+            window_title: None,
+            app_name: Some("Zed".into()),
+            browser_domain: None,
+            calendar: vec![],
+        };
+        let m = evaluate(std::iter::once(&rule), &snap).expect("match");
+        assert_eq!(m.ambiguity_behavior, AmbiguityBehavior::LogToUncategorized);
+    }
+
+    #[test]
+    fn rule_deserializes_legacy_body_without_ambiguity_behavior_field() {
+        // Older rule bodies persisted before #16 landed lack the
+        // `ambiguityBehavior` JSON key. Serde must default to Prompt
+        // — never silently change a rule's behaviour on app upgrade.
+        let legacy = serde_json::json!({
+            "id": "legacy",
+            "name": "Legacy",
+            "enabled": true,
+            "priority": 10,
+            "confidence": "suggestive",
+            "when": [],
+            "then": { "project": "p", "tags": [], "tagsFromCalendar": false }
+        });
+        let r: Rule = serde_json::from_value(legacy).unwrap();
+        assert_eq!(r.ambiguity_behavior, AmbiguityBehavior::Prompt);
+    }
+
+    #[test]
+    fn rule_deserializes_body_with_skip_ambiguity_and_default_confidence() {
+        // Reviewer-flagged combination: body sets `ambiguityBehavior:
+        // "skip"` but omits `confidence`. The defaults compose to
+        // (Suggestive, Skip) — a "silent drop" rule. Pinned end-to-end
+        // through `evaluate` so a regression on the serde default
+        // can't quietly start auto-firing rules the user expected to
+        // be silenced.
+        let body = serde_json::json!({
+            "id": "r-skip",
+            "name": "Skip-by-default",
+            "enabled": true,
+            "priority": 10,
+            "ambiguityBehavior": "skip",
+            "when": [{
+                "signal": "app.name",
+                "op": "equals",
+                "value": "Zed"
+            }],
+            "then": { "project": "cairn", "tags": [], "tagsFromCalendar": false }
+        });
+        let r: Rule = serde_json::from_value(body).unwrap();
+        assert_eq!(r.confidence, Confidence::Suggestive);
+        assert_eq!(r.ambiguity_behavior, AmbiguityBehavior::Skip);
+
+        // The emitted RuleMatch must carry the combination through
+        // to the frontend dispatcher (where suggestive + skip ⇒
+        // silent drop).
+        let snap = SignalSnapshot {
+            ide_folder: None,
+            git_branch: None,
+            window_title: None,
+            app_name: Some("Zed".into()),
+            browser_domain: None,
+            calendar: vec![],
+        };
+        let m = evaluate(std::iter::once(&r), &snap).expect("rule matches");
+        assert_eq!(m.confidence, Confidence::Suggestive);
+        assert_eq!(m.ambiguity_behavior, AmbiguityBehavior::Skip);
+    }
+
+    #[test]
     fn evaluate_with_snoozer_skips_snoozed_rules() {
         let rule = Rule {
             id: "r-snoozed".into(),
@@ -510,6 +669,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),
@@ -546,6 +706,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),
@@ -564,6 +725,7 @@ mod tests {
             enabled: true,
             priority: 1,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),
@@ -598,6 +760,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -627,6 +790,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),
@@ -654,6 +818,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -683,6 +848,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),
@@ -708,6 +874,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -750,6 +917,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -799,6 +967,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),
@@ -824,6 +993,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -862,6 +1032,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -893,6 +1064,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -930,6 +1102,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Strict,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::AppName {
                 op: Op::Equals,
                 value: "Zed".into(),
@@ -976,6 +1149,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::IdeFolder {
                 op: Op::Contains,
                 value: "cairn".into(),
@@ -1000,6 +1174,7 @@ mod tests {
             enabled: false,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::IdeFolder {
                 op: Op::Contains,
                 value: "cairn".into(),
@@ -1023,6 +1198,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![
                 Condition::IdeFolder {
                     op: Op::Contains,
@@ -1055,6 +1231,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: conds,
             then: RuleAction {
                 project: Some(project.into()),
@@ -1238,6 +1415,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::IdeFolder {
                 op: Op::Contains,
                 value: "cairn".into(),
@@ -1302,6 +1480,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::IsActive,
                 value: String::new(),
@@ -1334,6 +1513,7 @@ mod tests {
             enabled: true,
             priority: 0,
             confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
             when: vec![Condition::CalendarEvent {
                 op: Op::Contains,
                 value: "Alice".into(),

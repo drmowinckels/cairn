@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { inTauri, snoozeAll, snoozeRule, startEntry } from "./ipc";
 import type { Confidence, RuleMatchEvent } from "./types";
+import { coerceAmbiguity } from "./use-rules";
 
 /** A suggestion the UI should display in the `.suggest` banner. */
 export type Suggestion = RuleMatchEvent;
@@ -140,10 +141,37 @@ export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState 
         return;
       }
 
-      // Suggestive: the *backend* snoozer gates whether we see this
-      // event at all (per M1 #9, the matcher in `signals::fanout`
-      // skips snoozed rules before emitting `signal:match`). The
-      // hook just surfaces whatever the matcher decided to fire.
+      // Suggestive: dispatch on the rule's ambiguityBehavior (#16).
+      // - "prompt" (default): surface as the banner suggestion.
+      // - "skip": drop the match silently.
+      // - "log-to-uncategorized": auto-start a timer with no project,
+      //   `source: "rule"`. Same de-dup against the running ruleId
+      //   as the Strict path so we don't churn zero-second entries.
+      // `coerceAmbiguity` is the same guard the save path uses, so a
+      // malformed event payload (forged or replayed from before #16)
+      // falls through to "prompt" — the safe default that never
+      // starts a timer behind the user's back.
+      const behavior = coerceAmbiguity(payload.ambiguityBehavior);
+      if (behavior === "skip") return;
+      if (behavior === "log-to-uncategorized") {
+        if (currentRunningRuleIdRef.current === payload.ruleId) return;
+        start({
+          projectId: null,
+          source: "rule",
+          ruleId: payload.ruleId,
+          description: payload.description || undefined,
+        }).catch((e) => {
+          console.error(
+            "useSuggestion: auto-start (log-to-uncategorized) failed",
+            e,
+          );
+        });
+        return;
+      }
+      // The *backend* snoozer gates whether we see this event at
+      // all (per M1 #9, the matcher in `signals::fanout` skips
+      // snoozed rules before emitting `signal:match`). The hook
+      // just surfaces whatever the matcher decided to fire.
       setSuggestion(payload);
     }).then((un) => {
       if (cancelled) {
