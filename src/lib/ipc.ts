@@ -135,6 +135,18 @@ export async function deleteRule(id: string): Promise<void> {
   await invoke("delete_rule", { id });
 }
 
+/**
+ * Reorder all rules by id (issue #15). The backend assigns dense
+ * priorities `10, 20, 30, …` in the order given and reloads the
+ * matcher cache so the next snapshot tick uses the new order.
+ * Outside Tauri this is a no-op — the frontend optimistic reorder
+ * is the only persistence layer in fixture mode.
+ */
+export async function reorderRules(ids: string[]): Promise<void> {
+  if (!inTauri) return;
+  await invoke("reorder_rules", { ids });
+}
+
 export type ExclusionKind = "app" | "domain" | "window";
 
 export interface BackendExclusion {

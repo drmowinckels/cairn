@@ -415,6 +415,229 @@ describe("RulesView", () => {
     });
   });
 
+  // ---- #15: drag-to-reorder + keyboard alternative -----------------
+
+  it("reorders rules via Alt+ArrowDown when the rule head is focused", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    expect(heads.length).toBeGreaterThan(1);
+    const firstName = heads[0].querySelector(".rule-name")?.textContent;
+    heads[0].focus();
+    fireEvent.keyDown(heads[0], { key: "ArrowDown", altKey: true });
+    await waitFor(() => {
+      const newFirst = container
+        .querySelector<HTMLElement>(".rule:nth-child(1) .rule-name")
+        ?.textContent;
+      // The original first rule is no longer at the top.
+      expect(newFirst).not.toBe(firstName);
+    });
+  });
+
+  it("reorders rules via Alt+ArrowUp when the rule head is focused", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const lastName =
+      heads[heads.length - 1].querySelector(".rule-name")?.textContent;
+    heads[heads.length - 1].focus();
+    fireEvent.keyDown(heads[heads.length - 1], {
+      key: "ArrowUp",
+      altKey: true,
+    });
+    await waitFor(() => {
+      const newLast = container.querySelector<HTMLElement>(
+        ".rule:last-child .rule-name",
+      )?.textContent;
+      expect(newLast).not.toBe(lastName);
+    });
+  });
+
+  it("Alt+ArrowUp on the first rule is a no-op (already at top)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const firstNameBefore = heads[0].querySelector(".rule-name")?.textContent;
+    heads[0].focus();
+    fireEvent.keyDown(heads[0], { key: "ArrowUp", altKey: true });
+    const firstNameAfter = container
+      .querySelector(".rule:first-child .rule-name")
+      ?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("Alt+ArrowDown on the last rule is a no-op (already at bottom)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const lastNameBefore =
+      heads[heads.length - 1].querySelector(".rule-name")?.textContent;
+    heads[heads.length - 1].focus();
+    fireEvent.keyDown(heads[heads.length - 1], {
+      key: "ArrowDown",
+      altKey: true,
+    });
+    const lastNameAfter = container.querySelector(
+      ".rule:last-child .rule-name",
+    )?.textContent;
+    expect(lastNameAfter).toBe(lastNameBefore);
+  });
+
+  it("ArrowDown WITHOUT alt does NOT reorder (Alt is the spec's required modifier)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const heads = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule-head"),
+    );
+    const firstNameBefore = heads[0].querySelector(".rule-name")?.textContent;
+    heads[0].focus();
+    fireEvent.keyDown(heads[0], { key: "ArrowDown" });
+    const firstNameAfter = container
+      .querySelector(".rule:first-child .rule-name")
+      ?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("dropping rule 1 onto rule 2 reorders via the drag handler", async () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    expect(rules.length).toBeGreaterThan(1);
+    const firstName = rules[0].querySelector(".rule-name")?.textContent;
+    // `draggable` lives on the .rule-head (the visible drag grip);
+    // the drop target is the whole .rule <li>. Source index is held
+    // in a parent ref (the dataTransfer write is just there to keep
+    // Firefox happy). The drop handler reads the ref, so we don't
+    // need a working DataTransfer here.
+    const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
+    fireEvent.dragStart(firstHead);
+    fireEvent.dragOver(rules[1]);
+    fireEvent.drop(rules[1]);
+    await waitFor(() => {
+      const newFirst = container
+        .querySelector(".rule:first-child .rule-name")
+        ?.textContent;
+      expect(newFirst).not.toBe(firstName);
+    });
+  });
+
+  it("dropping a rule onto itself is a no-op (from === target)", () => {
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    const firstNameBefore = rules[0]
+      .querySelector(".rule-name")
+      ?.textContent;
+    const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
+    fireEvent.dragStart(firstHead);
+    fireEvent.dragOver(rules[0]);
+    fireEvent.drop(rules[0]);
+    const firstNameAfter = container.querySelector(
+      ".rule:first-child .rule-name",
+    )?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("dragend without drop resets the source-index ref (Escape / off-window)", () => {
+    // If onDragStart fires but the drag ends outside any drop target
+    // (user pressed Escape, dragged off the window), the source-index
+    // ref must reset. Otherwise a subsequent drop on an unrelated
+    // element would fire with a stale `from`.
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    const firstNameBefore = rules[0]
+      .querySelector(".rule-name")
+      ?.textContent;
+    const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
+    fireEvent.dragStart(firstHead);
+    fireEvent.dragEnd(firstHead); // user aborted the drag
+    // Now a drop on rule 2 (without a fresh dragStart) must NOT
+    // reorder, because the ref was reset.
+    fireEvent.drop(rules[1]);
+    const firstNameAfter = container.querySelector(
+      ".rule:first-child .rule-name",
+    )?.textContent;
+    expect(firstNameAfter).toBe(firstNameBefore);
+  });
+
+  it("the rule head exposes the Alt+arrow shortcut via aria-keyshortcuts (not in the visible label)", () => {
+    // role=alert spam was the same anti-pattern; here the concern is
+    // that announcing 'Use Alt+Up or Alt+Down' on every rule focus is
+    // verbose for a 50-rule list. aria-keyshortcuts is the platform-
+    // standard way to tell ATs about a shortcut without putting it
+    // in the visible / spoken label.
+    const { container } = renderRules({ complexity: "medium" });
+    const head = container.querySelector(".rule-head") as HTMLElement;
+    expect(head.getAttribute("aria-keyshortcuts")).toBe(
+      "Alt+ArrowUp Alt+ArrowDown",
+    );
+    // The visible label is just the rule's name + index — no shortcut
+    // hint baked into it.
+    const label = head.getAttribute("aria-label") ?? "";
+    expect(label).not.toMatch(/Alt/);
+  });
+
+  it("hovering a drop target toggles data-drag-over on, dragleave toggles it off", () => {
+    // Cover both arms of the dragOver / dragLeave guards:
+    // - dragOver while NOT already set → set true
+    // - dragOver while already set → no-op (the if-guard's false arm)
+    // - dragLeave while set → set false
+    // - dragLeave while NOT set → no-op (the if-guard's false arm)
+    const { container } = renderRules({ complexity: "medium" });
+    const rules = Array.from(
+      container.querySelectorAll<HTMLElement>(".rule"),
+    );
+    expect(rules[1].getAttribute("data-drag-over")).toBeNull();
+    fireEvent.dragOver(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBe("true");
+    // Second dragOver hits the !dragOver===false arm (no-op).
+    fireEvent.dragOver(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBe("true");
+    fireEvent.dragLeave(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBeNull();
+    // Second dragLeave hits the dragOver===false arm (no-op).
+    fireEvent.dragLeave(rules[1]);
+    expect(rules[1].getAttribute("data-drag-over")).toBeNull();
+  });
+
+  it("Enter or Space on the focused rule head toggles expansion (keyboard-accessible)", () => {
+    const { container, onOpenRule } = renderRules();
+    const head = container.querySelector(".rule-head") as HTMLElement;
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    head.focus();
+    fireEvent.keyDown(head, { key: "Enter" });
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(onOpenRule).toHaveBeenCalled();
+    // And Space toggles it back closed.
+    fireEvent.keyDown(head, { key: " " });
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("expanded editor inputs aren't draggable (text selection isn't hijacked)", () => {
+    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const nameInput = container.querySelector<HTMLInputElement>(
+      ".rule-name-input",
+    );
+    expect(nameInput).toBeTruthy();
+    // `draggable` lives only on the rule-head, not the <li> or the
+    // body. Inputs inside a draggable ancestor have their text
+    // selection hijacked by the browser's drag handler on macOS /
+    // Windows. Walking up the ancestors must find no draggable
+    // element before the <li>.
+    let node: HTMLElement | null = nameInput;
+    while (node && !node.classList.contains("rule")) {
+      expect(node.getAttribute("draggable")).not.toBe("true");
+      node = node.parentElement;
+    }
+  });
+
   // ---- #12: Live signals card integration -------------------------
 
   it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {
