@@ -105,7 +105,7 @@ export function Popover({
         <span className="nav-meta">⌃⌥T</span>
       </nav>
 
-      <div className="pop-body" role="tabpanel">
+      <div className="pop-body" role="tabpanel" tabIndex={0}>
         {view === "today" && (
           <ErrorBoundary area="Today">
             <TodayView
