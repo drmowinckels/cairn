@@ -1809,6 +1809,52 @@ select.rule-conf {
   margin: 10px 0 0;
   line-height: 1.45;
 }
+.privacy-files {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  border: 0.5px solid var(--hairline);
+}
+.privacy-files li {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-tiny);
+  color: var(--ink-soft);
+}
+.privacy-files svg {
+  color: var(--ink-mute);
+}
+.privacy-files code {
+  font-family: var(--mono);
+  color: var(--ink);
+  background: transparent;
+  padding: 0;
+}
+.privacy-files-size {
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+.privacy-attrib {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+  margin: 8px 0 0;
+}
+.privacy-attrib a {
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--hairline-strong);
+}
+.privacy-attrib a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
 .privacy-banner {
   display: flex;
   align-items: center;

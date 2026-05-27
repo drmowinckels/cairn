@@ -14,13 +14,38 @@ use chrono::Utc;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use tauri::{Manager, State};
+use tauri_plugin_opener::OpenerExt;
 use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
 
 pub const PENDING_SUFFIX: &str = ".pending";
 pub const BACKUP_SUFFIX: &str = ".bak";
+pub const DEBUG_SIGNALS_FILE: &str = "debug-signals.ndjson";
 const SQLITE_SIDECARS: [&str; 3] = ["-journal", "-wal", "-shm"];
+
+/// Names the user is allowed to see under `data_dir` when they click
+/// "View what's stored". Issue #24 fixes this set: the live DB and its
+/// SQLite sidecars, the staged restore, the rotation backup, and the
+/// opt-in raw signal log. Anything else in the directory is intentionally
+/// kept off the list — exposing arbitrary files would defeat the purpose
+/// of the privacy contract by letting future leakage hide in plain sight.
+const LISTABLE_FILES: [&str; 7] = [
+    "cairn.sqlite",
+    "cairn.sqlite-wal",
+    "cairn.sqlite-shm",
+    "cairn.sqlite-journal",
+    "cairn.sqlite.pending",
+    "cairn.sqlite.bak",
+    DEBUG_SIGNALS_FILE,
+];
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DataFileInfo {
+    pub name: String,
+    pub size_bytes: u64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -180,6 +205,27 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Inspect `data_dir` and return metadata (no content reads) for every
+/// known-listable file that currently exists, in the canonical order
+/// declared by `LISTABLE_FILES`. Issue #24. Missing files are simply
+/// omitted so the UI doesn't have to filter zero-sized placeholders.
+pub fn list_data_files_in(data_dir: &Path) -> Vec<DataFileInfo> {
+    LISTABLE_FILES
+        .iter()
+        .filter_map(|name| {
+            let path = data_dir.join(name);
+            let meta = std::fs::metadata(&path).ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            Some(DataFileInfo {
+                name: (*name).to_string(),
+                size_bytes: meta.len(),
+            })
+        })
+        .collect()
+}
+
 // ── Tauri command wrappers ────────────────────────────────────────────
 
 #[tauri::command]
@@ -275,6 +321,30 @@ pub async fn suggested_csv_name() -> String {
     format!("cairn-entries-{}.csv", Utc::now().format("%Y-%m-%d"))
 }
 
+#[tauri::command]
+pub async fn list_data_files(app: tauri::AppHandle) -> Result<Vec<DataFileInfo>, String> {
+    let data_dir = app.path().app_data_dir().map_err(err)?;
+    Ok(list_data_files_in(&data_dir))
+}
+
+#[tauri::command]
+pub async fn reveal_data_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(err)?;
+    // Reveal the live SQLite file when it exists so the platform file
+    // manager highlights it; fall back to the directory itself for a
+    // freshly-installed user with no DB yet.
+    let target = {
+        let live = db_path(&data_dir);
+        if live.exists() {
+            live
+        } else {
+            data_dir
+        }
+    };
+    app.opener().reveal_item_in_dir(&target).map_err(err)?;
+    Ok(())
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 async fn validate_sqlite_header(path: &Path) -> Result<(), String> {
@@ -358,6 +428,62 @@ mod tests {
         apply_pending_import(dir.path()).unwrap();
         assert_eq!(std::fs::read(&live).unwrap(), b"OLD");
         assert!(!backup_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn list_data_files_empty_dir_yields_empty_vec() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(list_data_files_in(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn list_data_files_returns_known_files_with_sizes_in_canonical_order() {
+        let dir = tempfile::tempdir().unwrap();
+        // Drop a subset: live db (3 bytes), wal (5 bytes), debug-signals (7 bytes).
+        std::fs::write(dir.path().join("cairn.sqlite"), b"abc").unwrap();
+        std::fs::write(dir.path().join("cairn.sqlite-wal"), b"abcde").unwrap();
+        std::fs::write(dir.path().join(DEBUG_SIGNALS_FILE), b"abcdefg").unwrap();
+        // An unrelated file should never appear — privacy contract.
+        std::fs::write(dir.path().join("README.txt"), b"x").unwrap();
+
+        let listed = list_data_files_in(dir.path());
+        let names: Vec<&str> = listed.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["cairn.sqlite", "cairn.sqlite-wal", DEBUG_SIGNALS_FILE]
+        );
+
+        let sizes: Vec<u64> = listed.iter().map(|f| f.size_bytes).collect();
+        assert_eq!(sizes, vec![3, 5, 7]);
+    }
+
+    #[test]
+    fn list_data_files_ignores_directories_with_matching_name() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory named like a tracked file must not be listed.
+        std::fs::create_dir(dir.path().join("cairn.sqlite")).unwrap();
+        assert!(list_data_files_in(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn list_data_files_skips_unrelated_files_only_tracking_the_canonical_set() {
+        let dir = tempfile::tempdir().unwrap();
+        // Files outside the canonical set.
+        std::fs::write(dir.path().join("cairn.log"), b"x").unwrap();
+        std::fs::write(dir.path().join("cairn.sqlite.bak.old"), b"x").unwrap();
+        std::fs::write(dir.path().join("secret.env"), b"x").unwrap();
+        assert!(list_data_files_in(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn list_data_files_includes_pending_and_bak() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(pending_import_path(dir.path()), b"NEW").unwrap();
+        std::fs::write(backup_path(dir.path()), b"OLD-").unwrap();
+        let listed = list_data_files_in(dir.path());
+        let names: Vec<&str> = listed.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"cairn.sqlite.pending"));
+        assert!(names.contains(&"cairn.sqlite.bak"));
     }
 
     #[test]

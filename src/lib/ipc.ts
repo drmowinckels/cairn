@@ -302,6 +302,26 @@ export async function deleteEverything(): Promise<void> {
   await invoke("delete_everything");
 }
 
+/**
+ * Metadata for a single file under the data directory, surfaced to the
+ * UI by the "View what's stored" privacy action. Only file names + byte
+ * sizes are read — never file contents (PRIVACY.md, issue #24).
+ */
+export interface DataFileInfo {
+  name: string;
+  sizeBytes: number;
+}
+
+export async function listDataFiles(): Promise<DataFileInfo[]> {
+  if (!inTauri) return [];
+  return invoke<DataFileInfo[]>("list_data_files");
+}
+
+export async function revealDataFolder(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("reveal_data_folder");
+}
+
 export type CalendarKind = "url" | "file";
 
 export interface CalendarSource {

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   cancelPendingImport,
   dataPaths,
@@ -8,9 +7,12 @@ import {
   exportBackup,
   exportCsv,
   inTauri,
+  listDataFiles,
+  revealDataFolder,
   stageImport,
   suggestedBackupName,
   suggestedCsvName,
+  type DataFileInfo,
   type DataPaths,
 } from "./ipc";
 
@@ -24,17 +26,20 @@ export interface BackupState {
   paths: DataPaths | null;
   pendingImport: string | null;
   status: BackupStatus;
+  dataFiles: DataFileInfo[];
   exportBackupToFile: () => Promise<void>;
   importBackupFromFile: () => Promise<void>;
   cancelImport: () => Promise<void>;
   exportCsvToFile: () => Promise<void>;
   revealDataFolder: () => Promise<void>;
+  refreshDataFiles: () => Promise<void>;
   deleteAllData: () => Promise<void>;
 }
 
 export function useBackup(): BackupState {
   const [paths, setPaths] = useState<DataPaths | null>(null);
   const [status, setStatus] = useState<BackupStatus>({ kind: "idle" });
+  const [dataFiles, setDataFiles] = useState<DataFileInfo[]>([]);
 
   const refreshPaths = useCallback(async () => {
     if (!inTauri) return;
@@ -45,9 +50,19 @@ export function useBackup(): BackupState {
     }
   }, []);
 
+  const refreshDataFiles = useCallback(async () => {
+    if (!inTauri) return;
+    try {
+      setDataFiles(await listDataFiles());
+    } catch (e) {
+      console.warn("list_data_files failed", e);
+    }
+  }, []);
+
   useEffect(() => {
     refreshPaths();
-  }, [refreshPaths]);
+    refreshDataFiles();
+  }, [refreshPaths, refreshDataFiles]);
 
   const exportBackupToFile = useCallback(async () => {
     if (!inTauri) return;
@@ -118,14 +133,14 @@ export function useBackup(): BackupState {
     }
   }, []);
 
-  const revealDataFolder = useCallback(async () => {
-    if (!inTauri || !paths) return;
+  const revealFolder = useCallback(async () => {
+    if (!inTauri) return;
     try {
-      await revealItemInDir(paths.dbPath);
+      await revealDataFolder();
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
     }
-  }, [paths]);
+  }, []);
 
   const deleteAllData = useCallback(async () => {
     if (!inTauri) return;
@@ -154,11 +169,13 @@ export function useBackup(): BackupState {
     paths,
     pendingImport: paths?.pendingImport ?? null,
     status,
+    dataFiles,
     exportBackupToFile,
     importBackupFromFile,
     cancelImport,
     exportCsvToFile,
-    revealDataFolder,
+    revealDataFolder: revealFolder,
+    refreshDataFiles,
     deleteAllData,
   };
 }
