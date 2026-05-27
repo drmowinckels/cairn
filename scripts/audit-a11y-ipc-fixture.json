@@ -38,6 +38,7 @@
     "dbPath": "/audit/cairn/cairn.sqlite",
     "pendingImport": null
   },
+  "list_data_files": [],
   "suggested_backup_name": "cairn-backup.sqlite",
   "suggested_csv_name": "cairn-export.csv"
 }
