@@ -150,7 +150,17 @@ export function TodayView({
   useEffect(() => {
     if (!suggestion || detectionPrompts === "off") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") dismiss();
+      if (e.key !== "Escape") return;
+      // Cascade contract (#27): if a modal is open, Esc closes it
+      // first — the suggestion banner survives. Only dismiss the
+      // suggestion when no modal is in the way. The modal's own
+      // keydown handler runs on the modal element and is independent
+      // of this document-level listener, so we check the DOM
+      // directly rather than coordinating via a flag.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
+        return;
+      }
+      dismiss();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
