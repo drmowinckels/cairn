@@ -272,6 +272,10 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         new RegExp(`^\\s*${expectedBadge}\\s*$`, "i"),
       );
       expect(badge).toBeTruthy();
+      // #30: each source label is paired with its own glyph so the
+      // distinction survives a grayscale / colorblind render.
+      const wrapper = document.querySelector(".now-source");
+      expect(wrapper?.querySelector("svg")).toBeTruthy();
     });
   }
 
@@ -298,6 +302,25 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     expect(document.querySelectorAll(".dt-tick").length).toBe(6);
     expect(document.querySelectorAll(".dt-seg.is-running").length).toBe(1);
     expect(document.querySelector(".dt-now-label")).toBeTruthy();
+  });
+
+  it("timeline legend pairs each project dot with its name (#30 a11y dual-signal)", async () => {
+    // Color is not the only signal: every dot in the legend must be
+    // accompanied by the project's name so a grayscale render still
+    // identifies which segment is which.
+    await freshRender("manual");
+    await waitFor(() => {
+      expect(document.querySelectorAll(".legend-item").length).toBeGreaterThan(0);
+    });
+    const items = document.querySelectorAll(".legend-item");
+    for (const item of Array.from(items)) {
+      expect(item.querySelector(".proj-dot")).toBeTruthy();
+      // The trailing text node after the dot carries the project
+      // name — strip the dot's empty text content to assert the
+      // remainder is non-empty.
+      const text = item.textContent?.trim() ?? "";
+      expect(text.length).toBeGreaterThan(0);
+    }
   });
 
   it("debounced description edits call update_entry after a quiet period", async () => {
