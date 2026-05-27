@@ -78,6 +78,37 @@ describe("ipc helpers (inside Tauri)", () => {
     });
     expect(events).toEqual([{ uid: "u1" }]);
   });
+
+  it("startSignalCapture returns the absolute file path from the backend", async () => {
+    invokeMock.mockResolvedValue("/tmp/cairn/debug-signals.ndjson");
+    const { startSignalCapture } = await import("./ipc");
+    const path = await startSignalCapture();
+    expect(invokeMock).toHaveBeenCalledWith("start_signal_capture");
+    expect(path).toBe("/tmp/cairn/debug-signals.ndjson");
+  });
+
+  it("stopSignalCapture invokes the command and ignores the response", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { stopSignalCapture } = await import("./ipc");
+    await stopSignalCapture();
+    expect(invokeMock).toHaveBeenCalledWith("stop_signal_capture");
+  });
+
+  it("signalCaptureStatus passes the backend payload through", async () => {
+    invokeMock.mockResolvedValue({
+      active: true,
+      path: "/tmp/cairn/debug-signals.ndjson",
+      bytesWritten: 123,
+    });
+    const { signalCaptureStatus } = await import("./ipc");
+    const status = await signalCaptureStatus();
+    expect(invokeMock).toHaveBeenCalledWith("signal_capture_status");
+    expect(status).toEqual({
+      active: true,
+      path: "/tmp/cairn/debug-signals.ndjson",
+      bytesWritten: 123,
+    });
+  });
 });
 
 describe("ipc helpers (outside Tauri)", () => {
@@ -90,6 +121,13 @@ describe("ipc helpers (outside Tauri)", () => {
     const { upcomingCalendarEvents } = await import("./ipc");
     const events = await upcomingCalendarEvents(5);
     expect(events).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("signalCaptureStatus short-circuits to inactive without calling the backend", async () => {
+    const { signalCaptureStatus } = await import("./ipc");
+    const status = await signalCaptureStatus();
+    expect(status).toEqual({ active: false, path: null, bytesWritten: 0 });
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

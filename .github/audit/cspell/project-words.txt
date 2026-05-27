@@ -158,3 +158,5 @@ snoozer
 snoozes
 refetches
 focusables
+oneshot
+ndjson

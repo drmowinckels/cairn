@@ -2154,6 +2154,108 @@ select.rule-conf {
   display: inline-block;
 }
 
+/* ─── CAPTURE BANNER (debug raw-signal capture) ─────────────────────── */
+.capture-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--pad-x);
+  background: var(--apricot-soft);
+  border-top: 0.5px solid rgba(242, 204, 143, 0.55);
+  font-size: var(--font-tiny);
+  color: var(--ink);
+}
+.capture-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: capture-pulse 1.6s ease-in-out infinite;
+}
+[data-reduce-motion="on"] .capture-dot {
+  animation: none;
+}
+.capture-text {
+  flex: 1;
+}
+.capture-sep {
+  color: var(--ink-mute);
+}
+.capture-stop {
+  font-weight: 600;
+  color: var(--accent);
+}
+@keyframes capture-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ─── CAPTURE CONFIRMATION DIALOG ───────────────────────────────────── */
+.capture-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+.capture-confirm {
+  background: var(--bg);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-md);
+  padding: 18px 18px 14px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+.capture-confirm-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+  margin: 0 0 10px;
+  color: var(--ink);
+}
+.capture-confirm-warn {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--apricot-soft);
+  border: 0.5px solid rgba(242, 204, 143, 0.55);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-tiny);
+  line-height: 1.5;
+  color: #8a5a18;
+}
+[data-theme="dark"] .capture-confirm-warn {
+  color: var(--apricot-cream);
+}
+.capture-confirm-body {
+  font-size: var(--font-tiny);
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+.capture-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.settings-sub--mono code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
 /* ─── EMPTY / ERROR / SKELETON ──────────────────────────────────────── */
 .empty {
   display: flex;

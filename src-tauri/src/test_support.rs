@@ -100,11 +100,14 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
             .await
             .expect("load_engine_rules: fresh test db"),
     ));
+    let data_dir = dir.path().to_path_buf();
     app.manage(AppState {
         db: db.clone(),
         pinned: AtomicBool::new(false),
         calendar,
         stream,
+        capture: crate::signals::capture::SignalCapture::new(),
+        data_dir,
         exclusions,
         exclusions_mutator: tokio::sync::Mutex::new(()),
         snoozer: Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new())),

@@ -525,3 +525,43 @@ export async function listSnoozes(): Promise<SnoozeSnapshot> {
   if (!inTauri) return { rules: [], global: null };
   return invoke<SnoozeSnapshot>("list_snoozes");
 }
+
+/**
+ * Status payload for the debug "Capture raw signals" mode. Mirrors
+ * `signals::capture::CaptureStatus`. Returned by `signal_capture_status`
+ * and used by `useSignalCapture` to drive the footer banner.
+ */
+export interface SignalCaptureStatus {
+  active: boolean;
+  /** Absolute path of the on-disk ndjson file while active. */
+  path: string | null;
+  /** Running counter of bytes appended since `start_signal_capture`. */
+  bytesWritten: number;
+}
+
+/**
+ * Start the debug raw-signal capture. Returns the absolute path of
+ * the `debug-signals.ndjson` file. The toggle is never persisted; a
+ * fresh launch always starts off.
+ */
+export async function startSignalCapture(): Promise<string> {
+  return invoke<string>("start_signal_capture");
+}
+
+/**
+ * Stop the writer, flush, close, and delete the ndjson file.
+ */
+export async function stopSignalCapture(): Promise<void> {
+  await invoke("stop_signal_capture");
+}
+
+/**
+ * Poll status for the footer banner. Outside Tauri (Vite dev /
+ * vitest) the status is permanently inactive.
+ */
+export async function signalCaptureStatus(): Promise<SignalCaptureStatus> {
+  if (!inTauri) {
+    return { active: false, path: null, bytesWritten: 0 };
+  }
+  return invoke<SignalCaptureStatus>("signal_capture_status");
+}

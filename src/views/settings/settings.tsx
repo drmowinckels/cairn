@@ -1,8 +1,9 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
 import { useBackup } from "../../lib/use-backup";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
+import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type {
   AmbiguityBehavior,
   Density,
@@ -21,6 +22,7 @@ import {
 interface Props {
   density: Density;
   a11y: UseA11yPrefs;
+  capture: UseSignalCapture;
 }
 
 const TEXT_SCALES: Array<{ value: TextScale; label: string }> = [
@@ -57,8 +59,22 @@ const AMBIGUITY_OPTIONS: Array<{
   label: AMBIGUITY_LABELS[value],
 }));
 
-export function SettingsView({ density, a11y }: Props) {
+export function SettingsView({ density, a11y, capture }: Props) {
   const backup = useBackup();
+  const [confirmCapture, setConfirmCapture] = useState(false);
+
+  const requestStartCapture = () => setConfirmCapture(true);
+  const confirmStartCapture = async () => {
+    try {
+      await capture.start();
+    } finally {
+      setConfirmCapture(false);
+    }
+  };
+  const cancelConfirm = () => setConfirmCapture(false);
+  const stopCapture = () => {
+    void capture.stop();
+  };
   return (
     <div className="view view-settings" data-density={density}>
       <section className="privacy-card" aria-label="Privacy">
@@ -392,6 +408,91 @@ export function SettingsView({ density, a11y }: Props) {
           </li>
         </ul>
       </section>
+
+      <section className="settings-block" aria-label="Advanced">
+        <h3 className="settings-h">Advanced</h3>
+        <p className="settings-sub">
+          Troubleshooting tools. Off by default and never persisted across
+          launches.
+        </p>
+
+        <SetRow
+          label="Capture raw signals"
+          hint="Write the raw signal stream to a file for debugging detection. Always starts off; disabling deletes the file."
+        >
+          <Toggle
+            on={capture.status.active}
+            onChange={(next) => {
+              if (next) {
+                requestStartCapture();
+              } else {
+                stopCapture();
+              }
+            }}
+            label="Capture raw signals"
+          />
+        </SetRow>
+
+        {capture.status.active && capture.status.path && (
+          <p
+            className="settings-sub settings-sub--mono"
+            data-testid="capture-path"
+          >
+            Writing to <code>{capture.status.path}</code>
+          </p>
+        )}
+        {capture.error && (
+          <div className="privacy-banner privacy-banner--error" role="alert">
+            <Icon name="x" size={13} />
+            <span>{capture.error}</span>
+          </div>
+        )}
+      </section>
+
+      {confirmCapture && (
+        <div
+          className="capture-confirm-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="capture-confirm-title"
+          data-testid="capture-confirm"
+        >
+          <div className="capture-confirm">
+            <h2 id="capture-confirm-title" className="capture-confirm-title">
+              <Icon name="info" size={16} /> Capture raw signals?
+            </h2>
+            <p className="capture-confirm-warn" role="note">
+              This writes every window title, app name, browser domain, and
+              calendar event Cairn sees to a file on disk. Use it only for
+              troubleshooting and stop it when you're done — Cairn deletes
+              the file when you turn this off.
+            </p>
+            <p className="capture-confirm-body">
+              Capture stops automatically when you quit Cairn. The toggle is
+              never persisted: the next launch always starts with capture
+              off.
+            </p>
+            <div className="capture-confirm-actions">
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={cancelConfirm}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                onClick={() => {
+                  void confirmStartCapture();
+                }}
+              >
+                I understand — capture for this session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <p className="settings-foot">
         Cairn v0.0.1 · {PRIVACY_LICENSE_LABEL} ·{" "}
