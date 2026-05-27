@@ -186,6 +186,39 @@ impl CalendarRegistry {
         out
     }
 
+    /// The next `limit` events that start strictly after `at`, across
+    /// every enabled source, sorted by start ascending. Powers the
+    /// Today view's "Up next" list (issue #20). All-day events are
+    /// included — the UI labels them but the row still renders.
+    pub async fn upcoming_events_at(&self, at: DateTime<Utc>, limit: usize) -> Vec<ActiveEvent> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let sources = match store::list(&self.pool).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("calendar: list sources for upcoming_events_at failed: {e}");
+                return Vec::new();
+            }
+        };
+        let st = self.state.read().await;
+        let mut out: Vec<ActiveEvent> = Vec::new();
+        for src in sources.into_iter().filter(|s| s.enabled) {
+            if let Some(events) = st.events.get(&src.id) {
+                for ev in events.iter().filter(|e| e.start > at) {
+                    out.push(ActiveEvent {
+                        source_id: src.id.clone(),
+                        source_label: src.label.clone(),
+                        event: ev.clone(),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|a| a.event.start);
+        out.truncate(limit);
+        out
+    }
+
     pub async fn sync_status(&self) -> Vec<SyncStatus> {
         let sources = store::list(&self.pool).await.unwrap_or_default();
         let st = self.state.read().await;
@@ -316,9 +349,205 @@ fn is_due(src: &CalendarSource, now: DateTime<Utc>) -> bool {
     (now - parsed).num_seconds() >= src.poll_seconds
 }
 
+impl CalendarRegistry {
+    /// Test-only: replace the in-memory parsed events for a source.
+    /// Used to drive `active_events_at` / `upcoming_events_at` from
+    /// unit tests without exercising the full ICS fetch + parse path.
+    #[cfg(test)]
+    pub(crate) async fn seed_events_for_test(&self, source_id: &str, events: Vec<ParsedEvent>) {
+        let mut st = self.state.write().await;
+        st.events.insert(source_id.to_string(), events);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_db;
+
+    fn make_parsed(uid: &str, start: DateTime<Utc>, dur_minutes: i64) -> ParsedEvent {
+        ParsedEvent {
+            uid: uid.into(),
+            summary: format!("event {uid}"),
+            start,
+            end: start + chrono::Duration::minutes(dur_minutes),
+            all_day: false,
+            attendees: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn upcoming_events_at_empty_when_no_sources() {
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        let out = reg.upcoming_events_at(Utc::now(), 3).await;
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn upcoming_events_at_returns_next_events_only() {
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        let src = reg
+            .add_source(CalendarKind::File, "Work".into(), "/tmp/none.ics".into())
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+        // One past (already started), three future.
+        let events = vec![
+            make_parsed("past", now - chrono::Duration::minutes(10), 30),
+            make_parsed("a", now + chrono::Duration::minutes(15), 30),
+            make_parsed("b", now + chrono::Duration::minutes(45), 60),
+            make_parsed("c", now + chrono::Duration::minutes(120), 30),
+        ];
+        reg.seed_events_for_test(&src.id, events).await;
+
+        let out = reg.upcoming_events_at(now, 2).await;
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].event.uid, "a");
+        assert_eq!(out[1].event.uid, "b");
+
+        let limited = reg.upcoming_events_at(now, 0).await;
+        assert!(limited.is_empty(), "limit=0 returns empty");
+    }
+
+    #[tokio::test]
+    async fn upcoming_events_at_sorts_across_sources() {
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        let s1 = reg
+            .add_source(CalendarKind::File, "Work".into(), "/tmp/a.ics".into())
+            .await
+            .unwrap();
+        let s2 = reg
+            .add_source(CalendarKind::File, "Home".into(), "/tmp/b.ics".into())
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+        reg.seed_events_for_test(
+            &s1.id,
+            vec![make_parsed("w1", now + chrono::Duration::minutes(30), 15)],
+        )
+        .await;
+        reg.seed_events_for_test(
+            &s2.id,
+            vec![make_parsed("h1", now + chrono::Duration::minutes(10), 15)],
+        )
+        .await;
+
+        let out = reg.upcoming_events_at(now, 5).await;
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].event.uid, "h1");
+        assert_eq!(out[1].event.uid, "w1");
+    }
+
+    #[tokio::test]
+    async fn active_events_at_returns_currently_running_events() {
+        // Drives the `if let Some(events)` = Some arm of
+        // `active_events_at`: at least one event is in-progress at
+        // `at`. Without this, the inner `out.push(ActiveEvent { … })`
+        // body stays uncovered even with the upcoming tests above.
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        let src = reg
+            .add_source(CalendarKind::File, "Work".into(), "/tmp/none.ics".into())
+            .await
+            .unwrap();
+        let now = Utc::now();
+        let events = vec![
+            // 10 min ago → 20 min from now (active).
+            make_parsed("now", now - chrono::Duration::minutes(10), 30),
+            // 60 min ago → 30 min ago (past).
+            make_parsed("past", now - chrono::Duration::minutes(60), 30),
+        ];
+        reg.seed_events_for_test(&src.id, events).await;
+        let out = reg.active_events_at(now).await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].event.uid, "now");
+        assert_eq!(out[0].source_label, "Work");
+    }
+
+    #[tokio::test]
+    async fn upcoming_events_at_returns_empty_when_store_list_fails() {
+        // Covers the `Err(e)` arm of `store::list(&self.pool).await`.
+        // We close the pool to make `list` fail with an
+        // `error returned from database: ...` — the function must log
+        // and return an empty list rather than panic.
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        db.pool.close().await;
+        let out = reg.upcoming_events_at(Utc::now(), 3).await;
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn active_events_at_returns_empty_when_store_list_fails() {
+        // Sibling of the test above for `active_events_at`.
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        db.pool.close().await;
+        let out = reg.active_events_at(Utc::now()).await;
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn upcoming_events_at_handles_source_without_seeded_events() {
+        // Covers the `if let Some(events)` = None arm: an enabled source
+        // that has never been synced is silently skipped instead of
+        // panicking. Without this, the next `upcoming_events_at` call
+        // after adding a fresh source would crash with a `None` unwrap.
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        reg.add_source(CalendarKind::File, "Empty".into(), "/tmp/none.ics".into())
+            .await
+            .unwrap();
+        let out = reg.upcoming_events_at(Utc::now(), 5).await;
+        assert!(
+            out.is_empty(),
+            "enabled source with no events yields nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn active_events_at_handles_source_without_seeded_events() {
+        // Mirrors the test above for `active_events_at` — the sibling
+        // helper that powers `current_calendar_events`. Same `if let
+        // Some(events)` = None arm.
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        reg.add_source(CalendarKind::File, "Empty".into(), "/tmp/none.ics".into())
+            .await
+            .unwrap();
+        let out = reg.active_events_at(Utc::now()).await;
+        assert!(
+            out.is_empty(),
+            "enabled source with no events yields nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn upcoming_events_at_skips_disabled_sources() {
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        let src = reg
+            .add_source(CalendarKind::File, "Work".into(), "/tmp/a.ics".into())
+            .await
+            .unwrap();
+        reg.update_source(&src.id, None, None, Some(false))
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+        reg.seed_events_for_test(
+            &src.id,
+            vec![make_parsed("a", now + chrono::Duration::minutes(15), 30)],
+        )
+        .await;
+        let out = reg.upcoming_events_at(now, 5).await;
+        assert!(out.is_empty(), "disabled source should not contribute");
+    }
 
     #[test]
     fn is_due_when_never_synced() {

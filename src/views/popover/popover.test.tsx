@@ -103,13 +103,18 @@ describe("Popover shell", () => {
 
   it("keyboard shortcut is ignored when an INPUT has focus", () => {
     render(<Popover />);
-    const input = document.createElement("input");
-    document.body.appendChild(input);
-    input.focus();
-    fireEvent.keyDown(input, { key: "3" });
-    // Still on Today
-    expect(screen.getByText(/today's path/i)).toBeTruthy();
-    document.body.removeChild(input);
+    // Mount a focused input to simulate the user typing in any text
+    // field — the popover's global shortcut handler must defer to it.
+    const probe = document.createElement("input");
+    document.body.appendChild(probe);
+    try {
+      probe.focus();
+      fireEvent.keyDown(probe, { key: "3" });
+      // Still on Today
+      expect(screen.getByText(/today's path/i)).toBeTruthy();
+    } finally {
+      document.body.removeChild(probe);
+    }
   });
 
   it("sets the data-theme attribute when theme prop is explicit", () => {
@@ -196,5 +201,40 @@ describe("Global ambiguity default → new rule (#71)", () => {
       );
       expect(sel?.value).toBe("log-to-uncategorized");
     });
+  });
+});
+
+describe("Popover header — add-entry button (#21)", () => {
+  it("clicking the header + button opens the manual-entry modal on Today", async () => {
+    render(<Popover />);
+    const plus = screen.getByRole("button", { name: /add manual entry/i });
+    fireEvent.click(plus);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /new entry/i }),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("opening from a non-Today view switches to Today first", async () => {
+    render(<Popover />);
+    const rulesTab = screen
+      .getAllByRole("tab")
+      .find((t) => /rules/i.test(t.textContent ?? ""))!;
+    fireEvent.click(rulesTab);
+    expect(rulesTab.getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /add manual entry/i }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /new entry/i }),
+      ).toBeTruthy(),
+    );
+    const todayTab = screen
+      .getAllByRole("tab")
+      .find((t) => /today/i.test(t.textContent ?? ""))!;
+    expect(todayTab.getAttribute("aria-selected")).toBe("true");
   });
 });

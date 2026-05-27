@@ -28,6 +28,10 @@
   ],
   "list_today": [],
   "list_rules": [],
+  "list_calendar_sources": [],
+  "upcoming_calendar_events": [],
+  "current_calendar_events": [],
+  "calendar_sync_status": [],
   "current_running": null,
   "data_paths": {
     "dataDir": "/audit/cairn",

@@ -130,49 +130,6 @@ pub struct WeekDayAgg {
     pub weekend: bool,
 }
 
-/// Range covered by `report_summary`. The window math is anchored
-/// in `chrono::Local` so a "day" / "week" / "month" matches the
-/// user's wall clock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ReportRange {
-    Day,
-    Week,
-    Month,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReportProjectSlice {
-    pub project_id: Option<String>,
-    pub seconds: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReportDayBucket {
-    pub date: NaiveDate,
-    pub by_project: Vec<ReportProjectSlice>,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ReportSourceSplit {
-    pub rule: i64,
-    pub calendar: i64,
-    pub manual: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReportSummary {
-    pub total_seconds: i64,
-    pub prev_total_seconds: i64,
-    pub by_day: Vec<ReportDayBucket>,
-    pub by_project: Vec<ReportProjectSlice>,
-    pub by_source: ReportSourceSplit,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartEntryInput {
@@ -201,6 +158,32 @@ pub struct UpdateEntryInput {
     pub started_at: Option<String>,
     #[serde(default)]
     pub ended_at: Option<Option<String>>,
+}
+
+/// Manual entry creation (#21). Unlike `start_entry`, the caller
+/// provides explicit `started_at` and optionally `ended_at`. When
+/// `ended_at` is `None` the entry is open-ended (running); the IPC
+/// closes any other running entry first so two timers can't overlap.
+/// When both are provided the entry is a closed historical row that
+/// does not affect the currently-running timer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEntryInput {
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub description: String,
+    /// RFC 3339 timestamp. Required.
+    pub started_at: String,
+    /// RFC 3339 timestamp. `None` ⇒ open-ended (running).
+    #[serde(default)]
+    pub ended_at: Option<String>,
+    /// Defaults to `"manual"`. The frontend wires this for clarity but
+    /// the backend would default it anyway.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// How the user resolved the idle-detection modal. Mirrors the three
@@ -576,252 +559,6 @@ fn local_midnight_utc(d: NaiveDate) -> DateTime<Utc> {
 
 fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
-}
-
-/// Inclusive-start / exclusive-end half-open window over local dates.
-/// `start` is the first day in the range; `end` is the day *after*
-/// the last day (so a 7-day week has `end = start + 7`).
-#[derive(Debug, Clone, Copy)]
-pub struct ReportWindow {
-    pub start: NaiveDate,
-    pub end: NaiveDate,
-}
-
-impl ReportWindow {
-    /// Day count, always >= 1.
-    pub fn days(&self) -> i64 {
-        (self.end - self.start).num_days().max(1)
-    }
-
-    /// The immediately-preceding window of the same length. Used
-    /// to compute `prev_total_seconds`.
-    pub fn previous(&self) -> ReportWindow {
-        let span = Duration::days(self.days());
-        ReportWindow {
-            start: self.start - span,
-            end: self.start,
-        }
-    }
-}
-
-/// Resolve the local-date window for a `ReportRange` anchored at
-/// `today`. Day = today; Week = Monday..Monday; Month = first..first.
-pub fn window_for(range: ReportRange, today: NaiveDate) -> ReportWindow {
-    match range {
-        ReportRange::Day => ReportWindow {
-            start: today,
-            end: today + Duration::days(1),
-        },
-        ReportRange::Week => {
-            let monday = monday_of(today);
-            ReportWindow {
-                start: monday,
-                end: monday + Duration::days(7),
-            }
-        }
-        ReportRange::Month => {
-            let first = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
-                .expect("year+month always yields a valid first-of-month");
-            let next_first = next_month_first(first);
-            ReportWindow {
-                start: first,
-                end: next_first,
-            }
-        }
-    }
-}
-
-fn next_month_first(d: NaiveDate) -> NaiveDate {
-    if d.month() == 12 {
-        NaiveDate::from_ymd_opt(d.year() + 1, 1, 1).expect("Jan 1 of next year exists")
-    } else {
-        NaiveDate::from_ymd_opt(d.year(), d.month() + 1, 1).expect("month+1 exists")
-    }
-}
-
-/// Bucket an entry's `source` column into the three honesty-meter
-/// columns. The DB column is free-form ("manual", "rule", "calendar",
-/// "idle-resume", "idle-break", future signal sources). Anything that
-/// isn't recognisably rule-driven or calendar-driven falls into
-/// `manual` — that's the safest UX read ("you wrote this, not a
-/// machine"). Pure function so it gets its own unit test.
-pub fn bucket_source(raw: &str) -> SourceBucket {
-    // Rules currently land as the literal "rule" or "rule:<id>".
-    if raw == "rule" || raw.starts_with("rule:") {
-        return SourceBucket::Rule;
-    }
-    if raw == "calendar" {
-        return SourceBucket::Calendar;
-    }
-    // "manual", "idle-resume", "idle-break", anything else → manual.
-    SourceBucket::Manual
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SourceBucket {
-    Rule,
-    Calendar,
-    Manual,
-}
-
-/// Compute clamped overlap (in seconds) of an entry `[entry_start,
-/// entry_end)` with the report's UTC window `[win_start, win_end)`.
-/// Returns 0 if the entry lies outside the window or has zero / negative
-/// duration after clamping. Open entries pass `now` as `entry_end`.
-pub fn clamped_seconds(
-    entry_start: DateTime<Utc>,
-    entry_end: DateTime<Utc>,
-    win_start: DateTime<Utc>,
-    win_end: DateTime<Utc>,
-) -> i64 {
-    let lo = entry_start.max(win_start);
-    let hi = entry_end.min(win_end);
-    let secs = (hi - lo).num_seconds();
-    secs.max(0)
-}
-
-// codecov: the #[tauri::command] proc-macro attribute below shows
-// as uncovered by llvm-cov even though report_summary runs in the
-// async tests at the bottom of this file. Same pattern as every
-// other tauri::command in this module — pre-existing precedent in
-// PRs #68 and #69.
-#[tauri::command]
-pub async fn report_summary(
-    state: State<'_, AppState>,
-    range: ReportRange,
-) -> Result<ReportSummary, String> {
-    let today_local = Local::now().date_naive();
-    let win = window_for(range, today_local);
-    let prev = win.previous();
-
-    let win_start_utc = local_midnight_utc(win.start);
-    let win_end_utc = local_midnight_utc(win.end);
-    let prev_start_utc = local_midnight_utc(prev.start);
-    let prev_end_utc = win_start_utc;
-
-    // Pull every entry whose interval could overlap either window.
-    // Half-open: we want entries that start before `win_end_utc` AND
-    // end (or are still open) after `prev_start_utc`. SQLite has no
-    // typed comparison for our RFC3339 strings, but the column was
-    // written with `to_rfc3339()` and they're all in UTC — lexical
-    // comparison matches chronological comparison.
-    let rows = sqlx::query(
-        r#"
-        SELECT project_id, started_at, ended_at, source
-          FROM entries
-         WHERE started_at < ?1
-           AND (ended_at IS NULL OR ended_at > ?2)
-        "#,
-    )
-    .bind(win_end_utc.to_rfc3339())
-    .bind(prev_start_utc.to_rfc3339())
-    .fetch_all(&state.db.pool)
-    .await
-    .map_err(err)?;
-
-    let now_utc = Utc::now();
-    let mut by_day_buckets: std::collections::BTreeMap<
-        NaiveDate,
-        std::collections::BTreeMap<Option<String>, i64>,
-    > = std::collections::BTreeMap::new();
-    let mut by_project: std::collections::BTreeMap<Option<String>, i64> =
-        std::collections::BTreeMap::new();
-    let mut total_seconds: i64 = 0;
-    let mut prev_total_seconds: i64 = 0;
-    let mut by_source = ReportSourceSplit::default();
-
-    for row in rows {
-        let project_id: Option<String> = row.get("project_id");
-        let started_at: String = row.get("started_at");
-        let ended_at: Option<String> = row.get("ended_at");
-        let source: String = row.get("source");
-        let start = parse_ts(started_at)?;
-        let end = match ended_at {
-            Some(s) => parse_ts(s)?,
-            None => now_utc,
-        };
-        if end <= start {
-            continue;
-        }
-
-        // Current window contribution.
-        let cur_secs = clamped_seconds(start, end, win_start_utc, win_end_utc);
-        if cur_secs > 0 {
-            total_seconds += cur_secs;
-            *by_project.entry(project_id.clone()).or_insert(0) += cur_secs;
-            match bucket_source(&source) {
-                SourceBucket::Rule => by_source.rule += cur_secs,
-                SourceBucket::Calendar => by_source.calendar += cur_secs,
-                SourceBucket::Manual => by_source.manual += cur_secs,
-            }
-
-            // Per-day split: walk the entry day-by-day in local time
-            // so an entry crossing midnight is attributed correctly.
-            let mut cursor_day = start.with_timezone(&Local).date_naive();
-            if cursor_day < win.start {
-                cursor_day = win.start;
-            }
-            while cursor_day < win.end {
-                let day_start = local_midnight_utc(cursor_day);
-                let day_end = local_midnight_utc(cursor_day + Duration::days(1));
-                let d_secs = clamped_seconds(start, end, day_start, day_end);
-                if d_secs > 0 {
-                    let bucket = by_day_buckets.entry(cursor_day).or_default();
-                    *bucket.entry(project_id.clone()).or_insert(0) += d_secs;
-                }
-                if day_end >= end {
-                    break;
-                }
-                cursor_day += Duration::days(1);
-            }
-        }
-
-        // Previous window contribution (only feeds the headline delta).
-        let prev_secs = clamped_seconds(start, end, prev_start_utc, prev_end_utc);
-        prev_total_seconds += prev_secs;
-    }
-
-    // Materialise dense by_day list: one entry per date in the
-    // window, including zero days. The UI relies on this to render
-    // a placeholder bar for empty weekdays / months.
-    let mut by_day = Vec::with_capacity(win.days() as usize);
-    let mut d = win.start;
-    while d < win.end {
-        let by_project_for_day = by_day_buckets
-            .remove(&d)
-            .map(|m| {
-                m.into_iter()
-                    .map(|(project_id, seconds)| ReportProjectSlice {
-                        project_id,
-                        seconds,
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        by_day.push(ReportDayBucket {
-            date: d,
-            by_project: by_project_for_day,
-        });
-        d += Duration::days(1);
-    }
-
-    // by_project sorted desc by seconds.
-    let mut by_project_vec: Vec<ReportProjectSlice> = by_project
-        .into_iter()
-        .map(|(project_id, seconds)| ReportProjectSlice {
-            project_id,
-            seconds,
-        })
-        .collect();
-    by_project_vec.sort_by_key(|p| std::cmp::Reverse(p.seconds));
-
-    Ok(ReportSummary {
-        total_seconds,
-        prev_total_seconds,
-        by_day,
-        by_project: by_project_vec,
-        by_source,
-    })
 }
 
 /// Maximum character length for a rule's name. A compromised
@@ -1319,6 +1056,79 @@ pub async fn stop_entry(state: State<'_, AppState>, id: String) -> Result<Entry,
             .transpose()?,
         source: row.get("source"),
         rule_id: row.get("rule_id"),
+    })
+}
+
+#[tauri::command]
+pub async fn create_entry(
+    state: State<'_, AppState>,
+    input: CreateEntryInput,
+) -> Result<Entry, String> {
+    let started_at: DateTime<Utc> = input
+        .started_at
+        .parse::<DateTime<Utc>>()
+        .map_err(|e| format!("invalid started_at: {e}"))?;
+    let ended_at: Option<DateTime<Utc>> = match &input.ended_at {
+        Some(s) => Some(
+            s.parse::<DateTime<Utc>>()
+                .map_err(|e| format!("invalid ended_at: {e}"))?,
+        ),
+        None => None,
+    };
+    if let Some(end) = ended_at {
+        if end <= started_at {
+            return Err("ended_at must be strictly after started_at".into());
+        }
+    }
+
+    let now_str = Utc::now().to_rfc3339();
+    let started_str = started_at.to_rfc3339();
+    let ended_str = ended_at.map(|t| t.to_rfc3339());
+    let id = uuid::Uuid::new_v4().to_string();
+    let source = input.source.clone().unwrap_or_else(|| "manual".into());
+
+    let mut tx = state.db.pool.begin().await.map_err(err)?;
+
+    // Open-ended manual entries follow the same "only one running
+    // timer at a time" invariant as start_entry — close any other
+    // currently-running entry first.
+    if ended_at.is_none() {
+        sqlx::query("UPDATE entries SET ended_at = ?1, updated_at = ?1 WHERE ended_at IS NULL")
+            .bind(&now_str)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?8)
+        "#,
+    )
+    .bind(&id)
+    .bind(&input.project_id)
+    .bind(&input.task_id)
+    .bind(&input.description)
+    .bind(&started_str)
+    .bind(ended_str.as_deref())
+    .bind(&source)
+    .bind(&now_str)
+    .execute(&mut *tx)
+    .await
+    .map_err(err)?;
+
+    tx.commit().await.map_err(err)?;
+
+    Ok(Entry {
+        id,
+        project_id: input.project_id,
+        task_id: input.task_id,
+        description: input.description,
+        started_at,
+        ended_at,
+        source,
+        rule_id: None,
     })
 }
 
@@ -3104,6 +2914,137 @@ mod tests {
         assert!(today.iter().all(|e| e.id != entry.id));
     }
 
+    // ---------------- create_entry (#21) ----------------
+
+    fn create_input_closed(
+        project: Option<&str>,
+        description: &str,
+        started: &str,
+        ended: &str,
+    ) -> CreateEntryInput {
+        CreateEntryInput {
+            project_id: project.map(Into::into),
+            task_id: None,
+            description: description.into(),
+            started_at: started.into(),
+            ended_at: Some(ended.into()),
+            source: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_entry_persists_a_closed_historical_row() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = create_entry(
+            state.clone(),
+            create_input_closed(
+                Some("cairn"),
+                "Backfill",
+                "2026-05-23T08:00:00+00:00",
+                "2026-05-23T09:30:00+00:00",
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(entry.description, "Backfill");
+        assert_eq!(entry.project_id.as_deref(), Some("cairn"));
+        assert!(entry.ended_at.is_some());
+        assert_eq!(entry.source, "manual");
+
+        // Closed manual entry must NOT stop a running timer.
+        let running = current_running(state).await.unwrap();
+        assert!(running.is_none(), "closed create must not affect running");
+    }
+
+    #[tokio::test]
+    async fn create_entry_open_ended_replaces_running_timer() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let prior = start_entry(state.clone(), start_input(Some("cairn"), "prior"))
+            .await
+            .unwrap();
+
+        let started = (Utc::now() - Duration::minutes(5)).to_rfc3339();
+        let open = create_entry(
+            state.clone(),
+            CreateEntryInput {
+                project_id: Some("acme".into()),
+                task_id: None,
+                description: "Backfill open".into(),
+                started_at: started,
+                ended_at: None,
+                source: Some("manual".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(open.ended_at.is_none());
+
+        let running = current_running(state.clone()).await.unwrap().unwrap();
+        assert_eq!(running.id, open.id);
+
+        let today = list_today(state).await.unwrap();
+        let prior_after = today.iter().find(|e| e.id == prior.id).unwrap();
+        assert!(prior_after.ended_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn create_entry_rejects_inverted_range() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = create_entry(
+            state,
+            create_input_closed(
+                None,
+                "x",
+                "2026-05-23T10:00:00+00:00",
+                "2026-05-23T09:00:00+00:00",
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("ended_at"));
+    }
+
+    #[tokio::test]
+    async fn create_entry_rejects_equal_range() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = create_entry(
+            state,
+            create_input_closed(
+                None,
+                "x",
+                "2026-05-23T10:00:00+00:00",
+                "2026-05-23T10:00:00+00:00",
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("ended_at"));
+    }
+
+    #[tokio::test]
+    async fn create_entry_rejects_malformed_timestamp() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = create_entry(
+            state,
+            CreateEntryInput {
+                project_id: None,
+                task_id: None,
+                description: "x".into(),
+                started_at: "not-a-timestamp".into(),
+                ended_at: None,
+                source: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("started_at"));
+    }
+
     // ---------------- list_week aggregation ----------------
 
     #[tokio::test]
@@ -3237,401 +3178,6 @@ mod tests {
         assert_eq!(round2(1.234), 1.23);
         assert_eq!(round2(1.235999), 1.24);
         assert_eq!(round2(0.0), 0.0);
-    }
-
-    // ---------------- report_summary ----------------
-
-    /// Insert a closed entry with explicit timestamps + source.
-    /// Returns the new id so callers can assert on it later.
-    async fn insert_entry(
-        pool: &sqlx::SqlitePool,
-        project_id: Option<&str>,
-        start: DateTime<Utc>,
-        end: Option<DateTime<Utc>>,
-        source: &str,
-    ) -> String {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            r#"
-            INSERT INTO entries
-                (id, project_id, task_id, description, started_at, ended_at,
-                 source, rule_id, created_at, updated_at)
-            VALUES (?1, ?2, NULL, '', ?3, ?4, ?5, NULL, ?6, ?6)
-            "#,
-        )
-        .bind(&id)
-        .bind(project_id)
-        .bind(start.to_rfc3339())
-        .bind(end.map(|t| t.to_rfc3339()))
-        .bind(source)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .unwrap();
-        id
-    }
-
-    #[tokio::test]
-    async fn report_summary_with_no_entries_returns_zero() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let summary = report_summary(state, ReportRange::Week).await.unwrap();
-        assert_eq!(summary.total_seconds, 0);
-        assert_eq!(summary.prev_total_seconds, 0);
-        assert!(summary.by_project.is_empty());
-        assert_eq!(summary.by_source.rule, 0);
-        assert_eq!(summary.by_source.calendar, 0);
-        assert_eq!(summary.by_source.manual, 0);
-        // by_day still has one slot per day in the range.
-        assert_eq!(summary.by_day.len(), 7);
-        assert!(summary.by_day.iter().all(|d| d.by_project.is_empty()));
-    }
-
-    #[tokio::test]
-    async fn report_summary_sums_match_total() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let monday_local = monday_of(Local::now().date_naive());
-        let start_utc = local_midnight_utc(monday_local) + Duration::hours(9);
-        // Two entries on the same Monday, different projects.
-        insert_entry(
-            &state.db.pool,
-            Some("cairn"),
-            start_utc,
-            Some(start_utc + Duration::hours(2)),
-            "manual",
-        )
-        .await;
-        insert_entry(
-            &state.db.pool,
-            Some("acme"),
-            start_utc + Duration::hours(3),
-            Some(start_utc + Duration::hours(4)),
-            "rule",
-        )
-        .await;
-
-        let summary = report_summary(state, ReportRange::Week).await.unwrap();
-        let by_project_total: i64 = summary.by_project.iter().map(|p| p.seconds).sum();
-        assert_eq!(by_project_total, summary.total_seconds);
-        let by_day_total: i64 = summary
-            .by_day
-            .iter()
-            .flat_map(|d| d.by_project.iter().map(|p| p.seconds))
-            .sum();
-        assert_eq!(by_day_total, summary.total_seconds);
-        let by_source_total =
-            summary.by_source.rule + summary.by_source.calendar + summary.by_source.manual;
-        assert_eq!(by_source_total, summary.total_seconds);
-        assert_eq!(summary.total_seconds, 3 * 3600);
-    }
-
-    #[tokio::test]
-    async fn report_summary_prev_range_uses_immediately_preceding_window() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let monday_local = monday_of(Local::now().date_naive());
-        // Current-week entry: Monday 09:00 → 10:00 (3600 s).
-        let cur_start = local_midnight_utc(monday_local) + Duration::hours(9);
-        insert_entry(
-            &state.db.pool,
-            Some("cairn"),
-            cur_start,
-            Some(cur_start + Duration::hours(1)),
-            "manual",
-        )
-        .await;
-        // Prev-week entry: last Wednesday for 2h.
-        let prev_start = local_midnight_utc(monday_local - Duration::days(5)) + Duration::hours(10);
-        insert_entry(
-            &state.db.pool,
-            Some("acme"),
-            prev_start,
-            Some(prev_start + Duration::hours(2)),
-            "manual",
-        )
-        .await;
-        // Entry that started two weeks ago — must NOT be counted as
-        // prev (it's outside the immediately preceding window).
-        let too_old = local_midnight_utc(monday_local - Duration::days(10)) + Duration::hours(9);
-        insert_entry(
-            &state.db.pool,
-            Some("ops"),
-            too_old,
-            Some(too_old + Duration::hours(3)),
-            "manual",
-        )
-        .await;
-
-        let summary = report_summary(state, ReportRange::Week).await.unwrap();
-        assert_eq!(summary.total_seconds, 3600);
-        assert_eq!(summary.prev_total_seconds, 2 * 3600);
-    }
-
-    #[tokio::test]
-    async fn report_summary_by_source_buckets_correctly() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let monday_local = monday_of(Local::now().date_naive());
-        let base = local_midnight_utc(monday_local) + Duration::hours(8);
-        insert_entry(
-            &state.db.pool,
-            Some("cairn"),
-            base,
-            Some(base + Duration::hours(1)),
-            "rule",
-        )
-        .await;
-        insert_entry(
-            &state.db.pool,
-            Some("cairn"),
-            base + Duration::hours(2),
-            Some(base + Duration::hours(3)),
-            "rule:abc-123",
-        )
-        .await;
-        insert_entry(
-            &state.db.pool,
-            Some("mtg"),
-            base + Duration::hours(4),
-            Some(base + Duration::hours(5)),
-            "calendar",
-        )
-        .await;
-        insert_entry(
-            &state.db.pool,
-            Some("site"),
-            base + Duration::hours(6),
-            Some(base + Duration::hours(7)),
-            "manual",
-        )
-        .await;
-        // Unknown source — should fall back to manual per the
-        // `bucket_source` convention.
-        insert_entry(
-            &state.db.pool,
-            Some("ops"),
-            base + Duration::hours(8),
-            Some(base + Duration::hours(8) + Duration::minutes(30)),
-            "idle-resume",
-        )
-        .await;
-
-        let summary = report_summary(state, ReportRange::Week).await.unwrap();
-        assert_eq!(summary.by_source.rule, 2 * 3600);
-        assert_eq!(summary.by_source.calendar, 3600);
-        // manual = 1h (manual) + 30min (idle-resume fallback).
-        assert_eq!(summary.by_source.manual, 3600 + 1800);
-    }
-
-    #[tokio::test]
-    async fn report_summary_running_entry_uses_now_as_end() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        // Open entry started 30 minutes ago. The IPC clamps it to
-        // `[range.start, now]`; for a Day range that starts at local
-        // midnight, the entry started 30 min ago must be ≤ 1800s.
-        let started = Utc::now() - Duration::minutes(30);
-        insert_entry(&state.db.pool, Some("cairn"), started, None, "manual").await;
-
-        let summary = report_summary(state, ReportRange::Day).await.unwrap();
-        // Day window starts at local midnight; entry started 30min
-        // ago. Total is bounded above by 30min*60s and below by
-        // however far we are past local midnight (could be less if
-        // tests run shortly after midnight in local time).
-        assert!(summary.total_seconds > 0);
-        assert!(
-            summary.total_seconds <= 30 * 60 + 5,
-            "running entry must not contribute beyond now; got {} s",
-            summary.total_seconds
-        );
-    }
-
-    #[tokio::test]
-    async fn report_summary_day_range_returns_single_day_bucket() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let summary = report_summary(state, ReportRange::Day).await.unwrap();
-        assert_eq!(summary.by_day.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn report_summary_month_range_returns_one_bucket_per_day() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let summary = report_summary(state, ReportRange::Month).await.unwrap();
-        let today = Local::now().date_naive();
-        let win = window_for(ReportRange::Month, today);
-        assert_eq!(summary.by_day.len() as i64, win.days());
-    }
-
-    #[tokio::test]
-    async fn report_summary_splits_multi_day_entries_across_buckets() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let monday_local = monday_of(Local::now().date_naive());
-        let start = local_midnight_utc(monday_local) + Duration::hours(22);
-        let end = start + Duration::hours(4);
-        insert_entry(&state.db.pool, Some("cairn"), start, Some(end), "manual").await;
-        let summary = report_summary(state, ReportRange::Week).await.unwrap();
-        assert_eq!(summary.total_seconds, 4 * 3600);
-        let non_empty: Vec<_> = summary
-            .by_day
-            .iter()
-            .filter(|d| !d.by_project.is_empty())
-            .collect();
-        assert_eq!(
-            non_empty.len(),
-            2,
-            "expected the entry to span two day buckets"
-        );
-    }
-
-    #[tokio::test]
-    async fn report_summary_clamps_entry_starting_before_window() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let monday_local = monday_of(Local::now().date_naive());
-        let pre_window = local_midnight_utc(monday_local) - Duration::hours(2);
-        let end = local_midnight_utc(monday_local) + Duration::hours(1);
-        insert_entry(
-            &state.db.pool,
-            Some("cairn"),
-            pre_window,
-            Some(end),
-            "manual",
-        )
-        .await;
-        let summary = report_summary(state, ReportRange::Week).await.unwrap();
-        assert_eq!(summary.total_seconds, 3600);
-        let monday_bucket = summary
-            .by_day
-            .iter()
-            .find(|d| d.date == monday_local)
-            .expect("monday bucket exists");
-        assert_eq!(
-            monday_bucket
-                .by_project
-                .iter()
-                .map(|p| p.seconds)
-                .sum::<i64>(),
-            3600
-        );
-    }
-
-    #[tokio::test]
-    async fn report_summary_skips_zero_or_negative_intervals() {
-        let (_dir, app, _db) = mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let monday_local = monday_of(Local::now().date_naive());
-        let base = local_midnight_utc(monday_local) + Duration::hours(8);
-        // ended_at == started_at — zero duration.
-        insert_entry(&state.db.pool, Some("cairn"), base, Some(base), "manual").await;
-        // ended_at < started_at — corrupt row, must be ignored.
-        insert_entry(
-            &state.db.pool,
-            Some("cairn"),
-            base + Duration::hours(2),
-            Some(base + Duration::hours(1)),
-            "manual",
-        )
-        .await;
-        let summary = report_summary(state, ReportRange::Week).await.unwrap();
-        assert_eq!(summary.total_seconds, 0);
-    }
-
-    // ---------------- report helpers (pure) ----------------
-
-    #[test]
-    fn bucket_source_groups_known_and_unknown_into_three_columns() {
-        assert_eq!(bucket_source("rule"), SourceBucket::Rule);
-        assert_eq!(bucket_source("rule:r-123"), SourceBucket::Rule);
-        assert_eq!(bucket_source("calendar"), SourceBucket::Calendar);
-        assert_eq!(bucket_source("manual"), SourceBucket::Manual);
-        assert_eq!(bucket_source("idle-resume"), SourceBucket::Manual);
-        assert_eq!(bucket_source("idle-break"), SourceBucket::Manual);
-        // Unknown / future source.
-        assert_eq!(bucket_source("something-else"), SourceBucket::Manual);
-        assert_eq!(bucket_source(""), SourceBucket::Manual);
-    }
-
-    #[test]
-    fn clamped_seconds_returns_zero_when_disjoint() {
-        let win_start = Utc::now();
-        let win_end = win_start + Duration::hours(1);
-        let entry_start = win_end + Duration::hours(1);
-        let entry_end = entry_start + Duration::hours(1);
-        assert_eq!(
-            clamped_seconds(entry_start, entry_end, win_start, win_end),
-            0
-        );
-    }
-
-    #[test]
-    fn clamped_seconds_clamps_overlap_into_window() {
-        let win_start = Utc::now();
-        let win_end = win_start + Duration::hours(2);
-        // Entry starts before window, ends inside.
-        let entry_start = win_start - Duration::hours(1);
-        let entry_end = win_start + Duration::hours(1);
-        assert_eq!(
-            clamped_seconds(entry_start, entry_end, win_start, win_end),
-            3600
-        );
-        // Entry fully contained.
-        assert_eq!(
-            clamped_seconds(
-                win_start + Duration::minutes(30),
-                win_start + Duration::minutes(90),
-                win_start,
-                win_end
-            ),
-            3600
-        );
-    }
-
-    #[test]
-    fn window_for_day_returns_today_only() {
-        let d = NaiveDate::from_ymd_opt(2026, 5, 23).unwrap();
-        let w = window_for(ReportRange::Day, d);
-        assert_eq!(w.start, d);
-        assert_eq!(w.end, d + Duration::days(1));
-        assert_eq!(w.days(), 1);
-    }
-
-    #[test]
-    fn window_for_week_starts_on_monday() {
-        let sat = NaiveDate::from_ymd_opt(2026, 5, 23).unwrap();
-        let w = window_for(ReportRange::Week, sat);
-        let monday = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
-        assert_eq!(w.start, monday);
-        assert_eq!(w.end, monday + Duration::days(7));
-        assert_eq!(w.days(), 7);
-    }
-
-    #[test]
-    fn window_for_month_returns_first_to_first() {
-        let mid = NaiveDate::from_ymd_opt(2026, 5, 23).unwrap();
-        let w = window_for(ReportRange::Month, mid);
-        assert_eq!(w.start, NaiveDate::from_ymd_opt(2026, 5, 1).unwrap());
-        assert_eq!(w.end, NaiveDate::from_ymd_opt(2026, 6, 1).unwrap());
-        // Year boundary.
-        let dec = NaiveDate::from_ymd_opt(2026, 12, 15).unwrap();
-        let w2 = window_for(ReportRange::Month, dec);
-        assert_eq!(w2.start, NaiveDate::from_ymd_opt(2026, 12, 1).unwrap());
-        assert_eq!(w2.end, NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
-    }
-
-    #[test]
-    fn window_previous_is_same_length_immediately_prior() {
-        let w = window_for(
-            ReportRange::Week,
-            NaiveDate::from_ymd_opt(2026, 5, 20).unwrap(),
-        );
-        let prev = w.previous();
-        assert_eq!(prev.end, w.start);
-        assert_eq!(prev.days(), w.days());
     }
 
     // ---------------- calendar IPC ----------------
@@ -3797,6 +3343,23 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         let events = current_calendar_events(state).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn upcoming_calendar_events_is_empty_on_fresh_db() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let events = upcoming_calendar_events(state, Some(3)).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn upcoming_calendar_events_defaults_limit_when_none() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // No events seeded — we just exercise the None-limit branch.
+        let events = upcoming_calendar_events(state, None).await.unwrap();
         assert!(events.is_empty());
     }
 
@@ -4150,6 +3713,20 @@ pub async fn current_calendar_events(
     state: State<'_, AppState>,
 ) -> Result<Vec<ActiveCalendarEvent>, String> {
     let events = state.calendar.active_events_at(Utc::now()).await;
+    Ok(events.into_iter().map(Into::into).collect())
+}
+
+/// Next `limit` calendar events strictly after now, across every
+/// enabled source, sorted by start time (#20). The Today view's
+/// "Up next" list consumes this. `limit` is clamped to 1..=10 to keep
+/// the response bounded even if a misbehaving caller asks for more.
+#[tauri::command]
+pub async fn upcoming_calendar_events(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<ActiveCalendarEvent>, String> {
+    let n = limit.unwrap_or(3).clamp(1, 10);
+    let events = state.calendar.upcoming_events_at(Utc::now(), n).await;
     Ok(events.into_iter().map(Into::into).collect())
 }
 

@@ -185,10 +185,12 @@ describe("TodayView (idle — no running entry)", () => {
     expect(document.querySelectorAll(".quick-card").length).toBe(4);
   });
 
-  it("renders the upcoming list", () => {
+  it("renders the upcoming section with empty state outside Tauri", () => {
     const { container } = renderToday();
     expect(container.querySelector(".upcoming")).toBeTruthy();
-    expect(container.querySelectorAll(".up-item").length).toBeGreaterThan(0);
+    // useUpcoming returns no events outside Tauri; useCalendars also empty,
+    // so the section renders the not-connected empty state.
+    expect(container.querySelectorAll(".up-item").length).toBe(0);
   });
 
   it("clicking a quick-start card calls timer.start (projects-first layout)", () => {

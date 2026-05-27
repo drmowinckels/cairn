@@ -30,7 +30,7 @@ export function useCalendars(): UseCalendars {
   const refresh = useCallback(async () => {
     if (!inTauri) return;
     try {
-      setSources(await listCalendarSources());
+      setSources((await listCalendarSources()) ?? []);
       setError(null);
     } catch (e) {
       setError(String(e));

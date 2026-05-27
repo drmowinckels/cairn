@@ -1,0 +1,149 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { RecentList, type RecentEntry } from "./recent-list";
+import type { Project } from "../../lib/types";
+
+const PROJECTS_BY_ID: Record<string, Project | undefined> = {
+  cairn: {
+    id: "cairn",
+    name: "Cairn",
+    clientId: null,
+    color: "#f2cc8f",
+    archived: false,
+  },
+};
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+function entry(overrides: Partial<RecentEntry> = {}): RecentEntry {
+  return {
+    id: "e1",
+    projectId: "cairn",
+    description: "Rule preview UI",
+    startedAt: "2026-05-26T09:00:00Z",
+    endedAt: "2026-05-26T09:45:00Z",
+    source: "rule:branch=feat/rules",
+    ...overrides,
+  };
+}
+
+describe("RecentList", () => {
+  it("renders an empty state when there are no entries", () => {
+    render(
+      <RecentList entries={[]} projectsById={PROJECTS_BY_ID} />,
+    );
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(screen.getByText(/no entries yet today/i)).toBeTruthy();
+  });
+
+  it("renders one row per entry with duration in hh/mm form", () => {
+    render(
+      <RecentList
+        entries={[entry({}), entry({ id: "e2", endedAt: "2026-05-26T11:00:00Z" })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    expect(document.querySelectorAll(".entry").length).toBe(2);
+  });
+
+  it("rule source row carries aria-label 'source: rule'", () => {
+    render(<RecentList entries={[entry({})]} projectsById={PROJECTS_BY_ID} />);
+    expect(
+      document.querySelector('[aria-label="source: rule"]'),
+    ).not.toBeNull();
+  });
+
+  it("calendar source row carries aria-label 'source: calendar'", () => {
+    render(
+      <RecentList
+        entries={[entry({ source: "calendar" })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    expect(
+      document.querySelector('[aria-label="source: calendar"]'),
+    ).not.toBeNull();
+  });
+
+  it("manual source row renders an icon-less label", () => {
+    render(
+      <RecentList
+        entries={[entry({ source: "manual" })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    const span = document.querySelector('[aria-label="source: manual"]');
+    expect(span).not.toBeNull();
+    expect(span?.querySelector("svg")).toBeNull();
+  });
+
+  it("falls back to the ink-faint dot when the project is unknown", () => {
+    render(
+      <RecentList
+        entries={[entry({ projectId: "ghost-proj" })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    const dot = document.querySelector(".entry .proj-dot") as HTMLElement;
+    expect(dot.style.background).toBe("var(--ink-faint)");
+  });
+
+  it("renders entries as buttons when onEdit is provided", () => {
+    const onEdit = vi.fn();
+    render(
+      <RecentList
+        entries={[entry({})]}
+        projectsById={PROJECTS_BY_ID}
+        onEdit={onEdit}
+      />,
+    );
+    const button = screen.getByRole("button", {
+      name: /edit entry: rule preview ui/i,
+    });
+    fireEvent.click(button);
+    expect(onEdit).toHaveBeenCalledWith("e1");
+  });
+
+  it("does not render buttons when onEdit is omitted", () => {
+    render(<RecentList entries={[entry({})]} projectsById={PROJECTS_BY_ID} />);
+    expect(document.querySelector(".entries .entry-btn")).toBeNull();
+  });
+
+  it("renders '(no description)' fallback for empty descriptions", () => {
+    const onEdit = vi.fn();
+    render(
+      <RecentList
+        entries={[entry({ description: "" })]}
+        projectsById={PROJECTS_BY_ID}
+        onEdit={onEdit}
+      />,
+    );
+    expect(screen.getByText(/\(no description\)/i)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /edit entry: \(no description\)/i }),
+    ).toBeTruthy();
+  });
+
+  it("treats null endedAt as a running entry and uses Date.now() for duration", () => {
+    render(
+      <RecentList
+        entries={[entry({ endedAt: null, startedAt: new Date(Date.now() - 60_000).toISOString() })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    expect(document.querySelectorAll(".entry").length).toBe(1);
+  });
+
+  it("renders no project dot color when entry has no projectId (null path)", () => {
+    render(
+      <RecentList
+        entries={[entry({ projectId: null })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    const dot = document.querySelector(".entry .proj-dot") as HTMLElement;
+    expect(dot.style.background).toBe("var(--ink-faint)");
+  });
+});

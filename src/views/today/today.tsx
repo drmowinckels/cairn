@@ -12,17 +12,25 @@ import { useSuggestion } from "../../lib/use-suggestion";
 import { useIdlePrompt } from "../../lib/use-idle-prompt";
 import { useProjects } from "../../lib/use-projects";
 import { useToday } from "../../lib/use-today";
+import { useUpcoming } from "../../lib/use-upcoming";
+import { useCalendars } from "../../lib/use-calendars";
 import { useDebouncedCallback } from "../../lib/use-debounced-callback";
 import {
   entriesToSegments,
   legendFromSegments,
-  minutesOfDay,
   startToPercent,
   type TimelineSegment,
 } from "../../lib/timeline";
-import type { BackendEntry } from "../../lib/ipc";
+import { inTauri, type BackendEntry } from "../../lib/ipc";
 import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
-import { UPCOMING } from "../../test-fixtures/data";
+import { RecentList, type RecentEntry } from "./recent-list";
+import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
+import {
+  isoToLocal,
+  ManualEntryModal,
+  type ManualEntryDraft,
+  type ManualEntrySubmit,
+} from "./manual-entry-modal";
 
 interface Props {
   density: Density;
@@ -32,6 +40,11 @@ interface Props {
   setShowIdleModal: (v: boolean) => void;
   detectionPrompts?: DetectionPrompts;
   announce?: boolean;
+  /**
+   * Increment this number from the popover header's `+` button to
+   * open the manual-entry modal in create mode (#21).
+   */
+  addEntryRequest?: number;
 }
 
 export function TodayView({
@@ -42,10 +55,13 @@ export function TodayView({
   setShowIdleModal,
   detectionPrompts = "subtle",
   announce = true,
+  addEntryRequest = 0,
 }: Props) {
   const compact = density === "compact";
   const projects = useProjects();
   const today = useToday();
+  const upcoming = useUpcoming(3);
+  const calendars = useCalendars();
   const timer = useTimer({ onStopped: () => void today.refresh() });
   const { suggestion, confirm, dismiss } = useSuggestion({
     currentRunningRuleId: timer.running?.ruleId ?? null,
@@ -105,6 +121,140 @@ export function TodayView({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [suggestion, detectionPrompts, dismiss]);
+
+  // ── manual-entry modal (#21) ────────────────────────────────────
+  const [modalState, setModalState] = useState<
+    | { open: false }
+    | { open: true; mode: "create" | "edit"; draft: ManualEntryDraft }
+  >({ open: false });
+
+  const openCreate = useCallback(() => {
+    const now = new Date();
+    const start = new Date(now.getTime() - 30 * 60_000);
+    setModalState({
+      open: true,
+      mode: "create",
+      draft: {
+        projectId: null,
+        description: "",
+        startedLocal: isoToLocal(start.toISOString()),
+        endedLocal: isoToLocal(now.toISOString()),
+      },
+    });
+  }, []);
+
+  const openEdit = useCallback((entry: BackendEntry) => {
+    setModalState({
+      open: true,
+      mode: "edit",
+      draft: {
+        id: entry.id,
+        projectId: entry.projectId,
+        description: entry.description,
+        startedLocal: isoToLocal(entry.startedAt),
+        endedLocal: isoToLocal(entry.endedAt ?? ""),
+      },
+    });
+  }, []);
+
+  const closeModal = useCallback(() => {
+    setModalState({ open: false });
+  }, []);
+
+  useEffect(() => {
+    if (addEntryRequest > 0) {
+      openCreate();
+    }
+  }, [addEntryRequest, openCreate]);
+
+  const handleSubmit = useCallback(
+    async (payload: ManualEntrySubmit) => {
+      if (payload.id) {
+        await today.update({
+          id: payload.id,
+          projectId: payload.projectId,
+          description: payload.description,
+          startedAt: payload.startedAt,
+          endedAt: payload.endedAt,
+        });
+      } else {
+        await today.create({
+          projectId: payload.projectId,
+          description: payload.description,
+          startedAt: payload.startedAt,
+          endedAt: payload.endedAt,
+          source: "manual",
+        });
+      }
+      void timer.refresh();
+    },
+    [today, timer],
+  );
+
+  const handleDelete = useCallback(
+    async (id: string) => {
+      await today.remove(id);
+      void timer.refresh();
+    },
+    [today, timer],
+  );
+
+  const recentEntries = useMemo<RecentEntry[]>(() => {
+    const closed = todayEntries.filter((e) => e.endedAt !== null);
+    return [...closed]
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+      .slice(0, 4)
+      .map((e) => ({
+        id: e.id,
+        projectId: e.projectId,
+        description: e.description,
+        startedAt: e.startedAt,
+        endedAt: e.endedAt,
+        source: e.source,
+      }));
+  }, [todayEntries]);
+
+  const findEntryById = useCallback(
+    (id: string): BackendEntry | undefined =>
+      todayEntries.find((e) => e.id === id),
+    [todayEntries],
+  );
+
+  const onEditRecent = useCallback(
+    (id: string) => {
+      // RecentList only renders ids from today.entries, so findEntryById
+      // always returns a match.
+      const entry = findEntryById(id);
+      if (!entry) return;
+      openEdit(entry);
+    },
+    [findEntryById, openEdit],
+  );
+
+  const upcomingEvents = useMemo<UpcomingEvent[]>(
+    () =>
+      upcoming.events.map((e) => ({
+        uid: e.uid,
+        summary: e.summary,
+        start: e.start,
+        end: e.end,
+        allDay: e.allDay,
+      })),
+    [upcoming.events],
+  );
+
+  const calendarsConnected = inTauri
+    ? calendars.sources.some((s) => s.enabled)
+    : true;
+
+  const onUpcomingStart = useCallback(
+    (event: UpcomingEvent) => {
+      timer
+        .start({ description: event.summary, source: "calendar" })
+        .catch((e) => console.error("start failed", e));
+    },
+    [timer],
+  );
 
   return (
     <div className="view view-today" data-density={density}>
@@ -357,79 +507,42 @@ export function TodayView({
         <section className="recent" aria-label="Recent entries">
           <div className="sect-label">
             <span>Recent</span>
-            <button className="link-btn">Edit…</button>
           </div>
-          {todayEntries.length === 0 ? (
-            <Empty
-              title="No entries yet today"
-              body="Start a timer or let a rule catch what you're doing."
-            />
-          ) : (
-            <ul className="entries">
-              {[...todayEntries]
-                .reverse()
-                .slice(0, 4)
-                .map((e) => {
-                  const startMin = minutesOfDay(e.startedAt);
-                  const endMin = e.endedAt ? minutesOfDay(e.endedAt) : startMin;
-                  const proj = e.projectId ? projectsById[e.projectId] : undefined;
-                  return (
-                    <li key={e.id} className="entry">
-                      <span className="entry-time">{fmtClock(startMin)}</span>
-                      <span
-                        className="proj-dot"
-                        style={{ background: proj?.color ?? "var(--ink-mute)" }}
-                      />
-                      <span className="entry-task">{e.description}</span>
-                      <span className="entry-dur">
-                        {fmtHm(Math.max(0, Math.round(endMin - startMin)))}
-                      </span>
-                      {e.source.startsWith("rule") && (
-                        <Icon
-                          name="sparkle"
-                          size={10}
-                          className="entry-src"
-                          aria-label="rule-detected"
-                        />
-                      )}
-                      {e.source === "calendar" && (
-                        <Icon
-                          name="calendar"
-                          size={10}
-                          className="entry-src"
-                          aria-label="calendar event"
-                        />
-                      )}
-                    </li>
-                  );
-                })}
-            </ul>
-          )}
+          <RecentList
+            entries={recentEntries}
+            projectsById={projectsById}
+            onEdit={onEditRecent}
+          />
         </section>
       )}
 
-      <section className="upcoming">
+      <section className="upcoming" aria-label="Upcoming calendar events">
         <div className="sect-label">
           <span>Up next</span>
         </div>
-        {UPCOMING.length === 0 ? (
-          <Empty
-            title="Nothing scheduled"
-            body="Calendar events show up here as they approach."
-            tone="soft"
-          />
-        ) : (
-          <ul className="up-list">
-            {UPCOMING.map((u, i) => (
-              <li key={i} className="up-item">
-                <span className="up-time">{fmtClock(u.at)}</span>
-                <span className="up-label">{u.label}</span>
-                <span className="up-dur">{u.duration}m</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <UpcomingList
+          events={upcomingEvents}
+          onStart={onUpcomingStart}
+          calendarsConnected={calendarsConnected}
+        />
       </section>
+
+      {modalState.open && (
+        <ManualEntryModal
+          open
+          mode={modalState.mode}
+          initial={modalState.draft}
+          projects={projects}
+          runningRange={
+            timer.running
+              ? { startedAt: timer.running.startedAt, id: timer.running.id }
+              : null
+          }
+          onSubmit={handleSubmit}
+          onDelete={modalState.mode === "edit" ? handleDelete : undefined}
+          onClose={closeModal}
+        />
+      )}
     </div>
   );
 }
@@ -660,4 +773,3 @@ function minutesNow(): number {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }
-
