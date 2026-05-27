@@ -103,12 +103,13 @@ describe("Popover shell", () => {
 
   it("keyboard shortcut is ignored when an INPUT has focus", () => {
     render(<Popover />);
-    // Focus the task-description input inside the running-timer card.
-    const input = screen.getByLabelText(/task description/i) as HTMLInputElement;
+    const input = document.createElement("input");
+    document.body.appendChild(input);
     input.focus();
     fireEvent.keyDown(input, { key: "3" });
     // Still on Today
     expect(screen.getByText(/today's path/i)).toBeTruthy();
+    document.body.removeChild(input);
   });
 
   it("sets the data-theme attribute when theme prop is explicit", () => {

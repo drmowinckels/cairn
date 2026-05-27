@@ -64,19 +64,29 @@ afterEach(() => {
   suggestionOverride = SUGGESTION_FIXTURE;
 });
 
-describe("TodayView", () => {
-  it("renders the running timer card with the project chip and stop button", () => {
-    const { container } = renderToday({ hideSuggestion: true });
+describe("TodayView (idle — no running entry)", () => {
+  it("renders the timer card in idle state", () => {
+    renderToday({ hideSuggestion: true });
     expect(screen.getByLabelText(/current timer/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /stop timer/i })).toBeTruthy();
-    const chip = container.querySelector(".now .proj-chip");
-    expect(chip?.textContent).toMatch(/cairn/i);
+    expect(screen.getByText(/now · idle/i)).toBeTruthy();
+    expect(screen.getByText(/no timer running/i)).toBeTruthy();
+  });
+
+  it("renders the elapsed wrapper with aria-live polite", () => {
+    const { container } = renderToday({ hideSuggestion: true });
+    const elapsed = container.querySelector(".now-time");
+    expect(elapsed?.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("Stop button is disabled when nothing is running", () => {
+    renderToday({ hideSuggestion: true });
+    const stop = screen.getByRole("button", { name: /stop timer/i });
+    expect(stop.hasAttribute("disabled")).toBe(true);
   });
 
   it("renders the auto-detect suggestion banner when the hook surfaces a suggestion", () => {
     renderToday();
     expect(screen.getByLabelText(/auto-detected work/i)).toBeTruthy();
-    expect(screen.getByText(/detected/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /^confirm$/i })).toBeTruthy();
   });
 
@@ -95,12 +105,23 @@ describe("TodayView", () => {
   it("clicking 'view rule' on the suggestion dismisses the banner and opens that rule", () => {
     const { onOpenRule } = renderToday();
     fireEvent.click(screen.getByRole("button", { name: /view rule/i }));
-    // Acknowledges the suggestion (dismiss) then navigates.
     expect(dismissMock).toHaveBeenCalledTimes(1);
     expect(onOpenRule).toHaveBeenCalledWith("r1");
   });
 
-  it("clicking Confirm calls the hook's confirm()", async () => {
+  it("non-Escape keydown on the document does not dismiss the suggestion", () => {
+    renderToday();
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(dismissMock).not.toHaveBeenCalled();
+  });
+
+  it("Escape keydown on the document dismisses the suggestion banner", () => {
+    renderToday();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(dismissMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking Confirm calls the hook's confirm()", () => {
     renderToday();
     fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
     expect(confirmMock).toHaveBeenCalledTimes(1);
@@ -113,7 +134,6 @@ describe("TodayView", () => {
 
   it("renders the suggestion's tags from the live event payload", () => {
     renderToday();
-    // Tag component prefixes the value with "#".
     const tag = document.querySelector(".suggest-tags .tag");
     expect(tag?.textContent).toBe("#dev");
   });
@@ -134,17 +154,18 @@ describe("TodayView", () => {
     }
   });
 
-  it("renders the timeline track, axis ticks, and legend", () => {
-    const { container } = renderToday();
-    expect(container.querySelector(".timeline")).toBeTruthy();
-    expect(container.querySelectorAll(".dt-seg").length).toBeGreaterThan(0);
-    expect(container.querySelectorAll(".dt-tick").length).toBe(6);
-    expect(container.querySelectorAll(".legend-item").length).toBeGreaterThan(0);
+  it("renders the timeline empty state when no entries exist today", () => {
+    renderToday({ hideSuggestion: true });
+    const empty = document.querySelector(".timeline .empty");
+    expect(empty).toBeTruthy();
+    expect(document.querySelectorAll(".dt-seg").length).toBe(0);
   });
 
-  it("renders the recent-entries section in default layout (comfy density)", () => {
+  it("renders the recent-entries empty state in default layout (comfy density)", () => {
     renderToday();
     expect(screen.getByLabelText(/recent entries/i)).toBeTruthy();
+    const recentEmpty = document.querySelector(".recent .empty");
+    expect(recentEmpty).toBeTruthy();
   });
 
   it("renders the quick-start grid only in projects-first layout", () => {
@@ -161,7 +182,6 @@ describe("TodayView", () => {
       />,
     );
     expect(screen.getByLabelText(/quick-start a project/i)).toBeTruthy();
-    // Renders the four quick-start cards
     expect(document.querySelectorAll(".quick-card").length).toBe(4);
   });
 
@@ -171,30 +191,14 @@ describe("TodayView", () => {
     expect(container.querySelectorAll(".up-item").length).toBeGreaterThan(0);
   });
 
-  it("clicking Stop logs the error if timer.stop rejects", async () => {
-    // useTimer's stop() bails out when there's no running entry. In
-    // browser-dev mode there is no running entry, so onStop is a no-op
-    // and the catch path can't be reached without a real running entry.
-    // Just verify the button is clickable without crashing the view.
-    renderToday({ hideSuggestion: true });
-    const stop = screen.getByRole("button", { name: /stop timer/i });
-    expect(stop.hasAttribute("disabled")).toBe(true);
-    // Clicking still fires onClick (button is disabled but jsdom allows it).
-    fireEvent.click(stop);
-  });
-
   it("clicking a quick-start card calls timer.start (projects-first layout)", () => {
     renderToday({ layoutVariant: "projects-first" });
     const card = document.querySelector(".quick-card") as HTMLElement;
     expect(card).toBeTruthy();
     fireEvent.click(card);
-    // No assertion on IPC because timer.start is a no-op without Tauri,
-    // but the click handler must not throw.
   });
 });
 
-// Render Today with a running entry from the backend so the
-// `deriveSource` helper and `now-source` badge are exercised.
 describe("TodayView (inside Tauri — running entry from backend)", () => {
   type WithInternals = { __TAURI_INTERNALS__?: unknown };
 
@@ -207,16 +211,39 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     delete (globalThis as WithInternals).__TAURI_INTERNALS__;
   });
 
-  async function freshRender(source: string) {
-    const invoke = vi.fn().mockResolvedValue({
+  async function freshRender(source: string, opts: { endedAt?: string | null } = {}) {
+    const running = {
       id: "e1",
       projectId: "cairn",
       taskId: null,
       description: "live work",
       startedAt: new Date(Date.now() - 60_000).toISOString(),
-      endedAt: null,
+      endedAt: opts.endedAt ?? null,
       source,
       ruleId: source.startsWith("rule") ? "r1" : null,
+    };
+    const closed = {
+      id: "e0",
+      projectId: "cairn",
+      taskId: null,
+      description: "earlier",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 120_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string, _args?: unknown) => {
+      if (cmd === "current_running") return running;
+      if (cmd === "list_today") return [closed, running];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          { id: "ops", name: "Operations", clientId: null, color: "#9a9bb0", archived: false },
+        ];
+      if (cmd === "stop_entry")
+        return { ...running, endedAt: new Date().toISOString() };
+      if (cmd === "update_entry") return { ...running, description: "patched" };
+      return null;
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
     const { TodayView } = await import("./today");
@@ -239,29 +266,650 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
   ] as const) {
     it(`labels the running timer source as '${expectedBadge}' for backend source='${source}'`, async () => {
       await freshRender(source);
-      // The .now-source span renders the derived label.
-      const badge = await screen.findByText(new RegExp(`^\\s*${expectedBadge}\\s*$`, "i"));
+      const badge = await screen.findByText(
+        new RegExp(`^\\s*${expectedBadge}\\s*$`, "i"),
+      );
       expect(badge).toBeTruthy();
     });
   }
 
-  it("stop button is enabled and triggers stop_entry when a backend entry is running", async () => {
+  it("stop button is enabled when a backend entry is running and triggers stop_entry + list_today refetch", async () => {
     const { invoke } = await freshRender("manual");
-    invoke.mockResolvedValueOnce({
-      id: "e1",
-      projectId: "cairn",
-      taskId: null,
-      description: "live work",
-      startedAt: new Date(Date.now() - 60_000).toISOString(),
-      endedAt: new Date().toISOString(),
-      source: "manual",
-      ruleId: null,
-    });
     const stop = await screen.findByRole("button", { name: /stop timer/i });
     await waitFor(() => expect(stop.hasAttribute("disabled")).toBe(false));
     fireEvent.click(stop);
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("stop_entry", { id: "e1" }),
     );
+    await waitFor(() => {
+      const todayCalls = invoke.mock.calls.filter(([c]) => c === "list_today");
+      expect(todayCalls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("renders the timeline segments + 6 axis ticks + a running stripe class", async () => {
+    await freshRender("manual");
+    await waitFor(() => {
+      const segments = document.querySelectorAll(".dt-seg");
+      expect(segments.length).toBe(2);
+    });
+    expect(document.querySelectorAll(".dt-tick").length).toBe(6);
+    expect(document.querySelectorAll(".dt-seg.is-running").length).toBe(1);
+    expect(document.querySelector(".dt-now-label")).toBeTruthy();
+  });
+
+  it("debounced description edits call update_entry after a quiet period", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { invoke } = await freshRender("manual");
+      const input = (await screen.findByLabelText(
+        /task description/i,
+      )) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "new desc 1" } });
+      fireEvent.change(input, { target: { value: "new desc 2" } });
+      await vi.advanceTimersByTimeAsync(450);
+      await waitFor(() => {
+        const updates = invoke.mock.calls.filter(([c]) => c === "update_entry");
+        expect(updates.length).toBe(1);
+        expect(updates[0][1]).toEqual({
+          input: { id: "e1", description: "new desc 2" },
+        });
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clicking outside the open project picker closes it", async () => {
+    await freshRender("manual");
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  });
+
+  it("description input onBlur flushes the pending debounced update", async () => {
+    const { invoke } = await freshRender("manual");
+    const input = (await screen.findByLabelText(
+      /task description/i,
+    )) as HTMLInputElement;
+    invoke.mockClear();
+    fireEvent.change(input, { target: { value: "flush me" } });
+    fireEvent.blur(input);
+    await waitFor(() => {
+      const updates = invoke.mock.calls.filter(([c]) => c === "update_entry");
+      expect(updates.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("clicking the project chip opens a listbox of projects and picking one calls update_entry", async () => {
+    const { invoke } = await freshRender("manual");
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    const list = await screen.findByRole("listbox");
+    expect(list).toBeTruthy();
+    const opsOpt = screen.getByRole("option", { name: /operations/i });
+    fireEvent.click(opsOpt.querySelector("button") as HTMLElement);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("update_entry", {
+        input: { id: "e1", projectId: "ops" },
+      }),
+    );
+  });
+
+  it("mousedown inside the picker does NOT close it (target contained by ref)", async () => {
+    await freshRender("manual");
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    const list = await screen.findByRole("listbox");
+    expect(list).toBeTruthy();
+    fireEvent.mouseDown(list);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+  });
+
+  it("debounced update rejection is logged via console.error (catch branch)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let updateShouldFail = false;
+      const running = {
+        id: "e1",
+        projectId: "cairn",
+        taskId: null,
+        description: "live work",
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        endedAt: null,
+        source: "manual",
+        ruleId: null,
+      };
+      const invoke = vi.fn(async (cmd: string) => {
+        if (cmd === "current_running") return running;
+        if (cmd === "list_today") return [running];
+        if (cmd === "list_projects")
+          return [{ id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false }];
+        if (cmd === "update_entry") {
+          if (updateShouldFail) throw new Error("update boom");
+          return running;
+        }
+        return null;
+      });
+      vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="default"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      const input = (await screen.findByLabelText(/task description/i)) as HTMLInputElement;
+      updateShouldFail = true;
+      fireEvent.change(input, { target: { value: "trigger failure" } });
+      await vi.advanceTimersByTimeAsync(450);
+      await waitFor(() =>
+        expect(errSpy).toHaveBeenCalledWith(
+          "update_entry failed",
+          expect.any(Error),
+        ),
+      );
+    } finally {
+      errSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("project-pick rejection is logged via console.error (onPickProject catch)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const running = {
+        id: "e1",
+        projectId: "cairn",
+        taskId: null,
+        description: "live work",
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        endedAt: null,
+        source: "manual",
+        ruleId: null,
+      };
+      const invoke = vi.fn(async (cmd: string) => {
+        if (cmd === "current_running") return running;
+        if (cmd === "list_today") return [running];
+        if (cmd === "list_projects")
+          return [
+            { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+            { id: "ops", name: "Operations", clientId: null, color: "#def", archived: false },
+          ];
+        if (cmd === "update_entry") throw new Error("pick boom");
+        return null;
+      });
+      vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="default"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      const chip = await screen.findByRole("button", {
+        name: /project: cairn\. change project/i,
+      });
+      fireEvent.click(chip);
+      const opsOpt = await screen.findByRole("option", { name: /operations/i });
+      fireEvent.click(opsOpt.querySelector("button") as HTMLElement);
+      await waitFor(() =>
+        expect(errSpy).toHaveBeenCalledWith(
+          "update_entry failed",
+          expect.any(Error),
+        ),
+      );
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("quick-start rejection is logged via console.error (start catch)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const invoke = vi.fn(async (cmd: string) => {
+        if (cmd === "current_running") return null;
+        if (cmd === "list_today") return [];
+        if (cmd === "list_projects")
+          return [
+            { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          ];
+        if (cmd === "start_entry") throw new Error("start boom");
+        return null;
+      });
+      vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="projects-first"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("current_running"),
+      );
+      const card = (await waitFor(() => {
+        const c = document.querySelector(".quick-card");
+        expect(c).toBeTruthy();
+        return c as HTMLElement;
+      })) as HTMLElement;
+      fireEvent.click(card);
+      await waitFor(() => {
+        const calls = invoke.mock.calls.filter(([c]) => c === "start_entry");
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+      });
+      await waitFor(() =>
+        expect(errSpy).toHaveBeenCalledWith(
+          "start failed",
+          expect.any(Error),
+        ),
+      );
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("renders the picker fallback labels when no project is selected", async () => {
+    const running = {
+      id: "e1",
+      projectId: null,
+      taskId: null,
+      description: "no project",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return running;
+      if (cmd === "list_today") return [running];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: /choose a project/i }),
+    ).toBeTruthy();
+    const chipName = document.querySelector(".now-picker .proj-chip-name");
+    expect(chipName?.textContent).toBe("No project");
+  });
+
+  it("renders Recent / Timeline entries that have no projectId (null branch)", async () => {
+    const orphan = {
+      id: "e-orphan",
+      projectId: null,
+      taskId: null,
+      description: "uncategorized work",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 120_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [orphan];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".dt-seg").length).toBe(1),
+    );
+    expect(screen.getByText(/uncategorized work/i)).toBeTruthy();
+  });
+
+  it("renders rule and calendar source icons in the Recent list", async () => {
+    const ruleEntry = {
+      id: "e-rule",
+      projectId: "cairn",
+      taskId: null,
+      description: "rule work",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 120_000).toISOString(),
+      source: "rule:branch=foo",
+      ruleId: "r1",
+    };
+    const calEntry = {
+      ...ruleEntry,
+      id: "e-cal",
+      description: "cal event",
+      source: "calendar",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [ruleEntry, calEntry];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".entries .entry").length).toBe(2),
+    );
+    expect(document.querySelectorAll(".entry-src").length).toBe(2);
+  });
+
+  it("timeline aria-live is 'off' when announce={false}", async () => {
+    const running = {
+      id: "e1",
+      projectId: "cairn",
+      taskId: null,
+      description: "quiet",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return running;
+      if (cmd === "list_today") return [running];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+        announce={false}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".dt-seg").length).toBe(1),
+    );
+    const needle = document.querySelector(".dt-now");
+    expect(needle?.getAttribute("aria-live")).toBe("off");
+    const elapsed = document.querySelector(".now-time");
+    expect(elapsed?.getAttribute("aria-live")).toBe("off");
+  });
+
+  it("Recent list resolves project via PROJECT_BY_ID when not in live projects", async () => {
+    const entry = {
+      id: "e-fixture",
+      projectId: "cairn",
+      taskId: null,
+      description: "cairn work",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 120_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [entry];
+      // live projects deliberately empty — useProjects falls back to fixture.
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".entries .entry").length).toBe(1),
+    );
+    const dot = document.querySelector(".entries .entry .proj-dot") as HTMLElement;
+    expect(dot.getAttribute("style") ?? "").not.toContain("var(--ink-mute)");
+  });
+
+  it("DayTimeline falls back to --ink-mute when a segment's projectId is unknown", async () => {
+    const orphan = {
+      id: "e-ghost",
+      projectId: "deleted-project",
+      taskId: null,
+      description: "ghost project work",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return orphan;
+      if (cmd === "list_today") return [orphan];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".dt-seg").length).toBe(1),
+    );
+    const seg = document.querySelector(".dt-seg") as HTMLElement;
+    expect(seg.getAttribute("style") ?? "").toContain("var(--ink-mute)");
+  });
+
+  it("picker mousedown listener ignores events whose target is not a DOM Node", async () => {
+    await freshRender("manual");
+    const chip = await screen.findByRole("button", {
+      name: /project: cairn\. change project/i,
+    });
+    fireEvent.click(chip);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+    const evt = new Event("mousedown", { bubbles: true });
+    Object.defineProperty(evt, "target", { value: null, configurable: true });
+    document.dispatchEvent(evt);
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+  });
+
+  it("project picker stays inert when useProjects yields [] (no fixture leak)", async () => {
+    const running = {
+      id: "e-pick",
+      projectId: "cairn",
+      taskId: null,
+      description: "live",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      endedAt: null,
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return running;
+      if (cmd === "list_today") return [running];
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    vi.doMock("../../lib/use-projects", () => ({
+      useProjects: () => [],
+    }));
+    try {
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="default"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      const chip = await screen.findByRole("button", { name: /choose a project/i });
+      expect(chip.getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(chip);
+      expect(screen.queryByRole("listbox")).toBeNull();
+    } finally {
+      vi.doUnmock("../../lib/use-projects");
+    }
+  });
+
+  it("quick-start grid renders an empty state when useProjects yields []", async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [];
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    vi.doMock("../../lib/use-projects", () => ({
+      useProjects: () => [],
+    }));
+    try {
+      const { TodayView } = await import("./today");
+      render(
+        <TodayView
+          density="comfy"
+          layoutVariant="projects-first"
+          onOpenRule={vi.fn()}
+          showIdleModal={false}
+          setShowIdleModal={vi.fn()}
+        />,
+      );
+      await waitFor(() =>
+        expect(screen.getByText(/no projects yet/i)).toBeTruthy(),
+      );
+      expect(document.querySelectorAll(".quick-card").length).toBe(0);
+    } finally {
+      vi.doUnmock("../../lib/use-projects");
+    }
+  });
+
+  it("suggestion banner has role=alertdialog when detectionPrompts=modal", () => {
+    suggestionOverride = SUGGESTION_FIXTURE;
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+        detectionPrompts="modal"
+      />,
+    );
+    expect(
+      screen.getByRole("alertdialog", { name: /auto-detected work/i }),
+    ).toBeTruthy();
+  });
+
+  it("suggestion banner renders generic 'Detected' label when suggestion has no project", () => {
+    suggestionOverride = { ...SUGGESTION_FIXTURE, project: null };
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    const body = document.querySelector(".suggest-body");
+    expect(body?.textContent ?? "").toMatch(/^Detected/);
+  });
+
+  it("renders the timer error banner and Retry calls timer.refresh", async () => {
+    let firstCall = true;
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") {
+        if (firstCall) {
+          firstCall = false;
+          throw new Error("db unreachable");
+        }
+        return null;
+      }
+      if (cmd === "list_today") return [];
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    const banner = await screen.findByText(/couldn't reach the local timer/i);
+    expect(banner).toBeTruthy();
+    const retry = screen.getByRole("button", { name: /try again/i });
+    fireEvent.click(retry);
+    await waitFor(() => {
+      const calls = invoke.mock.calls.filter(([c]) => c === "current_running");
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });

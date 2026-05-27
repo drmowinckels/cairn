@@ -1,19 +1,28 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
-import { fmtClock, fmtClockFromIso, fmtHm, fmtIdleDuration, fmtRange } from "../../lib/time";
+import {
+  fmtClock,
+  fmtClockFromIso,
+  fmtHm,
+  fmtIdleDuration,
+} from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
 import { useSuggestion } from "../../lib/use-suggestion";
 import { useIdlePrompt } from "../../lib/use-idle-prompt";
-import type { Density, DetectionPrompts, LayoutVariant } from "../../lib/types";
+import { useProjects } from "../../lib/use-projects";
+import { useToday } from "../../lib/use-today";
+import { useDebouncedCallback } from "../../lib/use-debounced-callback";
 import {
-  NOW_MIN,
-  PROJECT_BY_ID,
-  PROJECTS,
-  RUNNING,
-  TODAY,
-  UPCOMING,
-} from "../../test-fixtures/data";
+  entriesToSegments,
+  legendFromSegments,
+  minutesOfDay,
+  startToPercent,
+  type TimelineSegment,
+} from "../../lib/timeline";
+import type { BackendEntry } from "../../lib/ipc";
+import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
+import { UPCOMING } from "../../test-fixtures/data";
 
 interface Props {
   density: Density;
@@ -35,13 +44,9 @@ export function TodayView({
   announce = true,
 }: Props) {
   const compact = density === "compact";
-  const timer = useTimer();
-  // The hook owns banner visibility internally — dismissed
-  // suggestions clear via the snooze map per RULES_ENGINE.md §6,
-  // and Strict matches skip the banner entirely. The popover used
-  // to track `suggestionDismissed` as a session boolean; that's
-  // gone now because it permanently silenced the banner after the
-  // first dismiss, even after the snooze expired.
+  const projects = useProjects();
+  const today = useToday();
+  const timer = useTimer({ onStopped: () => void today.refresh() });
   const { suggestion, confirm, dismiss } = useSuggestion({
     currentRunningRuleId: timer.running?.ruleId ?? null,
   });
@@ -49,33 +54,57 @@ export function TodayView({
     runningEntryId: timer.running?.id ?? null,
   });
 
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
-    return () => window.clearInterval(id);
-  }, []);
+  const runningProject = timer.running?.projectId ?? null;
+  const runningTask = timer.running?.description ?? "";
+  const runningSource = timer.running ? deriveSource(timer.running) : "manual";
 
-  const runningProject = timer.running?.projectId ?? RUNNING.project;
-  const runningTask = timer.running?.description ?? RUNNING.description;
-  const runningTags = [] as string[];
-  const runningSource = timer.running ? deriveSource(timer.running) : "rule";
+  const totalSec = Math.floor(timer.elapsedMs / 1000);
+  const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+  const ss = String(totalSec % 60).padStart(2, "0");
 
-  const startedAt = timer.running
-    ? new Date(timer.running.startedAt).getTime()
-    : null;
-  const runSec = startedAt
-    ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) + tick * 0
-    : (NOW_MIN - RUNNING.start) * 60 + 14 + tick;
-  const hh = String(Math.floor(runSec / 3600)).padStart(2, "0");
-  const mm = String(Math.floor((runSec % 3600) / 60)).padStart(2, "0");
-  const ss = String(runSec % 60).padStart(2, "0");
+  const debouncedDesc = useDebouncedCallback((next: string) => {
+    timer
+      .update({ description: next })
+      .catch((e) => console.error("update_entry failed", e));
+  }, 400);
 
-  const onStop = () => {
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const onPickProject = useCallback(
+    (id: string) => {
+      setPickerOpen(false);
+      debouncedDesc.flush();
+      timer
+        .update({ projectId: id })
+        .catch((e) => console.error("update_entry failed", e));
+    },
+    [debouncedDesc, timer],
+  );
+
+  const onStop = useCallback(() => {
+    debouncedDesc.flush();
     timer.stop().catch((e) => console.error("stop failed", e));
-  };
+  }, [debouncedDesc, timer]);
+
   const onQuickStart = (projectId: string) => {
-    timer.start({ projectId, description: "" }).catch((e) => console.error("start failed", e));
+    timer
+      .start({ projectId, description: "" })
+      .then(() => today.refresh())
+      .catch((e) => console.error("start failed", e));
   };
+
+  const todayEntries = today.entries;
+  const projectsById = useMemo(() => projectById(projects), [projects]);
+
+  useEffect(() => {
+    if (!suggestion || detectionPrompts === "off") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismiss();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [suggestion, detectionPrompts, dismiss]);
 
   return (
     <div className="view view-today" data-density={density}>
@@ -85,13 +114,6 @@ export function TodayView({
           aria-label="Auto-detected work"
           aria-live={announce ? "polite" : "off"}
           role={detectionPrompts === "modal" ? "alertdialog" : undefined}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              dismiss();
-            } else if (e.key === "Enter") {
-              void confirm();
-            }
-          }}
         >
           <div className="suggest-head">
             <Icon name="sparkle" size={13} />
@@ -125,10 +147,6 @@ export function TodayView({
             <button
               className="suggest-link"
               onClick={() => {
-                // Viewing the rule acks the suggestion. Without
-                // this the banner stays pinned on return, with
-                // potentially stale `ruleName` if the user renamed
-                // the rule in the editor.
                 const id = suggestion.ruleId;
                 dismiss();
                 onOpenRule(id);
@@ -170,9 +188,6 @@ export function TodayView({
                 </span>
               </>
             ) : (
-              // Legacy fixture path used by Storybook/preview when
-              // no live event arrives. Kept so the modal renders
-              // for design review.
               <>
                 No input detected from <strong>14:50</strong> to <strong>15:02</strong>
                 <span className="idle-dur">12 min</span>
@@ -221,15 +236,21 @@ export function TodayView({
       <section className="now" aria-label="Current timer" aria-busy={timer.loading}>
         <div className="now-meta">
           <span className="now-label">
-            {timer.loading ? "Connecting…" : "Now · running"}
+            {timer.loading
+              ? "Connecting…"
+              : timer.running
+                ? "Now · running"
+                : "Now · idle"}
           </span>
-          {!timer.loading && (
+          {!timer.loading && timer.running && (
             <span
               className="now-source"
               title={
                 runningSource === "rule"
                   ? "Started automatically by a rule"
-                  : "Started manually"
+                  : runningSource === "calendar"
+                    ? "Started by a calendar event"
+                    : "Started manually"
               }
             >
               <Icon name="sparkle" size={11} /> {runningSource}
@@ -245,74 +266,92 @@ export function TodayView({
             {ss}
           </span>
         </div>
-        <div className="now-task">
-          <input
-            key={timer.running?.id ?? "fixture"}
-            className="now-input"
-            defaultValue={runningTask}
-            aria-label="Task description"
-            placeholder="What are you working on?"
-          />
-        </div>
-        <div className="now-row">
-          <div className="now-chips">
-            {runningProject && <ProjectChip id={runningProject} interactive />}
-            {runningTags.map((t) => (
-              <Tag key={t}>{t}</Tag>
-            ))}
-          </div>
-          <button
-            className="btn btn--stop"
-            aria-label="Stop timer"
-            onClick={onStop}
-            disabled={timer.running == null}
-          >
-            <Icon name="stop" size={12} /> Stop
-          </button>
-        </div>
+        {timer.running ? (
+          <>
+            <div className="now-task">
+              <input
+                key={timer.running.id}
+                className="now-input"
+                defaultValue={runningTask}
+                aria-label="Task description"
+                placeholder="What are you working on?"
+                onChange={(e) => debouncedDesc(e.currentTarget.value)}
+                onBlur={() => debouncedDesc.flush()}
+              />
+            </div>
+            <div className="now-row">
+              <div className="now-chips">
+                <ProjectPickerChip
+                  projectId={runningProject}
+                  projects={projects}
+                  open={pickerOpen}
+                  setOpen={setPickerOpen}
+                  onPick={onPickProject}
+                />
+              </div>
+              <button
+                className="btn btn--stop"
+                aria-label="Stop timer"
+                onClick={onStop}
+              >
+                <Icon name="stop" size={12} /> Stop
+              </button>
+            </div>
+          </>
+        ) : (
+          !timer.loading && (
+            <div className="now-row">
+              <div className="now-chips">
+                <span className="now-idle-hint">
+                  No timer running — start one from Quick start or pick a project.
+                </span>
+              </div>
+              <button
+                className="btn btn--stop"
+                aria-label="Stop timer"
+                disabled
+              >
+                <Icon name="stop" size={12} /> Stop
+              </button>
+            </div>
+          )
+        )}
       </section>
 
       {layoutVariant === "projects-first" && (
         <section className="quick" aria-label="Quick-start a project">
           <div className="sect-label">Quick start</div>
-          <div className="quick-grid">
-            {PROJECTS.slice(0, 4).map((p) => (
-              <button
-                key={p.id}
-                className="quick-card"
-                onClick={() => onQuickStart(p.id)}
-              >
-                <span
-                  className="proj-dot"
-                  style={{ background: p.color, width: 8, height: 8 }}
-                />
-                <span className="quick-name">{p.name}</span>
-              </button>
-            ))}
-          </div>
+          {projects.length === 0 ? (
+            <Empty
+              title="No projects yet"
+              body="Add a project from Settings to quick-start a timer."
+              tone="soft"
+            />
+          ) : (
+            <div className="quick-grid">
+              {projects.slice(0, 4).map((p) => (
+                <button
+                  key={p.id}
+                  className="quick-card"
+                  onClick={() => onQuickStart(p.id)}
+                >
+                  <span
+                    className="proj-dot"
+                    style={{ background: p.color, width: 8, height: 8 }}
+                  />
+                  <span className="quick-name">{p.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
-      <section className="timeline" aria-label="Today's timeline">
-        <div className="sect-label">
-          <span>Today's path</span>
-          <span className="sect-meta">
-            {fmtHm(4 * 60 + 12)} logged · {fmtHm(18 * 60 + 34)} this week
-          </span>
-        </div>
-        <DayTimeline />
-        <div className="legend">
-          {[...new Set(TODAY.map((t) => t.project).concat([RUNNING.project]))].map((pid) => (
-            <span key={pid} className="legend-item">
-              <span
-                className="proj-dot"
-                style={{ background: PROJECT_BY_ID[pid].color }}
-              />
-              {PROJECT_BY_ID[pid].name}
-            </span>
-          ))}
-        </div>
-      </section>
+      <TimelineSection
+        entries={todayEntries}
+        projects={projects}
+        announce={announce}
+      />
 
       {!compact && layoutVariant !== "projects-first" && (
         <section className="recent" aria-label="Recent entries">
@@ -320,26 +359,50 @@ export function TodayView({
             <span>Recent</span>
             <button className="link-btn">Edit…</button>
           </div>
-          {TODAY.length === 0 ? (
+          {todayEntries.length === 0 ? (
             <Empty
               title="No entries yet today"
               body="Start a timer or let a rule catch what you're doing."
             />
           ) : (
             <ul className="entries">
-              {[...TODAY].reverse().slice(0, 4).map((e, i) => (
-                <li key={i} className="entry">
-                  <span className="entry-time">{fmtClock(e.start)}</span>
-                  <span
-                    className="proj-dot"
-                    style={{ background: PROJECT_BY_ID[e.project].color }}
-                  />
-                  <span className="entry-task">{e.description}</span>
-                  <span className="entry-dur">{fmtHm(e.end - e.start)}</span>
-                  {e.source.startsWith("rule") && <Icon name="sparkle" size={10} className="entry-src" />}
-                  {e.source === "calendar" && <Icon name="calendar" size={10} className="entry-src" />}
-                </li>
-              ))}
+              {[...todayEntries]
+                .reverse()
+                .slice(0, 4)
+                .map((e) => {
+                  const startMin = minutesOfDay(e.startedAt);
+                  const endMin = e.endedAt ? minutesOfDay(e.endedAt) : startMin;
+                  const proj = e.projectId ? projectsById[e.projectId] : undefined;
+                  return (
+                    <li key={e.id} className="entry">
+                      <span className="entry-time">{fmtClock(startMin)}</span>
+                      <span
+                        className="proj-dot"
+                        style={{ background: proj?.color ?? "var(--ink-mute)" }}
+                      />
+                      <span className="entry-task">{e.description}</span>
+                      <span className="entry-dur">
+                        {fmtHm(Math.max(0, Math.round(endMin - startMin)))}
+                      </span>
+                      {e.source.startsWith("rule") && (
+                        <Icon
+                          name="sparkle"
+                          size={10}
+                          className="entry-src"
+                          aria-label="rule-detected"
+                        />
+                      )}
+                      {e.source === "calendar" && (
+                        <Icon
+                          name="calendar"
+                          size={10}
+                          className="entry-src"
+                          aria-label="calendar event"
+                        />
+                      )}
+                    </li>
+                  );
+                })}
             </ul>
           )}
         </section>
@@ -377,47 +440,214 @@ function deriveSource(entry: { source: string }): string {
   return "manual";
 }
 
-const DAY_START = 8 * 60;
-const DAY_END = 19 * 60;
-const DAY_SPAN = DAY_END - DAY_START;
+function projectById(list: Project[]): Record<string, Project> {
+  return Object.fromEntries(list.map((p) => [p.id, p]));
+}
 
-function DayTimeline() {
-  const pct = (m: number) => ((m - DAY_START) / DAY_SPAN) * 100;
-  const nowPct = pct(NOW_MIN);
+interface ProjectPickerChipProps {
+  projectId: string | null;
+  projects: Project[];
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  onPick: (id: string) => void;
+}
 
-  const entries = [
-    ...TODAY,
-    {
-      start: RUNNING.start,
-      end: NOW_MIN,
-      project: RUNNING.project,
-      description: RUNNING.description,
-      running: true,
-    },
-  ];
+// Stub project picker — clicking the chip opens a basic combobox over
+// the live project list. The full ⌘K command palette ships in M6;
+// this gives the user something better than a read-only label in the
+// meantime.
+function ProjectPickerChip({
+  projectId,
+  projects,
+  open,
+  setOpen,
+  onPick,
+}: ProjectPickerChipProps) {
+  const current = projectId ? projects.find((p) => p.id === projectId) : undefined;
+  const ref = useRef<HTMLDivElement>(null);
+  const hasProjects = projects.length > 0;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const node = ref.current;
+      if (!node || !(e.target instanceof Node)) return;
+      if (!node.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open, setOpen]);
 
   return (
-    <div className="dt-wrap" role="img" aria-label="Today's timeline from 08:00 to 19:00">
-      <div className="dt-track">
-        {entries.map((e, i) => (
-          <div
-            key={i}
-            className={`dt-seg${"running" in e && e.running ? " is-running" : ""}`}
-            style={{
-              left: `${pct(e.start)}%`,
-              width: `${pct(e.end) - pct(e.start)}%`,
-              background: PROJECT_BY_ID[e.project].color,
-            }}
-            title={`${e.description} · ${fmtRange(e.start, e.end)}`}
+    <div className="now-picker" ref={ref}>
+      <button
+        type="button"
+        className="proj-chip is-interactive"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-disabled={!hasProjects}
+        aria-label={
+          current ? `Project: ${current.name}. Change project` : "Choose a project"
+        }
+        onClick={() => hasProjects && setOpen(!open)}
+      >
+        <span
+          className="proj-dot"
+          style={{ background: current?.color ?? "var(--ink-mute)" }}
+        />
+        <span className="proj-chip-name">{current?.name ?? "No project"}</span>
+      </button>
+      {open && hasProjects && (
+        <ul className="now-picker-list" role="listbox">
+          {projects.map((p) => (
+            <li key={p.id} role="option" aria-selected={p.id === projectId}>
+              <button
+                type="button"
+                className="now-picker-item"
+                onClick={() => onPick(p.id)}
+              >
+                <span
+                  className="proj-dot"
+                  style={{ background: p.color }}
+                />
+                {p.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+interface TimelineSectionProps {
+  entries: BackendEntry[];
+  projects: Project[];
+  announce: boolean;
+}
+
+function TimelineSection({ entries, projects, announce }: TimelineSectionProps) {
+  const [nowMin, setNowMin] = useState(() => minutesNow());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMin(minutesNow()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const segments = useMemo(
+    () => entriesToSegments(entries, nowMin),
+    [entries, nowMin],
+  );
+  const legend = useMemo(
+    () => legendFromSegments(segments, projects),
+    [segments, projects],
+  );
+
+  const totalLoggedMin = useMemo(
+    () =>
+      segments.reduce(
+        (acc, s) => acc + Math.max(0, s.endMin - s.startMin),
+        0,
+      ),
+    [segments],
+  );
+
+  return (
+    <section className="timeline" aria-label="Today's timeline">
+      <div className="sect-label">
+        <span>Today's path</span>
+        <span className="sect-meta">
+          {fmtHm(Math.round(totalLoggedMin))} logged
+        </span>
+      </div>
+      {entries.length === 0 ? (
+        <Empty
+          title="No entries yet today"
+          body="The timeline fills as you log time."
+          tone="soft"
+        />
+      ) : (
+        <>
+          <DayTimeline
+            segments={segments}
+            projects={projects}
+            nowMin={nowMin}
+            announce={announce}
           />
-        ))}
-        <div className="dt-now" style={{ left: `${nowPct}%` }} aria-label="Now">
-          <span className="dt-now-label">{fmtClock(NOW_MIN)}</span>
+          <ul className="legend">
+            {legend.map((l) => (
+              <li key={l.projectId} className="legend-item">
+                <span className="proj-dot" style={{ background: l.color }} />
+                {l.name}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+interface DayTimelineProps {
+  segments: TimelineSegment[];
+  projects: Project[];
+  nowMin: number;
+  announce: boolean;
+}
+
+function DayTimeline({ segments, projects, nowMin, announce }: DayTimelineProps) {
+  const byId = useMemo(() => projectById(projects), [projects]);
+  const nowPct = startToPercent(nowMin);
+
+  return (
+    <div
+      className="dt-wrap"
+      role="img"
+      aria-label="Today's timeline from 08:00 to 19:00"
+    >
+      <div className="dt-track">
+        {segments.map((s) => {
+          const left = startToPercent(s.startMin);
+          const right = startToPercent(s.endMin);
+          const width = Math.max(0, right - left);
+          const color = s.projectId
+            ? (byId[s.projectId]?.color ?? "var(--ink-mute)")
+            : "var(--ink-mute)";
+          const proj = s.projectId ? byId[s.projectId] : undefined;
+          const label = proj
+            ? `${proj.name} · ${s.description}`
+            : s.description;
+          return (
+            <div
+              key={s.id}
+              className={`dt-seg${s.running ? " is-running" : ""}`}
+              style={{
+                left: `${left}%`,
+                width: `${width}%`,
+                background: color,
+              }}
+              title={label}
+              aria-label={label}
+            />
+          );
+        })}
+        <div
+          className="dt-now"
+          style={{ left: `${nowPct}%` }}
+          aria-label="Now"
+          aria-live={announce ? "polite" : "off"}
+        >
+          <span className="dt-now-label">{fmtClock(Math.round(nowMin))}</span>
         </div>
       </div>
       <div className="dt-axis">
         {[8, 10, 12, 14, 16, 18].map((h) => (
-          <span key={h} className="dt-tick" style={{ left: `${pct(h * 60)}%` }}>
+          <span
+            key={h}
+            className="dt-tick"
+            style={{ left: `${startToPercent(h * 60)}%` }}
+          >
             {h}
           </span>
         ))}
@@ -425,3 +655,9 @@ function DayTimeline() {
     </div>
   );
 }
+
+function minutesNow(): number {
+  const d = new Date();
+  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+}
+
