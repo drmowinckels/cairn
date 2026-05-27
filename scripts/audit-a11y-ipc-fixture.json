@@ -24,7 +24,12 @@
       "client": "Internal",
       "color": "#9a9bb0"
     },
-    { "id": "mtg", "name": "Meetings", "client": null, "color": "#c8b8e0" }
+    {
+      "id": "mtg",
+      "name": "Meetings",
+      "client": null,
+      "color": "#c8b8e0"
+    }
   ],
   "list_today": [],
   "list_rules": [],
@@ -40,5 +45,10 @@
   },
   "list_data_files": [],
   "suggested_backup_name": "cairn-backup.sqlite",
-  "suggested_csv_name": "cairn-export.csv"
+  "suggested_csv_name": "cairn-export.csv",
+  "signal_capture_status": {
+    "active": false,
+    "path": null,
+    "bytesWritten": 0
+  }
 }

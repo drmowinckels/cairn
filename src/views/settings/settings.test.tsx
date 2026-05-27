@@ -17,6 +17,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 import { SettingsView } from "./index";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
+import type { UseSignalCapture } from "../../lib/use-signal-capture";
 
 type WithInternals = { __TAURI_INTERNALS__?: unknown };
 
@@ -43,6 +44,17 @@ function stubA11y(overrides: Partial<UseA11yPrefs> = {}): UseA11yPrefs {
   };
 }
 
+function stubCapture(overrides: Partial<UseSignalCapture> = {}): UseSignalCapture {
+  return {
+    status: { active: false, path: null, bytesWritten: 0 },
+    error: null,
+    start: vi.fn(async () => undefined),
+    stop: vi.fn(async () => undefined),
+    refresh: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   invokeMock.mockReset();
   askMock.mockReset();
@@ -56,7 +68,7 @@ afterEach(() => {
 
 describe("SettingsView (browser-dev mode)", () => {
   it("renders the four privacy guarantees verbatim from PRIVACY.md", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} />);
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     expect(
       screen.getByText(/Everything is stored locally/i),
     ).toBeTruthy();
@@ -75,7 +87,7 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("renders the Source on GitHub · Apache-2.0 attribution with a real link", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} />);
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     const link = screen.getByRole("link", { name: /source on github/i });
     expect(link.getAttribute("href")).toBe(
       "https://github.com/drmowinckels/cairn",
@@ -84,7 +96,7 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("renders the five privacy action buttons", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} />);
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     for (const name of [
       /export all data/i,
       /restore from file/i,
@@ -97,14 +109,14 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("'View what's stored' is always clickable so the button is keyboard-reachable", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} />);
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     const btn = screen.getByRole("button", { name: /view what's stored/i });
     expect(btn.hasAttribute("disabled")).toBe(false);
   });
 
   it("renders an exclusion list (or its empty hint) with at least one signal", () => {
     const { container } = render(
-      <SettingsView density="comfy" a11y={stubA11y()} />,
+      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
     );
     // Either there's an exclusion list section, OR the empty hint is shown.
     expect(
@@ -114,7 +126,7 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("clicking an accessibility toggle calls the matching a11y setter", () => {
     const a11y = stubA11y({ highContrast: false });
-    render(<SettingsView density="comfy" a11y={a11y} />);
+    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
     const sw = screen.getByRole("switch", { name: /high contrast/i });
     fireEvent.click(sw);
     expect(a11y.setHighContrast).toHaveBeenCalledWith(true);
@@ -122,7 +134,7 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("renders the text-scale segmented control with the active option highlighted", () => {
     render(
-      <SettingsView density="comfy" a11y={stubA11y({ textScale: "lg" })} />,
+      <SettingsView density="comfy" a11y={stubA11y({ textScale: "lg" })} capture={stubCapture()} />,
     );
     const group = screen.getByRole("radiogroup", { name: /text size/i });
     const active = Array.from(
@@ -136,6 +148,7 @@ describe("SettingsView (browser-dev mode)", () => {
       <SettingsView
         density="comfy"
         a11y={stubA11y({ ambiguityDefault: "log-to-uncategorized" })}
+        capture={stubCapture()}
       />,
     );
     const group = screen.getByRole("radiogroup", {
@@ -149,7 +162,7 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("clicking an ambiguity option calls setAmbiguityDefault with the new value", () => {
     const a11y = stubA11y({ ambiguityDefault: "prompt" });
-    render(<SettingsView density="comfy" a11y={a11y} />);
+    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
     const group = screen.getByRole("radiogroup", {
       name: /default ambiguity behaviour/i,
     });
@@ -162,7 +175,7 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("does not call IPC in browser-dev mode", async () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} />);
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     await waitFor(() => {});
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -192,7 +205,7 @@ describe("SettingsView (inside Tauri)", () => {
       return null;
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     const btn = await screen.findByRole("button", {
       name: /view what's stored/i,
     });
@@ -221,7 +234,7 @@ describe("SettingsView (inside Tauri)", () => {
       return null;
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     const list = await screen.findByRole("list", {
       name: /files currently stored/i,
     });
@@ -252,7 +265,7 @@ describe("SettingsView (inside Tauri)", () => {
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
     const { container } = render(
-      <FreshSettingsView density="comfy" a11y={stubA11y()} />,
+      <FreshSettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
     );
     const list = await screen.findByRole("list", {
       name: /files currently stored/i,
@@ -276,7 +289,7 @@ describe("SettingsView (inside Tauri)", () => {
       return null;
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     expect(await screen.findByText(/restore is staged/i)).toBeTruthy();
   });
 
@@ -296,7 +309,7 @@ describe("SettingsView (inside Tauri)", () => {
     });
     saveMock.mockResolvedValue("/tmp/written.sqlite");
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     const btn = await screen.findByRole("button", { name: /export all data/i });
     await act(async () => {
       fireEvent.click(btn);
@@ -320,12 +333,107 @@ describe("SettingsView (inside Tauri)", () => {
     });
     saveMock.mockResolvedValue("/tmp/out.sqlite");
     const { SettingsView: FreshSettingsView } = await import("./settings");
-    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
     const btn = await screen.findByRole("button", { name: /export all data/i });
     await act(async () => {
       fireEvent.click(btn);
     });
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/disk full/);
+  });
+});
+
+describe("SettingsView · Advanced / Capture raw signals", () => {
+  it("renders the Advanced section as the last block", () => {
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+    );
+    const advanced = screen.getByRole("region", { name: /advanced/i });
+    expect(advanced).toBeTruthy();
+    expect(advanced.textContent).toContain("Capture raw signals");
+  });
+
+  it("opens the confirmation dialog instead of starting capture immediately", async () => {
+    const capture = stubCapture();
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    fireEvent.click(
+      screen.getByRole("switch", { name: /capture raw signals/i }),
+    );
+
+    const dialog = await screen.findByTestId("capture-confirm");
+    expect(dialog).toBeTruthy();
+    expect(dialog.textContent).toMatch(
+      /troubleshooting|writes|toggle is never persisted/i,
+    );
+    expect(capture.start).not.toHaveBeenCalled();
+  });
+
+  it("invokes capture.start() only after the confirmation button is pressed", async () => {
+    const capture = stubCapture();
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    fireEvent.click(
+      screen.getByRole("switch", { name: /capture raw signals/i }),
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /I understand — capture for this session/i,
+      }),
+    );
+
+    await waitFor(() => expect(capture.start).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.queryByTestId("capture-confirm")).toBeNull(),
+    );
+  });
+
+  it("cancelling the dialog does not start capture", async () => {
+    const capture = stubCapture();
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    fireEvent.click(
+      screen.getByRole("switch", { name: /capture raw signals/i }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("capture-confirm")).toBeNull(),
+    );
+    expect(capture.start).not.toHaveBeenCalled();
+  });
+
+  it("clicking the toggle when active calls stop() without re-opening the dialog", () => {
+    const capture = stubCapture({
+      status: {
+        active: true,
+        path: "/tmp/cairn/debug-signals.ndjson",
+        bytesWritten: 1,
+      },
+    });
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    expect(screen.queryByTestId("capture-confirm")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("switch", { name: /capture raw signals/i }),
+    );
+    expect(capture.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the on-disk path while capture is active", () => {
+    const capture = stubCapture({
+      status: {
+        active: true,
+        path: "/tmp/cairn/debug-signals.ndjson",
+        bytesWritten: 256,
+      },
+    });
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    expect(screen.getByTestId("capture-path").textContent).toContain(
+      "/tmp/cairn/debug-signals.ndjson",
+    );
+  });
+
+  it("renders an error banner when capture.error is set", () => {
+    const capture = stubCapture({ error: "boom" });
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("boom");
   });
 });

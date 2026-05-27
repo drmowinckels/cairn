@@ -21,6 +21,7 @@ pub use db::Db;
 
 use rules::{Rule as EngineRule, Snoozer};
 use signals::calendar::CalendarRegistry;
+use signals::capture::SignalCapture;
 use signals::exclusions::ExclusionMatcher;
 use signals::stream::SnapshotStream;
 
@@ -29,6 +30,15 @@ pub struct AppState {
     pub pinned: AtomicBool,
     pub calendar: Arc<CalendarRegistry>,
     pub stream: Arc<SnapshotStream>,
+    /// Debug "Capture raw signals" handle. Always created off; the
+    /// toggle is in-memory only and never persisted across launches.
+    /// See `signals::capture` and `docs/PRIVACY.md`.
+    pub capture: SignalCapture,
+    /// Absolute path to the resolved app data dir. The capture IPC
+    /// uses this to write `debug-signals.ndjson` so the writer
+    /// doesn't need to re-resolve via `AppHandle::path()` on every
+    /// start. Cloned at boot from `app.path().app_data_dir()`.
+    pub data_dir: std::path::PathBuf,
     /// Live exclusion-list snapshot. The snapshot-stream driver
     /// consults this on every `Window` event to drop signals from
     /// excluded apps / window titles before they reach the rules
@@ -150,6 +160,9 @@ pub fn run() {
             ipc::upcoming_calendar_events,
             ipc::calendar_sync_status,
             ipc::current_snapshot,
+            ipc::start_signal_capture,
+            ipc::stop_signal_capture,
+            ipc::signal_capture_status,
             ipc::dry_run_rules,
             ipc::snooze_rule,
             ipc::snooze_all,
@@ -175,6 +188,17 @@ pub fn run() {
 
             if let Err(e) = backup::apply_pending_import(&data_dir) {
                 log::warn!("backup: could not apply pending import: {e}");
+            }
+
+            // "Capture raw signals" never persists across launches.
+            // If a previous crashed Cairn left an ndjson file behind,
+            // delete it now so the on-disk state matches the UI's
+            // sticky-off contract (`signals::capture::cleanup_stale`
+            // logs a warning when it removes one).
+            if let Err(e) = tauri::async_runtime::block_on(async {
+                signals::capture::cleanup_stale(&data_dir).await
+            }) {
+                log::warn!("capture: stale-file cleanup failed: {e}");
             }
 
             let db = tauri::async_runtime::block_on(async {
@@ -277,6 +301,8 @@ pub fn run() {
                 pinned: AtomicBool::new(false),
                 calendar,
                 stream,
+                capture: SignalCapture::new(),
+                data_dir: data_dir.clone(),
                 exclusions,
                 exclusions_mutator: tokio::sync::Mutex::new(()),
                 snoozer: snoozer_for_state,

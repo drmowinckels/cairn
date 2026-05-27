@@ -3396,6 +3396,62 @@ mod tests {
         assert!(snap.ide_folder.is_none());
     }
 
+    // ---------------- signal_capture_* (#23) ----------------
+
+    #[tokio::test]
+    async fn signal_capture_status_starts_inactive_on_a_fresh_app() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let st = signal_capture_status(state).await.unwrap();
+        assert!(!st.active);
+        assert!(st.path.is_none());
+        assert_eq!(st.bytes_written, 0);
+    }
+
+    #[tokio::test]
+    async fn start_then_stop_signal_capture_round_trip_deletes_the_file() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let path = start_signal_capture(app.state::<crate::AppState>())
+            .await
+            .unwrap();
+        let st = signal_capture_status(app.state::<crate::AppState>())
+            .await
+            .unwrap();
+        assert!(st.active);
+        assert_eq!(st.path.as_deref(), Some(path.as_str()));
+        assert!(
+            std::path::Path::new(&path).exists(),
+            "ndjson file must exist while capture is on"
+        );
+
+        stop_signal_capture(state).await.unwrap();
+
+        let st = signal_capture_status(app.state::<crate::AppState>())
+            .await
+            .unwrap();
+        assert!(!st.active);
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "stop must delete the ndjson file"
+        );
+    }
+
+    #[tokio::test]
+    async fn double_start_signal_capture_returns_an_error() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let _path = start_signal_capture(app.state::<crate::AppState>())
+            .await
+            .unwrap();
+        let err = start_signal_capture(app.state::<crate::AppState>())
+            .await
+            .unwrap_err();
+        assert!(err.contains("already running"));
+        stop_signal_capture(app.state::<crate::AppState>())
+            .await
+            .unwrap();
+    }
+
     // ---------------- dry_run_rules (#13) ----------------
 
     fn dry_run_snapshot(
@@ -3848,4 +3904,39 @@ pub async fn current_snapshot(
     } else {
         Ok(crate::signals::snapshot::build(&state.calendar, &state.exclusions, Utc::now()).await)
     }
+}
+
+/// Start the debug "Capture raw signals" mode (see `docs/PRIVACY.md`
+/// §"Debug Capture raw signals"). Returns the absolute path of the
+/// `debug-signals.ndjson` file that the writer task appends to. The
+/// writer subscribes to the same `SnapshotStream` the matcher
+/// consumes, so the on-disk log faithfully reflects every snapshot
+/// the rules engine sees.
+///
+/// The toggle is never persisted: a fresh launch always starts off,
+/// and `signals::capture::cleanup_stale` removes a leftover file
+/// before this command can be called again.
+#[tauri::command]
+pub async fn start_signal_capture(state: State<'_, AppState>) -> Result<String, String> {
+    let rx = state.stream.subscribe();
+    state.capture.start_with_receiver(&state.data_dir, rx).await
+}
+
+/// Stop the debug capture writer. Flushes the file, closes the
+/// handle, and **deletes** the ndjson file — the file is the
+/// capture, so leaving it on disk would defeat the contract that
+/// capture-off ⇒ no debug data on disk.
+#[tauri::command]
+pub async fn stop_signal_capture(state: State<'_, AppState>) -> Result<(), String> {
+    state.capture.stop().await
+}
+
+/// Footer-banner status. Returns `{active: false, path: null,
+/// bytes_written: 0}` whenever capture is off so the UI can render
+/// the banner unconditionally from this one source.
+#[tauri::command]
+pub async fn signal_capture_status(
+    state: State<'_, AppState>,
+) -> Result<crate::signals::capture::CaptureStatus, String> {
+    Ok(state.capture.status().await)
 }

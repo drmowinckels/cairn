@@ -10,6 +10,7 @@
 
 pub mod calendar;
 pub mod calendar_autostop;
+pub mod capture;
 pub mod exclusions;
 pub mod fanout;
 pub mod git;

@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { ErrorBoundary } from "../../error-boundary";
 import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
+import { CaptureBanner } from "../../lib/capture-banner";
 import { useA11yPrefs } from "../../lib/use-a11y-prefs";
+import { useSignalCapture } from "../../lib/use-signal-capture";
 import type {
   Density,
   LayoutVariant,
@@ -35,6 +37,7 @@ export function Popover({
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [addEntryRequest, setAddEntryRequest] = useState(0);
   const a11y = useA11yPrefs();
+  const capture = useSignalCapture();
 
   const requestAddEntry = () => {
     setView("today");
@@ -138,10 +141,17 @@ export function Popover({
         )}
         {view === "settings" && (
           <ErrorBoundary area="Settings">
-            <SettingsView density={density} a11y={a11y} />
+            <SettingsView density={density} a11y={a11y} capture={capture} />
           </ErrorBoundary>
         )}
       </div>
+
+      <CaptureBanner
+        status={capture.status}
+        onStop={() => {
+          void capture.stop();
+        }}
+      />
 
       <footer className="pop-foot">
         <span className="foot-left">
