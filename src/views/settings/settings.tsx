@@ -10,6 +10,13 @@ import type {
   TextScale,
 } from "../../lib/types";
 import { AMBIGUITY_OPTIONS as AMBIGUITY_VALUES } from "../../lib/use-rules";
+import {
+  formatBytes,
+  PRIVACY_GUARANTEES,
+  PRIVACY_LICENSE_LABEL,
+  PRIVACY_REPO_LABEL,
+  PRIVACY_REPO_URL,
+} from "../../lib/privacy-copy";
 
 interface Props {
   density: Density;
@@ -60,22 +67,14 @@ export function SettingsView({ density, a11y }: Props) {
           <h2 className="privacy-title">Your data stays here</h2>
         </div>
         <ul className="privacy-list">
-          <li>
-            <Icon name="check" size={13} /> Everything is stored locally in
-            SQLite on this machine.
-          </li>
-          <li>
-            <Icon name="check" size={13} /> No accounts. No telemetry. No
-            background phone-home.
-          </li>
-          <li>
-            <Icon name="check" size={13} /> Window titles are read locally and
-            never leave the device.
-          </li>
-          <li>
-            <Icon name="check" size={13} /> Source on GitHub · Apache-2.0
-            licensed.
-          </li>
+          {PRIVACY_GUARANTEES.map((g) => (
+            <li key={g.id}>
+              <Icon name="check" size={13} />
+              <span>
+                <strong>{g.lead}</strong> {g.rest}
+              </span>
+            </li>
+          ))}
         </ul>
         <p className="privacy-hint">
           Backup or restore by saving the database file anywhere — including a
@@ -87,7 +86,7 @@ export function SettingsView({ density, a11y }: Props) {
             className="btn btn--ghost btn--sm"
             onClick={backup.exportBackupToFile}
           >
-            Export backup…
+            Export all data…
           </button>
           <button
             className="btn btn--ghost btn--sm"
@@ -104,7 +103,6 @@ export function SettingsView({ density, a11y }: Props) {
           <button
             className="btn btn--ghost btn--sm"
             onClick={backup.revealDataFolder}
-            disabled={!backup.paths}
           >
             View what's stored
           </button>
@@ -115,6 +113,32 @@ export function SettingsView({ density, a11y }: Props) {
             Delete everything…
           </button>
         </div>
+        {backup.dataFiles.length > 0 && (
+          <ul
+            className="privacy-files"
+            aria-label="Files currently stored on this machine"
+          >
+            {backup.dataFiles.map((file) => (
+              <li key={file.name}>
+                <Icon name="folder" size={11} />
+                <code>{file.name}</code>
+                <span className="privacy-files-size">
+                  {formatBytes(file.sizeBytes)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="privacy-attrib">
+          <a
+            href={PRIVACY_REPO_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            {PRIVACY_REPO_LABEL}
+          </a>{" "}
+          · {PRIVACY_LICENSE_LABEL}
+        </p>
         {backup.pendingImport && (
           <div className="privacy-banner privacy-banner--pending" role="status">
             <Icon name="info" size={13} />
@@ -370,8 +394,8 @@ export function SettingsView({ density, a11y }: Props) {
       </section>
 
       <p className="settings-foot">
-        Cairn v0.0.1 · Apache-2.0 ·{" "}
-        <a href="#" onClick={(e) => e.preventDefault()}>
+        Cairn v0.0.1 · {PRIVACY_LICENSE_LABEL} ·{" "}
+        <a href={PRIVACY_REPO_URL} target="_blank" rel="noreferrer noopener">
           github.com/drmowinckels/cairn
         </a>
       </p>

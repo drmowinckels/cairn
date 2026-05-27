@@ -12,7 +12,6 @@ const invokeMock = vi.fn();
 const askMock = vi.fn();
 const openMock = vi.fn();
 const saveMock = vi.fn();
-const revealMock = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -21,9 +20,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   ask: (...args: unknown[]) => askMock(...args),
   open: (...args: unknown[]) => openMock(...args),
   save: (...args: unknown[]) => saveMock(...args),
-}));
-vi.mock("@tauri-apps/plugin-opener", () => ({
-  revealItemInDir: (...args: unknown[]) => revealMock(...args),
 }));
 
 type WithInternals = { __TAURI_INTERNALS__?: unknown };
@@ -34,12 +30,30 @@ const PATHS = {
   pendingImport: null,
 };
 
+/**
+ * Build a Tauri `invoke` mock that answers `data_paths` + `list_data_files`
+ * on mount, then delegates to user-supplied `handlers` for whatever the
+ * individual test cares about. Keeps each test focused on one command
+ * without re-mocking the boilerplate startup calls.
+ */
+function mockInvoke(
+  handlers: Record<string, (...args: unknown[]) => unknown> = {},
+  pathsOverride: typeof PATHS = PATHS,
+) {
+  invokeMock.mockImplementation(async (cmd: string, ...rest: unknown[]) => {
+    if (cmd === "data_paths") return pathsOverride;
+    if (cmd === "list_data_files") return [];
+    const handler = handlers[cmd];
+    if (handler) return handler(...rest);
+    return undefined;
+  });
+}
+
 afterEach(() => {
   invokeMock.mockReset();
   askMock.mockReset();
   openMock.mockReset();
   saveMock.mockReset();
-  revealMock.mockReset();
 });
 
 describe("useBackup (outside Tauri)", () => {
@@ -56,7 +70,7 @@ describe("useBackup (outside Tauri)", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("all five actions are no-ops outside Tauri", async () => {
+  it("all six actions are no-ops outside Tauri", async () => {
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
     await act(async () => {
@@ -66,14 +80,15 @@ describe("useBackup (outside Tauri)", () => {
       await result.current.exportCsvToFile();
       await result.current.deleteAllData();
       await result.current.revealDataFolder();
+      await result.current.refreshDataFiles();
     });
     expect(invokeMock).not.toHaveBeenCalled();
     expect(saveMock).not.toHaveBeenCalled();
     expect(openMock).not.toHaveBeenCalled();
     expect(askMock).not.toHaveBeenCalled();
-    expect(revealMock).not.toHaveBeenCalled();
     // Status stays idle — every action short-circuited.
     expect(result.current.status).toEqual({ kind: "idle" });
+    expect(result.current.dataFiles).toEqual([]);
   });
 });
 
@@ -95,18 +110,33 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("loads data paths on mount", async () => {
-    invokeMock.mockResolvedValueOnce(PATHS);
+    mockInvoke();
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
     await waitFor(() => expect(result.current.paths).not.toBeNull());
     expect(result.current.paths?.dbPath).toBe("/data/cairn/cairn.sqlite");
   });
 
+  it("loads the data file list on mount", async () => {
+    const files = [
+      { name: "cairn.sqlite", sizeBytes: 4096 },
+      { name: "cairn.sqlite-wal", sizeBytes: 0 },
+    ];
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") return PATHS;
+      if (cmd === "list_data_files") return files;
+      return undefined;
+    });
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.dataFiles).toEqual(files));
+  });
+
   it("exportBackupToFile flows through suggested-name → save dialog → export_backup", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS) // data_paths
-      .mockResolvedValueOnce("cairn-backup.sqlite") // suggested_backup_name
-      .mockResolvedValueOnce("/tmp/written.sqlite"); // export_backup
+    mockInvoke({
+      suggested_backup_name: () => "cairn-backup.sqlite",
+      export_backup: () => "/tmp/written.sqlite",
+    });
     saveMock.mockResolvedValue("/tmp/written.sqlite");
 
     const { useBackup } = await import("./use-backup");
@@ -127,9 +157,7 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("exportBackupToFile is a no-op when the user cancels the save dialog", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockResolvedValueOnce("cairn-backup.sqlite");
+    mockInvoke({ suggested_backup_name: () => "cairn-backup.sqlite" });
     saveMock.mockResolvedValue(null);
 
     const { useBackup } = await import("./use-backup");
@@ -148,7 +176,7 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("deleteAllData requires confirmation before calling delete_everything", async () => {
-    invokeMock.mockResolvedValueOnce(PATHS);
+    mockInvoke();
     askMock.mockResolvedValue(false);
 
     const { useBackup } = await import("./use-backup");
@@ -166,9 +194,7 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("deleteAllData proceeds when confirmed", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockResolvedValueOnce(null); // delete_everything
+    mockInvoke({ delete_everything: () => null });
     askMock.mockResolvedValue(true);
 
     const { useBackup } = await import("./use-backup");
@@ -184,13 +210,18 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("importBackupFromFile stages the chosen file and refreshes paths", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS) // data_paths on mount
-      .mockResolvedValueOnce("/staged/pending") // stage_import returns the staged path
-      .mockResolvedValueOnce({
-        ...PATHS,
-        pendingImport: "/staged/pending",
-      }); // data_paths after stage
+    let staged = false;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return staged ? { ...PATHS, pendingImport: "/staged/pending" } : PATHS;
+      }
+      if (cmd === "list_data_files") return [];
+      if (cmd === "stage_import") {
+        staged = true;
+        return "/staged/pending";
+      }
+      return undefined;
+    });
     openMock.mockResolvedValue("/picked/source.sqlite");
 
     const { useBackup } = await import("./use-backup");
@@ -208,8 +239,17 @@ describe("useBackup (inside Tauri)", () => {
     expect(result.current.status.kind).toBe("done");
   });
 
-  it("revealDataFolder calls the opener plugin with the db path", async () => {
-    invokeMock.mockResolvedValueOnce(PATHS);
+  it("revealDataFolder calls the reveal_data_folder IPC", async () => {
+    const revealed = vi.fn().mockResolvedValue(null);
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") return PATHS;
+      if (cmd === "list_data_files") return [];
+      if (cmd === "reveal_data_folder") {
+        revealed();
+        return null;
+      }
+      return undefined;
+    });
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
     await waitFor(() => expect(result.current.paths).not.toBeNull());
@@ -218,14 +258,43 @@ describe("useBackup (inside Tauri)", () => {
       await result.current.revealDataFolder();
     });
 
-    expect(revealMock).toHaveBeenCalledWith("/data/cairn/cairn.sqlite");
+    expect(revealed).toHaveBeenCalledTimes(1);
+  });
+
+  it("revealDataFolder fires the IPC even when paths failed to load", async () => {
+    const revealed = vi.fn().mockResolvedValue(null);
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") throw new Error("paths failed");
+      if (cmd === "list_data_files") return [];
+      if (cmd === "reveal_data_folder") {
+        revealed();
+        return null;
+      }
+      return undefined;
+    });
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+
+    await act(async () => {
+      await result.current.revealDataFolder();
+    });
+
+    expect(revealed).toHaveBeenCalledTimes(1);
   });
 
   it("cancelImport calls the IPC and refreshes paths to idle status", async () => {
-    invokeMock
-      .mockResolvedValueOnce({ ...PATHS, pendingImport: "/staged" }) // initial
-      .mockResolvedValueOnce(null) // cancel_pending_import
-      .mockResolvedValueOnce(PATHS); // refresh paths
+    let cancelled = false;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return cancelled ? PATHS : { ...PATHS, pendingImport: "/staged" };
+      }
+      if (cmd === "list_data_files") return [];
+      if (cmd === "cancel_pending_import") {
+        cancelled = true;
+        return null;
+      }
+      return undefined;
+    });
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
     await waitFor(() =>
@@ -242,10 +311,10 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("exportCsvToFile flows through suggested-name → save dialog → export_csv", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockResolvedValueOnce("entries.csv") // suggested_csv_name
-      .mockResolvedValueOnce("/tmp/entries.csv"); // export_csv
+    mockInvoke({
+      suggested_csv_name: () => "entries.csv",
+      export_csv: () => "/tmp/entries.csv",
+    });
     saveMock.mockResolvedValue("/tmp/entries.csv");
 
     const { useBackup } = await import("./use-backup");
@@ -263,7 +332,7 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("exportCsvToFile is a no-op when the save dialog is cancelled", async () => {
-    invokeMock.mockResolvedValueOnce(PATHS).mockResolvedValueOnce("entries.csv");
+    mockInvoke({ suggested_csv_name: () => "entries.csv" });
     saveMock.mockResolvedValue(null);
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
@@ -280,10 +349,12 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("captures errors from export_backup as status.kind=error", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockResolvedValueOnce("cairn-backup.sqlite")
-      .mockRejectedValueOnce(new Error("disk full"));
+    mockInvoke({
+      suggested_backup_name: () => "cairn-backup.sqlite",
+      export_backup: () => {
+        throw new Error("disk full");
+      },
+    });
     saveMock.mockResolvedValue("/tmp/out.sqlite");
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
@@ -300,7 +371,7 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("importBackupFromFile is a no-op when the open dialog returns null", async () => {
-    invokeMock.mockResolvedValueOnce(PATHS);
+    mockInvoke();
     openMock.mockResolvedValue(null);
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
@@ -316,22 +387,48 @@ describe("useBackup (inside Tauri)", () => {
     );
   });
 
-  it("revealDataFolder is a no-op until paths have loaded", async () => {
-    // No invokeMock value → data_paths rejects/yields undefined.
-    invokeMock.mockResolvedValueOnce(undefined);
+  it("refreshDataFiles updates the list when invoked manually", async () => {
+    let call = 0;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") return PATHS;
+      if (cmd === "list_data_files") {
+        call += 1;
+        return call === 1
+          ? []
+          : [{ name: "cairn.sqlite", sizeBytes: 1024 }];
+      }
+      return undefined;
+    });
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
-    // Without paths, revealDataFolder bails out.
+    await waitFor(() => expect(result.current.dataFiles).toEqual([]));
     await act(async () => {
-      await result.current.revealDataFolder();
+      await result.current.refreshDataFiles();
     });
-    expect(revealMock).not.toHaveBeenCalled();
+    expect(result.current.dataFiles).toEqual([
+      { name: "cairn.sqlite", sizeBytes: 1024 },
+    ]);
+  });
+
+  it("swallows errors from list_data_files without crashing the hook", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") return PATHS;
+      if (cmd === "list_data_files") throw new Error("listing failed");
+      return undefined;
+    });
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+    expect(result.current.dataFiles).toEqual([]);
+    expect(result.current.status).toEqual({ kind: "idle" });
   });
 
   it("captures errors from stage_import as status.kind=error", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockRejectedValueOnce(new Error("staging failed"));
+    mockInvoke({
+      stage_import: () => {
+        throw new Error("staging failed");
+      },
+    });
     openMock.mockResolvedValue("/src/file.sqlite");
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
@@ -346,9 +443,11 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("captures errors from cancel_pending_import as status.kind=error", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockRejectedValueOnce(new Error("cancel failed"));
+    mockInvoke({
+      cancel_pending_import: () => {
+        throw new Error("cancel failed");
+      },
+    });
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
     await waitFor(() => expect(result.current.paths).not.toBeNull());
@@ -359,10 +458,12 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("captures errors from export_csv as status.kind=error", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockResolvedValueOnce("entries.csv")
-      .mockRejectedValueOnce(new Error("write failed"));
+    mockInvoke({
+      suggested_csv_name: () => "entries.csv",
+      export_csv: () => {
+        throw new Error("write failed");
+      },
+    });
     saveMock.mockResolvedValue("/tmp/x.csv");
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
@@ -373,9 +474,12 @@ describe("useBackup (inside Tauri)", () => {
     expect(result.current.status.kind).toBe("error");
   });
 
-  it("captures errors from revealItemInDir as status.kind=error", async () => {
-    invokeMock.mockResolvedValueOnce(PATHS);
-    revealMock.mockRejectedValueOnce(new Error("opener failed"));
+  it("captures errors from reveal_data_folder as status.kind=error", async () => {
+    mockInvoke({
+      reveal_data_folder: () => {
+        throw new Error("opener failed");
+      },
+    });
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
     await waitFor(() => expect(result.current.paths).not.toBeNull());
@@ -386,9 +490,11 @@ describe("useBackup (inside Tauri)", () => {
   });
 
   it("captures errors from delete_everything as status.kind=error", async () => {
-    invokeMock
-      .mockResolvedValueOnce(PATHS)
-      .mockRejectedValueOnce(new Error("nuke failed"));
+    mockInvoke({
+      delete_everything: () => {
+        throw new Error("nuke failed");
+      },
+    });
     askMock.mockResolvedValue(true);
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());

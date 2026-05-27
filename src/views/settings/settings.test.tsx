@@ -5,7 +5,6 @@ const invokeMock = vi.fn();
 const askMock = vi.fn();
 const openMock = vi.fn();
 const saveMock = vi.fn();
-const revealMock = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -14,9 +13,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   ask: (...args: unknown[]) => askMock(...args),
   open: (...args: unknown[]) => openMock(...args),
   save: (...args: unknown[]) => saveMock(...args),
-}));
-vi.mock("@tauri-apps/plugin-opener", () => ({
-  revealItemInDir: (...args: unknown[]) => revealMock(...args),
 }));
 
 import { SettingsView } from "./index";
@@ -52,7 +48,6 @@ beforeEach(() => {
   askMock.mockReset();
   openMock.mockReset();
   saveMock.mockReset();
-  revealMock.mockReset();
 });
 
 afterEach(() => {
@@ -60,21 +55,38 @@ afterEach(() => {
 });
 
 describe("SettingsView (browser-dev mode)", () => {
-  it("renders the four privacy guarantees", () => {
+  it("renders the four privacy guarantees verbatim from PRIVACY.md", () => {
     render(<SettingsView density="comfy" a11y={stubA11y()} />);
-    expect(screen.getByText(/stored locally/i)).toBeTruthy();
-    expect(screen.getByText(/No accounts\. No telemetry/i)).toBeTruthy();
     expect(
-      screen.getByText(/window titles are read locally/i),
+      screen.getByText(/Everything is stored locally/i),
     ).toBeTruthy();
-    // 'Apache-2.0' appears in both the guarantee bullet and the footer.
-    expect(screen.getAllByText(/Apache-2\.0/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/SQLite database under ~\/\.cairn\//i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/No accounts\. No telemetry\. No background phone-home\./i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Window titles are read locally and never leave the device\./i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Source on GitHub, Apache 2\.0 licensed\./i),
+    ).toBeTruthy();
+  });
+
+  it("renders the Source on GitHub · Apache-2.0 attribution with a real link", () => {
+    render(<SettingsView density="comfy" a11y={stubA11y()} />);
+    const link = screen.getByRole("link", { name: /source on github/i });
+    expect(link.getAttribute("href")).toBe(
+      "https://github.com/drmowinckels/cairn",
+    );
+    expect(link.getAttribute("rel")).toMatch(/noopener/);
   });
 
   it("renders the five privacy action buttons", () => {
     render(<SettingsView density="comfy" a11y={stubA11y()} />);
     for (const name of [
-      /export backup/i,
+      /export all data/i,
       /restore from file/i,
       /export csv/i,
       /view what's stored/i,
@@ -84,10 +96,10 @@ describe("SettingsView (browser-dev mode)", () => {
     }
   });
 
-  it("disables 'View what's stored' when no paths are loaded", () => {
+  it("'View what's stored' is always clickable so the button is keyboard-reachable", () => {
     render(<SettingsView density="comfy" a11y={stubA11y()} />);
     const btn = screen.getByRole("button", { name: /view what's stored/i });
-    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.hasAttribute("disabled")).toBe(false);
   });
 
   it("renders an exclusion list (or its empty hint) with at least one signal", () => {
@@ -166,30 +178,102 @@ describe("SettingsView (inside Tauri)", () => {
     delete (globalThis as WithInternals).__TAURI_INTERNALS__;
   });
 
-  it("enables 'View what's stored' once paths load and wires it to the opener plugin", async () => {
-    invokeMock.mockResolvedValue({
-      dataDir: "/data",
-      dbPath: "/data/cairn.sqlite",
-      pendingImport: null,
+  it("'View what's stored' wires to the reveal_data_folder IPC", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return {
+          dataDir: "/data",
+          dbPath: "/data/cairn.sqlite",
+          pendingImport: null,
+        };
+      }
+      if (cmd === "list_data_files") return [];
+      if (cmd === "reveal_data_folder") return null;
+      return null;
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
     render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
-    const btn = await waitFor(() => {
-      const b = screen.getByRole("button", { name: /view what's stored/i });
-      expect(b.hasAttribute("disabled")).toBe(false);
-      return b;
+    const btn = await screen.findByRole("button", {
+      name: /view what's stored/i,
     });
     await act(async () => {
       fireEvent.click(btn);
     });
-    expect(revealMock).toHaveBeenCalledWith("/data/cairn.sqlite");
+    expect(invokeMock).toHaveBeenCalledWith("reveal_data_folder");
+  });
+
+  it("renders the list of stored files with formatted sizes", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return {
+          dataDir: "/data",
+          dbPath: "/data/cairn.sqlite",
+          pendingImport: null,
+        };
+      }
+      if (cmd === "list_data_files") {
+        return [
+          { name: "cairn.sqlite", sizeBytes: 2 * 1024 * 1024 },
+          { name: "cairn.sqlite-wal", sizeBytes: 17 * 1024 },
+          { name: "debug-signals.ndjson", sizeBytes: 512 },
+        ];
+      }
+      return null;
+    });
+    const { SettingsView: FreshSettingsView } = await import("./settings");
+    render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
+    const list = await screen.findByRole("list", {
+      name: /files currently stored/i,
+    });
+    expect(list.textContent).toContain("cairn.sqlite");
+    expect(list.textContent).toContain("2.0 MB");
+    expect(list.textContent).toContain("cairn.sqlite-wal");
+    expect(list.textContent).toContain("17 KB");
+    expect(list.textContent).toContain("debug-signals.ndjson");
+    expect(list.textContent).toContain("512 B");
+  });
+
+  it("pins the rendered structure of the file list", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return {
+          dataDir: "/data",
+          dbPath: "/data/cairn.sqlite",
+          pendingImport: null,
+        };
+      }
+      if (cmd === "list_data_files") {
+        return [
+          { name: "cairn.sqlite", sizeBytes: 4096 },
+          { name: "cairn.sqlite-wal", sizeBytes: 32768 },
+        ];
+      }
+      return null;
+    });
+    const { SettingsView: FreshSettingsView } = await import("./settings");
+    const { container } = render(
+      <FreshSettingsView density="comfy" a11y={stubA11y()} />,
+    );
+    const list = await screen.findByRole("list", {
+      name: /files currently stored/i,
+    });
+    expect(list.outerHTML).toMatchInlineSnapshot(
+      `"<ul class="privacy-files" aria-label="Files currently stored on this machine"><li><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg><code>cairn.sqlite</code><span class="privacy-files-size">4 KB</span></li><li><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg><code>cairn.sqlite-wal</code><span class="privacy-files-size">32 KB</span></li></ul>"`,
+    );
+    expect(container.querySelector(".privacy-attrib")).toBeTruthy();
   });
 
   it("renders the pending-restore banner when a restore is staged", async () => {
-    invokeMock.mockResolvedValue({
-      dataDir: "/data",
-      dbPath: "/data/cairn.sqlite",
-      pendingImport: "/data/cairn.sqlite.pending",
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return {
+          dataDir: "/data",
+          dbPath: "/data/cairn.sqlite",
+          pendingImport: "/data/cairn.sqlite.pending",
+        };
+      }
+      if (cmd === "list_data_files") return [];
+      return null;
     });
     const { SettingsView: FreshSettingsView } = await import("./settings");
     render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
@@ -197,18 +281,23 @@ describe("SettingsView (inside Tauri)", () => {
   });
 
   it("surfaces a status banner (status.kind=done) after a backup export", async () => {
-    invokeMock
-      .mockResolvedValueOnce({
-        dataDir: "/data",
-        dbPath: "/data/cairn.sqlite",
-        pendingImport: null,
-      })
-      .mockResolvedValueOnce("cairn-backup.sqlite")
-      .mockResolvedValueOnce("/tmp/written.sqlite");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return {
+          dataDir: "/data",
+          dbPath: "/data/cairn.sqlite",
+          pendingImport: null,
+        };
+      }
+      if (cmd === "list_data_files") return [];
+      if (cmd === "suggested_backup_name") return "cairn-backup.sqlite";
+      if (cmd === "export_backup") return "/tmp/written.sqlite";
+      return null;
+    });
     saveMock.mockResolvedValue("/tmp/written.sqlite");
     const { SettingsView: FreshSettingsView } = await import("./settings");
     render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
-    const btn = await screen.findByRole("button", { name: /export backup/i });
+    const btn = await screen.findByRole("button", { name: /export all data/i });
     await act(async () => {
       fireEvent.click(btn);
     });
@@ -216,18 +305,23 @@ describe("SettingsView (inside Tauri)", () => {
   });
 
   it("renders a status banner with role=alert on error", async () => {
-    invokeMock
-      .mockResolvedValueOnce({
-        dataDir: "/data",
-        dbPath: "/data/cairn.sqlite",
-        pendingImport: null,
-      })
-      .mockResolvedValueOnce("cairn-backup.sqlite")
-      .mockRejectedValueOnce(new Error("disk full"));
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "data_paths") {
+        return {
+          dataDir: "/data",
+          dbPath: "/data/cairn.sqlite",
+          pendingImport: null,
+        };
+      }
+      if (cmd === "list_data_files") return [];
+      if (cmd === "suggested_backup_name") return "cairn-backup.sqlite";
+      if (cmd === "export_backup") throw new Error("disk full");
+      return null;
+    });
     saveMock.mockResolvedValue("/tmp/out.sqlite");
     const { SettingsView: FreshSettingsView } = await import("./settings");
     render(<FreshSettingsView density="comfy" a11y={stubA11y()} />);
-    const btn = await screen.findByRole("button", { name: /export backup/i });
+    const btn = await screen.findByRole("button", { name: /export all data/i });
     await act(async () => {
       fireEvent.click(btn);
     });

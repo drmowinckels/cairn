@@ -163,6 +163,8 @@ pub fn run() {
             backup::delete_everything,
             backup::suggested_backup_name,
             backup::suggested_csv_name,
+            backup::list_data_files,
+            backup::reveal_data_folder,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
