@@ -109,6 +109,18 @@ describe("TodayView (idle — no running entry)", () => {
     expect(onOpenRule).toHaveBeenCalledWith("r1");
   });
 
+  it("non-Escape keydown on the document does not dismiss the suggestion", () => {
+    renderToday();
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(dismissMock).not.toHaveBeenCalled();
+  });
+
+  it("Escape keydown on the document dismisses the suggestion banner", () => {
+    renderToday();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(dismissMock).toHaveBeenCalledTimes(1);
+  });
+
   it("clicking Confirm calls the hook's confirm()", () => {
     renderToday();
     fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
