@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { Empty, ErrorBanner, Mono } from "../../lib/components";
+import { cbColor } from "../../lib/colorblind";
+import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { buildWeekSummary } from "../../lib/summary";
 import { useBackup } from "../../lib/use-backup";
 import { useProjects } from "../../lib/use-projects";
@@ -52,9 +54,12 @@ export function ReportsView({ density }: Props) {
   const totalHours = secondsToHours(totalSeconds);
   const delta = computeDelta(totalSeconds, data?.prevTotalSeconds ?? 0);
 
+  const cbEnabled = useColorblindEnabled();
   const projectColor = (projectId: string | null): string => {
     if (!projectId) return "var(--ink-faint)";
-    return projectsById[projectId]?.color ?? "var(--ink-faint)";
+    const raw = projectsById[projectId]?.color;
+    if (!raw) return "var(--ink-faint)";
+    return cbColor(raw, cbEnabled);
   };
   const projectName = (projectId: string | null): string => {
     if (!projectId) return "No project";

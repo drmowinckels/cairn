@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
+import { cbColor } from "../../lib/colorblind";
+import { useColorblindEnabled } from "../../lib/use-colorblind";
+import { useAnnounce } from "../../lib/use-announce";
 import {
   fmtClock,
   fmtClockFromIso,
@@ -112,6 +115,37 @@ export function TodayView({
 
   const todayEntries = today.entries;
   const projectsById = useMemo(() => projectById(projects), [projects]);
+  const cbEnabled = useColorblindEnabled();
+  const announceMsg = useAnnounce();
+  const prevRunningIdRef = useRef<string | null>(timer.running?.id ?? null);
+
+  useEffect(() => {
+    const current = timer.running?.id ?? null;
+    const previous = prevRunningIdRef.current;
+    if (current && current !== previous) {
+      const name = timer.running?.projectId
+        ? (projectsById[timer.running.projectId]?.name ?? "no project")
+        : "no project";
+      announceMsg(`Timer started for ${name}`);
+    } else if (!current && previous) {
+      announceMsg("Timer stopped");
+    }
+    prevRunningIdRef.current = current;
+  }, [timer.running, projectsById, announceMsg]);
+
+  useEffect(() => {
+    if (suggestion) {
+      announceMsg(`Suggestion: ${suggestion.ruleName}`);
+    }
+  }, [suggestion, announceMsg]);
+
+  useEffect(() => {
+    if (idle.prompt) {
+      announceMsg(
+        `You were away for ${fmtIdleDuration(idle.prompt.durationSeconds)} — choose how to handle it`,
+      );
+    }
+  }, [idle.prompt, announceMsg]);
 
   useEffect(() => {
     if (!suggestion || detectionPrompts === "off") return;
@@ -437,6 +471,7 @@ export function TodayView({
                   open={pickerOpen}
                   setOpen={setPickerOpen}
                   onPick={onPickProject}
+                  cbEnabled={cbEnabled}
                 />
               </div>
               <button
@@ -487,7 +522,7 @@ export function TodayView({
                 >
                   <span
                     className="proj-dot"
-                    style={{ background: p.color, width: 8, height: 8 }}
+                    style={{ background: cbColor(p.color, cbEnabled), width: 8, height: 8 }}
                   />
                   <span className="quick-name">{p.name}</span>
                 </button>
@@ -501,6 +536,7 @@ export function TodayView({
         entries={todayEntries}
         projects={projects}
         announce={announce}
+        cbEnabled={cbEnabled}
       />
 
       {!compact && layoutVariant !== "projects-first" && (
@@ -563,6 +599,7 @@ interface ProjectPickerChipProps {
   open: boolean;
   setOpen: (v: boolean) => void;
   onPick: (id: string) => void;
+  cbEnabled: boolean;
 }
 
 // Stub project picker — clicking the chip opens a basic combobox over
@@ -575,6 +612,7 @@ function ProjectPickerChip({
   open,
   setOpen,
   onPick,
+  cbEnabled,
 }: ProjectPickerChipProps) {
   const current = projectId ? projects.find((p) => p.id === projectId) : undefined;
   const ref = useRef<HTMLDivElement>(null);
@@ -608,7 +646,9 @@ function ProjectPickerChip({
       >
         <span
           className="proj-dot"
-          style={{ background: current?.color ?? "var(--ink-mute)" }}
+          style={{
+            background: current ? cbColor(current.color, cbEnabled) : "var(--ink-mute)",
+          }}
         />
         <span className="proj-chip-name">{current?.name ?? "No project"}</span>
       </button>
@@ -623,7 +663,7 @@ function ProjectPickerChip({
               >
                 <span
                   className="proj-dot"
-                  style={{ background: p.color }}
+                  style={{ background: cbColor(p.color, cbEnabled) }}
                 />
                 {p.name}
               </button>
@@ -639,9 +679,10 @@ interface TimelineSectionProps {
   entries: BackendEntry[];
   projects: Project[];
   announce: boolean;
+  cbEnabled: boolean;
 }
 
-function TimelineSection({ entries, projects, announce }: TimelineSectionProps) {
+function TimelineSection({ entries, projects, announce, cbEnabled }: TimelineSectionProps) {
   const [nowMin, setNowMin] = useState(() => minutesNow());
   useEffect(() => {
     const id = window.setInterval(() => setNowMin(minutesNow()), 60_000);
@@ -687,11 +728,12 @@ function TimelineSection({ entries, projects, announce }: TimelineSectionProps) 
             projects={projects}
             nowMin={nowMin}
             announce={announce}
+            cbEnabled={cbEnabled}
           />
           <ul className="legend">
             {legend.map((l) => (
               <li key={l.projectId} className="legend-item">
-                <span className="proj-dot" style={{ background: l.color }} />
+                <span className="proj-dot" style={{ background: cbColor(l.color, cbEnabled) }} />
                 {l.name}
               </li>
             ))}
@@ -707,9 +749,10 @@ interface DayTimelineProps {
   projects: Project[];
   nowMin: number;
   announce: boolean;
+  cbEnabled: boolean;
 }
 
-function DayTimeline({ segments, projects, nowMin, announce }: DayTimelineProps) {
+function DayTimeline({ segments, projects, nowMin, announce, cbEnabled }: DayTimelineProps) {
   const byId = useMemo(() => projectById(projects), [projects]);
   const nowPct = startToPercent(nowMin);
 
@@ -724,9 +767,10 @@ function DayTimeline({ segments, projects, nowMin, announce }: DayTimelineProps)
           const left = startToPercent(s.startMin);
           const right = startToPercent(s.endMin);
           const width = Math.max(0, right - left);
-          const color = s.projectId
+          const rawColor = s.projectId
             ? (byId[s.projectId]?.color ?? "var(--ink-mute)")
             : "var(--ink-mute)";
+          const color = cbColor(rawColor, cbEnabled);
           const proj = s.projectId ? byId[s.projectId] : undefined;
           const label = proj
             ? `${proj.name} · ${s.description}`

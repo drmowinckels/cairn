@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { Empty } from "../../lib/components";
 import { Icon } from "../../lib/icon";
+import { cbColor } from "../../lib/colorblind";
+import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { fmtClockFromIso, fmtHm } from "../../lib/time";
 import type { Project } from "../../lib/types";
 
@@ -23,6 +25,7 @@ interface Props {
 const DEFAULT_DOT = "var(--ink-faint)";
 
 export function RecentList({ entries, projectsById, onEdit, emptyAction }: Props) {
+  const cbEnabled = useColorblindEnabled();
   if (entries.length === 0) {
     return (
       <Empty
@@ -36,7 +39,7 @@ export function RecentList({ entries, projectsById, onEdit, emptyAction }: Props
     <ul className="entries">
       {entries.map((e) => {
         const project = e.projectId ? projectsById[e.projectId] : undefined;
-        const color = project?.color ?? DEFAULT_DOT;
+        const color = project ? cbColor(project.color, cbEnabled) : DEFAULT_DOT;
         const duration = durationMinutes(e.startedAt, e.endedAt);
         const sourceMeta = sourceFor(e.source);
         const row = (

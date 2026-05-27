@@ -4,6 +4,7 @@ import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
 import { CaptureBanner } from "../../lib/capture-banner";
 import { useA11yPrefs } from "../../lib/use-a11y-prefs";
+import { AnnouncerProvider } from "../../lib/use-announce";
 import { useSignalCapture } from "../../lib/use-signal-capture";
 import type {
   Density,
@@ -71,6 +72,7 @@ export function Popover({
   };
 
   return (
+    <AnnouncerProvider enabled={a11y.announce}>
     <div
       className="pop"
       data-density={density}
@@ -168,6 +170,7 @@ export function Popover({
         </span>
       </footer>
     </div>
+    </AnnouncerProvider>
   );
 }
 
