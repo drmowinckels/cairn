@@ -106,6 +106,39 @@ export async function listWeek(): Promise<BackendWeekDay[]> {
   return invoke<BackendWeekDay[]>("list_week");
 }
 
+export type ReportRange = "day" | "week" | "month";
+
+export interface ReportProjectSlice {
+  projectId: string | null;
+  seconds: number;
+}
+
+export interface ReportDayBucket {
+  date: string;
+  byProject: ReportProjectSlice[];
+}
+
+export interface ReportSourceSplit {
+  rule: number;
+  calendar: number;
+  manual: number;
+}
+
+export interface ReportSummary {
+  totalSeconds: number;
+  prevTotalSeconds: number;
+  byDay: ReportDayBucket[];
+  byProject: ReportProjectSlice[];
+  bySource: ReportSourceSplit;
+}
+
+export async function reportSummary(
+  range: ReportRange,
+): Promise<ReportSummary | null> {
+  if (!inTauri) return null;
+  return invoke<ReportSummary>("report_summary", { range });
+}
+
 export interface BackendRule {
   id: string;
   name: string;

@@ -1,26 +1,95 @@
-import { useState } from "react";
-import { Empty, Mono } from "../../lib/components";
+import { useMemo, useState } from "react";
+import { Empty, ErrorBanner, Mono } from "../../lib/components";
 import { buildWeekSummary } from "../../lib/summary";
 import { useBackup } from "../../lib/use-backup";
-import type { Density } from "../../lib/types";
-import { PROJECT_BY_ID, WEEK } from "../../test-fixtures/data";
-
-const WEEK_LABEL = "May 18 — May 24, 2026";
+import { useProjects } from "../../lib/use-projects";
+import { useReportSummary } from "../../lib/use-report-summary";
+import {
+  buildStackedDays,
+  computeDelta,
+  deltaComparisonLabel,
+  formatRangeLabel,
+  percentOf,
+  rangeTitle,
+  secondsToHours,
+  weekdayLabel,
+} from "../../lib/report-math";
+import type { ReportRange } from "../../lib/ipc";
+import type { Density, Project, WeekDay } from "../../lib/types";
 
 interface Props {
   density: Density;
 }
 
+const RANGES: ReportRange[] = ["day", "week", "month"];
+
+const RANGE_LABEL: Record<ReportRange, string> = {
+  day: "Day",
+  week: "Week",
+  month: "Month",
+};
+
 export function ReportsView({ density }: Props) {
   const backup = useBackup();
+  const projects = useProjects();
+  const projectsById = useMemo<Record<string, Project>>(
+    () => Object.fromEntries(projects.map((p) => [p.id, p])),
+    [projects],
+  );
+  const [range, setRange] = useState<ReportRange>("week");
   const [copied, setCopied] = useState(false);
-  const weekTotal = WEEK.reduce((a, d) => a + d.hours, 0);
+  const { data, loading, error, refresh } = useReportSummary(range);
+
+  const stackedDays = useMemo(
+    () => (data ? buildStackedDays(data) : []),
+    [data],
+  );
+  const maxDaySeconds = useMemo(
+    () => stackedDays.reduce((m, d) => Math.max(m, d.totalSeconds), 8 * 3600),
+    [stackedDays],
+  );
+  const totalSeconds = data?.totalSeconds ?? 0;
+  const totalHours = secondsToHours(totalSeconds);
+  const delta = computeDelta(totalSeconds, data?.prevTotalSeconds ?? 0);
+
+  const projectColor = (projectId: string | null): string => {
+    if (!projectId) return "var(--ink-faint)";
+    return projectsById[projectId]?.color ?? "var(--ink-faint)";
+  };
+  const projectName = (projectId: string | null): string => {
+    if (!projectId) return "No project";
+    return projectsById[projectId]?.name ?? projectId;
+  };
 
   const onCopySummary = async () => {
+    // The button is `disabled={!hasData}` and `hasData` is false whenever
+    // `data` is null, so this handler runs only when `data` is non-null.
+    const summaryData = data!;
+    const week: WeekDay[] = summaryData.byDay.map((d) => {
+      const segments: Array<[string, number]> = d.byProject.map((s) => [
+        s.projectId ?? "_none",
+        secondsToHours(s.seconds),
+      ]);
+      const hours = segments.reduce((a, [, h]) => a + h, 0);
+      return {
+        day: weekdayLabel(d.date) || d.date,
+        hours,
+        segments,
+      };
+    });
     const summary = buildWeekSummary({
-      weekLabel: WEEK_LABEL,
-      week: WEEK,
-      projectsById: PROJECT_BY_ID,
+      weekLabel: formatRangeLabel(summaryData),
+      week,
+      projectsById: {
+        ...projectsById,
+        _none: {
+          id: "_none",
+          name: "No project",
+          clientId: null,
+          color: "#999",
+          archived: false,
+        },
+      },
     });
     try {
       await navigator.clipboard.writeText(summary);
@@ -30,57 +99,86 @@ export function ReportsView({ density }: Props) {
       console.error("clipboard write failed", e);
     }
   };
-  const maxDay = Math.max(...WEEK.map((d) => d.hours), 8);
 
-  const projTotals: Record<string, number> = {};
-  WEEK.forEach((d) =>
-    d.segments.forEach(([pid, h]) => {
-      projTotals[pid] = (projTotals[pid] || 0) + h;
-    }),
-  );
-  const sortedProjects = Object.entries(projTotals).sort((a, b) => b[1] - a[1]);
-  const trackedDays = WEEK.filter((d) => d.hours > 0).length || 1;
-  const hasData = weekTotal > 0;
+  const hasData = totalSeconds > 0;
+  const honestyTotal =
+    (data?.bySource.rule ?? 0) +
+    (data?.bySource.calendar ?? 0) +
+    (data?.bySource.manual ?? 0);
 
   return (
     <div className="view view-reports" data-density={density}>
       <header className="view-head">
         <div>
-          <h2 className="view-title">This week</h2>
-          <p className="view-sub">{WEEK_LABEL}</p>
+          <h2 className="view-title">{rangeTitle(range)}</h2>
+          <p className="view-sub">{data ? formatRangeLabel(data) : ""}</p>
         </div>
-        <div className="seg" role="tablist" aria-label="Period">
-          <button className="seg-btn">Day</button>
-          <button className="seg-btn is-active" aria-selected="true">
-            Week
-          </button>
-          <button className="seg-btn">Month</button>
+        <div className="seg" role="radiogroup" aria-label="Period">
+          {RANGES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              role="radio"
+              aria-checked={r === range}
+              aria-label={RANGE_LABEL[r]}
+              className={`seg-btn${r === range ? " is-on" : ""}`}
+              onClick={() => setRange(r)}
+            >
+              {RANGE_LABEL[r]}
+            </button>
+          ))}
         </div>
       </header>
 
-      {!hasData && (
+      {error && <ErrorBanner message={error} onRetry={refresh} />}
+
+      {!loading && !hasData && !error && (
         <Empty
-          title="No hours tracked this week"
+          title="No hours tracked"
           body="Once you start logging, you'll see daily totals and a breakdown by project here."
         />
       )}
 
-      <section className="totals">
+      <section className="totals" aria-label="Headline totals">
         <div className="total">
           <span className="total-num">
-            <Mono>{weekTotal.toFixed(1)}</Mono>h
+            <Mono>{totalHours.toFixed(1)}</Mono>h
           </span>
           <span className="total-lbl">tracked</span>
         </div>
         <div className="total">
-          <span className="total-num">
-            <Mono>{(weekTotal / trackedDays).toFixed(1)}</Mono>h
+          <span
+            className={`total-num rep-delta rep-delta--${delta.kind}`}
+            aria-label={`Compared to ${deltaComparisonLabel(range)}`}
+          >
+            {delta.kind === "up" && (
+              <span aria-hidden="true" className="rep-delta-arrow">
+                ▲
+              </span>
+            )}
+            {delta.kind === "down" && (
+              <span aria-hidden="true" className="rep-delta-arrow">
+                ▼
+              </span>
+            )}
+            {delta.kind === "flat" && (
+              <span aria-hidden="true" className="rep-delta-arrow">
+                ◆
+              </span>
+            )}
+            {delta.kind === "none" ? (
+              <Mono>—</Mono>
+            ) : (
+              <>
+                <Mono>{Math.abs(delta.percent).toFixed(0)}</Mono>%
+              </>
+            )}
           </span>
-          <span className="total-lbl">daily avg</span>
+          <span className="total-lbl">{deltaComparisonLabel(range)}</span>
         </div>
         <div className="total">
           <span className="total-num">
-            <Mono>{sortedProjects.length}</Mono>
+            <Mono>{data?.byProject.length ?? 0}</Mono>
           </span>
           <span className="total-lbl">projects</span>
         </div>
@@ -88,32 +186,36 @@ export function ReportsView({ density }: Props) {
 
       <section className="chart" aria-label="Hours per day">
         <div className="chart-bars">
-          {WEEK.map((d, i) => {
-            const total = d.hours;
+          {stackedDays.map((d) => {
+            const heightPct = (d.totalSeconds / maxDaySeconds) * 100;
+            const hours = secondsToHours(d.totalSeconds);
             return (
               <div
-                key={i}
-                className={`bar-col${d.today ? " is-today" : ""}${d.future ? " is-future" : ""}`}
+                key={d.isoDate}
+                className={`bar-col${d.isToday ? " is-today" : ""}${d.isFuture ? " is-future" : ""}`}
+                aria-label={`${d.weekday}: ${hours.toFixed(1)} hours${d.isToday ? " (today)" : ""}`}
               >
                 <div
                   className="bar-stack"
-                  style={{ height: `${(total / maxDay) * 100}%` }}
+                  style={{ height: `${heightPct}%` }}
                 >
-                  {d.segments.map(([pid, h], j) => (
+                  {d.segments.map((s) => (
                     <div
-                      key={j}
+                      key={s.projectId ?? "_none"}
                       className="bar-seg"
                       style={{
-                        flex: h,
-                        background: PROJECT_BY_ID[pid].color,
+                        flex: s.seconds,
+                        background: projectColor(s.projectId),
                       }}
-                      title={`${PROJECT_BY_ID[pid].name}: ${h.toFixed(1)}h`}
+                      title={`${projectName(s.projectId)}: ${secondsToHours(s.seconds).toFixed(1)}h`}
                     />
                   ))}
                 </div>
                 <div className="bar-meta">
-                  <span className="bar-h">{total ? total.toFixed(1) : "·"}</span>
-                  <span className="bar-d">{d.day}</span>
+                  <span className="bar-h">
+                    {d.totalSeconds > 0 ? hours.toFixed(1) : "·"}
+                  </span>
+                  <span className="bar-d">{d.weekday}</span>
                 </div>
               </div>
             );
@@ -126,27 +228,28 @@ export function ReportsView({ density }: Props) {
           <span>By project</span>
         </div>
         <ul className="bd-list">
-          {sortedProjects.map(([pid, h]) => {
-            const p = PROJECT_BY_ID[pid];
-            const pct = (h / weekTotal) * 100;
+          {(data?.byProject ?? []).map((slice) => {
+            const hours = secondsToHours(slice.seconds);
+            const pct = percentOf(slice.seconds, totalSeconds);
+            const color = projectColor(slice.projectId);
             return (
-              <li key={pid} className="bd-row">
+              <li key={slice.projectId ?? "_none"} className="bd-row">
                 <span
                   className="proj-dot"
-                  style={{ background: p.color, width: 8, height: 8 }}
+                  style={{ background: color, width: 8, height: 8 }}
                 />
-                <span className="bd-name">{p.name}</span>
+                <span className="bd-name">{projectName(slice.projectId)}</span>
                 <div className="bd-bar">
                   <div
                     className="bd-bar-fill"
-                    style={{ width: `${pct}%`, background: p.color }}
+                    style={{ width: `${pct}%`, background: color }}
                   />
                 </div>
                 <span className="bd-pct">
                   <Mono>{pct.toFixed(0)}</Mono>%
                 </span>
                 <span className="bd-h">
-                  <Mono>{h.toFixed(1)}</Mono>h
+                  <Mono>{hours.toFixed(1)}</Mono>h
                 </span>
               </li>
             );
@@ -154,19 +257,93 @@ export function ReportsView({ density }: Props) {
         </ul>
       </section>
 
+      <section className="honesty" aria-label="Honesty meter">
+        <div className="sect-label">
+          <span>How this time was logged</span>
+        </div>
+        <div
+          className="honesty-bar"
+          role="img"
+          aria-label={honestyAriaLabel(data?.bySource, honestyTotal)}
+        >
+          <span
+            className="hon-seg hon-rule"
+            style={{ width: `${percentOf(data?.bySource.rule ?? 0, honestyTotal)}%` }}
+            data-testid="hon-rule"
+          />
+          <span
+            className="hon-seg hon-cal"
+            style={{ width: `${percentOf(data?.bySource.calendar ?? 0, honestyTotal)}%` }}
+            data-testid="hon-cal"
+          />
+          <span
+            className="hon-seg hon-manual"
+            style={{ width: `${percentOf(data?.bySource.manual ?? 0, honestyTotal)}%` }}
+            data-testid="hon-manual"
+          />
+        </div>
+        <ul className="hon-legend">
+          <li>
+            <span className="hon-key hon-rule" aria-hidden="true" />
+            <span>Rule-detected</span>
+            <Mono>
+              {percentOf(data?.bySource.rule ?? 0, honestyTotal).toFixed(0)}%
+            </Mono>
+          </li>
+          <li>
+            <span className="hon-key hon-cal" aria-hidden="true" />
+            <span>From calendar</span>
+            <Mono>
+              {percentOf(data?.bySource.calendar ?? 0, honestyTotal).toFixed(0)}%
+            </Mono>
+          </li>
+          <li>
+            <span className="hon-key hon-manual" aria-hidden="true" />
+            <span>Manual</span>
+            <Mono>
+              {percentOf(data?.bySource.manual ?? 0, honestyTotal).toFixed(0)}%
+            </Mono>
+          </li>
+        </ul>
+      </section>
+
       <section className="export-row">
-        <button className="link-btn" onClick={backup.exportCsvToFile}>
+        <button
+          type="button"
+          className="link-btn"
+          onClick={backup.exportCsvToFile}
+        >
           Export CSV
         </button>
         <span className="dot-sep">·</span>
-        <button className="link-btn" onClick={backup.exportBackupToFile}>
+        <button
+          type="button"
+          className="link-btn"
+          onClick={backup.exportBackupToFile}
+        >
           Export backup
         </button>
         <span className="dot-sep">·</span>
-        <button className="link-btn" onClick={onCopySummary}>
+        <button
+          type="button"
+          className="link-btn"
+          onClick={onCopySummary}
+          disabled={!hasData}
+        >
           {copied ? "Copied ✓" : "Copy summary"}
         </button>
       </section>
     </div>
   );
+}
+
+function honestyAriaLabel(
+  bySource: { rule: number; calendar: number; manual: number } | undefined,
+  total: number,
+): string {
+  if (!bySource || total === 0) return "No tracked time yet";
+  const rule = percentOf(bySource.rule, total).toFixed(0);
+  const cal = percentOf(bySource.calendar, total).toFixed(0);
+  const man = percentOf(bySource.manual, total).toFixed(0);
+  return `Rule-detected ${rule}%, calendar ${cal}%, manual ${man}%`;
 }
