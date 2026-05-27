@@ -33,7 +33,13 @@ export function Popover({
   const [view, setView] = useState<View>(initialView);
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
   const [showIdleModal, setShowIdleModal] = useState(false);
+  const [addEntryRequest, setAddEntryRequest] = useState(0);
   const a11y = useA11yPrefs();
+
+  const requestAddEntry = () => {
+    setView("today");
+    setAddEntryRequest((n) => n + 1);
+  };
 
   useEffect(() => {
     if (theme === "system") {
@@ -83,6 +89,7 @@ export function Popover({
             className="icon-btn"
             aria-label="Add manual entry"
             title="Add entry"
+            onClick={requestAddEntry}
           >
             <Icon name="plus" />
           </button>
@@ -98,7 +105,7 @@ export function Popover({
         <span className="nav-meta">⌃⌥T</span>
       </nav>
 
-      <div className="pop-body" role="tabpanel">
+      <div className="pop-body" role="tabpanel" tabIndex={0}>
         {view === "today" && (
           <ErrorBoundary area="Today">
             <TodayView
@@ -109,6 +116,7 @@ export function Popover({
               setShowIdleModal={setShowIdleModal}
               detectionPrompts={a11y.detectionPrompts}
               announce={a11y.announce}
+              addEntryRequest={addEntryRequest}
             />
           </ErrorBoundary>
         )}

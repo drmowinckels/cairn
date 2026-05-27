@@ -1,0 +1,648 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn().mockResolvedValue(null),
+}));
+
+import {
+  ManualEntryModal,
+  isoToLocal,
+  localToIso,
+  validateDraft,
+  type ManualEntryDraft,
+  type ManualEntrySubmit,
+} from "./manual-entry-modal";
+import type { Project } from "../../lib/types";
+
+const PROJECTS: Project[] = [
+  { id: "p1", name: "Alpha", clientId: null, color: "#aaa", archived: false },
+  { id: "p2", name: "Beta", clientId: null, color: "#bbb", archived: false },
+];
+
+const BASE_DRAFT: ManualEntryDraft = {
+  projectId: null,
+  description: "",
+  startedLocal: "2026-05-26T09:00",
+  endedLocal: "2026-05-26T10:00",
+};
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("ManualEntryModal — render & a11y", () => {
+  it("renders as a dialog with aria-modal=true", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: /new entry/i });
+    expect(dialog).toBeTruthy();
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+  });
+
+  it("returns null when open=false", () => {
+    const { container } = render(
+      <ManualEntryModal
+        open={false}
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("calls onClose when Escape is pressed inside the dialog", () => {
+    const onClose = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onClose when the overlay is clicked", () => {
+    const onClose = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    const overlay = document.querySelector(".modal-overlay") as HTMLElement;
+    fireEvent.mouseDown(overlay);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("mousedown on the dialog (inside the overlay) does not close the modal", () => {
+    const onClose = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    fireEvent.mouseDown(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("Tab on the last focusable wraps to the first (focus trap)", async () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    const focusables = dialog.querySelectorAll<HTMLElement>(
+      'button, input, select, [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    last.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    // jsdom doesn't honor preventDefault on programmatic events,
+    // but our handler also calls .focus() on `first` when wrapping.
+    await waitFor(() => expect(document.activeElement).toBe(first));
+  });
+
+  it("Shift+Tab on the first focusable wraps to the last (focus trap)", async () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    const focusables = dialog.querySelectorAll<HTMLElement>(
+      'button, input, select, [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    first.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    await waitFor(() => expect(document.activeElement).toBe(last));
+  });
+
+  it("non-Tab/non-Escape keydown inside the dialog is a no-op", () => {
+    const onClose = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "ArrowDown" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("Tab from a middle focusable does NOT wrap (focus trap only wraps at edges)", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    const focusables = dialog.querySelectorAll<HTMLElement>(
+      'button, input, select, [tabindex]:not([tabindex="-1"])',
+    );
+    const middle = focusables[Math.floor(focusables.length / 2)];
+    middle.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(middle);
+  });
+});
+
+describe("ManualEntryModal — validation", () => {
+  it("submit button is disabled when start time is empty", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{ ...BASE_DRAFT, startedLocal: "" }}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const save = screen.getByRole("button", { name: /save/i });
+    expect(save.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("submit is disabled when end <= start", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{
+          ...BASE_DRAFT,
+          startedLocal: "2026-05-26T10:00",
+          endedLocal: "2026-05-26T09:00",
+        }}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const save = screen.getByRole("button", { name: /save/i });
+    expect(save.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText(/end must be after start/i)).toBeTruthy();
+  });
+
+  it("submit is enabled with valid range; calls onSubmit with UTC ISO timestamps", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{
+          ...BASE_DRAFT,
+          description: "  Backfill  ",
+          projectId: "p1",
+        }}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={onSubmit}
+        onClose={onClose}
+      />,
+    );
+    const save = screen.getByRole("button", { name: /save/i });
+    expect(save.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0][0] as ManualEntrySubmit;
+    expect(payload.description).toBe("Backfill");
+    expect(payload.projectId).toBe("p1");
+    // Verify ISO 8601 UTC suffix.
+    expect(payload.startedAt).toMatch(/Z$/);
+    expect(payload.endedAt).toMatch(/Z$/);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("submits with endedAt=null when the end field is empty (running)", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{ ...BASE_DRAFT, endedLocal: "" }}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const payload = onSubmit.mock.calls[0][0] as ManualEntrySubmit;
+    expect(payload.endedAt).toBeNull();
+  });
+
+  it("overlap with running timer renders a warning but allows submit", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    // The running timer started 1h ago; the draft starts 30 min ago
+    // and ends 5 min ago — guaranteed overlap regardless of test
+    // runtime clock.
+    const runningStartIso = new Date(Date.now() - 60 * 60_000).toISOString();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{
+          ...BASE_DRAFT,
+          startedLocal: isoToLocal(
+            new Date(Date.now() - 30 * 60_000).toISOString(),
+          ),
+          endedLocal: isoToLocal(
+            new Date(Date.now() - 5 * 60_000).toISOString(),
+          ),
+        }}
+        projects={PROJECTS}
+        runningRange={{ id: "running-id", startedAt: runningStartIso }}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/overlaps with the currently-running timer/i),
+    ).toBeTruthy();
+    const save = screen.getByRole("button", { name: /save/i });
+    expect(save.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("surfaces a submit error if onSubmit rejects, keeping the modal open", async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValue(new Error("ipc unavailable"));
+    const onClose = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={onSubmit}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/ipc unavailable/i)).toBeTruthy(),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("ManualEntryModal — edit mode + delete", () => {
+  const EDIT_DRAFT: ManualEntryDraft = {
+    id: "entry-1",
+    projectId: "p1",
+    description: "Existing work",
+    startedLocal: "2026-05-26T09:00",
+    endedLocal: "2026-05-26T10:00",
+  };
+
+  it("titles the modal 'Edit entry' in edit mode", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="edit"
+        initial={EDIT_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("dialog", { name: /edit entry/i })).toBeTruthy();
+  });
+
+  it("prefills the form fields from the initial draft", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="edit"
+        initial={EDIT_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const desc = screen.getByLabelText(/description/i) as HTMLInputElement;
+    expect(desc.value).toBe("Existing work");
+    const project = screen.getByLabelText(/project/i) as HTMLSelectElement;
+    expect(project.value).toBe("p1");
+  });
+
+  it("delete requires a confirm step before calling onDelete", async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ManualEntryModal
+        open
+        mode="edit"
+        initial={EDIT_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onDelete={onDelete}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    // Confirm step appears.
+    const confirmBtn = screen.getByRole("button", { name: /^delete$/i });
+    fireEvent.click(confirmBtn);
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith("entry-1"));
+  });
+
+  it("cancel inside the confirm step returns to the default footer", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="edit"
+        initial={EDIT_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    expect(screen.getByText(/delete this entry/i)).toBeTruthy();
+    // Click the confirm-row's Cancel (its parent has class .confirm-row).
+    const confirmCancel = document.querySelector(
+      ".confirm-row button.btn--ghost",
+    ) as HTMLElement;
+    expect(confirmCancel).not.toBeNull();
+    fireEvent.click(confirmCancel);
+    expect(screen.queryByText(/delete this entry/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /^delete$/i })).toBeTruthy();
+  });
+});
+
+describe("validateDraft (pure)", () => {
+  it("rejects empty start", () => {
+    const v = validateDraft(
+      { ...BASE_DRAFT, startedLocal: "" },
+      null,
+    );
+    expect(v.ok).toBe(false);
+  });
+  it("rejects equal start/end", () => {
+    const v = validateDraft(
+      {
+        ...BASE_DRAFT,
+        startedLocal: "2026-05-26T09:00",
+        endedLocal: "2026-05-26T09:00",
+      },
+      null,
+    );
+    expect(v.ok).toBe(false);
+  });
+  it("accepts open-ended (no end)", () => {
+    const v = validateDraft({ ...BASE_DRAFT, endedLocal: "" }, null);
+    expect(v.ok).toBe(true);
+  });
+  it("does not flag overlap when editing the same running entry", () => {
+    const v = validateDraft(
+      { ...BASE_DRAFT, id: "r1" },
+      { id: "r1", startedAt: "2026-05-26T08:30:00Z" },
+    );
+    expect(v.overlapWarning).toBeNull();
+  });
+  it("flags overlap when a closed draft intersects the running entry", () => {
+    const now = new Date();
+    const tenMinAgo = new Date(now.getTime() - 10 * 60_000);
+    const fiveMinAhead = new Date(now.getTime() + 5 * 60_000);
+    const v = validateDraft(
+      {
+        ...BASE_DRAFT,
+        startedLocal: toLocal(tenMinAgo),
+        endedLocal: toLocal(fiveMinAhead),
+      },
+      { id: "running", startedAt: new Date(now.getTime() - 30 * 60_000).toISOString() },
+    );
+    expect(v.overlapWarning).toMatch(/overlaps/i);
+  });
+  it("does not flag overlap for an open-ended draft (it supersedes the timer)", () => {
+    const v = validateDraft(
+      { ...BASE_DRAFT, endedLocal: "" },
+      { id: "running", startedAt: new Date(Date.now() - 30 * 60_000).toISOString() },
+    );
+    expect(v.overlapWarning).toBeNull();
+  });
+});
+
+function toLocal(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+describe("ManualEntryModal — field changes & focus return", () => {
+  it("typing into the description, project, start and end fields updates the draft", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{
+          ...BASE_DRAFT,
+          startedLocal: "2026-05-26T09:00",
+          endedLocal: "",
+        }}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const desc = screen.getByLabelText(/description/i) as HTMLInputElement;
+    fireEvent.change(desc, { target: { value: "Triage" } });
+    expect(desc.value).toBe("Triage");
+
+    const project = screen.getByLabelText(/project/i) as HTMLSelectElement;
+    fireEvent.change(project, { target: { value: "p2" } });
+    expect(project.value).toBe("p2");
+
+    // Switching back to "No project" sets projectId to null.
+    fireEvent.change(project, { target: { value: "" } });
+    expect(project.value).toBe("");
+
+    const start = screen.getByLabelText(/^start/i) as HTMLInputElement;
+    fireEvent.change(start, { target: { value: "2026-05-26T10:00" } });
+    expect(start.value).toBe("2026-05-26T10:00");
+
+    const end = screen.getByLabelText(/^end/i) as HTMLInputElement;
+    fireEvent.change(end, { target: { value: "2026-05-26T11:00" } });
+    expect(end.value).toBe("2026-05-26T11:00");
+  });
+
+  it("returns focus to the opener element when the modal closes", () => {
+    const opener = document.createElement("button");
+    opener.textContent = "opener";
+    document.body.appendChild(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const { rerender } = render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    // Closing the modal should restore focus to the opener.
+    rerender(
+      <ManualEntryModal
+        open={false}
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("Shift+Tab on the first focusable wraps to the last (focus trap)", async () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    const focusables = dialog.querySelectorAll<HTMLElement>(
+      'button, input, select, [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    first.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    await waitFor(() => expect(document.activeElement).toBe(last));
+  });
+
+  it("surfaces a delete error if onDelete rejects, keeping the modal open", async () => {
+    const onDelete = vi.fn().mockRejectedValue(new Error("delete failed"));
+    const onClose = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="edit"
+        initial={{
+          id: "entry-1",
+          projectId: "p1",
+          description: "Existing",
+          startedLocal: "2026-05-26T09:00",
+          endedLocal: "2026-05-26T10:00",
+        }}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onDelete={onDelete}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/delete failed/i)).toBeTruthy(),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("localToIso / isoToLocal round-trip", () => {
+  it("isoToLocal returns YYYY-MM-DDTHH:MM in local zone", () => {
+    const local = isoToLocal("2026-05-26T09:30:00Z");
+    expect(local).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  });
+
+  it("isoToLocal returns empty for empty / invalid input", () => {
+    expect(isoToLocal("")).toBe("");
+    expect(isoToLocal("not-a-date")).toBe("");
+  });
+
+  it("localToIso returns empty for empty input", () => {
+    expect(localToIso("")).toBe("");
+  });
+
+  it("localToIso → isoToLocal round-trip preserves the wall-clock components", () => {
+    const local = "2026-05-26T09:30";
+    const iso = localToIso(local);
+    const back = isoToLocal(iso);
+    expect(back).toBe(local);
+  });
+});

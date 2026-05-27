@@ -217,6 +217,21 @@ export async function updateEntry(input: UpdateEntryInput): Promise<BackendEntry
   return invoke<BackendEntry>("update_entry", { input });
 }
 
+export interface CreateEntryInput {
+  projectId?: string | null;
+  taskId?: string | null;
+  description?: string;
+  /** RFC 3339 timestamp. Required. */
+  startedAt: string;
+  /** RFC 3339 timestamp. `null` / omitted ⇒ open-ended (running). */
+  endedAt?: string | null;
+  source?: string;
+}
+
+export async function createEntry(input: CreateEntryInput): Promise<BackendEntry> {
+  return invoke<BackendEntry>("create_entry", { input });
+}
+
 export async function deleteEntry(id: string): Promise<void> {
   await invoke("delete_entry", { id });
 }
@@ -368,6 +383,18 @@ export async function refreshCalendarSource(
 export async function currentCalendarEvents(): Promise<ActiveCalendarEvent[]> {
   if (!inTauri) return [];
   return invoke<ActiveCalendarEvent[]>("current_calendar_events");
+}
+
+/**
+ * Next `limit` calendar events strictly after now, across every
+ * enabled source, sorted by start time (#20). Backend clamps `limit`
+ * to 1..=10.
+ */
+export async function upcomingCalendarEvents(
+  limit = 3,
+): Promise<ActiveCalendarEvent[]> {
+  if (!inTauri) return [];
+  return invoke<ActiveCalendarEvent[]>("upcoming_calendar_events", { limit });
 }
 
 export async function calendarSyncStatus(): Promise<CalendarSyncStatus[]> {
