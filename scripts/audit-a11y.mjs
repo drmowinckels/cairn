@@ -127,26 +127,18 @@ async function auditTab(page, tab) {
 
   await page.addScriptTag({ path: AXE_PATH });
   const violations = await page.evaluate(async () => {
-    // Existing violations whose fixes are tracked under M5:
-    //   - target-size           (WCAG 2.2 SC 2.5.8) — dense rule rows         → M5 #28
-    //   - aria-allowed-attr     — segmented control / nested toggle attrs     → M5 #28
-    //   - aria-required-children — `role="tablist"` with `<button>` children   → M5 #28
-    //   - nested-interactive    — `.rule-head[role="button"]` contains buttons → M5 #28
-    // `color-contrast` is re-enabled — see docs/architecture/contrast.md for
-    // the audit matrix and token adjustments. Re-enable each remaining rule
-    // as the linked issue lands. New a11y bugs introduced by this PR or
-    // later PRs must NOT be added to this list — fix the bug.
+    // All M5 a11y rules are enabled — target-size, aria-allowed-attr,
+    // aria-required-children, nested-interactive landed under #28;
+    // color-contrast landed under #29 (see docs/architecture/contrast.md
+    // for the matrix + token fixes).
+    // New a11y bugs introduced by this PR or later PRs must NOT be added
+    // to this list — fix the bug.
     const results = await window.axe.run(document, {
       runOnly: {
         type: "tag",
         values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
       },
-      rules: {
-        "target-size": { enabled: false },
-        "aria-allowed-attr": { enabled: false },
-        "aria-required-children": { enabled: false },
-        "nested-interactive": { enabled: false },
-      },
+      rules: {},
     });
     return results.violations.map((v) => ({
       id: v.id,

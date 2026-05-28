@@ -62,32 +62,34 @@ describe("RulesView", () => {
     expect(screen.getByLabelText(/test bench/i)).toBeTruthy();
   });
 
-  it("clicking a rule head expands it and invokes onOpenRule", () => {
+  it("clicking the disclosure button expands the rule and invokes onOpenRule", () => {
     const { container, onOpenRule } = renderRules();
-    const firstHead = container.querySelector(".rule-head") as HTMLElement;
-    expect(firstHead.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(firstHead);
-    expect(firstHead.getAttribute("aria-expanded")).toBe("true");
+    const firstDisclose = container.querySelector(
+      ".rule-disclose",
+    ) as HTMLButtonElement;
+    expect(firstDisclose.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(firstDisclose);
+    expect(firstDisclose.getAttribute("aria-expanded")).toBe("true");
     expect(onOpenRule).toHaveBeenCalled();
   });
 
   it("preselects openRuleId on mount", () => {
     const { container } = renderRules({ openRuleId: "r1" });
-    const heads = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule-head"),
+    const discloses = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".rule-disclose"),
     );
-    const expanded = heads.find(
+    const expanded = discloses.find(
       (h) => h.getAttribute("aria-expanded") === "true",
     );
     expect(expanded).toBeTruthy();
   });
 
-  it("clicking the same rule head twice collapses it (sets onOpenRule to null)", () => {
+  it("clicking the same disclosure twice collapses it (sets onOpenRule to null)", () => {
     const { container, onOpenRule } = renderRules({ openRuleId: "r1" });
-    const head = container.querySelector(
-      ".rule.is-open .rule-head",
-    ) as HTMLElement;
-    fireEvent.click(head);
+    const disclose = container.querySelector(
+      ".rule.is-open .rule-disclose",
+    ) as HTMLButtonElement;
+    fireEvent.click(disclose);
     expect(onOpenRule).toHaveBeenLastCalledWith(null);
   });
 
@@ -421,15 +423,15 @@ describe("RulesView", () => {
 
   // ---- #15: drag-to-reorder + keyboard alternative -----------------
 
-  it("reorders rules via Alt+ArrowDown when the rule head is focused", async () => {
+  it("reorders rules via Alt+ArrowDown when the disclosure is focused", async () => {
     const { container } = renderRules({ complexity: "medium" });
-    const heads = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule-head"),
+    const discloses = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".rule-disclose"),
     );
-    expect(heads.length).toBeGreaterThan(1);
-    const firstName = heads[0].querySelector(".rule-name")?.textContent;
-    heads[0].focus();
-    fireEvent.keyDown(heads[0], { key: "ArrowDown", altKey: true });
+    expect(discloses.length).toBeGreaterThan(1);
+    const firstName = discloses[0].querySelector(".rule-name")?.textContent;
+    discloses[0].focus();
+    fireEvent.keyDown(discloses[0], { key: "ArrowDown", altKey: true });
     await waitFor(() => {
       const newFirst = container
         .querySelector<HTMLElement>(".rule:nth-child(1) .rule-name")
@@ -439,15 +441,15 @@ describe("RulesView", () => {
     });
   });
 
-  it("reorders rules via Alt+ArrowUp when the rule head is focused", async () => {
+  it("reorders rules via Alt+ArrowUp when the disclosure is focused", async () => {
     const { container } = renderRules({ complexity: "medium" });
-    const heads = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule-head"),
+    const discloses = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".rule-disclose"),
     );
     const lastName =
-      heads[heads.length - 1].querySelector(".rule-name")?.textContent;
-    heads[heads.length - 1].focus();
-    fireEvent.keyDown(heads[heads.length - 1], {
+      discloses[discloses.length - 1].querySelector(".rule-name")?.textContent;
+    discloses[discloses.length - 1].focus();
+    fireEvent.keyDown(discloses[discloses.length - 1], {
       key: "ArrowUp",
       altKey: true,
     });
@@ -461,12 +463,13 @@ describe("RulesView", () => {
 
   it("Alt+ArrowUp on the first rule is a no-op (already at top)", () => {
     const { container } = renderRules({ complexity: "medium" });
-    const heads = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule-head"),
+    const discloses = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".rule-disclose"),
     );
-    const firstNameBefore = heads[0].querySelector(".rule-name")?.textContent;
-    heads[0].focus();
-    fireEvent.keyDown(heads[0], { key: "ArrowUp", altKey: true });
+    const firstNameBefore =
+      discloses[0].querySelector(".rule-name")?.textContent;
+    discloses[0].focus();
+    fireEvent.keyDown(discloses[0], { key: "ArrowUp", altKey: true });
     const firstNameAfter = container
       .querySelector(".rule:first-child .rule-name")
       ?.textContent;
@@ -475,13 +478,13 @@ describe("RulesView", () => {
 
   it("Alt+ArrowDown on the last rule is a no-op (already at bottom)", () => {
     const { container } = renderRules({ complexity: "medium" });
-    const heads = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule-head"),
+    const discloses = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".rule-disclose"),
     );
     const lastNameBefore =
-      heads[heads.length - 1].querySelector(".rule-name")?.textContent;
-    heads[heads.length - 1].focus();
-    fireEvent.keyDown(heads[heads.length - 1], {
+      discloses[discloses.length - 1].querySelector(".rule-name")?.textContent;
+    discloses[discloses.length - 1].focus();
+    fireEvent.keyDown(discloses[discloses.length - 1], {
       key: "ArrowDown",
       altKey: true,
     });
@@ -493,12 +496,13 @@ describe("RulesView", () => {
 
   it("ArrowDown WITHOUT alt does NOT reorder (Alt is the spec's required modifier)", () => {
     const { container } = renderRules({ complexity: "medium" });
-    const heads = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule-head"),
+    const discloses = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".rule-disclose"),
     );
-    const firstNameBefore = heads[0].querySelector(".rule-name")?.textContent;
-    heads[0].focus();
-    fireEvent.keyDown(heads[0], { key: "ArrowDown" });
+    const firstNameBefore =
+      discloses[0].querySelector(".rule-name")?.textContent;
+    discloses[0].focus();
+    fireEvent.keyDown(discloses[0], { key: "ArrowDown" });
     const firstNameAfter = container
       .querySelector(".rule:first-child .rule-name")
       ?.textContent;
@@ -571,20 +575,22 @@ describe("RulesView", () => {
     expect(firstNameAfter).toBe(firstNameBefore);
   });
 
-  it("the rule head exposes the Alt+arrow shortcut via aria-keyshortcuts (not in the visible label)", () => {
+  it("the disclosure button exposes the Alt+arrow shortcut via aria-keyshortcuts (not in the visible label)", () => {
     // role=alert spam was the same anti-pattern; here the concern is
     // that announcing 'Use Alt+Up or Alt+Down' on every rule focus is
     // verbose for a 50-rule list. aria-keyshortcuts is the platform-
     // standard way to tell ATs about a shortcut without putting it
     // in the visible / spoken label.
     const { container } = renderRules({ complexity: "medium" });
-    const head = container.querySelector(".rule-head") as HTMLElement;
-    expect(head.getAttribute("aria-keyshortcuts")).toBe(
+    const disclose = container.querySelector(
+      ".rule-disclose",
+    ) as HTMLButtonElement;
+    expect(disclose.getAttribute("aria-keyshortcuts")).toBe(
       "Alt+ArrowUp Alt+ArrowDown",
     );
     // The visible label is just the rule's name + index — no shortcut
     // hint baked into it.
-    const label = head.getAttribute("aria-label") ?? "";
+    const label = disclose.getAttribute("aria-label") ?? "";
     expect(label).not.toMatch(/Alt/);
   });
 
@@ -611,17 +617,22 @@ describe("RulesView", () => {
     expect(rules[1].getAttribute("data-drag-over")).toBeNull();
   });
 
-  it("Enter or Space on the focused rule head toggles expansion (keyboard-accessible)", () => {
+  it("clicking the focused disclosure button toggles expansion (native <button> handles Enter/Space)", () => {
+    // The disclosure is a real <button>, so Enter/Space activation is
+    // handled by the browser — no custom keydown logic needed. The
+    // testing-library way to exercise that path is fireEvent.click,
+    // which is what Enter/Space dispatch on a focused button.
     const { container, onOpenRule } = renderRules();
-    const head = container.querySelector(".rule-head") as HTMLElement;
-    expect(head.getAttribute("aria-expanded")).toBe("false");
-    head.focus();
-    fireEvent.keyDown(head, { key: "Enter" });
-    expect(head.getAttribute("aria-expanded")).toBe("true");
+    const disclose = container.querySelector(
+      ".rule-disclose",
+    ) as HTMLButtonElement;
+    expect(disclose.getAttribute("aria-expanded")).toBe("false");
+    disclose.focus();
+    fireEvent.click(disclose);
+    expect(disclose.getAttribute("aria-expanded")).toBe("true");
     expect(onOpenRule).toHaveBeenCalled();
-    // And Space toggles it back closed.
-    fireEvent.keyDown(head, { key: " " });
-    expect(head.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(disclose);
+    expect(disclose.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("expanded editor inputs aren't draggable (text selection isn't hijacked)", () => {

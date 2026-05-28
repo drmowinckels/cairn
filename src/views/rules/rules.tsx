@@ -402,55 +402,65 @@ function RuleRow({
           onDragStartIndex(-1);
           setDragOver(false);
         }}
-        onClick={onToggle}
-        tabIndex={0}
-        role="button"
-        aria-expanded={expanded}
-        aria-label={`Rule ${index + 1}: ${rule.name}`}
-        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-        onKeyDown={(e) => {
-          // Alt+↑/↓: keyboard alternative to the drag handle. The
-          // spec requires this so power users without a mouse can
-          // still order their rules. Bounds-checked so a no-op key
-          // press at the top/bottom doesn't fire a useless IPC.
-          if (e.altKey && e.key === "ArrowUp" && index > 0) {
-            e.preventDefault();
-            onMove(index - 1);
-            return;
-          }
-          if (e.altKey && e.key === "ArrowDown" && index < total - 1) {
-            e.preventDefault();
-            onMove(index + 1);
-            return;
-          }
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onToggle();
-          }
-        }}
       >
-        <Icon
-          name="drag"
-          size={14}
-          className="rule-drag"
-          aria-hidden="true"
-        />
-        <span className="rule-num">{index + 1}</span>
-        <span className="rule-name">{rule.name}</span>
-        <span className="rule-summary">
-          {rule.when.length === 1 ? (
-            <RuleConditionPill cond={rule.when[0]} />
-          ) : (
-            <span className="rule-multi">{rule.when.length} conditions</span>
-          )}
-          <Icon name="arrow-right" size={11} className="rule-arrow" />
-          {project ? (
-            <ProjectChip id={project.id} />
-          ) : (
-            <span className="rule-tags-only">+ tags</span>
-          )}
-        </span>
-        <span className="rule-stats">{rule.matchedToday}× today</span>
+        {/* `.rule-disclose` is the actual disclosure control. The
+            surrounding `<header>` used to carry `role="button"`,
+            but axe's `nested-interactive` (rightly) rejects a
+            button that contains a focusable checkbox + a
+            draggable handle. Splitting the row keeps the row
+            clickable while putting a real `<button>` on the
+            keyboard-accessible path. */}
+        <button
+          type="button"
+          className="rule-disclose"
+          aria-expanded={expanded}
+          aria-controls={expanded ? `rule-body-${rule.id}` : undefined}
+          aria-label={`Rule ${index + 1}: ${rule.name}`}
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          onClick={(e) => {
+            stopBubble(e);
+            onToggle();
+          }}
+          onKeyDown={(e) => {
+            // Alt+↑/↓: keyboard alternative to the drag handle. The
+            // spec requires this so power users without a mouse can
+            // still order their rules. Bounds-checked so a no-op key
+            // press at the top/bottom doesn't fire a useless IPC.
+            if (e.altKey && e.key === "ArrowUp" && index > 0) {
+              e.preventDefault();
+              onMove(index - 1);
+              return;
+            }
+            if (e.altKey && e.key === "ArrowDown" && index < total - 1) {
+              e.preventDefault();
+              onMove(index + 1);
+              return;
+            }
+          }}
+        >
+          <Icon
+            name="drag"
+            size={14}
+            className="rule-drag"
+            aria-hidden="true"
+          />
+          <span className="rule-num">{index + 1}</span>
+          <span className="rule-name">{rule.name}</span>
+          <span className="rule-summary">
+            {rule.when.length === 1 ? (
+              <RuleConditionPill cond={rule.when[0]} />
+            ) : (
+              <span className="rule-multi">{rule.when.length} conditions</span>
+            )}
+            <Icon name="arrow-right" size={11} className="rule-arrow" />
+            {project ? (
+              <ProjectChip id={project.id} />
+            ) : (
+              <span className="rule-tags-only">+ tags</span>
+            )}
+          </span>
+          <span className="rule-stats">{rule.matchedToday}× today</span>
+        </button>
         <span className="rule-toggle">
           <input
             type="checkbox"
@@ -464,11 +474,12 @@ function RuleRow({
           name={expanded ? "chevron-down" : "chevron-right"}
           size={14}
           className="rule-chev"
+          aria-hidden="true"
         />
       </header>
 
       {expanded && (
-        <div className="rule-body">
+        <div className="rule-body" id={`rule-body-${rule.id}`}>
           <div className="rule-name-row">
             <label className="rule-name-label" htmlFor={`rule-name-${rule.id}`}>
               Name
