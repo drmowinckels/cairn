@@ -30,7 +30,7 @@ describe("scoreFuzzy", () => {
   });
 
   it("rewards start-of-word matches over mid-word ones", () => {
-    // "sp" at "S(top) (P)roject" vs mid-word match in "displa-something"
+    // start-of-word "sp" via "Stop Project" vs a mid-word match in "display open"
     const startOfWord = scoreFuzzy("sp", "stop project");
     const midWord = scoreFuzzy("sp", "display open");
     expect(startOfWord).not.toBeNull();
