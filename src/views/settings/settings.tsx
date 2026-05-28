@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
 import { useBackup } from "../../lib/use-backup";
@@ -22,6 +22,21 @@ import {
 } from "../../lib/privacy-copy";
 import { IntegrationsCard } from "./integrations";
 
+/**
+ * Anchors the command palette's "Open settings: X" commands can
+ * target. Each setting <section> is tagged with `data-section`
+ * matching one of these ids; SettingsView scrolls the matching
+ * section into view when `scrollToSection` changes.
+ */
+export type SettingsSectionId =
+  | "privacy"
+  | "exclusions"
+  | "accessibility"
+  | "shortcuts"
+  | "integrations"
+  | "calendar"
+  | "advanced";
+
 interface Props {
   density: Density;
   a11y: UseA11yPrefs;
@@ -33,6 +48,14 @@ interface Props {
    * settings tests can render the view without onboarding state.
    */
   onRerunOnboarding?: () => Promise<void> | void;
+  /**
+   * Identifier of the section to scroll into view (palette #32).
+   * The popover increments `scrollNonce` to force the effect to fire
+   * even when the same section is targeted twice in a row.
+   */
+  scrollToSection?: SettingsSectionId | null;
+  /** Monotonically-incrementing token so repeat targets re-fire. */
+  scrollNonce?: number;
 }
 
 const TEXT_SCALES: Array<{ value: TextScale; label: string }> = [
@@ -74,10 +97,30 @@ export function SettingsView({
   a11y,
   capture,
   onRerunOnboarding,
+  scrollToSection = null,
+  scrollNonce = 0,
 }: Props) {
   const backup = useBackup();
   const announce = useAnnounce();
   const [confirmCapture, setConfirmCapture] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!scrollToSection) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const target = root.querySelector<HTMLElement>(
+      `[data-section="${scrollToSection}"]`,
+    );
+    if (!target) return;
+    // `block:start` aligns the section header at the top of the
+    // scrollable popover body, which is the most useful position for
+    // a section the user just navigated to.
+    target.scrollIntoView({ block: "start", behavior: "auto" });
+    // Drop a focus target so screen readers announce the section.
+    target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+  }, [scrollToSection, scrollNonce]);
 
   const resetShortcuts = () => {
     const msg = "Shortcuts already at defaults";
@@ -98,8 +141,16 @@ export function SettingsView({
     void capture.stop();
   };
   return (
-    <div className="view view-settings" data-density={density}>
-      <section className="privacy-card" aria-label="Privacy">
+    <div
+      className="view view-settings"
+      data-density={density}
+      ref={rootRef}
+    >
+      <section
+        className="privacy-card"
+        aria-label="Privacy"
+        data-section="privacy"
+      >
         <div className="privacy-head">
           <Icon name="shield" size={18} />
           <h2 className="privacy-title">Your data stays here</h2>
@@ -202,7 +253,7 @@ export function SettingsView({
         )}
       </section>
 
-      <section className="settings-block">
+      <section className="settings-block" data-section="exclusions">
         <h3 className="settings-h">Never track these</h3>
         <p className="settings-sub">
           Cairn won't observe these apps, URLs, or windows — not even to count
@@ -247,7 +298,7 @@ export function SettingsView({
         </label>
       </section>
 
-      <section className="settings-block">
+      <section className="settings-block" data-section="accessibility">
         <h3 className="settings-h">Accessibility</h3>
         <p className="settings-sub">Cairn should be usable by everyone.</p>
 
@@ -366,7 +417,11 @@ export function SettingsView({
         </SetRow>
       </section>
 
-      <section className="settings-block" aria-labelledby="shortcuts-h">
+      <section
+        className="settings-block"
+        aria-labelledby="shortcuts-h"
+        data-section="shortcuts"
+      >
         <div className="settings-row-head">
           <h3 className="settings-h" id="shortcuts-h">
             Shortcuts
@@ -417,7 +472,11 @@ export function SettingsView({
         </button>
       </section>
 
-      <section className="settings-block" aria-label="Advanced">
+      <section
+        className="settings-block"
+        aria-label="Advanced"
+        data-section="advanced"
+      >
         <h3 className="settings-h">Advanced</h3>
         <p className="settings-sub">
           Troubleshooting tools. Off by default and never persisted across
