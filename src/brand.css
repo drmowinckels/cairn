@@ -1941,6 +1941,12 @@ select.rule-conf {
   margin: 0 0 10px;
   line-height: 1.5;
 }
+.settings-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
 
 .excl-list {
   list-style: none;

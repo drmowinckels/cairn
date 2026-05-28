@@ -4,9 +4,13 @@ import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
 import { CaptureBanner } from "../../lib/capture-banner";
 import { useA11yPrefs } from "../../lib/use-a11y-prefs";
-import { AnnouncerProvider } from "../../lib/use-announce";
+import { AnnouncerProvider, useAnnounce } from "../../lib/use-announce";
 import { useSignalCapture } from "../../lib/use-signal-capture";
 import { useOnboarding } from "../../lib/use-onboarding";
+import {
+  usePaletteShortcut,
+  useToggleTimerShortcut,
+} from "../../lib/use-shortcut-listeners";
 import type {
   Density,
   LayoutVariant,
@@ -35,13 +39,43 @@ export function Popover({
   ruleComplexity = "medium",
   theme = "system",
 }: Props) {
+  const a11y = useA11yPrefs();
+  return (
+    <AnnouncerProvider enabled={a11y.announce}>
+      <PopoverShell
+        initialView={initialView}
+        density={density}
+        layoutVariant={layoutVariant}
+        ruleComplexity={ruleComplexity}
+        theme={theme}
+        a11y={a11y}
+      />
+    </AnnouncerProvider>
+  );
+}
+
+interface ShellProps extends Required<Pick<Props, "initialView" | "density" | "layoutVariant" | "ruleComplexity" | "theme">> {
+  a11y: ReturnType<typeof useA11yPrefs>;
+}
+
+function PopoverShell({
+  initialView,
+  density,
+  layoutVariant,
+  ruleComplexity,
+  theme,
+  a11y,
+}: ShellProps) {
   const [view, setView] = useState<View>(initialView);
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [addEntryRequest, setAddEntryRequest] = useState(0);
-  const a11y = useA11yPrefs();
   const capture = useSignalCapture();
   const onboarding = useOnboarding();
+  const announce = useAnnounce();
+
+  useToggleTimerShortcut({ announce });
+  usePaletteShortcut();
 
   const requestAddEntry = () => {
     setView("today");
@@ -96,7 +130,6 @@ export function Popover({
   }
 
   return (
-    <AnnouncerProvider enabled={a11y.announce}>
     <div
       className="pop"
       data-density={density}
@@ -201,7 +234,6 @@ export function Popover({
         </span>
       </footer>
     </div>
-    </AnnouncerProvider>
   );
 }
 
