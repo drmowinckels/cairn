@@ -8,7 +8,6 @@
     "@tauri-apps/plugin-global-shortcut",
     "@tauri-apps/plugin-opener",
     "@tauri-apps/plugin-positioner",
-    "@testing-library/user-event",
     "zod"
   ],
   "ignoreBinaries": ["lychee"],
