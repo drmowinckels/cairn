@@ -594,3 +594,24 @@ export async function resetOnboarding(): Promise<OnboardingState> {
   if (!inTauri) return { completedAt: null };
   return invoke<OnboardingState>("reset_onboarding");
 }
+
+export interface GitWatcherStatus {
+  discoveryRoots: string[];
+  watchedCount: number;
+}
+
+export async function getGitWatcherStatus(): Promise<GitWatcherStatus | null> {
+  if (!inTauri) return null;
+  return invoke<GitWatcherStatus>("get_git_watcher_status");
+}
+
+export interface BrowserExtensionStatus {
+  connected: boolean;
+  lastSeen: string | null;
+  browserLabel: string | null;
+}
+
+export async function browserExtensionStatus(): Promise<BrowserExtensionStatus | null> {
+  if (!inTauri) return null;
+  return invoke<BrowserExtensionStatus>("browser_extension_status");
+}

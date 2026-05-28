@@ -20,9 +20,11 @@ use tauri_plugin_log::{Target, TargetKind};
 pub use db::Db;
 
 use rules::{Rule as EngineRule, Snoozer};
+use signals::browser_extension::BrowserExtensionState;
 use signals::calendar::CalendarRegistry;
 use signals::capture::SignalCapture;
 use signals::exclusions::ExclusionMatcher;
+use signals::git_watcher::GitWatcherStatus;
 use signals::stream::SnapshotStream;
 
 pub struct AppState {
@@ -64,6 +66,16 @@ pub struct AppState {
     /// Same pattern as `exclusions_mutator`: serializes
     /// `(DB write, rules reload)` pairs.
     pub rules_mutator: tokio::sync::Mutex<()>,
+    /// Snapshot of the git watcher's discovery roots + watched repo
+    /// count, captured at boot. Surface for Settings → Integrations
+    /// (issue #34). The watcher itself doesn't change roots at
+    /// runtime today, so a single boot-time snapshot is faithful.
+    pub git_watcher_status: GitWatcherStatus,
+    /// Browser-extension liveness ledger. Today this is empty until
+    /// the browser collector lands in M7; the IPC handler returns
+    /// `{connected: false, lastSeen: null}` against the default
+    /// state.
+    pub browser_extension: Arc<BrowserExtensionState>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -160,6 +172,8 @@ pub fn run() {
             ipc::upcoming_calendar_events,
             ipc::calendar_sync_status,
             ipc::current_snapshot,
+            ipc::get_git_watcher_status,
+            ipc::browser_extension_status,
             ipc::start_signal_capture,
             ipc::stop_signal_capture,
             ipc::signal_capture_status,
@@ -226,6 +240,8 @@ pub fn run() {
             // file-watcher task on each `.git/HEAD`.
             let discovery_roots = signals::git_watcher::default_discovery_roots();
             let discovered_repos = signals::git_watcher::discover_repos(&discovery_roots);
+            let git_watcher_status =
+                signals::git_watcher::build_status(&discovery_roots, &discovered_repos);
 
             let stream = Arc::new(signals::stream::spawn_full(
                 calendar.clone(),
@@ -311,6 +327,8 @@ pub fn run() {
                 snoozer: snoozer_for_state,
                 rules_cache,
                 rules_mutator: tokio::sync::Mutex::new(()),
+                git_watcher_status,
+                browser_extension: Arc::new(BrowserExtensionState::new()),
             });
 
             tray::setup(app.handle())?;

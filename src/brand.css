@@ -2136,6 +2136,135 @@ select.rule-conf {
   font-size: var(--font-tiny);
 }
 
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 32, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+  padding: 24px;
+}
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  width: min(520px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+  padding: 16px 18px 18px;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.modal-head h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+}
+.modal-sub {
+  margin: 0 0 12px;
+  color: var(--ink-mute);
+  font-size: var(--font-small);
+}
+
+.cal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cal-empty {
+  color: var(--ink-mute);
+  font-size: var(--font-small);
+  padding: 10px 0;
+}
+.cal-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "main meta"
+    "actions actions";
+  gap: 6px 12px;
+  padding: 10px 0;
+  border-top: 0.5px solid var(--hairline);
+  font-size: var(--font-small);
+}
+.cal-row:first-child {
+  border-top: 0;
+}
+.cal-row-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cal-label {
+  font-weight: 500;
+}
+.cal-loc {
+  color: var(--ink-mute);
+  font-size: var(--font-tiny);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-row-meta {
+  grid-area: meta;
+  color: var(--ink-mute);
+  font-size: var(--font-tiny);
+}
+.cal-err {
+  color: var(--accent);
+}
+.cal-row-actions {
+  grid-area: actions;
+  display: flex;
+  gap: 12px;
+}
+.cal-add {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-top: 14px;
+}
+.cal-add legend {
+  padding: 0 6px;
+  font-size: var(--font-small);
+  color: var(--ink-mute);
+}
+.cal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: var(--font-small);
+}
+.cal-field input {
+  padding: 6px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+}
+.cal-add-err {
+  color: var(--accent);
+  font-size: var(--font-tiny);
+  margin-top: 8px;
+}
+.cal-add-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .settings-foot {
   font-size: 12px;
   color: var(--ink-mute);

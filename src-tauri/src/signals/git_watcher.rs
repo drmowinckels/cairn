@@ -36,10 +36,56 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use notify::{EventKind, RecursiveMode, Watcher};
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::signals::git::read_git_context;
 use crate::signals::stream::SignalEvent;
+
+/// IPC-facing snapshot of what the watcher currently observes. The
+/// Settings → Integrations card renders this. `discovery_roots` are
+/// shown as-is in the UI (tilde-form preserved); `watched_count`
+/// reflects the number of `.git/HEAD` files the watcher actively
+/// subscribes to.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWatcherStatus {
+    pub discovery_roots: Vec<String>,
+    pub watched_count: u32,
+}
+
+/// Render `roots` with `$HOME` collapsed to `~` so the Settings card
+/// shows `~/code` rather than `/Users/foo/code`. Inputs that don't sit
+/// under `$HOME` are returned unchanged.
+pub fn display_roots(roots: &[PathBuf]) -> Vec<String> {
+    let home = dirs::home_dir();
+    roots
+        .iter()
+        .map(|p| display_root(p, home.as_deref()))
+        .collect()
+}
+
+fn display_root(path: &Path, home: Option<&Path>) -> String {
+    if let Some(home) = home {
+        if let Ok(rest) = path.strip_prefix(home) {
+            if rest.as_os_str().is_empty() {
+                return "~".into();
+            }
+            return format!("~/{}", rest.display());
+        }
+    }
+    path.display().to_string()
+}
+
+/// Build the IPC-facing status from a list of resolved discovery
+/// roots and the discovered repo paths. Pure: takes the data, returns
+/// the data, no globals.
+pub fn build_status(roots: &[PathBuf], repos: &[PathBuf]) -> GitWatcherStatus {
+    GitWatcherStatus {
+        discovery_roots: display_roots(roots),
+        watched_count: repos.len() as u32,
+    }
+}
 
 /// Max directory levels `discover_repos` will walk down from each
 /// root. A user's home directory can contain dozens of project
@@ -491,6 +537,54 @@ mod tests {
         assert!(!is_head_event(&EventKind::Remove(RemoveKind::File)));
         assert!(!is_head_event(&EventKind::Access(AccessKind::Read)));
         assert!(!is_head_event(&EventKind::Any));
+    }
+
+    // -- IPC status helpers --
+
+    #[test]
+    fn build_status_counts_repos() {
+        let roots = vec![PathBuf::from("/u/jane/code")];
+        let repos = vec![
+            PathBuf::from("/u/jane/code/a"),
+            PathBuf::from("/u/jane/code/b"),
+            PathBuf::from("/u/jane/code/c"),
+        ];
+        let status = build_status(&roots, &repos);
+        assert_eq!(status.watched_count, 3);
+        assert_eq!(status.discovery_roots, vec!["/u/jane/code".to_string()]);
+    }
+
+    #[test]
+    fn build_status_with_no_repos() {
+        let roots = vec![PathBuf::from("/nope")];
+        let status = build_status(&roots, &[]);
+        assert_eq!(status.watched_count, 0);
+    }
+
+    #[test]
+    fn display_root_collapses_home_to_tilde() {
+        let home = PathBuf::from("/Users/jane");
+        let rendered = display_root(&home.join("code"), Some(home.as_path()));
+        assert_eq!(rendered, "~/code");
+    }
+
+    #[test]
+    fn display_root_preserves_paths_outside_home() {
+        let home = PathBuf::from("/Users/jane");
+        let rendered = display_root(&PathBuf::from("/opt/projects"), Some(home.as_path()));
+        assert_eq!(rendered, "/opt/projects");
+    }
+
+    #[test]
+    fn display_root_handles_home_itself() {
+        let home = PathBuf::from("/Users/jane");
+        assert_eq!(display_root(&home, Some(home.as_path())), "~");
+    }
+
+    #[test]
+    fn display_root_without_home_returns_path() {
+        let rendered = display_root(&PathBuf::from("/srv/code"), None);
+        assert_eq!(rendered, "/srv/code");
     }
 
     // ---- Integration: spawn_watcher_task end-to-end -------------

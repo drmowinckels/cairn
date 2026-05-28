@@ -20,6 +20,7 @@ import {
   PRIVACY_REPO_LABEL,
   PRIVACY_REPO_URL,
 } from "../../lib/privacy-copy";
+import { IntegrationsCard } from "./integrations";
 
 interface Props {
   density: Density;
@@ -396,29 +397,7 @@ export function SettingsView({
         </ul>
       </section>
 
-      <section className="settings-block">
-        <h3 className="settings-h">Integrations</h3>
-        <ul className="intg-list">
-          <li className="intg-row">
-            <Icon name="calendar" size={14} />
-            <span className="intg-name">Calendar</span>
-            <span className="intg-status">3 accounts · read-only</span>
-            <button className="link-btn">Configure…</button>
-          </li>
-          <li className="intg-row">
-            <Icon name="branch" size={14} />
-            <span className="intg-name">Git</span>
-            <span className="intg-status">4 watched repos</span>
-            <button className="link-btn">Manage…</button>
-          </li>
-          <li className="intg-row">
-            <Icon name="globe" size={14} />
-            <span className="intg-name">Browsers</span>
-            <span className="intg-status">Safari, Firefox · via extension</span>
-            <button className="link-btn">Install…</button>
-          </li>
-        </ul>
-      </section>
+      <IntegrationsCard />
 
       <section className="settings-block" aria-label="Onboarding">
         <h3 className="settings-h">Onboarding</h3>
