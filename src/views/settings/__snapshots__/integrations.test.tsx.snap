@@ -1,0 +1,145 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`BrowserStatusLine > matches snapshot when disconnected 1`] = `
+<li
+  class="intg-row"
+  data-integration="browser"
+>
+  <svg
+    aria-hidden="true"
+    fill="none"
+    height="14"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="1.5"
+    viewBox="0 0 24 24"
+    width="14"
+  >
+    <circle
+      cx="12"
+      cy="12"
+      r="9"
+    />
+    <path
+      d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"
+    />
+  </svg>
+  <span
+    class="intg-name"
+  >
+    Browsers
+  </span>
+  <span
+    class="intg-status"
+  >
+    Not installed
+  </span>
+  <button
+    class="link-btn"
+    type="button"
+  >
+    Install…
+  </button>
+</li>
+`;
+
+exports[`CalendarStatusLine > matches snapshot for a single source 1`] = `
+<li
+  class="intg-row"
+  data-integration="calendar"
+>
+  <svg
+    aria-hidden="true"
+    fill="none"
+    height="14"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="1.5"
+    viewBox="0 0 24 24"
+    width="14"
+  >
+    <rect
+      height="16"
+      rx="2"
+      width="18"
+      x="3"
+      y="5"
+    />
+    <path
+      d="M3 10h18M8 3v4M16 3v4"
+    />
+  </svg>
+  <span
+    class="intg-name"
+  >
+    Calendar
+  </span>
+  <span
+    class="intg-status"
+  >
+    1 source · last sync 2m ago
+  </span>
+  <button
+    class="link-btn"
+    type="button"
+  >
+    Manage…
+  </button>
+</li>
+`;
+
+exports[`GitStatusLine > matches snapshot 1`] = `
+<li
+  class="intg-row"
+  data-integration="git"
+>
+  <svg
+    aria-hidden="true"
+    fill="none"
+    height="14"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="1.5"
+    viewBox="0 0 24 24"
+    width="14"
+  >
+    <circle
+      cx="6"
+      cy="6"
+      r="2"
+    />
+    <circle
+      cx="6"
+      cy="18"
+      r="2"
+    />
+    <circle
+      cx="18"
+      cy="8"
+      r="2"
+    />
+    <path
+      d="M6 8v8M6 12a6 6 0 0 0 6-6h4"
+    />
+  </svg>
+  <span
+    class="intg-name"
+  >
+    Git
+  </span>
+  <span
+    class="intg-status"
+  >
+    Watching 3 repos under ~/code
+  </span>
+  <button
+    class="link-btn"
+    type="button"
+  >
+    Configure roots…
+  </button>
+</li>
+`;

@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tauri::{Manager, State};
 
+use crate::signals::browser_extension::BrowserExtensionStatus;
 use crate::signals::calendar::{ActiveEvent, CalendarKind, CalendarSource, SyncStatus};
+use crate::signals::git_watcher::GitWatcherStatus;
 use crate::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3396,6 +3398,41 @@ mod tests {
         assert!(snap.ide_folder.is_none());
     }
 
+    // ---------------- get_git_watcher_status / browser_extension_status (#34) ----------------
+
+    #[tokio::test]
+    async fn get_git_watcher_status_returns_boot_snapshot() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let status = get_git_watcher_status(state).unwrap();
+        // mock_app_with_db boots with empty roots — see test_support.rs.
+        assert_eq!(status.watched_count, 0);
+        assert!(status.discovery_roots.is_empty());
+    }
+
+    #[tokio::test]
+    async fn browser_extension_status_is_disconnected_until_a_heartbeat_arrives() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let status = browser_extension_status(state).unwrap();
+        assert!(!status.connected);
+        assert!(status.last_seen.is_none());
+        assert!(status.browser_label.is_none());
+    }
+
+    #[tokio::test]
+    async fn browser_extension_status_reflects_a_recorded_heartbeat() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        app.state::<crate::AppState>()
+            .browser_extension
+            .record_heartbeat(Some("Safari".into()), Utc::now());
+        let state = app.state::<crate::AppState>();
+        let status = browser_extension_status(state).unwrap();
+        assert!(status.connected);
+        assert_eq!(status.browser_label.as_deref(), Some("Safari"));
+        assert!(status.last_seen.is_some());
+    }
+
     // ---------------- signal_capture_* (#23) ----------------
 
     #[tokio::test]
@@ -3904,6 +3941,31 @@ pub async fn current_snapshot(
     } else {
         Ok(crate::signals::snapshot::build(&state.calendar, &state.exclusions, Utc::now()).await)
     }
+}
+
+/// Settings → Integrations card status. Returns the watcher's
+/// discovery roots (tilde-form for display) and the current count of
+/// `.git/HEAD` files the watcher is subscribed to. The snapshot is
+/// captured at boot — see `AppState::git_watcher_status` for the
+/// rationale. The watcher itself doesn't mutate roots after launch
+/// today (M1), so the field is plain data rather than locked behind
+/// an interior mutability primitive.
+#[tauri::command]
+pub fn get_git_watcher_status(state: State<'_, AppState>) -> Result<GitWatcherStatus, String> {
+    Ok(state.git_watcher_status.clone())
+}
+
+/// Settings → Integrations card status for the browser extension.
+/// Today this returns `{connected: false, lastSeen: null}` because the
+/// browser collector lands in M7 — see `signals::browser_extension`.
+/// The frontend renders whatever this IPC returns; once M7 wires the
+/// extension's heartbeat into `BrowserExtensionState::record_heartbeat`,
+/// the same IPC starts returning live values without any UI changes.
+#[tauri::command]
+pub fn browser_extension_status(
+    state: State<'_, AppState>,
+) -> Result<BrowserExtensionStatus, String> {
+    Ok(state.browser_extension.snapshot(Utc::now()))
 }
 
 /// Start the debug "Capture raw signals" mode (see `docs/PRIVACY.md`
