@@ -565,3 +565,32 @@ export async function signalCaptureStatus(): Promise<SignalCaptureStatus> {
   }
   return invoke<SignalCaptureStatus>("signal_capture_status");
 }
+
+/**
+ * Snapshot of the single-row `app_state` marker (issue #31). When
+ * `completedAt` is `null` the popover renders the onboarding overlay
+ * instead of the main view.
+ */
+export interface OnboardingState {
+  completedAt: string | null;
+}
+
+/**
+ * Read the onboarding marker. Outside Tauri the flow is implicitly
+ * "completed" so the fixture-only dev mode doesn't trap the developer
+ * in the onboarding overlay on every Vite reload.
+ */
+export async function getOnboardingState(): Promise<OnboardingState> {
+  if (!inTauri) return { completedAt: new Date(0).toISOString() };
+  return invoke<OnboardingState>("get_onboarding_state");
+}
+
+export async function completeOnboarding(): Promise<OnboardingState> {
+  if (!inTauri) return { completedAt: new Date().toISOString() };
+  return invoke<OnboardingState>("complete_onboarding");
+}
+
+export async function resetOnboarding(): Promise<OnboardingState> {
+  if (!inTauri) return { completedAt: null };
+  return invoke<OnboardingState>("reset_onboarding");
+}

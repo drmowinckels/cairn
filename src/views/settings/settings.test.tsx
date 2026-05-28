@@ -437,3 +437,33 @@ describe("SettingsView · Advanced / Capture raw signals", () => {
     expect(alert.textContent).toContain("boom");
   });
 });
+
+describe("SettingsView — Run onboarding again (#31)", () => {
+  it("clicking 'Run onboarding again' invokes the passed handler", () => {
+    const onRerun = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        onRerunOnboarding={onRerun}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /run onboarding again/i }),
+    );
+    expect(onRerun).toHaveBeenCalledTimes(1);
+  });
+
+  it("the 'Run onboarding again' button is disabled when no handler is wired", () => {
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: /run onboarding again/i });
+    expect(btn.hasAttribute("disabled")).toBe(true);
+  });
+});

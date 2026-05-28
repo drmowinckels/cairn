@@ -6,6 +6,7 @@ import { CaptureBanner } from "../../lib/capture-banner";
 import { useA11yPrefs } from "../../lib/use-a11y-prefs";
 import { AnnouncerProvider } from "../../lib/use-announce";
 import { useSignalCapture } from "../../lib/use-signal-capture";
+import { useOnboarding } from "../../lib/use-onboarding";
 import type {
   Density,
   LayoutVariant,
@@ -17,6 +18,7 @@ import { TodayView } from "../today";
 import { ReportsView } from "../reports";
 import { RulesView } from "../rules";
 import { SettingsView } from "../settings";
+import { OnboardingView } from "../onboarding";
 
 interface Props {
   initialView?: View;
@@ -39,6 +41,7 @@ export function Popover({
   const [addEntryRequest, setAddEntryRequest] = useState(0);
   const a11y = useA11yPrefs();
   const capture = useSignalCapture();
+  const onboarding = useOnboarding();
 
   const requestAddEntry = () => {
     setView("today");
@@ -70,6 +73,27 @@ export function Popover({
     setOpenRuleId(id);
     setView("rules");
   };
+
+  if (onboarding.status === "needs-onboarding") {
+    return (
+      <AnnouncerProvider enabled={a11y.announce}>
+        <div
+          className="pop"
+          data-density={density}
+          role="dialog"
+          aria-label="Cairn first-run onboarding"
+        >
+          <ErrorBoundary area="Onboarding">
+            <OnboardingView
+              onComplete={async () => {
+                await onboarding.complete();
+              }}
+            />
+          </ErrorBoundary>
+        </div>
+      </AnnouncerProvider>
+    );
+  }
 
   return (
     <AnnouncerProvider enabled={a11y.announce}>
@@ -143,7 +167,14 @@ export function Popover({
         )}
         {view === "settings" && (
           <ErrorBoundary area="Settings">
-            <SettingsView density={density} a11y={a11y} capture={capture} />
+            <SettingsView
+              density={density}
+              a11y={a11y}
+              capture={capture}
+              onRerunOnboarding={async () => {
+                await onboarding.reset();
+              }}
+            />
           </ErrorBoundary>
         )}
       </div>

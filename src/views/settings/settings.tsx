@@ -23,6 +23,13 @@ interface Props {
   density: Density;
   a11y: UseA11yPrefs;
   capture: UseSignalCapture;
+  /**
+   * Re-arm the first-run onboarding overlay (issue #31). Settings
+   * shells the action as "Run onboarding again"; the parent popover
+   * wires the `useOnboarding().reset` mutator. Optional so the
+   * settings tests can render the view without onboarding state.
+   */
+  onRerunOnboarding?: () => Promise<void> | void;
 }
 
 const TEXT_SCALES: Array<{ value: TextScale; label: string }> = [
@@ -59,7 +66,12 @@ const AMBIGUITY_OPTIONS: Array<{
   label: AMBIGUITY_LABELS[value],
 }));
 
-export function SettingsView({ density, a11y, capture }: Props) {
+export function SettingsView({
+  density,
+  a11y,
+  capture,
+  onRerunOnboarding,
+}: Props) {
   const backup = useBackup();
   const [confirmCapture, setConfirmCapture] = useState(false);
 
@@ -407,6 +419,24 @@ export function SettingsView({ density, a11y, capture }: Props) {
             <button className="link-btn">Install…</button>
           </li>
         </ul>
+      </section>
+
+      <section className="settings-block" aria-label="Onboarding">
+        <h3 className="settings-h">Onboarding</h3>
+        <p className="settings-sub">
+          Replay the first-run guided tour. The popover will switch to the
+          onboarding overlay on the next render.
+        </p>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={() => {
+            if (onRerunOnboarding) void onRerunOnboarding();
+          }}
+          disabled={!onRerunOnboarding}
+        >
+          Run onboarding again
+        </button>
       </section>
 
       <section className="settings-block" aria-label="Advanced">

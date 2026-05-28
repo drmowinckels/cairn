@@ -204,6 +204,61 @@ describe("Global ambiguity default → new rule (#71)", () => {
   });
 });
 
+describe("Popover — first-run onboarding gating (#31)", () => {
+  let original: unknown;
+  type WithInternals = { __TAURI_INTERNALS__?: unknown };
+
+  beforeEach(() => {
+    original = (globalThis as WithInternals).__TAURI_INTERNALS__;
+    (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    } else {
+      (globalThis as WithInternals).__TAURI_INTERNALS__ = original;
+    }
+  });
+
+  it("renders the onboarding overlay when the backend reports completedAt=null", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "get_onboarding_state") return { completedAt: null };
+        return null;
+      },
+    );
+    const { Popover } = await import("./popover");
+    render(<Popover />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /first-run onboarding/i }),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText(/welcome to cairn/i)).toBeTruthy();
+  });
+
+  it("renders the normal popover when completedAt is set", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "get_onboarding_state")
+          return { completedAt: "2026-01-01T00:00:00Z" };
+        return null;
+      },
+    );
+    const { Popover } = await import("./popover");
+    render(<Popover />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /cairn time tracker/i }),
+      ).toBeTruthy(),
+    );
+  });
+});
+
 describe("Popover header — add-entry button (#21)", () => {
   it("clicking the header + button opens the manual-entry modal on Today", async () => {
     render(<Popover />);
