@@ -3940,3 +3940,143 @@ pub async fn signal_capture_status(
 ) -> Result<crate::signals::capture::CaptureStatus, String> {
     Ok(state.capture.status().await)
 }
+
+// ----------------------------------------------------------------------
+// First-run onboarding (issue #31).
+//
+// The `app_state` table is a single-row marker: `completed_at IS NULL`
+// means the popover must mount the onboarding overlay instead of the
+// main view. The flow is also re-runnable from Settings — that maps to
+// `reset_onboarding`, which nulls the column and lets the next render
+// re-mount the overlay.
+// ----------------------------------------------------------------------
+
+/// Snapshot of the single-row `app_state` marker. The frontend mirrors
+/// this via `useOnboarding` and renders the onboarding overlay when
+/// `completed_at` is `None`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingState {
+    /// RFC 3339 timestamp at which the user completed (or skipped) the
+    /// flow. `None` ⇒ first-run / re-run-requested ⇒ show onboarding.
+    pub completed_at: Option<String>,
+}
+
+async fn read_onboarding_state(state: &State<'_, AppState>) -> Result<OnboardingState, String> {
+    let row = sqlx::query("SELECT completed_at FROM app_state WHERE singleton = 1")
+        .fetch_optional(&state.db.pool)
+        .await
+        .map_err(err)?;
+    let completed_at = row.and_then(|r| r.get::<Option<String>, _>("completed_at"));
+    Ok(OnboardingState { completed_at })
+}
+
+/// Read the onboarding marker. Returns `{completedAt: null}` on a
+/// fresh DB (the migration seeded the row but with a NULL column).
+#[tauri::command]
+pub async fn get_onboarding_state(state: State<'_, AppState>) -> Result<OnboardingState, String> {
+    read_onboarding_state(&state).await
+}
+
+/// Mark onboarding as complete — sets `completed_at` to the current
+/// UTC instant. Idempotent: completing twice in a row leaves the first
+/// timestamp in place so we don't churn `updated_at`-style audit data.
+#[tauri::command]
+pub async fn complete_onboarding(state: State<'_, AppState>) -> Result<OnboardingState, String> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "UPDATE app_state SET completed_at = COALESCE(completed_at, ?1) WHERE singleton = 1",
+    )
+    .bind(&now)
+    .execute(&state.db.pool)
+    .await
+    .map_err(err)?;
+    read_onboarding_state(&state).await
+}
+
+/// Re-arm the onboarding flow. Called from Settings → "Run onboarding
+/// again". Nulls `completed_at` so the next render of the popover
+/// mounts the overlay again.
+#[tauri::command]
+pub async fn reset_onboarding(state: State<'_, AppState>) -> Result<OnboardingState, String> {
+    sqlx::query("UPDATE app_state SET completed_at = NULL WHERE singleton = 1")
+        .execute(&state.db.pool)
+        .await
+        .map_err(err)?;
+    read_onboarding_state(&state).await
+}
+
+#[cfg(test)]
+#[cfg(not(target_os = "windows"))]
+mod onboarding_tests {
+    use super::*;
+    use crate::test_support::mock_app_with_db;
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn fresh_db_reports_onboarding_incomplete() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let s = get_onboarding_state(state).await.unwrap();
+        assert!(
+            s.completed_at.is_none(),
+            "fresh db should mark onboarding as incomplete"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_onboarding_records_timestamp() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let after = complete_onboarding(state.clone()).await.unwrap();
+        let ts = after.completed_at.expect("timestamp set after completion");
+        assert!(parse_ts(&ts).is_ok(), "completed_at must be RFC 3339");
+        let echoed = get_onboarding_state(state).await.unwrap();
+        assert_eq!(
+            echoed.completed_at.as_deref(),
+            Some(ts.as_str()),
+            "get must read what complete wrote"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_onboarding_is_idempotent() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let first = complete_onboarding(state.clone()).await.unwrap();
+        // A second call must not overwrite the original timestamp —
+        // the UI may double-fire the completion event on fast taps,
+        // and re-stamping would drift the "first completed" audit.
+        let second = complete_onboarding(state.clone()).await.unwrap();
+        assert_eq!(first.completed_at, second.completed_at);
+    }
+
+    #[tokio::test]
+    async fn reset_onboarding_clears_completion() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        complete_onboarding(state.clone()).await.unwrap();
+        let reset = reset_onboarding(state.clone()).await.unwrap();
+        assert!(reset.completed_at.is_none());
+        let echoed = get_onboarding_state(state).await.unwrap();
+        assert!(echoed.completed_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn singleton_invariant_holds_across_resets() {
+        // The schema constrains the table to exactly one row via the
+        // CHECK on the constant PK. A complete → reset → complete
+        // cycle must still see exactly one row at the end.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        complete_onboarding(state.clone()).await.unwrap();
+        reset_onboarding(state.clone()).await.unwrap();
+        complete_onboarding(state.clone()).await.unwrap();
+        let count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM app_state")
+            .fetch_one(&state.db.pool)
+            .await
+            .unwrap()
+            .get("n");
+        assert_eq!(count, 1, "app_state must remain a single-row table");
+    }
+}

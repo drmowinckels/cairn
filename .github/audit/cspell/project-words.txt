@@ -160,3 +160,5 @@ refetches
 focusables
 oneshot
 ndjson
+lede
+systempreferences
