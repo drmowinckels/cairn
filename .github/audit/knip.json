@@ -4,7 +4,6 @@
   "ignore": ["scripts/contrast-matrix.mjs"],
   "ignoreDependencies": [
     "axe-core",
-    "@tauri-apps/plugin-autostart",
     "@tauri-apps/plugin-global-shortcut",
     "@tauri-apps/plugin-opener",
     "@tauri-apps/plugin-positioner",
