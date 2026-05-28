@@ -17,7 +17,11 @@ const EXTENSION_INSTALL_URL =
 export function IntegrationsCard() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   return (
-    <section className="settings-block" aria-label="Integrations">
+    <section
+      className="settings-block"
+      aria-label="Integrations"
+      data-section="integrations"
+    >
       <h3 className="settings-h">Integrations</h3>
       <ul className="intg-list">
         <CalendarStatusLine onManage={() => setCalendarOpen(true)} />
