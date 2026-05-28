@@ -2552,18 +2552,37 @@ select.rule-conf {
   }
 }
 
-/* User-controlled accessibility prefs, applied to <html> */
+/* User-controlled accessibility prefs, applied to <html>. The popover
+ * style sheet uses pixel-valued `--font-*` vars (so density tweaks
+ * land cleanly), which means changing `:root font-size` alone is
+ * insufficient — we have to multiply the four font tokens directly so
+ * every `font-size: var(--font-base)` rule across the tree reacts.
+ * The `data-text-scale="md"` rule re-asserts the comfy defaults so a
+ * user who lands on "md" doesn't inherit a stale scale.
+ */
 :root[data-text-scale="sm"] {
-  font-size: 14px;
+  --font-base: 14px;
+  --font-small: 12.5px;
+  --font-tiny: 11px;
+  --font-display: 36px;
 }
 :root[data-text-scale="md"] {
-  font-size: 16px;
+  --font-base: 16px;
+  --font-small: 14px;
+  --font-tiny: 12.5px;
+  --font-display: 42px;
 }
 :root[data-text-scale="lg"] {
-  font-size: 17.5px;
+  --font-base: 18px;
+  --font-small: 15.5px;
+  --font-tiny: 13.5px;
+  --font-display: 48px;
 }
 :root[data-text-scale="xl"] {
-  font-size: 19px;
+  --font-base: 20px;
+  --font-small: 17px;
+  --font-tiny: 14.5px;
+  --font-display: 54px;
 }
 
 :root[data-reduce-motion="on"] *,

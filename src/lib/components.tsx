@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { PROJECT_BY_ID } from "../test-fixtures/data";
+import { cbColor } from "./colorblind";
+import { useColorblindEnabled } from "./use-colorblind";
 import type { ProjectId } from "./types";
 
 interface ProjectChipProps {
@@ -11,6 +13,7 @@ interface ProjectChipProps {
 
 export function ProjectChip({ id, size = "sm", interactive, onClick }: ProjectChipProps) {
   const project = PROJECT_BY_ID[id];
+  const cb = useColorblindEnabled();
   if (!project) return null;
   const dotSize = size === "lg" ? 8 : 6;
   return (
@@ -22,7 +25,7 @@ export function ProjectChip({ id, size = "sm", interactive, onClick }: ProjectCh
     >
       <span
         className="proj-dot"
-        style={{ width: dotSize, height: dotSize, background: project.color }}
+        style={{ width: dotSize, height: dotSize, background: cbColor(project.color, cb) }}
       />
       <span className="proj-chip-name">{project.name}</span>
     </span>
