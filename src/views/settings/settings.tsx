@@ -1,7 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
 import { useBackup } from "../../lib/use-backup";
+import { SHORTCUTS, emitToast } from "../../lib/shortcuts";
+import { useAnnounce } from "../../lib/use-announce";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type {
@@ -73,7 +75,14 @@ export function SettingsView({
   onRerunOnboarding,
 }: Props) {
   const backup = useBackup();
+  const announce = useAnnounce();
   const [confirmCapture, setConfirmCapture] = useState(false);
+
+  const resetShortcuts = () => {
+    const msg = "Shortcuts already at defaults";
+    announce(msg);
+    emitToast(msg);
+  };
 
   const requestStartCapture = () => setConfirmCapture(true);
   const confirmStartCapture = async () => {
@@ -356,44 +365,34 @@ export function SettingsView({
         </SetRow>
       </section>
 
-      <section className="settings-block">
-        <h3 className="settings-h">Shortcuts</h3>
+      <section className="settings-block" aria-labelledby="shortcuts-h">
+        <div className="settings-row-head">
+          <h3 className="settings-h" id="shortcuts-h">
+            Shortcuts
+          </h3>
+          <button
+            type="button"
+            className="link-btn"
+            onClick={resetShortcuts}
+          >
+            Reset to defaults
+          </button>
+        </div>
         <ul className="short-list">
-          <li>
-            <span>Open / hide Cairn</span>
-            <span className="kbds">
-              <Kbd>⌃</Kbd>
-              <Kbd>⌥</Kbd>
-              <Kbd>T</Kbd>
-            </span>
-          </li>
-          <li>
-            <span>Start / stop timer</span>
-            <span className="kbds">
-              <Kbd>⌃</Kbd>
-              <Kbd>⌥</Kbd>
-              <Kbd>␣</Kbd>
-            </span>
-          </li>
-          <li>
-            <span>Confirm suggestion</span>
-            <span className="kbds">
-              <Kbd>↵</Kbd>
-            </span>
-          </li>
-          <li>
-            <span>Change project</span>
-            <span className="kbds">
-              <Kbd>⌘</Kbd>
-              <Kbd>K</Kbd>
-            </span>
-          </li>
-          <li>
-            <span>Switch view</span>
-            <span className="kbds">
-              <Kbd>1</Kbd>–<Kbd>4</Kbd>
-            </span>
-          </li>
+          {SHORTCUTS.map((sc) => (
+            <li key={sc.id} data-shortcut-id={sc.id}>
+              <span>{sc.label}</span>
+              <span className="kbds">
+                {sc.keys.map((k, i) =>
+                  k === "–" ? (
+                    <Fragment key={i}>–</Fragment>
+                  ) : (
+                    <Kbd key={i}>{k}</Kbd>
+                  ),
+                )}
+              </span>
+            </li>
+          ))}
         </ul>
       </section>
 

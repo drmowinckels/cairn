@@ -179,6 +179,77 @@ describe("SettingsView (browser-dev mode)", () => {
     await waitFor(() => {});
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  describe("Shortcuts card (issue #33)", () => {
+    it("renders one row per binding listed in SHORTCUTS", () => {
+      render(
+        <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      );
+      const heading = screen.getByRole("heading", { name: /^shortcuts$/i });
+      const section = heading.closest("section")!;
+      const items = section.querySelectorAll("li[data-shortcut-id]");
+      expect(items.length).toBe(6);
+      const ids = Array.from(items).map((li) =>
+        li.getAttribute("data-shortcut-id"),
+      );
+      expect(ids).toEqual([
+        "toggle-popover",
+        "toggle-timer",
+        "command-palette",
+        "switch-view",
+        "confirm",
+        "dismiss",
+      ]);
+    });
+
+    it("renders each binding's keys as <Kbd> chips, verbatim", () => {
+      render(
+        <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      );
+      const togglePopover = document.querySelector(
+        'li[data-shortcut-id="toggle-popover"]',
+      )!;
+      const kbds = Array.from(togglePopover.querySelectorAll(".kbd")).map(
+        (el) => el.textContent,
+      );
+      expect(kbds).toEqual(["⌃", "⌥", "T"]);
+
+      const toggleTimer = document.querySelector(
+        'li[data-shortcut-id="toggle-timer"]',
+      )!;
+      const ttKbds = Array.from(toggleTimer.querySelectorAll(".kbd")).map(
+        (el) => el.textContent,
+      );
+      expect(ttKbds).toEqual(["⌃", "⌥", "␣"]);
+
+      const switchView = document.querySelector(
+        'li[data-shortcut-id="switch-view"]',
+      )!;
+      const svKbds = Array.from(switchView.querySelectorAll(".kbd")).map(
+        (el) => el.textContent,
+      );
+      expect(svKbds).toEqual(["1", "4"]);
+      // Range dash sits between the two Kbd chips so the user reads "1 – 4".
+      expect(switchView.textContent).toContain("–");
+    });
+
+    it("'Reset to defaults' is rendered and clickable (no-op + toast)", () => {
+      render(
+        <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      );
+      const btn = screen.getByRole("button", { name: /reset to defaults/i });
+      const toast = vi.fn();
+      window.addEventListener("cairn:toast", toast);
+      try {
+        fireEvent.click(btn);
+        expect(toast).toHaveBeenCalledTimes(1);
+        const evt = toast.mock.calls[0][0] as CustomEvent<string>;
+        expect(evt.detail).toMatch(/defaults/i);
+      } finally {
+        window.removeEventListener("cairn:toast", toast);
+      }
+    });
+  });
 });
 
 describe("SettingsView (inside Tauri)", () => {
