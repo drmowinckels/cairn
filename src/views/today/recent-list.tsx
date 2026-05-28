@@ -93,7 +93,7 @@ function sourceFor(source: string): SourceMeta {
       icon: <Icon name="calendar" size={10} />,
     };
   }
-  return { label: "manual", icon: null };
+  return { label: "manual", icon: <Icon name="edit" size={10} /> };
 }
 
 function durationMinutes(startedAt: string, endedAt: string | null): number {

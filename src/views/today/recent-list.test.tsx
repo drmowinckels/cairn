@@ -67,7 +67,7 @@ describe("RecentList", () => {
     ).not.toBeNull();
   });
 
-  it("manual source row renders an icon-less label", () => {
+  it("manual source row renders the edit icon as the non-color signal", () => {
     render(
       <RecentList
         entries={[entry({ source: "manual" })]}
@@ -76,7 +76,35 @@ describe("RecentList", () => {
     );
     const span = document.querySelector('[aria-label="source: manual"]');
     expect(span).not.toBeNull();
-    expect(span?.querySelector("svg")).toBeNull();
+    expect(span?.querySelector("svg")).not.toBeNull();
+  });
+
+  it("each source label is paired with a distinct icon (#30 a11y dual-signal)", () => {
+    // Color is not the only signal: rule = sparkle, calendar = calendar,
+    // manual = edit. The icon paths differ so the source remains
+    // distinguishable in a grayscale render.
+    const sources: Array<{ source: string; label: string }> = [
+      { source: "rule:branch=foo", label: "rule" },
+      { source: "calendar", label: "calendar" },
+      { source: "manual", label: "manual" },
+    ];
+    const seenPaths = new Set<string>();
+    for (const { source, label } of sources) {
+      const { unmount } = render(
+        <RecentList
+          entries={[entry({ source })]}
+          projectsById={PROJECTS_BY_ID}
+        />,
+      );
+      const span = document.querySelector(`[aria-label="source: ${label}"]`);
+      const svg = span?.querySelector("svg");
+      expect(svg).not.toBeNull();
+      // Serialize the SVG so structurally-distinct icons register as
+      // distinct keys, regardless of any class differences.
+      seenPaths.add(svg!.outerHTML);
+      unmount();
+    }
+    expect(seenPaths.size).toBe(3);
   });
 
   it("falls back to the ink-faint dot when the project is unknown", () => {

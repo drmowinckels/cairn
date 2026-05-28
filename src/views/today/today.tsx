@@ -403,7 +403,17 @@ export function TodayView({
                     : "Started manually"
               }
             >
-              <Icon name="sparkle" size={11} /> {runningSource}
+              <Icon
+                name={
+                  runningSource === "rule"
+                    ? "sparkle"
+                    : runningSource === "calendar"
+                      ? "calendar"
+                      : "edit"
+                }
+                size={11}
+              />{" "}
+              {runningSource}
             </span>
           )}
         </div>
