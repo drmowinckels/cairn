@@ -243,18 +243,37 @@ pub fn run() {
             let git_watcher_status =
                 signals::git_watcher::build_status(&discovery_roots, &discovered_repos);
 
-            let stream = Arc::new(signals::stream::spawn_full(
-                calendar.clone(),
-                exclusions.clone(),
-                signals::stream::DEFAULT_DEBOUNCE,
-                std::time::Duration::from_secs(signals::stream::DEFAULT_IDLE_THRESHOLD_SECS),
-                discovered_repos.clone(),
-            ));
-            signals::stream::spawn_default_sources(&stream);
+            // `spawn_full`, `spawn_default_sources`, and
+            // `spawn_watcher_task` call `tokio::spawn` internally, but
+            // the Tauri `setup` hook runs on the main thread *outside*
+            // the async runtime — so a bare call panics with "there is
+            // no reactor running". Enter the runtime via `block_on`;
+            // the spawned driver/collector tasks live on Tauri's
+            // runtime for the app's lifetime, and `block_on` returns as
+            // soon as they're spawned.
+            let stream = Arc::new(tauri::async_runtime::block_on(async {
+                let stream = signals::stream::spawn_full(
+                    calendar.clone(),
+                    exclusions.clone(),
+                    signals::stream::DEFAULT_DEBOUNCE,
+                    std::time::Duration::from_secs(
+                        signals::stream::DEFAULT_IDLE_THRESHOLD_SECS,
+                    ),
+                    discovered_repos.clone(),
+                );
+                signals::stream::spawn_default_sources(&stream);
+                stream
+            }));
 
             // Spawn the git watcher *after* the stream so the
-            // initial Git events flow into the stream's sender.
-            signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos);
+            // initial Git events flow into the stream's sender. Same
+            // runtime-context requirement as above.
+            tauri::async_runtime::block_on(async {
+                signals::git_watcher::spawn_watcher_task(
+                    stream.event_sender(),
+                    discovered_repos,
+                );
+            });
 
             // Browser-signal IPC socket (M7 #35). Listens on
             // `<data_dir>/ipc/sock` (Unix; owner-only `chmod 0700`
