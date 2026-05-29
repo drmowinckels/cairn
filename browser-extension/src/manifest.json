@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Cairn — active-tab signal",
+  "short_name": "Cairn",
+  "description": "Sends your active browser tab's domain to your local Cairn time tracker. Domain only — never the URL path, page contents, or any tab from a private window. Open source, runs entirely on your machine.",
+  "version": "0.1.0",
+  "homepage_url": "https://github.com/drmowinckels/cairn",
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "permissions": ["tabs", "nativeMessaging"],
+  "host_permissions": [],
+  "incognito": "split",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "cairn@drmowinckels.io",
+      "strict_min_version": "115.0"
+    }
+  }
+}

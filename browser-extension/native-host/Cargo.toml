@@ -1,0 +1,21 @@
+[package]
+name = "cairn-browser-host"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Native messaging host bridging Cairn browser extension → main app IPC socket"
+publish = false
+
+[[bin]]
+name = "cairn-browser-host"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
