@@ -257,9 +257,11 @@ pub fn run() {
             signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos);
 
             // Browser-signal IPC socket (M7 #35). Listens on
-            // `<data_dir>/sock` (Unix) / `\\.\pipe\cairn` (Windows)
-            // for pushes from a small browser extension. Heartbeats
-            // are recorded on `browser_extension_state` so the
+            // `<data_dir>/ipc/sock` (Unix; owner-only `chmod 0700`
+            // parent + `chmod 0600` socket) or `\\.\pipe\cairn`
+            // (Windows; `reject_remote_clients(true)`) for pushes
+            // from a small browser extension. Heartbeats are
+            // recorded on `browser_extension_state` so the
             // Settings → Integrations card reflects connectivity;
             // a focused, non-incognito, non-excluded message produces
             // a `SignalEvent::Browser` that feeds the snapshot

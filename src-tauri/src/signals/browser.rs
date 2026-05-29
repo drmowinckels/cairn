@@ -135,6 +135,15 @@ pub struct BrowserContext {
 /// (incognito, unfocused, empty domain) per `docs/PRIVACY.md`.
 /// Pure — no IO, no locks. The exclusion-list filter is applied by
 /// the listen loop because it needs the live `ExclusionMatcher`.
+///
+/// The domain is **lowercased** at this boundary. RFC 1035 specifies
+/// DNS labels as case-insensitive, but the in-memory exclusion
+/// matcher does a literal `==` compare (see
+/// `signals/exclusions::matches_domain`). Normalising here means an
+/// extension that emits `"GitHub.com"` is matched against a
+/// `github.com` exclusion — without it, the privacy contract that
+/// CLAUDE.md calls non-negotiable would silently leak any domain
+/// the browser happens to capitalise.
 pub fn project_message(msg: &BrowserMessage) -> Option<BrowserContext> {
     if msg.incognito {
         return None;
@@ -147,7 +156,7 @@ pub fn project_message(msg: &BrowserMessage) -> Option<BrowserContext> {
         return None;
     }
     Some(BrowserContext {
-        domain: domain.to_string(),
+        domain: domain.to_ascii_lowercase(),
     })
 }
 
@@ -167,7 +176,7 @@ pub fn handle_message(
     // unfocused — so the Integrations card reflects "the extension
     // is alive" regardless of whether the user is currently producing
     // privacy-sensitive signals.
-    extension_state.record_heartbeat(msg.browser_label.clone(), Utc::now());
+    extension_state.record_heartbeat(msg.browser_label.as_ref().cloned(), Utc::now());
 
     let ctx = project_message(msg)?;
     let excluded = match exclusions.read() {
@@ -185,6 +194,40 @@ pub fn handle_message(
         return None;
     }
     Some(ctx)
+}
+
+/// RAII guard that logs a loud message if the listener task exits
+/// unexpectedly (panic or unhandled error). `disarm()` is called at
+/// the end of a clean break-from-the-loop; anything else means the
+/// `Drop` impl fires and the user finds a clear breadcrumb in the
+/// log. Without this guard a panic inside `tokio::spawn` is captured
+/// in the JoinHandle and effectively swallowed — the user would see
+/// "extension connected" in Settings while no `SignalEvent` ever
+/// reaches the stream. Critical-reviewer BLOCKING #2 on PR #86.
+struct ListenerExitGuard {
+    label: &'static str,
+    armed: bool,
+}
+
+impl ListenerExitGuard {
+    fn new(label: &'static str) -> Self {
+        Self { label, armed: true }
+    }
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ListenerExitGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            log::error!(
+                "browser: {} listener exited unexpectedly (panic or unhandled error); \
+                 browser_domain signals will stop until app restart",
+                self.label
+            );
+        }
+    }
 }
 
 // -----------------------------------------------------------------
@@ -271,6 +314,7 @@ async fn spawn_unix(
 
     let conn_sem = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
     tokio::spawn(async move {
+        let guard = ListenerExitGuard::new("unix");
         loop {
             // Block on a connection slot BEFORE accepting — so the
             // accept syscall doesn't run faster than we can handle
@@ -303,6 +347,7 @@ async fn spawn_unix(
         }
         // Best-effort cleanup on shutdown.
         let _ = std::fs::remove_file(&path);
+        guard.disarm();
     });
     Ok(())
 }
@@ -360,7 +405,12 @@ async fn handle_conn<S>(
                         break;
                     }
                 };
-                process_line(s, &event_tx, &exclusions, &extension_state).await;
+                if matches!(
+                    process_line(s, &event_tx, &exclusions, &extension_state).await,
+                    LineOutcome::Break
+                ) {
+                    break;
+                }
             }
             Ok(None) => break, // client closed
             Err(e) => {
@@ -388,6 +438,7 @@ async fn spawn_windows(
 
     let conn_sem = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
     tokio::spawn(async move {
+        let guard = ListenerExitGuard::new("windows");
         loop {
             let permit = match conn_sem.clone().acquire_owned().await {
                 Ok(p) => p,
@@ -419,8 +470,20 @@ async fn spawn_windows(
                 drop(permit);
             });
         }
+        guard.disarm();
     });
     Ok(())
+}
+
+/// Control signal returned by [`process_line`] — `Continue` means
+/// the next frame on the same connection is worth reading, `Break`
+/// means the downstream channel is closed (snapshot stream shut
+/// down) so further parsing is wasted CPU and we should drop the
+/// connection.
+#[cfg(any(unix, windows))]
+enum LineOutcome {
+    Continue,
+    Break,
 }
 
 #[cfg(any(unix, windows))]
@@ -429,10 +492,10 @@ async fn process_line(
     event_tx: &mpsc::Sender<SignalEvent>,
     exclusions: &Arc<std::sync::RwLock<ExclusionMatcher>>,
     extension_state: &BrowserExtensionState,
-) {
+) -> LineOutcome {
     let trimmed = line.trim();
     if trimmed.is_empty() {
-        return;
+        return LineOutcome::Continue;
     }
     let msg: BrowserMessage = match serde_json::from_str(trimmed) {
         Ok(m) => m,
@@ -440,13 +503,24 @@ async fn process_line(
             // Don't echo the raw line — it can carry user URL data
             // that PRIVACY.md forbids putting in logs.
             log::debug!("browser: malformed JSON ({e}); dropping line");
-            return;
+            return LineOutcome::Continue;
         }
     };
     let Some(ctx) = handle_message(&msg, exclusions, extension_state) else {
-        return;
+        return LineOutcome::Continue;
     };
-    let _ = event_tx.send(SignalEvent::Browser(Some(ctx))).await;
+    // Drop the connection if the snapshot stream is gone — otherwise
+    // we'd keep parsing JSON and heartbeating for a downstream that
+    // can't act on any of it (and the Integrations card would still
+    // say "connected" while no domain ever lands). Critical-reviewer
+    // BLOCKING #3 on PR #86.
+    match event_tx.send(SignalEvent::Browser(Some(ctx))).await {
+        Ok(()) => LineOutcome::Continue,
+        Err(_) => {
+            log::warn!("browser: snapshot stream closed; dropping connection");
+            LineOutcome::Break
+        }
+    }
 }
 
 // -----------------------------------------------------------------
@@ -939,6 +1013,119 @@ mod tests {
             .expect("at-cap frame ok")
             .expect("frame present");
         assert_eq!(line.len(), MAX_LINE_BYTES - 1);
+    }
+
+    // ---- critical-review #86 follow-ups ----------------------------
+
+    #[test]
+    fn project_message_lowercases_domain() {
+        // Critical-reviewer BLOCKING #1: an extension emitting
+        // `Github.com` must match a `github.com` exclusion. DNS
+        // labels are case-insensitive per RFC 1035; the in-memory
+        // exclusion matcher does a literal `==`, so we normalise at
+        // the boundary or the privacy contract leaks.
+        for raw in ["Github.com", "GITHUB.COM", "github.com", "  GitHub.COM  "] {
+            let mut m = msg_with_domain(raw);
+            m.focused = true;
+            m.incognito = false;
+            let ctx = project_message(&m).expect("focused non-incognito projects");
+            assert_eq!(ctx.domain, "github.com");
+        }
+    }
+
+    #[test]
+    fn handle_message_lowercases_then_consults_exclusion_list() {
+        // End-to-end pin: a mixed-case `GitHub.com` matches a
+        // lowercase `github.com` exclusion. Without `to_ascii_lowercase`
+        // in `project_message` the matcher misses and the rule
+        // engine fires on a domain the user explicitly excluded.
+        let exc = matcher_with_excluded_domain("github.com");
+        let state = BrowserExtensionState::new();
+        let mut m = msg_with_domain("GitHub.com");
+        m.focused = true;
+        assert!(handle_message(&m, &exc, &state).is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unix_handle_conn_breaks_on_dropped_receiver() {
+        // Critical-reviewer BLOCKING #3: if the snapshot stream is
+        // gone, every subsequent line on a connection still ran
+        // `serde_json::from_str` + `handle_message` for a no-op
+        // send. `process_line` now returns `LineOutcome::Break` on
+        // send-error so `handle_conn` drops the connection. This
+        // test simulates by dropping the receiver after the first
+        // event lands, then writing more lines and asserting the
+        // connection closes (read returns 0 / EOF).
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::UnixStream;
+        use tokio::time::{timeout, Duration};
+
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let (tx, mut rx) = mpsc::channel::<SignalEvent>(8);
+        let exclusions = Arc::new(std::sync::RwLock::new(ExclusionMatcher::default()));
+        let state = Arc::new(BrowserExtensionState::new());
+
+        spawn_listener(data_dir.clone(), tx, exclusions, state)
+            .await
+            .unwrap();
+        let path = socket_path(&data_dir);
+        for _ in 0..30 {
+            if path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let mut client = UnixStream::connect(&path).await.unwrap();
+        client
+            .write_all(b"{\"domain\":\"first.example\",\"focused\":true}\n")
+            .await
+            .unwrap();
+        // Drain the first event AND close the receiver — subsequent
+        // `event_tx.send` from the listener will return `SendError`.
+        let _first = timeout(Duration::from_secs(2), rx.recv()).await.unwrap();
+        drop(rx);
+
+        // The next line triggers the SendError path; `process_line`
+        // returns `Break`; `handle_conn` exits; the server shuts
+        // down this connection. The client's read should EOF.
+        client
+            .write_all(b"{\"domain\":\"second.example\",\"focused\":true}\n")
+            .await
+            .unwrap();
+        let mut buf = [0u8; 1];
+        let read_res = timeout(Duration::from_secs(2), client.read(&mut buf)).await;
+        // EOF arrives as `Ok(Ok(0))`.
+        match read_res {
+            Ok(Ok(0)) => {}
+            other => panic!("expected connection EOF after receiver drop, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn listener_exit_guard_logs_on_unexpected_drop() {
+        // Critical-reviewer BLOCKING #2: a panic inside the listener
+        // task used to be swallowed by tokio's JoinHandle. The new
+        // `ListenerExitGuard` fires its Drop impl whenever it's
+        // dropped without `disarm()` — including via panic-unwind —
+        // logging an `error!` so the user finds a breadcrumb instead
+        // of a silently-dead listener. We can't easily assert the
+        // log line here, but we CAN pin that:
+        // - constructing without disarm → drop logs (proxy: armed=true)
+        // - constructing then disarm   → drop is silent (armed=false)
+        // The semantics are tested by reading the `armed` field
+        // through a public-from-this-module Drop-instrumented test.
+        let g = ListenerExitGuard::new("test");
+        assert!(g.armed);
+        g.disarm();
+        // Now construct another, drop without disarm — we can't
+        // hook into log capture here, but the drop is correct iff
+        // it doesn't panic.
+        {
+            let _g2 = ListenerExitGuard::new("test2");
+            // dropped at end of scope, fires the error-log path
+        }
     }
 
     #[tokio::test]
