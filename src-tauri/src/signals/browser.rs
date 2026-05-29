@@ -707,13 +707,7 @@ mod tests {
             .expect("listener should bind");
 
         let path = socket_path(&data_dir);
-        // Tiny wait so the accept loop is ready.
-        for _ in 0..20 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
         let mut client = UnixStream::connect(&path).await.expect("connect");
         let line = r#"{"domain":"github.com","focused":true,"incognito":false}
 "#;
@@ -790,12 +784,7 @@ mod tests {
             .await
             .unwrap();
         let path = socket_path(&data_dir);
-        for _ in 0..20 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
         let mut client = UnixStream::connect(&path).await.unwrap();
         // Incognito → must NOT produce a SignalEvent.
         let line = r#"{"domain":"github.com","incognito":true,"focused":true}
@@ -829,12 +818,7 @@ mod tests {
             .await
             .unwrap();
         let path = socket_path(&data_dir);
-        for _ in 0..20 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
         let mut client = UnixStream::connect(&path).await.unwrap();
         // Junk + a well-formed line afterwards on the same connection.
         client
