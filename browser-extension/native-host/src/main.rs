@@ -10,11 +10,13 @@
 //! See: https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging#native-messaging-host-protocol
 //!
 //! For each well-formed message we forward a newline-delimited JSON
-//! line to the local Cairn IPC socket:
+//! line to the local Cairn IPC socket. The path mirrors Tauri's
+//! `app_data_dir` for the `io.drmowinckels.cairn` bundle identifier
+//! (see [`socket_path`]):
 //!
-//! - Unix: `<XDG_DATA_HOME or ~/.local/share>/cairn/ipc/sock` (falls
-//!   back to platform-equivalent `app_data_dir`).
-//! - Windows: `\\.\pipe\cairn`.
+//! - macOS: `~/Library/Application Support/io.drmowinckels.cairn/ipc/sock`
+//! - Linux: `<XDG_DATA_HOME or ~/.local/share>/io.drmowinckels.cairn/ipc/sock`
+//! - Windows: `\\.\pipe\cairn`
 //!
 //! ## Privacy gates
 //!
@@ -68,6 +70,57 @@ fn default_true() -> bool {
     true
 }
 
+/// Why [`project_inbound`] refused a frame. Kept distinct so the debug
+/// log can name the gate that fired without re-deriving it.
+#[derive(Debug, PartialEq, Eq)]
+enum DropReason {
+    /// Security-review B2 on PR #87: a `{"domain":""}` frame
+    /// deserialises cleanly (every field is optional or defaulted),
+    /// yielding `{domain:"", focused:true}` — a phantom "focused on
+    /// the empty domain" message indistinguishable from the
+    /// legitimate `WINDOW_ID_NONE` ping, which carries `focused:false`.
+    PhantomEmptyDomain,
+    /// Security-review R4 on PR #87: `browserLabel` is user-controllable
+    /// (UA override). Reject control chars (which would break the
+    /// downstream newline framing) and oversized labels (which a
+    /// hostile UA could pad toward the socket's MAX_LINE_BYTES cap).
+    BadBrowserLabel,
+}
+
+impl DropReason {
+    fn as_str(&self) -> &'static str {
+        match self {
+            DropReason::PhantomEmptyDomain => "empty-domain focused frame",
+            DropReason::BadBrowserLabel => "oversized / control-char browserLabel",
+        }
+    }
+}
+
+/// Validate an inbound frame and project it to the outbound wire shape,
+/// or return the gate that rejected it. Pure — no IO — so the privacy
+/// and anti-forgery gates are unit-testable without driving stdin.
+///
+/// Projecting through the typed [`Outbound`] also guarantees only the
+/// allowlisted fields cross the socket: any extra field on the inbound
+/// side was already dropped by serde, and no future field can leak
+/// through transparently.
+fn project_inbound(msg: &Inbound) -> Result<Outbound<'_>, DropReason> {
+    if msg.domain.is_empty() && msg.focused {
+        return Err(DropReason::PhantomEmptyDomain);
+    }
+    if let Some(label) = msg.browser_label.as_ref() {
+        if label.len() > 64 || label.chars().any(|c| c.is_control()) {
+            return Err(DropReason::BadBrowserLabel);
+        }
+    }
+    Ok(Outbound {
+        domain: msg.domain.as_str(),
+        incognito: msg.incognito,
+        focused: msg.focused,
+        browser_label: msg.browser_label.as_deref(),
+    })
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Outbound<'a> {
@@ -109,43 +162,14 @@ fn run(debug: bool) -> std::io::Result<()> {
             }
             continue;
         };
-        // Security-review B2 on PR #87: reject phantom heartbeats.
-        // A 4-byte `{}` frame deserialises cleanly (every field is
-        // optional or has a default), producing `{domain:"",
-        // focused:true,...}` — a "user is focused on the empty
-        // domain" message indistinguishable from the legitimate
-        // WINDOW_ID_NONE ping (which carries `focused:false`).
-        // Drop empty-domain frames unless they're explicitly the
-        // unfocused heartbeat.
-        if msg.domain.is_empty() && msg.focused {
-            if debug {
-                eprintln!("cairn-browser-host: dropping empty-domain focused frame");
-            }
-            continue;
-        }
-        // Cap `browserLabel` so a hostile / oversized UA can't push
-        // the outbound frame near the socket's MAX_LINE_BYTES cap or
-        // smuggle control characters into the Integrations UI.
-        // Real labels are ~12 chars ("Chrome 120"); 64 is generous.
-        if let Some(label) = msg.browser_label.as_ref() {
-            if label.len() > 64 || label.chars().any(|c| c.is_control()) {
+        let out = match project_inbound(&msg) {
+            Ok(out) => out,
+            Err(reason) => {
                 if debug {
-                    eprintln!(
-                        "cairn-browser-host: rejecting oversized / control-char browserLabel"
-                    );
+                    eprintln!("cairn-browser-host: dropping frame: {}", reason.as_str());
                 }
                 continue;
             }
-        }
-        // Project to the outbound shape — explicit allowlist of fields.
-        // Any extras on the inbound side are dropped by serde's default
-        // behaviour, but emitting via the typed `Outbound` struct also
-        // ensures we never leak a future field through transparently.
-        let out = Outbound {
-            domain: msg.domain.as_str(),
-            incognito: msg.incognito,
-            focused: msg.focused,
-            browser_label: msg.browser_label.as_deref(),
         };
         let line = match serde_json::to_string(&out) {
             Ok(s) => s,
@@ -214,6 +238,16 @@ impl SocketConn {
             // Tokio's named pipe API is async; the host stays sync (one
             // thread, blocking IO), so we use std::fs::OpenOptions which
             // delegates to CreateFileW with the right access flags.
+            //
+            // Asymmetry vs. Unix: the Unix branch sets a 1s write
+            // timeout so a wedged app can't block the host. There is no
+            // std equivalent for a named-pipe client write timeout —
+            // it would require overlapped IO + WaitForSingleObject. We
+            // accept the gap: a write only blocks if the app stopped
+            // reading the pipe while keeping the server end open, which
+            // in practice means the app is mid-shutdown and the pipe is
+            // about to close (unblocking the write) anyway. Tracked for
+            // a follow-up if it proves to matter in the field.
             use std::os::windows::fs::OpenOptionsExt;
             // FILE_FLAG_OVERLAPPED is the default in tokio's NamedPipeServer;
             // we want SYNCHRONOUS access from this side.
@@ -431,49 +465,94 @@ mod tests {
     }
 
     #[test]
-    fn inbound_empty_domain_with_focused_true_is_the_phantom_shape() {
+    fn project_inbound_drops_phantom_empty_domain_focused_frame() {
         // Security review B2 on PR #87. The minimal forged heartbeat
         // shape is `{"domain":"","focused":true}` — deserialises
         // cleanly but is indistinguishable from the legitimate
-        // `WINDOW_ID_NONE` ping (which carries `focused:false`). The
-        // host's main loop drops it.
+        // `WINDOW_ID_NONE` ping (which carries `focused:false`).
         let inb: Inbound = serde_json::from_str(r#"{"domain":""}"#).unwrap();
-        assert!(inb.domain.is_empty());
-        assert!(inb.focused);
-        let phantom = inb.domain.is_empty() && inb.focused;
-        assert!(phantom, "the host's main loop drops this shape");
-    }
-
-    #[test]
-    fn inbound_unfocused_empty_domain_is_legitimate_heartbeat() {
-        // WINDOW_ID_NONE from the service worker sends
-        // `{domain:"", focused:false}`. The main loop must NOT drop
-        // this — it's the documented heartbeat shape that keeps
-        // Settings → Integrations alive when the browser loses focus.
-        let inb: Inbound = serde_json::from_str(r#"{"domain":"","focused":false}"#).unwrap();
-        let phantom = inb.domain.is_empty() && inb.focused;
-        assert!(
-            !phantom,
-            "unfocused empty-domain is legitimate, not phantom"
+        assert!(inb.domain.is_empty() && inb.focused, "the phantom shape");
+        assert_eq!(
+            project_inbound(&inb).unwrap_err(),
+            DropReason::PhantomEmptyDomain
         );
     }
 
     #[test]
-    fn inbound_rejects_browser_label_with_control_chars_or_oversize() {
-        // The main loop's browser_label guard rejects two classes
-        // of input: control characters (which would break newline
-        // framing on the downstream socket) and >64 char strings
-        // (which a hostile UA could pad to push the outbound frame
-        // near the socket's MAX_LINE_BYTES cap).
-        // We pin the policy by checking the bool a future change
-        // would need to flip.
-        let with_newline = "Chrome\n120";
-        let oversize = "x".repeat(65);
-        assert!(with_newline.chars().any(|c| c.is_control()));
-        assert!(oversize.len() > 64);
-        // The legitimate shape passes:
-        let ok = "Chrome 120";
-        assert!(ok.len() <= 64);
-        assert!(!ok.chars().any(|c| c.is_control()));
+    fn project_inbound_keeps_unfocused_empty_domain_heartbeat() {
+        // WINDOW_ID_NONE from the service worker sends
+        // `{domain:"", focused:false}`. It must NOT drop — it's the
+        // documented heartbeat shape that keeps Settings →
+        // Integrations alive when the browser loses focus.
+        let inb: Inbound = serde_json::from_str(r#"{"domain":"","focused":false}"#).unwrap();
+        let out = project_inbound(&inb).expect("legitimate heartbeat survives");
+        assert_eq!(out.domain, "");
+        assert!(!out.focused);
+    }
+
+    #[test]
+    fn project_inbound_keeps_a_normal_domain_frame() {
+        let inb: Inbound =
+            serde_json::from_str(r#"{"domain":"github.com","browserLabel":"Chrome 120"}"#).unwrap();
+        let out = project_inbound(&inb).expect("a normal frame survives");
+        assert_eq!(out.domain, "github.com");
+        assert!(out.focused);
+        assert_eq!(out.browser_label, Some("Chrome 120"));
+    }
+
+    #[test]
+    fn project_inbound_rejects_control_char_browser_label() {
+        // A control char would break newline framing on the socket.
+        let inb: Inbound =
+            serde_json::from_str(r#"{"domain":"x.com","browserLabel":"Chrome\n120"}"#).unwrap();
+        assert_eq!(
+            project_inbound(&inb).unwrap_err(),
+            DropReason::BadBrowserLabel
+        );
+    }
+
+    #[test]
+    fn project_inbound_rejects_oversized_browser_label() {
+        let big = "x".repeat(65);
+        let inb = Inbound {
+            domain: "x.com".into(),
+            incognito: false,
+            focused: true,
+            browser_label: Some(big),
+        };
+        assert_eq!(
+            project_inbound(&inb).unwrap_err(),
+            DropReason::BadBrowserLabel
+        );
+    }
+
+    #[test]
+    fn project_inbound_accepts_64_char_browser_label_boundary() {
+        let exact = "x".repeat(64);
+        let inb = Inbound {
+            domain: "x.com".into(),
+            incognito: false,
+            focused: true,
+            browser_label: Some(exact.clone()),
+        };
+        let out = project_inbound(&inb).expect("64 chars is the inclusive limit");
+        assert_eq!(out.browser_label, Some(exact.as_str()));
+    }
+
+    #[test]
+    fn project_inbound_does_not_leak_extra_fields() {
+        // A buggy extension that sends `path`/`title` must not have
+        // them cross the socket. Serde drops unknown fields on the
+        // inbound side; projecting through Outbound pins that no extra
+        // field is emitted.
+        let inb: Inbound = serde_json::from_str(
+            r#"{"domain":"x.com","focused":true,"path":"/leaked","title":"oops"}"#,
+        )
+        .unwrap();
+        let out = project_inbound(&inb).unwrap();
+        let s = serde_json::to_string(&out).unwrap();
+        assert!(!s.contains("path"));
+        assert!(!s.contains("title"));
+        assert!(!s.contains("leaked"));
     }
 }

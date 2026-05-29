@@ -6,7 +6,9 @@
 // and forwards them to the Cairn native messaging host
 // (`io.drmowinckels.cairn`). The host writes newline-delimited JSON to
 // the local IPC socket the main app listens on
-// (`~/.cairn/ipc/sock` on Unix, `\\.\pipe\cairn` on Windows).
+// (`~/Library/Application Support/io.drmowinckels.cairn/ipc/sock` on
+// macOS, `$XDG_DATA_HOME/io.drmowinckels.cairn/ipc/sock` on Linux,
+// `\\.\pipe\cairn` on Windows).
 //
 // Per `docs/PRIVACY.md` and the manifest description:
 //
@@ -24,6 +26,8 @@
 // life of the worker. If it disconnects (host crashed, app not running),
 // subsequent messages are dropped silently until we re-open on the next
 // event.
+
+import { projectTab, parseBrowserLabel } from "./lib.js";
 
 const NATIVE_HOST = "io.drmowinckels.cairn";
 
@@ -52,21 +56,7 @@ async function getBrowserLabel() {
   // Best-effort UA parse for Chromium-family browsers (Chrome, Edge,
   // Brave, etc.). We avoid `navigator.userAgentData` because it's still
   // gated behind `permissions: ["userAgent"]` in some channels.
-  const ua = (globalThis.navigator?.userAgent ?? "").toString();
-  const m =
-    /Edg\/(\d+)/.exec(ua) ??
-    /Brave\/(\d+)/.exec(ua) ??
-    /Chrome\/(\d+)/.exec(ua);
-  if (m) {
-    const name = ua.includes("Edg/")
-      ? "Edge"
-      : ua.includes("Brave/")
-      ? "Brave"
-      : "Chrome";
-    browserLabel = `${name} ${m[1]}`;
-  } else {
-    browserLabel = "browser";
-  }
+  browserLabel = parseBrowserLabel(globalThis.navigator?.userAgent);
   return browserLabel;
 }
 
@@ -113,48 +103,9 @@ function sendMessage(payload) {
   }
 }
 
-/** Project a `browser.tabs.Tab` to the native-host wire shape. Returns
- *  null when the tab carries no usable URL (chrome:// pages, the new
- *  tab page, extension pages — none of which the user typically wants
- *  in a time entry). */
-function project(tab, focused) {
-  if (!tab || !tab.url) return null;
-  let url;
-  try {
-    url = new URL(tab.url);
-  } catch {
-    return null;
-  }
-  // Filter out the always-noisy schemes. The native host re-validates
-  // anyway, but bailing here avoids waking the host for every internal
-  // page transition.
-  if (
-    url.protocol === "chrome:" ||
-    url.protocol === "edge:" ||
-    url.protocol === "brave:" ||
-    url.protocol === "about:" ||
-    url.protocol === "moz-extension:" ||
-    url.protocol === "chrome-extension:"
-  ) {
-    return null;
-  }
-  const domain = url.hostname.toLowerCase();
-  if (!domain) return null;
-  return {
-    domain,
-    // Per PRIVACY.md: the extension MUST NOT send the path, query, or
-    // any tab content. The native host strips path/title too, but the
-    // privacy contract is that the data never leaves the browser
-    // boundary in the first place — these fields are absent, not
-    // emptied.
-    incognito: tab.incognito === true,
-    focused,
-  };
-}
-
 async function announceActiveTab(tab, focused) {
   if (!tab) return;
-  const payload = project(tab, focused);
+  const payload = projectTab(tab, focused);
   if (!payload) return;
   // Security review R5 on PR #87: skip browserLabel for incognito.
   // Reading `getBrowserInfo` / `userAgent` is fine here, but
@@ -185,8 +136,13 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 // A tab we know about changed URL. We only care about the active tab
 // in the focused window — otherwise a background tab updating its
 // favicon would spam events.
-chrome.tabs.onUpdated.addListener(async (_tabId, _changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
   if (!tab.active) return;
+  // Only react when the URL actually changed. A single navigation
+  // fires onUpdated several times (status loading→complete, title,
+  // favicon); without this guard each one re-announces the same
+  // domain and wakes the native host 3-4× per page load.
+  if (!changeInfo.url) return;
   // `chrome.windows.WINDOW_ID_NONE` after a focus loss still leaves
   // `tab.active` true for its owning window. We rely on the focused
   // window's tab being announced again via `windows.onFocusChanged`

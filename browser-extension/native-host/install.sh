@@ -75,6 +75,16 @@ render_firefox() {
 install_into() {
   local dir="$1"
   local rendered="$2"
+  # Only register with browsers the user actually has. The parent of
+  # the NativeMessagingHosts dir (e.g. `.../Google/Chrome`) exists iff
+  # that browser is installed; skipping otherwise avoids littering the
+  # user's profile with empty config trees for browsers they don't use.
+  local parent
+  parent="$(dirname "$dir")"
+  if [ ! -d "$parent" ]; then
+    echo "skipped: $dir (browser not installed)"
+    return 0
+  fi
   # Security review R2 on PR #87: refuse to write through a symlink
   # whose target escapes $HOME. A pre-planted symlink at
   # `NativeMessagingHosts -> /tmp/evil` would otherwise let an
