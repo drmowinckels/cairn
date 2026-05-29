@@ -70,11 +70,20 @@ async function getBrowserLabel() {
   return browserLabel;
 }
 
+// Security review R3 on PR #87: `connectNative` is invoked
+// synchronously — no `await` between the null-check and the
+// assignment — and the `onDisconnect` handler closes over the local
+// `current` binding rather than the module-global. Two listeners
+// firing in the same microtask tick can no longer both call
+// `connectNative` and stomp each other; the second `getPort()`
+// returns the already-open instance. If `current` disconnects, only
+// THAT port's handler nulls the global — it doesn't accidentally
+// null a successor port that was opened in the meantime.
 function getPort() {
   if (port) return port;
   try {
-    port = chrome.runtime.connectNative(NATIVE_HOST);
-    port.onDisconnect.addListener(() => {
+    const current = chrome.runtime.connectNative(NATIVE_HOST);
+    current.onDisconnect.addListener(() => {
       const err = chrome.runtime.lastError;
       if (err) {
         // The Cairn app isn't running, or the native-host manifest
@@ -82,8 +91,9 @@ function getPort() {
         // next event re-open. Don't log loudly — this is the steady
         // state when the user hasn't started Cairn yet.
       }
-      port = null;
+      if (port === current) port = null;
     });
+    port = current;
   } catch (e) {
     port = null;
   }
@@ -146,7 +156,16 @@ async function announceActiveTab(tab, focused) {
   if (!tab) return;
   const payload = project(tab, focused);
   if (!payload) return;
-  payload.browserLabel = await getBrowserLabel();
+  // Security review R5 on PR #87: skip browserLabel for incognito.
+  // Reading `getBrowserInfo` / `userAgent` is fine here, but
+  // attaching the label tells the native host (and downstream
+  // Integrations card) that an incognito session is producing
+  // signals — which is more than the collector needs. The Cairn
+  // collector drops incognito frames before the rules engine, so
+  // the label only travels with non-incognito payloads anyway.
+  if (!payload.incognito) {
+    payload.browserLabel = await getBrowserLabel();
+  }
   sendMessage(payload);
 }
 

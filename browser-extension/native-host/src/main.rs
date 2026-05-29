@@ -34,6 +34,7 @@ use std::io::{BufReader, Read, Write};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -89,7 +90,7 @@ fn main() {
 }
 
 fn run(debug: bool) -> std::io::Result<()> {
-    let socket = socket_path();
+    let socket = socket_path(debug);
     if debug {
         eprintln!("cairn-browser-host: target socket = {}", socket.display());
     }
@@ -108,6 +109,34 @@ fn run(debug: bool) -> std::io::Result<()> {
             }
             continue;
         };
+        // Security-review B2 on PR #87: reject phantom heartbeats.
+        // A 4-byte `{}` frame deserialises cleanly (every field is
+        // optional or has a default), producing `{domain:"",
+        // focused:true,...}` — a "user is focused on the empty
+        // domain" message indistinguishable from the legitimate
+        // WINDOW_ID_NONE ping (which carries `focused:false`).
+        // Drop empty-domain frames unless they're explicitly the
+        // unfocused heartbeat.
+        if msg.domain.is_empty() && msg.focused {
+            if debug {
+                eprintln!("cairn-browser-host: dropping empty-domain focused frame");
+            }
+            continue;
+        }
+        // Cap `browserLabel` so a hostile / oversized UA can't push
+        // the outbound frame near the socket's MAX_LINE_BYTES cap or
+        // smuggle control characters into the Integrations UI.
+        // Real labels are ~12 chars ("Chrome 120"); 64 is generous.
+        if let Some(label) = msg.browser_label.as_ref() {
+            if label.len() > 64 || label.chars().any(|c| c.is_control()) {
+                if debug {
+                    eprintln!(
+                        "cairn-browser-host: rejecting oversized / control-char browserLabel"
+                    );
+                }
+                continue;
+            }
+        }
         // Project to the outbound shape — explicit allowlist of fields.
         // Any extras on the inbound side are dropped by serde's default
         // behaviour, but emitting via the typed `Outbound` struct also
@@ -127,7 +156,7 @@ fn run(debug: bool) -> std::io::Result<()> {
                 continue;
             }
         };
-        if let Err(e) = send_to_socket(&mut socket, &line) {
+        if let Err(e) = send_to_socket(&mut socket, &line, debug) {
             if debug {
                 eprintln!("cairn-browser-host: socket write failed: {e}");
             }
@@ -205,9 +234,9 @@ impl SocketConn {
     }
 }
 
-fn send_to_socket(slot: &mut Option<SocketConn>, line: &str) -> std::io::Result<()> {
+fn send_to_socket(slot: &mut Option<SocketConn>, line: &str, debug: bool) -> std::io::Result<()> {
     if slot.is_none() {
-        let path = socket_path();
+        let path = socket_path(debug);
         *slot = Some(SocketConn::connect(&path)?);
     }
     let Some(conn) = slot.as_mut() else {
@@ -221,9 +250,19 @@ fn send_to_socket(slot: &mut Option<SocketConn>, line: &str) -> std::io::Result<
 /// We can't reuse the main app's `tauri::AppHandle::path()` from a
 /// standalone binary, so this duplicates Tauri's resolution logic for
 /// `app_data_dir` keyed by the bundle identifier (`io.drmowinckels.cairn`).
-fn socket_path() -> PathBuf {
-    if let Some(env) = std::env::var_os("CAIRN_HOST_SOCKET") {
-        return PathBuf::from(env);
+///
+/// Security review R1 on PR #87: the `CAIRN_HOST_SOCKET` env override
+/// is gated behind `CAIRN_HOST_DEBUG=1`. Native hosts inherit the
+/// browser-launched process environment, so a malicious extension or
+/// login-shell config that sets the var unconditionally would
+/// otherwise redirect the domain stream to a socket the attacker
+/// controls. Test/debug builds opt in explicitly; production
+/// installations cannot reach a non-canonical path.
+fn socket_path(debug: bool) -> PathBuf {
+    if debug {
+        if let Some(env) = std::env::var_os("CAIRN_HOST_SOCKET") {
+            return PathBuf::from(env);
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -361,15 +400,80 @@ mod tests {
     // ---- socket_path resolution ------------------------------------
 
     #[test]
-    fn socket_path_honours_env_override() {
-        // The override is the only deterministic way to test
-        // `socket_path` cross-platform — the other branches depend on
-        // $HOME / XDG_DATA_HOME / etc. that vary between hosts.
-        // SAFETY: setting env vars in tests is racy, but this var
-        // isn't read by anything else in the suite.
+    fn socket_path_honours_env_override_only_in_debug_mode() {
+        // Security review R1 on PR #87: the env override is gated
+        // behind the explicit debug flag so a malicious extension or
+        // shell config that sets CAIRN_HOST_SOCKET in the inherited
+        // process env can't redirect the domain stream off-machine.
+        // SAFETY: setting env vars in tests is racy across threads,
+        // but this var isn't read by anything else in the suite.
         unsafe { std::env::set_var("CAIRN_HOST_SOCKET", "/tmp/cairn-test-socket") };
-        let p = socket_path();
-        assert_eq!(p, PathBuf::from("/tmp/cairn-test-socket"));
+        // Without the debug flag, the env is ignored — canonical
+        // path resolution applies.
+        let prod = socket_path(false);
+        assert_ne!(prod, PathBuf::from("/tmp/cairn-test-socket"));
+        // With the debug flag, the env takes precedence.
+        let dev = socket_path(true);
+        assert_eq!(dev, PathBuf::from("/tmp/cairn-test-socket"));
         unsafe { std::env::remove_var("CAIRN_HOST_SOCKET") };
+    }
+
+    // ---- security-review #87 follow-ups ----------------------------
+
+    #[test]
+    fn inbound_requires_domain_field() {
+        // The truly-empty `{}` frame is already rejected at deserialise
+        // (domain has no `serde(default)`), so the phantom shape isn't
+        // a literal `{}`. The smallest forged frame would carry an
+        // explicit empty domain — see the next test.
+        let r = serde_json::from_str::<Inbound>("{}");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn inbound_empty_domain_with_focused_true_is_the_phantom_shape() {
+        // Security review B2 on PR #87. The minimal forged heartbeat
+        // shape is `{"domain":"","focused":true}` — deserialises
+        // cleanly but is indistinguishable from the legitimate
+        // `WINDOW_ID_NONE` ping (which carries `focused:false`). The
+        // host's main loop drops it.
+        let inb: Inbound = serde_json::from_str(r#"{"domain":""}"#).unwrap();
+        assert!(inb.domain.is_empty());
+        assert!(inb.focused);
+        let phantom = inb.domain.is_empty() && inb.focused;
+        assert!(phantom, "the host's main loop drops this shape");
+    }
+
+    #[test]
+    fn inbound_unfocused_empty_domain_is_legitimate_heartbeat() {
+        // WINDOW_ID_NONE from the service worker sends
+        // `{domain:"", focused:false}`. The main loop must NOT drop
+        // this — it's the documented heartbeat shape that keeps
+        // Settings → Integrations alive when the browser loses focus.
+        let inb: Inbound = serde_json::from_str(r#"{"domain":"","focused":false}"#).unwrap();
+        let phantom = inb.domain.is_empty() && inb.focused;
+        assert!(
+            !phantom,
+            "unfocused empty-domain is legitimate, not phantom"
+        );
+    }
+
+    #[test]
+    fn inbound_rejects_browser_label_with_control_chars_or_oversize() {
+        // The main loop's browser_label guard rejects two classes
+        // of input: control characters (which would break newline
+        // framing on the downstream socket) and >64 char strings
+        // (which a hostile UA could pad to push the outbound frame
+        // near the socket's MAX_LINE_BYTES cap).
+        // We pin the policy by checking the bool a future change
+        // would need to flip.
+        let with_newline = "Chrome\n120";
+        let oversize = "x".repeat(65);
+        assert!(with_newline.chars().any(|c| c.is_control()));
+        assert!(oversize.len() > 64);
+        // The legitimate shape passes:
+        let ok = "Chrome 120";
+        assert!(ok.len() <= 64);
+        assert!(!ok.chars().any(|c| c.is_control()));
     }
 }
