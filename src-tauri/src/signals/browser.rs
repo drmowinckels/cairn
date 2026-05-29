@@ -609,6 +609,22 @@ mod tests {
 
     // ---- handle_message (with exclusions + heartbeat) --------------
 
+    /// Poll for the socket path to exist (or timeout). Extracted so
+    /// every Unix-socket integration test shares one polling loop —
+    /// without this, the `for _ in 0..30 { … sleep }` body was
+    /// duplicated five times across tests and each copy showed up as
+    /// a codecov gap (the loop usually breaks on the first iteration,
+    /// so the sleep arm is rarely measured).
+    #[cfg(unix)]
+    async fn wait_for_socket(path: &std::path::Path) {
+        for _ in 0..30 {
+            if path.exists() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
     fn matcher_with_excluded_domain(domain: &str) -> Arc<std::sync::RwLock<ExclusionMatcher>> {
         Arc::new(std::sync::RwLock::new(ExclusionMatcher::for_test(
             &[],
@@ -739,7 +755,6 @@ mod tests {
     #[tokio::test]
     async fn unix_socket_chmod_is_0600() {
         use std::os::unix::fs::PermissionsExt;
-        use tokio::time::Duration;
 
         let dir = tempfile::tempdir().unwrap();
         let data_dir = dir.path().to_path_buf();
@@ -752,12 +767,7 @@ mod tests {
             .unwrap();
         let path = socket_path(&data_dir);
         // Wait briefly for the file to exist + chmod to apply.
-        for _ in 0..30 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
         let meta = std::fs::metadata(&path).expect("socket file present");
         let mode = meta.permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
@@ -890,12 +900,7 @@ mod tests {
             .await
             .unwrap();
         let path = socket_path(&data_dir);
-        for _ in 0..30 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
 
         // Connection #1: oversize frame, no newline. Listener drops.
         {
@@ -954,12 +959,7 @@ mod tests {
             .await
             .unwrap();
         let path = socket_path(&data_dir);
-        for _ in 0..30 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
 
         let total = MAX_CONCURRENT_CONNECTIONS + 4;
         for i in 0..total {
@@ -1071,12 +1071,7 @@ mod tests {
             .await
             .unwrap();
         let path = socket_path(&data_dir);
-        for _ in 0..30 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
         let mut client = UnixStream::connect(&path).await.unwrap();
         client
             .write_all(b"{\"domain\":\"first.example\",\"focused\":true}\n")
@@ -1170,12 +1165,7 @@ mod tests {
             .await
             .unwrap();
         let path = socket_path(&data_dir);
-        for _ in 0..30 {
-            if path.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for_socket(&path).await;
         let mut client = UnixStream::connect(&path).await.unwrap();
         // `\xFF\xFE` is invalid UTF-8 anywhere.
         client.write_all(&[0xFF, 0xFE, b'\n']).await.unwrap();
