@@ -15,8 +15,8 @@
       {
         "label": "popover",
         "title": "Cairn",
-        "width": 500,
-        "height": 720,
+        "width": 560,
+        "height": 760,
         "resizable": false,
         "decorations": false,
         "transparent": true,
