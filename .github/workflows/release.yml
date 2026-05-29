@@ -46,11 +46,17 @@ jobs:
       - name: Resolve tag
         id: resolve
         shell: bash
+        # Pass both the event name and the dispatch input through `env`
+        # rather than interpolating `${{ … }}` straight into the script
+        # body — that avoids shell injection from a crafted tag input.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ github.event.inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            tag="${GITHUB_REF_NAME}"
+            tag="$GITHUB_REF_NAME"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Releasing tag: $tag"
