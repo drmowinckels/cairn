@@ -8,6 +8,7 @@
 //! warnings` happy until then.
 #![allow(dead_code)]
 
+pub mod browser;
 pub mod browser_extension;
 pub mod calendar;
 pub mod calendar_autostop;

@@ -134,6 +134,13 @@ pub enum SignalEvent {
     /// the variant is here today so the publish path's git_branch
     /// projection ships with the snapshot stream.
     Git(Option<GitContext>),
+    /// Browser context derived from a local-IPC push by a small
+    /// browser extension (issue #35, M7). Carries only the domain —
+    /// path and title are dropped at the collector boundary per
+    /// `docs/PRIVACY.md`. The exclusion list is applied BEFORE the
+    /// event reaches the stream, so any value seen here is allowed
+    /// to participate in matching.
+    Browser(Option<crate::signals::browser::BrowserContext>),
     /// Calendar tick: re-query `active_events_at(now)`. The event
     /// carries no payload — the calendar registry is the source of
     /// truth.
@@ -222,6 +229,12 @@ impl SnapshotStream {
 struct LiveState {
     front: Option<FrontWindow>,
     git: Option<GitContext>,
+    /// Latest browser context from the local-IPC collector (#35),
+    /// or `None` when no extension has reported recently. The
+    /// `apply_event` arm for `SignalEvent::Browser` writes this
+    /// straight through — the exclusion + privacy filters fire
+    /// *before* the event reaches the stream.
+    browser: Option<crate::signals::browser::BrowserContext>,
     idle: IdleState,
     /// When the user first crossed the idle threshold. `None` while
     /// active; `Some(ts)` while idle. The transition `Some → None`
@@ -475,6 +488,13 @@ fn apply_event(
         SignalEvent::Git(git) => {
             state.git = git;
         }
+        SignalEvent::Browser(browser) => {
+            // The collector at `signals/browser` has already applied
+            // the privacy gates (incognito / unfocused / empty) and
+            // the exclusion list before sending the event. Any value
+            // we see here is allowed to drive the snapshot directly.
+            state.browser = browser;
+        }
         SignalEvent::CalendarRefresh => {
             // No state mutation — the driver re-queries calendar on
             // publish. The event just arms the debounce.
@@ -564,12 +584,14 @@ async fn publish(
 
     let git_branch = state.git.as_ref().and_then(|g| g.branch.clone());
 
+    let browser_domain = state.browser.as_ref().map(|b| b.domain.clone());
+
     let mut snap = SignalSnapshot {
         ide_folder,
         git_branch,
         window_title,
         app_name,
-        browser_domain: None,
+        browser_domain,
         calendar: calendar_events,
     };
 
@@ -1137,6 +1159,43 @@ mod tests {
             .expect("channel still open");
         let snap = rx.borrow().clone().expect("Some snapshot");
         assert_eq!(snap.git_branch.as_deref(), Some("feat/snapshot-stream"));
+    }
+
+    #[tokio::test]
+    async fn browser_event_publishes_to_snapshot_browser_domain() {
+        // Sibling of `git_event_publishes_to_snapshot_git_branch`:
+        // the SignalEvent::Browser arm in apply_event writes straight
+        // through to LiveState.browser, which `publish` projects to
+        // SignalSnapshot.browser_domain. A None Browser event after
+        // a Some clears the field — same shape as the Git arm.
+        use crate::signals::browser::BrowserContext;
+        let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Browser(Some(BrowserContext {
+            domain: "github.com".to_string(),
+        })))
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("publish runs")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert_eq!(snap.browser_domain.as_deref(), Some("github.com"));
+
+        // None clears it (user closed the browser tab).
+        tx.send(SignalEvent::Browser(None)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .ok();
+        assert_eq!(
+            rx.borrow().clone().and_then(|s| s.browser_domain),
+            None,
+            "Browser(None) clears the snapshot's browser_domain"
+        );
     }
 
     #[tokio::test]
