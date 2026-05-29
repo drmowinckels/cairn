@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Icon } from "../../lib/icon";
 import { useCalendars } from "../../lib/use-calendars";
@@ -9,6 +9,8 @@ import {
   type BrowserExtensionStatus,
   type GitWatcherStatus,
 } from "../../lib/ipc";
+import { useAutostart } from "../../lib/use-autostart";
+import { autostartCopy, detectPlatform } from "../../lib/autostart-copy";
 import { CalendarManager } from "./calendar-manager";
 
 const EXTENSION_INSTALL_URL =
@@ -27,6 +29,7 @@ export function IntegrationsCard() {
         <CalendarStatusLine onManage={() => setCalendarOpen(true)} />
         <GitStatusLine />
         <BrowserStatusLine installHref={EXTENSION_INSTALL_URL} />
+        <AutostartStatusLine />
       </ul>
       {calendarOpen && (
         <CalendarManager onClose={() => setCalendarOpen(false)} />
@@ -140,6 +143,39 @@ export function BrowserStatusLine({ installHref }: BrowserStatusLineProps) {
       <span className="intg-status">{text}</span>
       <button type="button" className="link-btn" onClick={onInstall}>
         {connected ? "Manage…" : "Install…"}
+      </button>
+    </li>
+  );
+}
+
+export function AutostartStatusLine() {
+  const { enabled, busy, error, ready, toggle } = useAutostart();
+  const copy = useMemo(() => autostartCopy(detectPlatform()), []);
+
+  const status = error
+    ? `Toggle failed: ${error}`
+    : enabled
+      ? "On"
+      : "Off";
+
+  return (
+    <li className="intg-row" data-integration="autostart">
+      <Icon name="sparkle" size={14} />
+      <span className="intg-name">{copy.label}</span>
+      <span className="intg-status">{status}</span>
+      <button
+        type="button"
+        className={`tgl${enabled ? " is-on" : ""}`}
+        role="switch"
+        aria-checked={enabled}
+        aria-label={copy.label}
+        title={copy.hint}
+        onClick={() => {
+          void toggle(!enabled);
+        }}
+        disabled={!ready || busy}
+      >
+        <span className="tgl-dot" />
       </button>
     </li>
   );
