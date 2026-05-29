@@ -41,6 +41,22 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "Productivity",
+    "shortDescription": "Local-first time tracker with passive auto-detection.",
+    "longDescription": "Cairn is a local-first time tracker that passively detects what you're working on from OS signals (active window, IDE folder, git branch, browser domain, calendar event) using rules you define. Your data never leaves your machine.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
+        ]
+      }
+    }
   }
 }

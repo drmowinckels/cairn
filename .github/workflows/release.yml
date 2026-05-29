@@ -1,0 +1,141 @@
+name: Release
+
+# End-to-end beta release pipeline (M9 #46). Takes a version tag and
+# produces signed bundles for all three platforms, attached to a DRAFT
+# GitHub Release for manual review before publishing.
+#
+# Triggers:
+#   - pushing a `v*` tag (e.g. `v0.1.0-beta`)
+#   - manual `workflow_dispatch` with an explicit tag (re-runs / dry runs)
+#
+# macOS bundles are code-signed with a Developer ID Application cert and
+# notarized + stapled by tauri-action when the APPLE_* secrets are set
+# (see RELEASING.md). When those secrets are absent the macOS job still
+# runs and produces an UNSIGNED bundle, so the pipeline is exercisable
+# before the cert is provisioned.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0-beta). Must already exist."
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # Resolve the tag once and extract the release notes from the topmost
+  # CHANGELOG.md section, so all three matrix jobs attach identical
+  # metadata to the draft release.
+  notes:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      body: ${{ steps.extract.outputs.body }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Resolve tag
+        id: resolve
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing tag: $tag"
+      - name: Extract release notes from CHANGELOG.md
+        id: extract
+        shell: bash
+        run: |
+          # Print everything under the FIRST `## ` heading up to the
+          # next `## ` heading - i.e. the most recent release section.
+          notes="$(awk '/^## / { if (seen) exit; seen=1; next } seen { print }' CHANGELOG.md)"
+          if [ -z "$notes" ]; then
+            notes="See CHANGELOG.md."
+          fi
+          {
+            echo "body<<__CAIRN_NOTES__"
+            echo "$notes"
+            echo "__CAIRN_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: notes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+            rust-targets: ""
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # Gate the release on the same suites CI runs, so a broken commit
+      # can never produce a published artifact.
+      - name: Test (frontend)
+        run: npm run test
+      - name: Test (Rust)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Build, sign, notarize, and attach to draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- macOS code-signing + notarization (#42) ---------------
+          # All optional: when unset, tauri-action produces an unsigned
+          # macOS bundle and skips notarization. See RELEASING.md.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ needs.notes.outputs.tag }}
+          releaseName: "Cairn ${{ needs.notes.outputs.tag }}"
+          releaseBody: ${{ needs.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

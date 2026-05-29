@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened-runtime entitlements for the notarized Cairn build.
+
+    Deliberately minimal. Cairn is local-first (see docs/PRIVACY.md):
+    the ONLY outbound network it makes is (a) fetching subscribed ICS
+    calendar URLs and (b) the opt-in update check. macOS has no
+    finer-grained outbound entitlement than network.client, so that one
+    key covers both. There is no network.server entitlement — Cairn
+    never listens on a network socket (its IPC is a Unix domain socket /
+    named pipe, which needs no entitlement).
+
+    NOT granted here, on purpose:
+      - network.server: Cairn never accepts inbound network connections.
+      - files.user-selected / downloads: CSV export uses the standard
+        save panel, which is powerbox-mediated and needs no entitlement.
+      - Accessibility: reading the frontmost window TITLE uses the
+        Accessibility API, but that is a runtime TCC permission the user
+        grants in System Settings - it is NOT an entitlement and signing
+        is what lets the app appear in that list at all.
+
+    If the WKWebView fails to load under hardened runtime on an older
+    macOS, add `com.apple.security.cs.allow-jit` (true) - but verify it
+    is actually required before weakening the runtime.
+  -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+</dict>
+</plist>
