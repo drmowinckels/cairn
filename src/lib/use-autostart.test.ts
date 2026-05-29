@@ -64,6 +64,16 @@ describe("useAutostart", () => {
     expect(result.current.enabled).toBe(false);
   });
 
+  it("coerces an undefined probe result to false (no aria-checked drop)", async () => {
+    // A stubbed plugin (e.g. the a11y-audit Tauri shim) can resolve
+    // `undefined`; `enabled` must stay a real boolean so the consuming
+    // `aria-checked` attribute is never omitted.
+    isEnabled.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useAutostart());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.enabled).toBe(false);
+  });
+
   it("surfaces a probe error and still becomes ready", async () => {
     isEnabled.mockRejectedValue(new Error("no autostart here"));
     const { result } = renderHook(() => useAutostart());

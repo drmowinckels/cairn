@@ -36,7 +36,10 @@ export function useAutostart(): AutostartState {
       try {
         const mod = await import("@tauri-apps/plugin-autostart");
         if (cancelled) return;
-        setEnabled(await mod.isEnabled());
+        // Coerce to a real boolean: a stubbed/absent plugin command can
+        // resolve `undefined`, which would otherwise make the consuming
+        // `aria-checked={enabled}` drop the attribute entirely.
+        setEnabled((await mod.isEnabled()) === true);
       } catch (e) {
         if (!cancelled) setError(String(e));
       } finally {
