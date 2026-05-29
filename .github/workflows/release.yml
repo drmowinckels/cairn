@@ -33,16 +33,23 @@ permissions:
   contents: write
 
 jobs:
-  # Resolve the tag once and extract the release notes from the topmost
-  # CHANGELOG.md section, so all three matrix jobs attach identical
-  # metadata to the draft release.
-  notes:
+  # Resolve the tag, extract the release notes from the topmost
+  # CHANGELOG.md section, and create the draft release exactly ONCE.
+  # The three matrix jobs then upload into this release by id — without
+  # a single owner, parallel matrix jobs would each create-or-find the
+  # release and could produce duplicate drafts for one tag.
+  prepare:
     runs-on: ubuntu-22.04
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
-      body: ${{ steps.extract.outputs.body }}
+      release_id: ${{ steps.mkrelease.outputs.result }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Build the code AT the tag, not whatever branch a dispatch
+          # was launched from. On a tag push this is the tag; on
+          # workflow_dispatch it's the input tag (which must exist).
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - name: Resolve tag
         id: resolve
         shell: bash
@@ -75,9 +82,37 @@ jobs:
             echo "$notes"
             echo "__CAIRN_NOTES__"
           } >> "$GITHUB_OUTPUT"
+      - name: Create or reuse the draft release
+        id: mkrelease
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          BODY: ${{ steps.extract.outputs.body }}
+        with:
+          # Create the draft once; on a re-run for the same tag the
+          # create returns 422 and we fall back to the existing release,
+          # so matrix jobs always have an id to upload into (idempotent).
+          script: |
+            const tag = process.env.TAG;
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            try {
+              const { data } = await github.rest.repos.createRelease({
+                ...repo,
+                tag_name: tag,
+                name: `Cairn ${tag}`,
+                body: process.env.BODY,
+                draft: true,
+                prerelease: true,
+              });
+              return data.id;
+            } catch (e) {
+              if (e.status !== 422) throw e;
+              const { data } = await github.rest.repos.getReleaseByTag({ ...repo, tag });
+              return data.id;
+            }
 
   release:
-    needs: notes
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +129,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install Linux deps
         if: matrix.platform == 'ubuntu-22.04'
@@ -125,7 +162,7 @@ jobs:
       - name: Test (Rust)
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
-      - name: Build, sign, notarize, and attach to draft release
+      - name: Build, sign, notarize, and upload to the draft release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -139,9 +176,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: ${{ needs.notes.outputs.tag }}
-          releaseName: "Cairn ${{ needs.notes.outputs.tag }}"
-          releaseBody: ${{ needs.notes.outputs.body }}
-          releaseDraft: true
-          prerelease: true
+          # Upload into the single draft release created by `prepare`,
+          # rather than each matrix job creating its own. No race.
+          releaseId: ${{ needs.prepare.outputs.release_id }}
           args: ${{ matrix.args }}
