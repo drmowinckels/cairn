@@ -1162,6 +1162,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn browser_event_publishes_to_snapshot_browser_domain() {
+        // Sibling of `git_event_publishes_to_snapshot_git_branch`:
+        // the SignalEvent::Browser arm in apply_event writes straight
+        // through to LiveState.browser, which `publish` projects to
+        // SignalSnapshot.browser_domain. A None Browser event after
+        // a Some clears the field — same shape as the Git arm.
+        use crate::signals::browser::BrowserContext;
+        let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Browser(Some(BrowserContext {
+            domain: "github.com".to_string(),
+        })))
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("publish runs")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert_eq!(snap.browser_domain.as_deref(), Some("github.com"));
+
+        // None clears it (user closed the browser tab).
+        tx.send(SignalEvent::Browser(None)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .ok();
+        assert_eq!(
+            rx.borrow().clone().and_then(|s| s.browser_domain),
+            None,
+            "Browser(None) clears the snapshot's browser_domain"
+        );
+    }
+
+    #[tokio::test]
     async fn git_none_clears_branch() {
         let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
         let tx = stream.event_sender();

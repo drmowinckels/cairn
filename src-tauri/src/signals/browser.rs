@@ -1129,6 +1129,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn process_line_skips_whitespace_only_lines() {
+        // Empty / whitespace-only frames are a no-op — neither parse
+        // nor send anything. Pins the early-return branch in
+        // process_line (codecov gap on PR #86).
+        let (tx, mut rx) = mpsc::channel::<SignalEvent>(4);
+        let exclusions = Arc::new(std::sync::RwLock::new(ExclusionMatcher::default()));
+        let state = BrowserExtensionState::new();
+        for input in ["", "   ", "\t\t", " \r"] {
+            let outcome = process_line(input, &tx, &exclusions, &state).await;
+            assert!(matches!(outcome, LineOutcome::Continue));
+        }
+        // No SignalEvent landed.
+        let received = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await;
+        assert!(
+            received.is_err(),
+            "no SignalEvent should arrive for whitespace lines"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unix_socket_drops_non_utf8_frame_and_closes_connection() {
+        // Non-UTF8 bytes terminated by `\n` reach `handle_conn`,
+        // where the `from_utf8` check rejects them. The connection
+        // is dropped (next read EOFs) rather than skipped: a peer
+        // sending binary garbage is presumed malicious. Pins the
+        // non-utf8 branch (codecov gap on PR #86).
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::UnixStream;
+        use tokio::time::{timeout, Duration};
+
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let (tx, _rx) = mpsc::channel::<SignalEvent>(8);
+        let exclusions = Arc::new(std::sync::RwLock::new(ExclusionMatcher::default()));
+        let state = Arc::new(BrowserExtensionState::new());
+
+        spawn_listener(data_dir.clone(), tx, exclusions, state)
+            .await
+            .unwrap();
+        let path = socket_path(&data_dir);
+        for _ in 0..30 {
+            if path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let mut client = UnixStream::connect(&path).await.unwrap();
+        // `\xFF\xFE` is invalid UTF-8 anywhere.
+        client.write_all(&[0xFF, 0xFE, b'\n']).await.unwrap();
+
+        let mut buf = [0u8; 1];
+        let read_res = timeout(Duration::from_secs(2), client.read(&mut buf)).await;
+        match read_res {
+            Ok(Ok(0)) => {}
+            other => panic!("expected EOF after non-utf8 frame, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn read_capped_line_strips_crlf_and_lf() {
         use std::io::Cursor;
         for input in ["foo\n", "foo\r\n"] {
