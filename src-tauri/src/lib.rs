@@ -71,10 +71,10 @@ pub struct AppState {
     /// (issue #34). The watcher itself doesn't change roots at
     /// runtime today, so a single boot-time snapshot is faithful.
     pub git_watcher_status: GitWatcherStatus,
-    /// Browser-extension liveness ledger. Today this is empty until
-    /// the browser collector lands in M7; the IPC handler returns
-    /// `{connected: false, lastSeen: null}` against the default
-    /// state.
+    /// Browser-extension liveness ledger (#34, #35). Heartbeats land
+    /// here on every push from the local-IPC socket collector in
+    /// `signals::browser`; the IPC handler `browser_extension_status`
+    /// reads from it for Settings → Integrations.
     pub browser_extension: Arc<BrowserExtensionState>,
 }
 
@@ -256,6 +256,39 @@ pub fn run() {
             // initial Git events flow into the stream's sender.
             signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos);
 
+            // Browser-signal IPC socket (M7 #35). Listens on
+            // `<data_dir>/sock` (Unix) / `\\.\pipe\cairn` (Windows)
+            // for pushes from a small browser extension. Heartbeats
+            // are recorded on `browser_extension_state` so the
+            // Settings → Integrations card reflects connectivity;
+            // a focused, non-incognito, non-excluded message produces
+            // a `SignalEvent::Browser` that feeds the snapshot
+            // stream's `browser_domain` field. A bind failure is
+            // logged but never fatal — Cairn still runs without the
+            // browser collector.
+            let browser_extension_state = Arc::new(BrowserExtensionState::new());
+            {
+                let event_tx = stream.event_sender();
+                let exclusions_for_browser = exclusions.clone();
+                let state_for_browser = browser_extension_state.clone();
+                let data_dir_for_browser = data_dir.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = signals::browser::spawn_listener(
+                        data_dir_for_browser,
+                        event_tx,
+                        exclusions_for_browser,
+                        state_for_browser,
+                    )
+                    .await
+                    {
+                        log::warn!(
+                            "browser: socket listener failed to bind: {e}; \
+                             browser_domain will stay None"
+                        );
+                    }
+                });
+            }
+
             // Rules cache: load once, refreshed by `save_rule` /
             // `delete_rule` IPC mutators. The fanout reads this on
             // every snapshot publish; per-tick DB queries used to
@@ -328,7 +361,7 @@ pub fn run() {
                 rules_cache,
                 rules_mutator: tokio::sync::Mutex::new(()),
                 git_watcher_status,
-                browser_extension: Arc::new(BrowserExtensionState::new()),
+                browser_extension: browser_extension_state,
             });
 
             tray::setup(app.handle())?;
