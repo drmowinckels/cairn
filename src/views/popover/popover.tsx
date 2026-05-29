@@ -114,6 +114,7 @@ function PopoverShell({
         <div
           className="pop"
           data-density={density}
+          data-onboarding="true"
           role="dialog"
           aria-label="Cairn first-run onboarding"
         >

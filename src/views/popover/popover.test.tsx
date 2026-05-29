@@ -232,12 +232,16 @@ describe("Popover — first-run onboarding gating (#31)", () => {
     );
     const { Popover } = await import("./popover");
     render(<Popover />);
-    await waitFor(() =>
-      expect(
-        screen.getByRole("dialog", { name: /first-run onboarding/i }),
-      ).toBeTruthy(),
-    );
+    let dialog!: HTMLElement;
+    await waitFor(() => {
+      dialog = screen.getByRole("dialog", { name: /first-run onboarding/i });
+      expect(dialog).toBeTruthy();
+    });
     expect(screen.getByText(/welcome to cairn/i)).toBeTruthy();
+    // The onboarding overlay is position:absolute (out of flow), so .pop has no
+    // in-flow children and collapses unless this attribute pins its height
+    // (brand.css .pop[data-onboarding]). Without it the popover renders blank.
+    expect(dialog.getAttribute("data-onboarding")).toBe("true");
   });
 
   it("renders the normal popover when completedAt is set", async () => {

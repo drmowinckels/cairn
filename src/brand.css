@@ -128,6 +128,13 @@ body {
 .pop[data-density="compact"] {
   width: 420px;
 }
+/* Onboarding renders a single position:absolute overlay (.onboarding-overlay,
+   inset:0) as the only child of .pop. With no in-flow children a flex column
+   collapses to ~0 height, and .pop's overflow:hidden then clips the overlay to
+   nothing. Pin a definite height so the overlay has a box to fill. */
+.pop[data-onboarding="true"] {
+  height: calc(100vh - 56px);
+}
 .pop::before {
   /* Tail pointing up to tray icon */
   content: "";
