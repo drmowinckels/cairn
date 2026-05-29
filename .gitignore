@@ -22,6 +22,9 @@ Cargo.lock.bak
 /src-tauri/target/
 /src-tauri/gen/schemas/
 
+# Browser extension (M7)
+/browser-extension/native-host/target/
+
 # Editor / OS
 .DS_Store
 .vscode/

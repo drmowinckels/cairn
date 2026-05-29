@@ -120,3 +120,14 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --manifest-path src-tauri/Cargo.toml --no-deps
+
+      # Cairn browser-extension native messaging host (M7 #36). Small
+      # standalone Rust crate that bridges the MV3 extension's Native
+      # Messaging stream to Cairn's local IPC socket. Tested on every
+      # platform — the cfg-gated socket-connect logic differs per OS.
+      - name: native-host fmt
+        run: cargo fmt --manifest-path browser-extension/native-host/Cargo.toml --check
+      - name: native-host clippy
+        run: cargo clippy --manifest-path browser-extension/native-host/Cargo.toml --all-targets -- -D warnings
+      - name: native-host test
+        run: cargo test --manifest-path browser-extension/native-host/Cargo.toml --release
