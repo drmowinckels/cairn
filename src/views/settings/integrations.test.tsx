@@ -37,6 +37,7 @@ import {
   BrowserStatusLine,
   CalendarStatusLine,
   GitStatusLine,
+  IntegrationsCard,
 } from "./integrations";
 import { formatRelativeTime } from "../../lib/relative-time";
 
@@ -317,6 +318,49 @@ describe("AutostartStatusLine", () => {
     await user.click(sw);
     await waitFor(() => expect(autostartEnable).toHaveBeenCalledOnce());
     expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("surfaces a probe failure in the status line", async () => {
+    autostartIsEnabled.mockRejectedValue(new Error("registry denied"));
+    render(
+      <ul>
+        <AutostartStatusLine />
+      </ul>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Toggle failed/)).toBeTruthy(),
+    );
+    expect(screen.getByText(/registry denied/)).toBeTruthy();
+  });
+});
+
+describe("IntegrationsCard", () => {
+  beforeEach(() => {
+    listCalendarSources.mockResolvedValue([]);
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 0,
+    });
+    browserExtensionStatus.mockResolvedValue({
+      connected: false,
+      lastSeen: null,
+      browserLabel: null,
+    });
+    autostartIsEnabled.mockReset().mockResolvedValue(false);
+  });
+
+  it("composes all four integration rows", async () => {
+    const { container } = render(<IntegrationsCard />);
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-integration="autostart"]'),
+      ).toBeTruthy(),
+    );
+    for (const id of ["calendar", "git", "browser", "autostart"]) {
+      expect(
+        container.querySelector(`[data-integration="${id}"]`),
+      ).toBeTruthy();
+    }
   });
 });
 
