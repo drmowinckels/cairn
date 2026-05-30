@@ -161,8 +161,12 @@ export function ManualEntryModal({
       setNewProjectColor(PROJECT_COLORS[0]);
       setCreateProjectError(null);
       setCreatingTask(false);
+      setCreatingTaskBusy(false);
       setNewTaskName("");
       setCreateTaskError(null);
+      // Drop the previous project's tasks so a reopen for a different
+      // project can't flash a stale list before loadTasks resolves.
+      setTasks([]);
       const id = window.requestAnimationFrame(() => {
         firstFieldRef.current?.focus();
       });

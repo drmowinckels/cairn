@@ -1687,6 +1687,14 @@ pub fn set_pinned(state: State<'_, AppState>, pinned: bool) -> Result<(), String
 
 #[tauri::command]
 pub fn set_popover_size(app: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    // Validate at the trust boundary: this is an invokable command, so
+    // don't assume the caller is the fixed client-side preset. Reject
+    // non-finite sizes and clamp to a sane on-screen range.
+    if !width.is_finite() || !height.is_finite() {
+        return Err("popover size must be finite".into());
+    }
+    let width = width.clamp(320.0, 1200.0);
+    let height = height.clamp(400.0, 1400.0);
     if let Some(window) = app.get_webview_window("popover") {
         window
             .set_size(tauri::LogicalSize::new(width, height))
@@ -3240,6 +3248,44 @@ mod tests {
         .unwrap();
         assert_eq!(after.project_id.as_deref(), Some("site"));
         assert!(after.task_id.is_none(), "changing project must clear task");
+    }
+
+    #[tokio::test]
+    async fn update_entry_sets_project_and_task_in_one_call() {
+        // The manual-entry modal always sends BOTH project_id and
+        // task_id on save. Correctness depends on the project branch
+        // (which nulls task_id) running before the task branch
+        // re-applies it. Pin that interplay so a reorder can't silently
+        // drop the task.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let entry = start_entry(state.clone(), start_input(Some("cairn"), "x"))
+            .await
+            .unwrap();
+        let task = save_task(state.clone(), task_input(None, "cairn", "Build"))
+            .await
+            .unwrap();
+
+        let after = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: Some(Some("cairn".into())),
+                task_id: Some(Some(task.id.clone())),
+                description: None,
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(after.project_id.as_deref(), Some("cairn"));
+        assert_eq!(
+            after.task_id.as_deref(),
+            Some(task.id.as_str()),
+            "task set in the same call as project must survive"
+        );
     }
 
     #[tokio::test]
