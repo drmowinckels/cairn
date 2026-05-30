@@ -140,6 +140,87 @@ describe("useTimer (inside Tauri)", () => {
     expect(result.current.running).toBeNull();
     expect(invokeMock).toHaveBeenCalledWith("stop_entry", { id: "e1" });
   });
+
+  it("stop() clears running optimistically before stop_entry resolves", async () => {
+    let resolveStop: ((e: import("./ipc").BackendEntry) => void) | undefined;
+    const stopEntry = vi.fn(
+      () =>
+        new Promise<import("./ipc").BackendEntry>((res) => {
+          resolveStop = res;
+        }),
+    );
+    const fetchCurrent = vi.fn(async () => ENTRY);
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
+        tickMs: 60_000,
+      }),
+    );
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+
+    let stopPromise: Promise<unknown> = Promise.resolve();
+    act(() => {
+      stopPromise = result.current.stop();
+    });
+    // Cleared instantly — the backend promise is still pending.
+    expect(result.current.running).toBeNull();
+
+    await act(async () => {
+      resolveStop?.({ ...ENTRY, endedAt: "2026-05-23T11:00:00Z" });
+      await stopPromise;
+    });
+    expect(result.current.running).toBeNull();
+  });
+
+  it("a refresh mid-stop does not resurrect the stopping entry", async () => {
+    let resolveStop: ((e: import("./ipc").BackendEntry) => void) | undefined;
+    const stopEntry = vi.fn(
+      () =>
+        new Promise<import("./ipc").BackendEntry>((res) => {
+          resolveStop = res;
+        }),
+    );
+    // current_running keeps returning the entry until the stop commits.
+    const fetchCurrent = vi.fn(async () => ENTRY);
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
+        tickMs: 60_000,
+      }),
+    );
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+
+    let stopPromise: Promise<unknown> = Promise.resolve();
+    act(() => {
+      stopPromise = result.current.stop();
+    });
+    expect(result.current.running).toBeNull();
+
+    // A refresh fires mid-stop and reads the still-running entry — it must
+    // NOT bring the timer back.
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.running).toBeNull();
+
+    await act(async () => {
+      resolveStop?.({ ...ENTRY, endedAt: "2026-05-23T11:00:00Z" });
+      await stopPromise;
+    });
+    expect(result.current.running).toBeNull();
+  });
 });
 
 describe("useTimer elapsed + tick", () => {
