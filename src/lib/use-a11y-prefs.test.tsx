@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useA11yPrefs } from "./use-a11y-prefs";
 
@@ -120,6 +120,65 @@ describe("useA11yPrefs", () => {
     );
     const { result } = renderHook(() => useA11yPrefs());
     expect(result.current.ambiguityDefault).toBe("prompt");
+  });
+
+  // ---- theme: light / dark / system ---------------------------------
+
+  it("seeds theme to 'system' and resolves it to light on the root", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.theme).toBe("system");
+    // happy-dom reports no dark preference, so system → light.
+    expect(document.documentElement.dataset.theme).toBe("light");
+  });
+
+  it("setTheme writes the resolved theme to the root and persists the pref", () => {
+    const { result } = renderHook(() => useA11yPrefs());
+    act(() => result.current.setTheme("dark"));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    act(() => result.current.setTheme("light"));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    const stored = JSON.parse(localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}");
+    expect(stored.theme).toBe("light");
+  });
+
+  it("restores an explicit theme from localStorage on remount", () => {
+    localStorage.setItem("cairn:a11y-prefs:v1", JSON.stringify({ theme: "dark" }));
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.theme).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+
+  describe("when the OS prefers a dark color scheme", () => {
+    const realMatchMedia = window.matchMedia;
+    afterEach(() => {
+      window.matchMedia = realMatchMedia;
+    });
+
+    it("resolves 'system' to dark and follows OS changes", () => {
+      let changeHandler: (() => void) | null = null;
+      const mq = {
+        matches: true,
+        addEventListener: (_: string, cb: () => void) => {
+          changeHandler = cb;
+        },
+        removeEventListener: vi.fn(),
+      };
+      window.matchMedia = vi.fn().mockImplementation((q: string) =>
+        q.includes("dark")
+          ? mq
+          : { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() },
+      ) as unknown as typeof window.matchMedia;
+
+      const { result } = renderHook(() => useA11yPrefs());
+      expect(result.current.theme).toBe("system");
+      expect(document.documentElement.dataset.theme).toBe("dark");
+
+      // A live OS flip to light re-resolves without changing the pref.
+      mq.matches = false;
+      act(() => changeHandler?.());
+      expect(document.documentElement.dataset.theme).toBe("light");
+      expect(result.current.theme).toBe("system");
+    });
   });
 
   it("coerces a tampered ambiguityDefault to 'prompt' (security-review on #71)", () => {
