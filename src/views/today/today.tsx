@@ -89,6 +89,8 @@ export function TodayView({
   }, 400);
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [idleProjectId, setIdleProjectId] = useState<string | null>(null);
+  const [idlePickerOpen, setIdlePickerOpen] = useState(false);
 
   const onPickProject = useCallback(
     (id: string) => {
@@ -109,6 +111,13 @@ export function TodayView({
   const onQuickStart = (projectId: string) => {
     timer
       .start({ projectId, description: "" })
+      .then(() => today.refresh())
+      .catch((e) => console.error("start failed", e));
+  };
+
+  const onStartIdle = () => {
+    timer
+      .start({ projectId: idleProjectId, description: "" })
       .then(() => today.refresh())
       .catch((e) => console.error("start failed", e));
   };
@@ -507,16 +516,24 @@ export function TodayView({
           !timer.loading && (
             <div className="now-row">
               <div className="now-chips">
-                <span className="now-idle-hint">
-                  No timer running — start one from Quick start or pick a project.
-                </span>
+                <ProjectPickerChip
+                  projectId={idleProjectId}
+                  projects={projects}
+                  open={idlePickerOpen}
+                  setOpen={setIdlePickerOpen}
+                  onPick={(id) => {
+                    setIdleProjectId(id);
+                    setIdlePickerOpen(false);
+                  }}
+                  cbEnabled={cbEnabled}
+                />
               </div>
               <button
-                className="btn btn--stop"
-                aria-label="Stop timer"
-                disabled
+                className="btn btn--primary"
+                aria-label="Start timer"
+                onClick={onStartIdle}
               >
-                <Icon name="stop" size={12} /> Stop
+                <Icon name="play" size={12} /> Start
               </button>
             </div>
           )

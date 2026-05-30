@@ -287,9 +287,14 @@ pub async fn delete_everything(app: tauri::AppHandle) -> Result<(), String> {
     }
     let data_dir = app.path().app_data_dir().map_err(err)?;
     nuke_data_files(&data_dir).map_err(err)?;
-    log::info!("backup: deleted everything in {data_dir:?}; exiting");
-    app.exit(0);
-    Ok(())
+    // Relaunch rather than exit: on restart the app re-creates an empty
+    // SQLite database (migrations + default seed) and shows the
+    // first-run onboarding again, leaving the user in a running, freshly
+    // reset Cairn. `app.exit(0)` here was the bug behind "Delete
+    // everything killed the app" — it tore down the tray + popover and
+    // left no process. `restart()` returns `!`, so it is the tail.
+    log::info!("backup: deleted everything in {data_dir:?}; restarting");
+    app.restart();
 }
 
 async fn purge_calendar_secrets(pool: &SqlitePool) {

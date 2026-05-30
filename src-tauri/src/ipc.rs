@@ -545,6 +545,237 @@ pub async fn list_week(state: State<'_, AppState>) -> Result<Vec<WeekDayAgg>, St
     Ok(out)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportProjectSlice {
+    pub project_id: Option<String>,
+    pub seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportDayBucket {
+    pub date: String,
+    pub by_project: Vec<ReportProjectSlice>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSourceSplit {
+    pub rule: i64,
+    pub calendar: i64,
+    pub manual: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSummary {
+    pub total_seconds: i64,
+    pub prev_total_seconds: i64,
+    pub by_day: Vec<ReportDayBucket>,
+    pub by_project: Vec<ReportProjectSlice>,
+    pub by_source: ReportSourceSplit,
+}
+
+/// One entry reduced to what the report needs: project, signal source,
+/// and a concrete [start, end] (open entries are resolved to `now`
+/// before they reach the pure aggregator).
+#[derive(Debug, Clone)]
+struct ReportRow {
+    project_id: Option<String>,
+    source: String,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+}
+
+/// Local-date half-open window [start, end) for `range`, anchored on
+/// `anchor` (today, normally). Unknown ranges fall back to the week.
+fn report_window(range: &str, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
+    match range {
+        "day" => (anchor, anchor + Duration::days(1)),
+        "month" => {
+            let first = first_of_month(anchor);
+            (first, first_of_next_month(first))
+        }
+        _ => {
+            let monday = monday_of(anchor);
+            (monday, monday + Duration::days(7))
+        }
+    }
+}
+
+/// The window immediately preceding `report_window(range, anchor)` —
+/// the "vs last period" baseline.
+fn prev_report_window(range: &str, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
+    let (start, _) = report_window(range, anchor);
+    match range {
+        "day" => (start - Duration::days(1), start),
+        "month" => (first_of_month(start - Duration::days(1)), start),
+        _ => (start - Duration::days(7), start),
+    }
+}
+
+fn first_of_month(d: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(d.year(), d.month(), 1).expect("day 1 is valid")
+}
+
+fn first_of_next_month(first: NaiveDate) -> NaiveDate {
+    if first.month() == 12 {
+        NaiveDate::from_ymd_opt(first.year() + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(first.year(), first.month() + 1, 1)
+    }
+    .expect("first of next month is valid")
+}
+
+fn source_bucket<'a>(split: &'a mut ReportSourceSplit, source: &str) -> &'a mut i64 {
+    if source.starts_with("rule") {
+        &mut split.rule
+    } else if source == "calendar" {
+        &mut split.calendar
+    } else {
+        &mut split.manual
+    }
+}
+
+fn total_seconds(rows: &[ReportRow]) -> i64 {
+    rows.iter()
+        .map(|r| (r.end - r.start).num_seconds())
+        .filter(|s| *s > 0)
+        .sum()
+}
+
+/// Pure heart of `report_summary`: from the rows in [start, end) (open
+/// entries pre-resolved to `now`), produce the total, per-project
+/// rollup, one per-day bucket for every calendar day in the window (in
+/// order, empty days included), and the rule/calendar/manual split.
+fn aggregate_report(
+    rows: &[ReportRow],
+    start_day: NaiveDate,
+    end_day: NaiveDate,
+) -> (
+    i64,
+    Vec<ReportProjectSlice>,
+    Vec<ReportDayBucket>,
+    ReportSourceSplit,
+) {
+    use std::collections::BTreeMap;
+    let mut by_project: BTreeMap<Option<String>, i64> = BTreeMap::new();
+    let mut by_day: BTreeMap<NaiveDate, BTreeMap<Option<String>, i64>> = BTreeMap::new();
+    let mut by_source = ReportSourceSplit::default();
+    let mut total = 0i64;
+
+    for r in rows {
+        let secs = (r.end - r.start).num_seconds();
+        if secs <= 0 {
+            continue;
+        }
+        total += secs;
+        *by_project.entry(r.project_id.clone()).or_insert(0) += secs;
+        let date = r.start.with_timezone(&Local).date_naive();
+        *by_day
+            .entry(date)
+            .or_default()
+            .entry(r.project_id.clone())
+            .or_insert(0) += secs;
+        *source_bucket(&mut by_source, &r.source) += secs;
+    }
+
+    let by_project_vec = by_project
+        .into_iter()
+        .map(|(project_id, seconds)| ReportProjectSlice {
+            project_id,
+            seconds,
+        })
+        .collect();
+
+    let mut day_buckets = Vec::new();
+    let mut d = start_day;
+    while d < end_day {
+        let slices = by_day
+            .get(&d)
+            .map(|m| {
+                m.iter()
+                    .map(|(p, s)| ReportProjectSlice {
+                        project_id: p.clone(),
+                        seconds: *s,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        day_buckets.push(ReportDayBucket {
+            date: d.to_string(),
+            by_project: slices,
+        });
+        d += Duration::days(1);
+    }
+
+    (total, by_project_vec, day_buckets, by_source)
+}
+
+async fn fetch_report_rows(
+    pool: &sqlx::SqlitePool,
+    start_day: NaiveDate,
+    end_day: NaiveDate,
+    now: DateTime<Utc>,
+) -> Result<Vec<ReportRow>, String> {
+    let start_utc = local_midnight_utc(start_day);
+    let end_utc = local_midnight_utc(end_day);
+    let sqlrows = sqlx::query(
+        r#"
+        SELECT project_id, source, started_at, ended_at
+          FROM entries
+         WHERE started_at >= ?1 AND started_at < ?2
+        "#,
+    )
+    .bind(start_utc.to_rfc3339())
+    .bind(end_utc.to_rfc3339())
+    .fetch_all(pool)
+    .await
+    .map_err(err)?;
+
+    let mut rows = Vec::with_capacity(sqlrows.len());
+    for row in sqlrows {
+        let start = parse_ts(row.get::<String, _>("started_at"))?;
+        let end = match row.get::<Option<String>, _>("ended_at") {
+            Some(s) => parse_ts(s)?,
+            None => now,
+        };
+        rows.push(ReportRow {
+            project_id: row.get("project_id"),
+            source: row.get("source"),
+            start,
+            end,
+        });
+    }
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn report_summary(
+    state: State<'_, AppState>,
+    range: String,
+) -> Result<ReportSummary, String> {
+    let anchor = Local::now().date_naive();
+    let now = Utc::now();
+
+    let (start_day, end_day) = report_window(&range, anchor);
+    let (prev_start, prev_end) = prev_report_window(&range, anchor);
+
+    let cur_rows = fetch_report_rows(&state.db.pool, start_day, end_day, now).await?;
+    let prev_rows = fetch_report_rows(&state.db.pool, prev_start, prev_end, now).await?;
+
+    let (total, by_project, by_day, by_source) = aggregate_report(&cur_rows, start_day, end_day);
+
+    Ok(ReportSummary {
+        total_seconds: total,
+        prev_total_seconds: total_seconds(&prev_rows),
+        by_day,
+        by_project,
+        by_source,
+    })
+}
+
 fn monday_of(d: NaiveDate) -> NaiveDate {
     let offset = d.weekday().num_days_from_monday() as i64;
     d - Duration::days(offset)
@@ -1475,11 +1706,140 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 }
 
 #[cfg(test)]
+mod report_pure_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn row(project: Option<&str>, source: &str, ymdh: (i32, u32, u32, u32), dur: i64) -> ReportRow {
+        let s = Utc
+            .with_ymd_and_hms(ymdh.0, ymdh.1, ymdh.2, ymdh.3, 0, 0)
+            .unwrap();
+        ReportRow {
+            project_id: project.map(str::to_string),
+            source: source.to_string(),
+            start: s,
+            end: s + Duration::seconds(dur),
+        }
+    }
+
+    #[test]
+    fn report_window_day_week_month() {
+        let anchor = NaiveDate::from_ymd_opt(2026, 5, 30).unwrap(); // Saturday
+        assert_eq!(
+            report_window("day", anchor),
+            (anchor, NaiveDate::from_ymd_opt(2026, 5, 31).unwrap())
+        );
+        let (ws, we) = report_window("week", anchor);
+        assert_eq!(ws.weekday(), Weekday::Mon);
+        assert_eq!((we - ws).num_days(), 7);
+        assert_eq!(
+            report_window("month", anchor),
+            (
+                NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()
+            )
+        );
+        // Unknown range falls back to the current week (matches the
+        // command's lenient deserialization of the `range` arg).
+        assert_eq!(
+            report_window("bogus", anchor),
+            report_window("week", anchor)
+        );
+    }
+
+    #[test]
+    fn month_window_rolls_over_year_in_december() {
+        let dec = NaiveDate::from_ymd_opt(2026, 12, 15).unwrap();
+        assert_eq!(
+            report_window("month", dec),
+            (
+                NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn prev_window_precedes_current() {
+        let anchor = NaiveDate::from_ymd_opt(2026, 5, 30).unwrap();
+        let (cs, _) = report_window("day", anchor);
+        let (ps, pe) = prev_report_window("day", anchor);
+        assert_eq!(pe, cs);
+        assert_eq!(ps, cs - Duration::days(1));
+
+        let (ms, _) = report_window("month", anchor);
+        let (pms, pme) = prev_report_window("month", anchor);
+        assert_eq!(pme, ms);
+        assert_eq!(pms, NaiveDate::from_ymd_opt(2026, 4, 1).unwrap());
+    }
+
+    #[test]
+    fn aggregate_totals_projects_days_and_sources() {
+        let start_day = NaiveDate::from_ymd_opt(2026, 5, 25).unwrap(); // Monday
+        let end_day = start_day + Duration::days(7);
+        let rows = vec![
+            row(Some("a"), "manual", (2026, 5, 25, 9), 3600),
+            row(Some("a"), "rule:branch=x", (2026, 5, 26, 9), 1800),
+            row(Some("b"), "calendar", (2026, 5, 27, 9), 1200),
+            row(None, "manual", (2026, 5, 27, 11), 600),
+            row(Some("a"), "manual", (2026, 5, 30, 9), 0), // zero-length, ignored
+        ];
+        let (total, by_project, by_day, by_source) = aggregate_report(&rows, start_day, end_day);
+
+        assert_eq!(total, 3600 + 1800 + 1200 + 600);
+        // One bucket per calendar day in the window, tz-independent.
+        assert_eq!(by_day.len(), 7);
+        let a = by_project
+            .iter()
+            .find(|s| s.project_id.as_deref() == Some("a"))
+            .unwrap();
+        assert_eq!(a.seconds, 5400);
+        let none = by_project.iter().find(|s| s.project_id.is_none()).unwrap();
+        assert_eq!(none.seconds, 600);
+        assert_eq!(by_source.manual, 3600 + 600);
+        assert_eq!(by_source.rule, 1800);
+        assert_eq!(by_source.calendar, 1200);
+    }
+
+    #[test]
+    fn total_seconds_ignores_negative_spans() {
+        let s = Utc.with_ymd_and_hms(2026, 5, 25, 9, 0, 0).unwrap();
+        let rows = vec![
+            ReportRow {
+                project_id: None,
+                source: "manual".into(),
+                start: s,
+                end: s + Duration::seconds(60),
+            },
+            ReportRow {
+                project_id: None,
+                source: "manual".into(),
+                start: s,
+                end: s - Duration::seconds(10),
+            },
+        ];
+        assert_eq!(total_seconds(&rows), 60);
+    }
+}
+
+#[cfg(test)]
 #[cfg(not(target_os = "windows"))]
 mod tests {
     use super::*;
     use crate::test_support::mock_app_with_db;
     use tauri::Manager;
+
+    #[tokio::test]
+    async fn report_summary_on_fresh_db_is_zero_with_full_day_buckets() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let summary = report_summary(state, "week".into()).await.unwrap();
+        assert_eq!(summary.total_seconds, 0);
+        assert_eq!(summary.prev_total_seconds, 0);
+        assert_eq!(summary.by_day.len(), 7);
+        assert!(summary.by_project.is_empty());
+        assert_eq!(summary.by_source.manual, 0);
+    }
 
     #[tokio::test]
     async fn list_projects_returns_seeded_projects() {

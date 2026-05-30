@@ -157,9 +157,10 @@ export function useBackup(): BackupState {
       if (!confirmed) return;
       setStatus({ kind: "working", message: "Deleting…" });
       await deleteEverything();
-      // The app will exit before this banner renders, but keep the
-      // state coherent in case the exit is delayed.
-      setStatus({ kind: "done", message: "Data deleted. Cairn is quitting." });
+      // The backend relaunches the app (fresh empty DB + onboarding)
+      // before this banner renders, but keep the state coherent in case
+      // the restart is delayed.
+      setStatus({ kind: "done", message: "Data deleted. Cairn is restarting…" });
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
     }
