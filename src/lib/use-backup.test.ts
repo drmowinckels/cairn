@@ -209,6 +209,47 @@ describe("useBackup (inside Tauri)", () => {
     expect(result.current.status.kind).toBe("done");
   });
 
+  it("pins the popover around the delete confirmation, then unpins", async () => {
+    // The native ask() dialog steals focus and would otherwise blur-hide
+    // the popover (looked like a crash). deleteAllData must pin before
+    // the dialog and unpin after.
+    mockInvoke({ delete_everything: () => null });
+    const order: string[] = [];
+    invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "set_pinned") {
+        order.push(
+          `set_pinned:${(args as { pinned: boolean } | undefined)?.pinned}`,
+        );
+        return null;
+      }
+      if (cmd === "data_paths") return { dataDir: "/d", dbPath: "/d/x", pendingImport: null };
+      if (cmd === "list_data_files") return [];
+      if (cmd === "delete_everything") {
+        order.push("delete_everything");
+        return null;
+      }
+      return null;
+    });
+    askMock.mockImplementation(async () => {
+      order.push("ask");
+      return true;
+    });
+
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await act(async () => {
+      await result.current.deleteAllData();
+    });
+
+    // pin(true) → ask → pin(false) all happen before the delete invoke.
+    expect(order).toEqual([
+      "set_pinned:true",
+      "ask",
+      "set_pinned:false",
+      "delete_everything",
+    ]);
+  });
+
   it("importBackupFromFile stages the chosen file and refreshes paths", async () => {
     let staged = false;
     invokeMock.mockImplementation(async (cmd: string) => {

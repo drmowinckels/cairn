@@ -249,6 +249,7 @@ pub async fn export_csv(state: State<'_, AppState>, dest: String) -> Result<Stri
 
 #[tauri::command]
 pub async fn delete_everything(app: tauri::AppHandle) -> Result<(), String> {
+    log::info!("delete_everything: command invoked");
     let state = app.state::<AppState>();
     reset_all_data(state.inner()).await?;
     log::info!("backup: reset all data in place");
@@ -265,6 +266,10 @@ pub async fn delete_everything(app: tauri::AppHandle) -> Result<(), String> {
 /// `#[tauri::command]` (which needs a Wry `AppHandle`) so it is testable
 /// against a mock-runtime `AppState`.
 pub(crate) async fn reset_all_data(state: &AppState) -> Result<(), String> {
+    // Explicit start/end markers so a "delete crashed it" report can be
+    // diagnosed from the log alone — without these, the only trace was
+    // incidental sqlx DEBUG lines.
+    log::info!("reset_all_data: starting in-place wipe");
     // 1. Purge calendar-URL bearer secrets from the OS keychain *first* —
     //    once the `calendar_sources` rows are gone we can no longer
     //    enumerate which `cairn-calendar/<id>` entries to drop, and they'd
@@ -343,6 +348,7 @@ pub(crate) async fn reset_all_data(state: &AppState) -> Result<(), String> {
             let _ = std::fs::remove_file(&path);
         }
     }
+    log::info!("reset_all_data: in-place wipe complete; onboarding re-armed");
     Ok(())
 }
 
