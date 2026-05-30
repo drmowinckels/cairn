@@ -3770,6 +3770,77 @@ mod tests {
         assert!(status.discovery_roots.is_empty());
     }
 
+    #[test]
+    fn normalize_roots_trims_drops_blanks_and_dedupes() {
+        let out = normalize_roots(&[
+            "  ~/code  ".into(),
+            "".into(),
+            "   ".into(),
+            "~/code".into(),
+            "/srv/git".into(),
+        ]);
+        assert_eq!(out, vec!["~/code".to_string(), "/srv/git".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn discovery_roots_default_to_empty_then_roundtrip() {
+        let (_dir, _app, db) = mock_app_with_db().await;
+        // Unset → empty (caller treats as "use defaults").
+        assert!(load_discovery_roots(&db.pool).await.is_empty());
+
+        persist_discovery_roots(&db.pool, &["~/work".into(), "/opt/x".into()])
+            .await
+            .unwrap();
+        let loaded = load_discovery_roots(&db.pool).await;
+        assert_eq!(loaded, vec!["~/work".to_string(), "/opt/x".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn set_git_discovery_roots_persists_discovers_and_updates_status() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("proj");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+
+        let status = {
+            let state = app.state::<crate::AppState>();
+            set_git_discovery_roots(state, vec![root.clone(), "  ".into(), root.clone()])
+                .await
+                .unwrap()
+        };
+        assert_eq!(status.watched_count, 1);
+        assert_eq!(status.discovery_roots, vec![root.clone()]);
+
+        // Persisted, deduped, blanks dropped.
+        assert_eq!(load_discovery_roots(&db.pool).await, vec![root.clone()]);
+
+        // The cached status the UI reads now reflects the new roots.
+        let got = {
+            let state = app.state::<crate::AppState>();
+            get_git_watcher_status(state).unwrap()
+        };
+        assert_eq!(got.watched_count, 1);
+        assert_eq!(got.discovery_roots, vec![root]);
+    }
+
+    #[tokio::test]
+    async fn set_git_discovery_roots_empty_clears_override() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        persist_discovery_roots(&db.pool, &["/seeded".into()])
+            .await
+            .unwrap();
+        {
+            let state = app.state::<crate::AppState>();
+            set_git_discovery_roots(state, vec!["   ".into(), "".into()])
+                .await
+                .unwrap();
+        }
+        // Override cleared → load returns empty (defaults apply).
+        assert!(load_discovery_roots(&db.pool).await.is_empty());
+    }
+
     #[tokio::test]
     async fn browser_extension_status_is_disconnected_until_a_heartbeat_arrives() {
         let (_dir, app, _db) = mock_app_with_db().await;
@@ -4312,7 +4383,126 @@ pub async fn current_snapshot(
 /// an interior mutability primitive.
 #[tauri::command]
 pub fn get_git_watcher_status(state: State<'_, AppState>) -> Result<GitWatcherStatus, String> {
-    Ok(state.git_watcher_status.clone())
+    Ok(state
+        .git_watcher_status
+        .lock()
+        .map_err(|_| "git watcher status lock poisoned".to_string())?
+        .clone())
+}
+
+/// Read the user's configured git discovery roots (issue #7). Returns
+/// the persisted tilde-form roots, or the built-in defaults (in
+/// tilde-form) when the user hasn't configured any — so the editor
+/// always shows what the watcher is actually using.
+#[tauri::command]
+pub async fn get_git_discovery_roots(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let configured = load_discovery_roots(&state.db.pool).await;
+    if configured.is_empty() {
+        Ok(crate::signals::git_watcher::display_roots(
+            &crate::signals::git_watcher::default_discovery_roots(),
+        ))
+    } else {
+        Ok(configured)
+    }
+}
+
+/// Persist a new set of git discovery roots and re-arm the watcher
+/// over them (issue #7). Blank entries are dropped and duplicates
+/// collapsed (order preserved). An empty list clears the override, so
+/// the watcher falls back to the built-in defaults. The live watcher
+/// task is aborted and respawned against the freshly-discovered repos,
+/// and the cached status is rewritten so Settings → Integrations
+/// reflects the new roots immediately. Returns the updated status.
+///
+/// Caveat: the snapshot stream's repo-path list (used by
+/// `derive_ide_folder`'s longest-prefix fallback) is fixed at boot, so
+/// IDE-folder→repo resolution for *newly added* roots only takes full
+/// effect after the next launch. Branch detection for the new repos
+/// works immediately via the respawned watcher.
+#[tauri::command]
+pub async fn set_git_discovery_roots(
+    state: State<'_, AppState>,
+    roots: Vec<String>,
+) -> Result<GitWatcherStatus, String> {
+    let cleaned = normalize_roots(&roots);
+    persist_discovery_roots(&state.db.pool, &cleaned).await?;
+
+    let expanded = if cleaned.is_empty() {
+        crate::signals::git_watcher::default_discovery_roots()
+    } else {
+        crate::signals::git_watcher::expand_roots(&cleaned)
+    };
+    let repos = crate::signals::git_watcher::discover_repos(&expanded);
+    let status = crate::signals::git_watcher::build_status(&expanded, &repos);
+
+    // Abort the running watcher and respawn over the new repo set.
+    {
+        let mut guard = state
+            .git_watcher_handle
+            .lock()
+            .map_err(|_| "git watcher handle lock poisoned".to_string())?;
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+        let handle =
+            crate::signals::git_watcher::spawn_watcher_task(state.stream.event_sender(), repos);
+        *guard = Some(handle);
+    }
+
+    *state
+        .git_watcher_status
+        .lock()
+        .map_err(|_| "git watcher status lock poisoned".to_string())? = status.clone();
+
+    Ok(status)
+}
+
+/// Trim, drop blanks, and de-duplicate user-entered roots, preserving
+/// first-seen order. Pure helper so the cleanup is unit-testable
+/// independent of the DB.
+pub(crate) fn normalize_roots(roots: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in roots {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let owned = trimmed.to_string();
+        if !out.contains(&owned) {
+            out.push(owned);
+        }
+    }
+    out
+}
+
+/// Read the persisted discovery-roots JSON from `app_state`. Returns
+/// an empty vec when unset or unparseable (the caller treats empty as
+/// "use defaults").
+pub(crate) async fn load_discovery_roots(pool: &sqlx::SqlitePool) -> Vec<String> {
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT git_discovery_roots FROM app_state WHERE singleton = 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    raw.and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Write the discovery-roots override to `app_state` as a JSON array.
+/// An empty slice persists `[]`, which `load_discovery_roots` reads
+/// back as "no override" → defaults.
+pub(crate) async fn persist_discovery_roots(
+    pool: &sqlx::SqlitePool,
+    roots: &[String],
+) -> Result<(), String> {
+    let json = serde_json::to_string(roots).map_err(err)?;
+    sqlx::query("UPDATE app_state SET git_discovery_roots = ?1 WHERE singleton = 1")
+        .bind(json)
+        .execute(pool)
+        .await
+        .map_err(err)?;
+    Ok(())
 }
 
 /// Settings → Integrations card status for the browser extension.

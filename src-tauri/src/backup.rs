@@ -274,12 +274,16 @@ pub(crate) async fn reset_all_data(state: &AppState) -> Result<(), String> {
     // 2. Wipe every user table.
     wipe_user_tables(&state.db.pool).await?;
 
-    // 3. Re-arm onboarding (the marker row is UPDATEd, never deleted —
-    //    every onboarding command targets `WHERE singleton = 1`).
-    sqlx::query("UPDATE app_state SET completed_at = NULL WHERE singleton = 1")
-        .execute(&state.db.pool)
-        .await
-        .map_err(err)?;
+    // 3. Re-arm onboarding and clear the git discovery-roots override
+    //    (the marker row is UPDATEd, never deleted — every onboarding
+    //    command targets `WHERE singleton = 1`). A wiped install boots
+    //    back on the built-in default roots.
+    sqlx::query(
+        "UPDATE app_state SET completed_at = NULL, git_discovery_roots = NULL WHERE singleton = 1",
+    )
+    .execute(&state.db.pool)
+    .await
+    .map_err(err)?;
 
     // 4. Re-seed default clients/projects for fresh-install parity.
     crate::db::seed_if_empty(&state.db.pool)
@@ -299,6 +303,25 @@ pub(crate) async fn reset_all_data(state: &AppState) -> Result<(), String> {
     }
     if let Ok(mut snoozer) = state.snoozer.lock() {
         *snoozer = crate::rules::Snoozer::default();
+    }
+
+    // 5b. Re-arm the git watcher over the default roots (the override
+    //     was just cleared) so the running session matches a fresh
+    //     install rather than continuing to watch the user's old roots.
+    let default_roots = crate::signals::git_watcher::default_discovery_roots();
+    let default_repos = crate::signals::git_watcher::discover_repos(&default_roots);
+    let default_status = crate::signals::git_watcher::build_status(&default_roots, &default_repos);
+    if let Ok(mut guard) = state.git_watcher_handle.lock() {
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+        *guard = Some(crate::signals::git_watcher::spawn_watcher_task(
+            state.stream.event_sender(),
+            default_repos,
+        ));
+    }
+    if let Ok(mut guard) = state.git_watcher_status.lock() {
+        *guard = default_status;
     }
 
     // 6. Remove on-disk user-data copies that live beside the DB: a staged
