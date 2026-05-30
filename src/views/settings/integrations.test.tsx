@@ -249,6 +249,65 @@ describe("GitStatusLine", () => {
     );
   });
 
+  it("reset-to-defaults persists an empty override and reloads the defaults", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/work"],
+      watchedCount: 4,
+    });
+    // First call (on mount) → the configured root; second call (after
+    // reset) → the reloaded built-in defaults.
+    getGitDiscoveryRoots
+      .mockResolvedValueOnce(["~/work"])
+      .mockResolvedValueOnce(["~/code"]);
+    setGitDiscoveryRoots.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 1,
+    });
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Configure roots…/ }),
+    );
+    await screen.findByText("~/work");
+    fireEvent.click(screen.getByRole("button", { name: /reset to defaults/i }));
+
+    await waitFor(() =>
+      expect(setGitDiscoveryRoots).toHaveBeenCalledWith([]),
+    );
+    // The reloaded defaults render in the list.
+    await waitFor(() => expect(screen.getByText("~/code")).toBeTruthy());
+  });
+
+  it("surfaces an error when saving the roots fails", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 2,
+    });
+    getGitDiscoveryRoots.mockResolvedValue(["~/code"]);
+    setGitDiscoveryRoots.mockRejectedValue("/ resolves to the filesystem root");
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Configure roots…/ }),
+    );
+    await screen.findByText("~/code");
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/filesystem root/i),
+    );
+  });
+
   it("removes a root in the configurator before saving", async () => {
     const { fireEvent } = await import("@testing-library/react");
     getGitWatcherStatus.mockResolvedValue({

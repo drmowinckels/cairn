@@ -311,17 +311,24 @@ pub(crate) async fn reset_all_data(state: &AppState) -> Result<(), String> {
     let default_roots = crate::signals::git_watcher::default_discovery_roots();
     let default_repos = crate::signals::git_watcher::discover_repos(&default_roots);
     let default_status = crate::signals::git_watcher::build_status(&default_roots, &default_repos);
-    if let Ok(mut guard) = state.git_watcher_handle.lock() {
-        if let Some(handle) = guard.take() {
-            handle.abort();
+    match state.git_watcher_handle.lock() {
+        Ok(mut guard) => {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+            *guard = Some(crate::signals::git_watcher::spawn_watcher_task(
+                state.stream.event_sender(),
+                default_repos,
+            ));
         }
-        *guard = Some(crate::signals::git_watcher::spawn_watcher_task(
-            state.stream.event_sender(),
-            default_repos,
-        ));
+        Err(_) => log::warn!(
+            "reset_all_data: git watcher handle lock poisoned; \
+             old watcher keeps running until next launch"
+        ),
     }
-    if let Ok(mut guard) = state.git_watcher_status.lock() {
-        *guard = default_status;
+    match state.git_watcher_status.lock() {
+        Ok(mut guard) => *guard = default_status,
+        Err(_) => log::warn!("reset_all_data: git watcher status lock poisoned; status stale"),
     }
 
     // 6. Remove on-disk user-data copies that live beside the DB: a staged

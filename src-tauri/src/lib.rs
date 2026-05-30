@@ -77,6 +77,12 @@ pub struct AppState {
     /// `set_git_discovery_roots` aborts the running watcher and spawns a
     /// fresh one over the new roots, swapping the handle here.
     pub git_watcher_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Serializes `set_git_discovery_roots` so two overlapping calls
+    /// (double-click Save, or Save racing a `reset_all_data` re-arm)
+    /// can't interleave the discover → abort → respawn → persist
+    /// sequence and leak an un-abortable watcher. Same pattern as
+    /// `rules_mutator` / `exclusions_mutator`.
+    pub git_roots_mutator: tokio::sync::Mutex<()>,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
     /// here on every push from the local-IPC socket collector in
     /// `signals::browser`; the IPC handler `browser_extension_status`
@@ -402,6 +408,7 @@ pub fn run() {
                 rules_mutator: tokio::sync::Mutex::new(()),
                 git_watcher_status: std::sync::Mutex::new(git_watcher_status),
                 git_watcher_handle: std::sync::Mutex::new(Some(git_watcher_handle)),
+                git_roots_mutator: tokio::sync::Mutex::new(()),
                 browser_extension: browser_extension_state,
             });
 

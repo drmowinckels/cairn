@@ -3782,6 +3782,62 @@ mod tests {
         assert_eq!(out, vec!["~/code".to_string(), "/srv/git".to_string()]);
     }
 
+    #[test]
+    fn validate_roots_accepts_ordinary_paths_and_empty() {
+        assert!(validate_roots(&[]).is_ok());
+        assert!(validate_roots(&["~/code".into(), "/srv/git".into()]).is_ok());
+    }
+
+    #[test]
+    fn validate_roots_rejects_filesystem_root() {
+        assert!(validate_roots(&["/".into()]).is_err());
+    }
+
+    #[test]
+    fn validate_roots_rejects_bare_home() {
+        // Only meaningful when a home dir resolves in the test env.
+        if dirs::home_dir().is_some() {
+            assert!(validate_roots(&["~".into()]).is_err());
+        }
+    }
+
+    #[test]
+    fn validate_roots_rejects_too_many() {
+        let many: Vec<String> = (0..MAX_DISCOVERY_ROOTS + 1)
+            .map(|i| format!("/p/{i}"))
+            .collect();
+        assert!(validate_roots(&many).is_err());
+    }
+
+    #[tokio::test]
+    async fn get_git_discovery_roots_falls_back_to_defaults_when_unset() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let configured = {
+            let state = app.state::<crate::AppState>();
+            get_git_discovery_roots(state).await.unwrap()
+        };
+        // With no override persisted, the command returns the built-in
+        // defaults in display form — which equals display_roots of
+        // default_discovery_roots (possibly empty on a CI box with no
+        // conventional dev dirs, but never an error).
+        let expected = crate::signals::git_watcher::display_roots(
+            &crate::signals::git_watcher::default_discovery_roots(),
+        );
+        assert_eq!(configured, expected);
+    }
+
+    #[tokio::test]
+    async fn set_git_discovery_roots_rejects_filesystem_root_without_persisting() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let result = {
+            let state = app.state::<crate::AppState>();
+            set_git_discovery_roots(state, vec!["/".into()]).await
+        };
+        assert!(result.is_err());
+        // Nothing persisted (validation runs before any write).
+        assert!(load_discovery_roots(&db.pool).await.is_empty());
+    }
+
     #[tokio::test]
     async fn discovery_roots_default_to_empty_then_roundtrip() {
         let (_dir, _app, db) = mock_app_with_db().await;
@@ -4424,37 +4480,90 @@ pub async fn set_git_discovery_roots(
     state: State<'_, AppState>,
     roots: Vec<String>,
 ) -> Result<GitWatcherStatus, String> {
+    // Serialize the whole discover → respawn → persist sequence so two
+    // overlapping calls can't interleave and leak an un-abortable
+    // watcher (same pattern as rules_mutator / exclusions_mutator).
+    let _guard = state.git_roots_mutator.lock().await;
+
     let cleaned = normalize_roots(&roots);
-    persist_discovery_roots(&state.db.pool, &cleaned).await?;
+    validate_roots(&cleaned)?;
 
     let expanded = if cleaned.is_empty() {
         crate::signals::git_watcher::default_discovery_roots()
     } else {
         crate::signals::git_watcher::expand_roots(&cleaned)
     };
-    let repos = crate::signals::git_watcher::discover_repos(&expanded);
+    // Discovery is a synchronous recursive filesystem walk — run it on
+    // the blocking pool so a deep/slow root can't stall the async
+    // runtime worker (and with it, unrelated IPC).
+    let walk_roots = expanded.clone();
+    let repos = tauri::async_runtime::spawn_blocking(move || {
+        crate::signals::git_watcher::discover_repos(&walk_roots)
+    })
+    .await
+    .map_err(|e| format!("discovery task failed: {e}"))?;
     let status = crate::signals::git_watcher::build_status(&expanded, &repos);
 
     // Abort the running watcher and respawn over the new repo set.
     {
-        let mut guard = state
+        let mut handle_guard = state
             .git_watcher_handle
             .lock()
             .map_err(|_| "git watcher handle lock poisoned".to_string())?;
-        if let Some(handle) = guard.take() {
+        if let Some(handle) = handle_guard.take() {
             handle.abort();
         }
         let handle =
             crate::signals::git_watcher::spawn_watcher_task(state.stream.event_sender(), repos);
-        *guard = Some(handle);
+        *handle_guard = Some(handle);
     }
-
     *state
         .git_watcher_status
         .lock()
         .map_err(|_| "git watcher status lock poisoned".to_string())? = status.clone();
 
+    // Persist LAST: the live session is already re-armed, so a DB write
+    // failure leaves the running watcher correct (it reverts to the old
+    // roots only on the next launch) rather than the DB getting ahead of
+    // the live state.
+    persist_discovery_roots(&state.db.pool, &cleaned).await?;
+
     Ok(status)
+}
+
+/// Maximum number of discovery roots a user may configure — a guard
+/// against a pathological config (or crafted import) that would make
+/// the watcher register an unbounded number of OS subscriptions.
+pub(crate) const MAX_DISCOVERY_ROOTS: usize = 64;
+
+/// Reject pathological roots before they reach the filesystem walk:
+/// too many entries, or a root that expands to the filesystem root or
+/// the bare home directory (either would walk a huge slice of the disk
+/// to `MAX_DISCOVERY_DEPTH` and register a flood of watches).
+pub(crate) fn validate_roots(cleaned: &[String]) -> Result<(), String> {
+    if cleaned.len() > MAX_DISCOVERY_ROOTS {
+        return Err(format!(
+            "Too many discovery roots ({}); the maximum is {MAX_DISCOVERY_ROOTS}.",
+            cleaned.len()
+        ));
+    }
+    let home = dirs::home_dir();
+    for raw in cleaned {
+        let expanded = crate::signals::git_watcher::expand_root(raw);
+        if expanded.parent().is_none() {
+            return Err(format!(
+                "\u{201c}{raw}\u{201d} resolves to the filesystem root \u{2014} pick a project folder instead."
+            ));
+        }
+        if let Some(home) = home.as_deref() {
+            if expanded == home {
+                return Err(format!(
+                    "\u{201c}{raw}\u{201d} is your entire home folder \u{2014} pick a project subfolder instead."
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Trim, drop blanks, and de-duplicate user-entered roots, preserving
@@ -4485,8 +4594,18 @@ pub(crate) async fn load_discovery_roots(pool: &sqlx::SqlitePool) -> Vec<String>
             .await
             .ok()
             .flatten();
-    raw.and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .unwrap_or_default()
+    match raw {
+        None => Vec::new(),
+        Some(s) => match serde_json::from_str::<Vec<String>>(&s) {
+            Ok(roots) => roots,
+            Err(e) => {
+                // Corrupt / hand-edited value: degrade to defaults but
+                // make the corruption diagnosable rather than silent.
+                log::warn!("git_watcher: ignoring unparseable git_discovery_roots ({e})");
+                Vec::new()
+            }
+        },
+    }
 }
 
 /// Write the discovery-roots override to `app_state` as a JSON array.
