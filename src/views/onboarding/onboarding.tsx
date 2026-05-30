@@ -13,7 +13,8 @@ import {
   PRIVACY_REPO_LABEL,
   PRIVACY_REPO_URL,
 } from "../../lib/privacy-copy";
-import { inTauri, saveProject } from "../../lib/ipc";
+import { saveProject } from "../../lib/ipc";
+import { useAutostart } from "../../lib/use-autostart";
 
 /**
  * Linear state machine for first-run onboarding (issue #31).
@@ -319,56 +320,13 @@ function WelcomeStep() {
 }
 
 function PermissionsStep() {
-  const [autostart, setAutostart] = useState(false);
-  const [autostartError, setAutostartError] = useState<string | null>(null);
-  const [autostartBusy, setAutostartBusy] = useState(false);
-  const [autostartReady, setAutostartReady] = useState(false);
-
-  // Probe the plugin once on mount; outside Tauri the dynamic import
-  // simply returns the no-op shape (the plugin's own dev fallback).
-  useEffect(() => {
-    let cancelled = false;
-    if (!inTauri) {
-      setAutostartReady(true);
-      return () => {
-        cancelled = true;
-      };
-    }
-    void (async () => {
-      try {
-        const mod = await import("@tauri-apps/plugin-autostart");
-        if (cancelled) return;
-        setAutostart(await mod.isEnabled());
-      } catch (e) {
-        if (!cancelled) setAutostartError(String(e));
-      } finally {
-        if (!cancelled) setAutostartReady(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const toggleAutostart = useCallback(
-    async (next: boolean) => {
-      setAutostartBusy(true);
-      setAutostartError(null);
-      try {
-        if (inTauri) {
-          const mod = await import("@tauri-apps/plugin-autostart");
-          if (next) await mod.enable();
-          else await mod.disable();
-        }
-        setAutostart(next);
-      } catch (e) {
-        setAutostartError(String(e));
-      } finally {
-        setAutostartBusy(false);
-      }
-    },
-    [],
-  );
+  const {
+    enabled: autostart,
+    busy: autostartBusy,
+    error: autostartError,
+    ready: autostartReady,
+    toggle: toggleAutostart,
+  } = useAutostart();
 
   return (
     <>

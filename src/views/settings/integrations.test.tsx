@@ -5,6 +5,15 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
 }));
 
+const autostartIsEnabled = vi.fn().mockResolvedValue(false);
+const autostartEnable = vi.fn().mockResolvedValue(undefined);
+const autostartDisable = vi.fn().mockResolvedValue(undefined);
+vi.mock("@tauri-apps/plugin-autostart", () => ({
+  isEnabled: (...args: unknown[]) => autostartIsEnabled(...args),
+  enable: (...args: unknown[]) => autostartEnable(...args),
+  disable: (...args: unknown[]) => autostartDisable(...args),
+}));
+
 const listCalendarSources = vi.fn();
 const getGitWatcherStatus = vi.fn();
 const browserExtensionStatus = vi.fn();
@@ -24,9 +33,11 @@ vi.mock("../../lib/ipc", async () => {
 });
 
 import {
+  AutostartStatusLine,
   BrowserStatusLine,
   CalendarStatusLine,
   GitStatusLine,
+  IntegrationsCard,
 } from "./integrations";
 import { formatRelativeTime } from "../../lib/relative-time";
 
@@ -267,6 +278,89 @@ describe("BrowserStatusLine", () => {
     await waitFor(() => screen.getByText("Not installed"));
     expect(container.querySelector('[data-integration="browser"]'))
       .toMatchSnapshot();
+  });
+});
+
+describe("AutostartStatusLine", () => {
+  beforeEach(() => {
+    autostartIsEnabled.mockReset().mockResolvedValue(false);
+    autostartEnable.mockReset().mockResolvedValue(undefined);
+    autostartDisable.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("renders a platform-correct label and reflects the probed state", async () => {
+    autostartIsEnabled.mockResolvedValue(true);
+    render(
+      <ul>
+        <AutostartStatusLine />
+      </ul>,
+    );
+    // The label is platform-derived; the switch must reach the on state
+    // once the plugin probe resolves.
+    await waitFor(() =>
+      expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
+        "true",
+      ),
+    );
+    expect(screen.getByText("On")).toBeTruthy();
+  });
+
+  it("enables autostart when the off switch is clicked", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    render(
+      <ul>
+        <AutostartStatusLine />
+      </ul>,
+    );
+    const sw = screen.getByRole("switch");
+    await waitFor(() => expect(sw.hasAttribute("disabled")).toBe(false));
+    await user.click(sw);
+    await waitFor(() => expect(autostartEnable).toHaveBeenCalledOnce());
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("surfaces a probe failure in the status line", async () => {
+    autostartIsEnabled.mockRejectedValue(new Error("registry denied"));
+    render(
+      <ul>
+        <AutostartStatusLine />
+      </ul>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Toggle failed/)).toBeTruthy(),
+    );
+    expect(screen.getByText(/registry denied/)).toBeTruthy();
+  });
+});
+
+describe("IntegrationsCard", () => {
+  beforeEach(() => {
+    listCalendarSources.mockResolvedValue([]);
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 0,
+    });
+    browserExtensionStatus.mockResolvedValue({
+      connected: false,
+      lastSeen: null,
+      browserLabel: null,
+    });
+    autostartIsEnabled.mockReset().mockResolvedValue(false);
+  });
+
+  it("composes all four integration rows", async () => {
+    const { container } = render(<IntegrationsCard />);
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-integration="autostart"]'),
+      ).toBeTruthy(),
+    );
+    for (const id of ["calendar", "git", "browser", "autostart"]) {
+      expect(
+        container.querySelector(`[data-integration="${id}"]`),
+      ).toBeTruthy();
+    }
   });
 });
 
