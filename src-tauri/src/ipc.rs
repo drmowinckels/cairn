@@ -993,7 +993,7 @@ pub async fn reorder_rules(state: State<'_, AppState>, ids: Vec<String>) -> Resu
 /// The DB write that triggered the reload has already succeeded;
 /// the cache lag converges as soon as the next mutator (or app
 /// restart) loads cleanly.
-async fn reload_rules(state: &State<'_, AppState>) {
+pub(crate) async fn reload_rules(state: &State<'_, AppState>) {
     let fresh = match crate::signals::fanout::load_engine_rules(&state.db.pool).await {
         Ok(rules) => rules,
         Err(e) => {
@@ -1153,7 +1153,7 @@ pub async fn delete_exclusion(state: State<'_, AppState>, id: String) -> Result<
 /// Reload the in-memory exclusion matcher from the DB. Called after
 /// every `save_exclusion` / `delete_exclusion` so the snapshot
 /// stream driver sees the new state on the very next event.
-async fn reload_exclusions(state: &State<'_, AppState>) {
+pub(crate) async fn reload_exclusions(state: &State<'_, AppState>) {
     let fresh = crate::signals::exclusions::ExclusionMatcher::load(&state.db.pool).await;
     match state.exclusions.write() {
         Ok(mut guard) => *guard = fresh,

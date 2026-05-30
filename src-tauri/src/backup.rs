@@ -22,7 +22,6 @@ use crate::AppState;
 pub const PENDING_SUFFIX: &str = ".pending";
 pub const BACKUP_SUFFIX: &str = ".bak";
 pub const DEBUG_SIGNALS_FILE: &str = "debug-signals.ndjson";
-const SQLITE_SIDECARS: [&str; 3] = ["-journal", "-wal", "-shm"];
 
 /// Names the user is allowed to see under `data_dir` when they click
 /// "View what's stored". Issue #24 fixes this set: the live DB and its
@@ -183,28 +182,6 @@ pub async fn export_csv_to(pool: &SqlitePool, dest: &Path) -> Result<(), String>
     Ok(())
 }
 
-/// Delete the live DB plus any sidecars, staged import, and backup.
-/// The pool is dropped first by the caller.
-pub fn nuke_data_files(data_dir: &Path) -> std::io::Result<()> {
-    let live = db_path(data_dir);
-    let candidates = std::iter::once(live.clone())
-        .chain(SQLITE_SIDECARS.iter().map(|s| with_suffix(&live, s)))
-        .chain(std::iter::once(pending_import_path(data_dir)))
-        .chain(std::iter::once(backup_path(data_dir)));
-    for path in candidates {
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-        }
-    }
-    Ok(())
-}
-
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut s = path.as_os_str().to_owned();
-    s.push(suffix);
-    PathBuf::from(s)
-}
-
 /// Inspect `data_dir` and return metadata (no content reads) for every
 /// known-listable file that currently exists, in the canonical order
 /// declared by `LISTABLE_FILES`. Issue #24. Missing files are simply
@@ -272,29 +249,107 @@ pub async fn export_csv(state: State<'_, AppState>, dest: String) -> Result<Stri
 
 #[tauri::command]
 pub async fn delete_everything(app: tauri::AppHandle) -> Result<(), String> {
-    // Wipe every calendar-URL bearer secret from the OS keychain
-    // *before* the SQLite file goes away. Without this, `cairn-calendar/<id>`
-    // entries would orphan in the keychain holding the full
-    // subscription URL (including its token). Anyone with access to
-    // the user's keychain login profile — a shared laptop's next
-    // user, IT, restored Time Machine backup, etc. — could read the
-    // user's calendar in perpetuity. Best-effort: log on failure but
-    // continue with the wipe.
-    {
-        let state = app.state::<AppState>();
-        purge_calendar_secrets(&state.db.pool).await;
-        state.db.pool.close().await;
+    let state = app.state::<AppState>();
+    reset_all_data(state.inner()).await?;
+    log::info!("backup: reset all data in place");
+    Ok(())
+}
+
+/// Wipe every user record and return the app to a fresh-install state,
+/// IN PLACE on the live pool — no file delete, no exit, no restart.
+///
+/// `app.exit(0)` tore the app down ("delete crashed it"); `app.restart()`
+/// races the single-instance socket on relaunch and aborts in
+/// `did_finish_launching`. Wiping rows keeps the tray + popover alive and
+/// the pool valid, so this is the safe reset path. Split out from the
+/// `#[tauri::command]` (which needs a Wry `AppHandle`) so it is testable
+/// against a mock-runtime `AppState`.
+pub(crate) async fn reset_all_data(state: &AppState) -> Result<(), String> {
+    // 1. Purge calendar-URL bearer secrets from the OS keychain *first* —
+    //    once the `calendar_sources` rows are gone we can no longer
+    //    enumerate which `cairn-calendar/<id>` entries to drop, and they'd
+    //    orphan holding the full subscription URL + token.
+    purge_calendar_secrets(&state.db.pool).await;
+
+    // 2. Wipe every user table.
+    wipe_user_tables(&state.db.pool).await?;
+
+    // 3. Re-arm onboarding (the marker row is UPDATEd, never deleted —
+    //    every onboarding command targets `WHERE singleton = 1`).
+    sqlx::query("UPDATE app_state SET completed_at = NULL WHERE singleton = 1")
+        .execute(&state.db.pool)
+        .await
+        .map_err(err)?;
+
+    // 4. Re-seed default clients/projects for fresh-install parity.
+    crate::db::seed_if_empty(&state.db.pool)
+        .await
+        .map_err(err)?;
+
+    // 5. Reload the in-memory caches so the running session reflects the
+    //    wiped + reseeded DB rather than stale rules/exclusions/snoozes.
+    let fresh_exclusions = crate::signals::exclusions::ExclusionMatcher::load(&state.db.pool).await;
+    if let Ok(mut guard) = state.exclusions.write() {
+        *guard = fresh_exclusions;
     }
-    let data_dir = app.path().app_data_dir().map_err(err)?;
-    nuke_data_files(&data_dir).map_err(err)?;
-    // Relaunch rather than exit: on restart the app re-creates an empty
-    // SQLite database (migrations + default seed) and shows the
-    // first-run onboarding again, leaving the user in a running, freshly
-    // reset Cairn. `app.exit(0)` here was the bug behind "Delete
-    // everything killed the app" — it tore down the tray + popover and
-    // left no process. `restart()` returns `!`, so it is the tail.
-    log::info!("backup: deleted everything in {data_dir:?}; restarting");
-    app.restart();
+    if let Ok(fresh_rules) = crate::signals::fanout::load_engine_rules(&state.db.pool).await {
+        if let Ok(mut guard) = state.rules_cache.write() {
+            *guard = fresh_rules;
+        }
+    }
+    if let Ok(mut snoozer) = state.snoozer.lock() {
+        *snoozer = crate::rules::Snoozer::default();
+    }
+
+    // 6. Remove on-disk user-data copies that live beside the DB: a staged
+    //    restore, the rotation backup, and the debug capture log. The live
+    //    DB stays — its rows were wiped in place above.
+    for path in [
+        pending_import_path(&state.data_dir),
+        backup_path(&state.data_dir),
+        state.data_dir.join(DEBUG_SIGNALS_FILE),
+    ] {
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    Ok(())
+}
+
+/// Delete every row from the user tables, leaving the schema, the
+/// migration ledger, and the `app_state` onboarding marker intact.
+/// Foreign-key enforcement is disabled for the duration so deletion
+/// order is irrelevant; the PRAGMA is connection-scoped, so every
+/// statement runs on a single acquired connection.
+async fn wipe_user_tables(pool: &SqlitePool) -> Result<(), String> {
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master \
+         WHERE type = 'table' \
+           AND name NOT LIKE 'sqlite_%' \
+           AND name NOT IN ('_sqlx_migrations', 'app_state')",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(err)?;
+
+    let mut conn = pool.acquire().await.map_err(err)?;
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    for table in &names {
+        // Names come from sqlite_master, never user input; DELETE can't
+        // bind an identifier, so interpolation is the only option.
+        sqlx::query(&format!("DELETE FROM \"{table}\""))
+            .execute(&mut *conn)
+            .await
+            .map_err(err)?;
+    }
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    Ok(())
 }
 
 async fn purge_calendar_secrets(pool: &SqlitePool) {
@@ -491,27 +546,67 @@ mod tests {
         assert!(names.contains(&"cairn.sqlite.bak"));
     }
 
-    #[test]
-    fn nuke_removes_db_and_sidecars() {
-        let dir = tempfile::tempdir().unwrap();
-        let live = db_path(dir.path());
-        for path in [
-            live.clone(),
-            with_suffix(&live, "-wal"),
-            with_suffix(&live, "-shm"),
-            with_suffix(&live, "-journal"),
-            pending_import_path(dir.path()),
-            backup_path(dir.path()),
-        ] {
-            std::fs::write(&path, b"x").unwrap();
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn reset_all_data_wipes_in_place_reseeds_and_rearms_onboarding() {
+        use tauri::Manager;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        let pool = &state.db.pool;
+
+        insert_entry(pool, "to be deleted").await;
+        sqlx::query("INSERT INTO exclusions (id, kind, value) VALUES ('e1', 'app', 'Secret')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE app_state SET completed_at = '2026-01-01T00:00:00Z' WHERE singleton = 1",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let entries: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(entries, 1, "precondition: an entry exists");
+
+        // A stale rotation backup beside the DB must be removed too.
+        let bak = backup_path(&state.data_dir);
+        std::fs::write(&bak, b"old data").unwrap();
+
+        reset_all_data(state.inner()).await.unwrap();
+
+        assert!(!bak.exists(), "rotation backup should be deleted");
+
+        // User rows wiped.
+        for table in ["entries", "exclusions"] {
+            let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(n, 0, "{table} should be empty after reset");
         }
-        nuke_data_files(dir.path()).unwrap();
-        assert!(!live.exists());
-        assert!(!with_suffix(&live, "-wal").exists());
-        assert!(!with_suffix(&live, "-shm").exists());
-        assert!(!with_suffix(&live, "-journal").exists());
-        assert!(!pending_import_path(dir.path()).exists());
-        assert!(!backup_path(dir.path()).exists());
+        // Onboarding re-armed.
+        let completed: Option<String> =
+            sqlx::query_scalar("SELECT completed_at FROM app_state WHERE singleton = 1")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert!(completed.is_none(), "onboarding must be re-armed");
+        // Defaults reseeded (fresh-install parity).
+        let projects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert!(projects > 0, "default projects should be reseeded");
+        // Pool still usable — no exit/close/restart.
+        let one: i64 = sqlx::query_scalar("SELECT 1")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(one, 1);
     }
 
     async fn insert_entry(pool: &SqlitePool, description: &str) -> String {

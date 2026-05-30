@@ -157,10 +157,15 @@ export function useBackup(): BackupState {
       if (!confirmed) return;
       setStatus({ kind: "working", message: "Deleting…" });
       await deleteEverything();
-      // The backend relaunches the app (fresh empty DB + onboarding)
-      // before this banner renders, but keep the state coherent in case
-      // the restart is delayed.
-      setStatus({ kind: "done", message: "Data deleted. Cairn is restarting…" });
+      // The backend wiped + reseeded the DB in place (no exit/restart —
+      // those crashed the app). Reload the webview so every view
+      // refetches the empty state and onboarding re-arms.
+      setStatus({ kind: "done", message: "All data deleted." });
+      try {
+        window.location?.reload?.();
+      } catch {
+        /* non-browser / happy-dom: navigation not implemented — ignore */
+      }
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
     }
