@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
 import { useBackup } from "../../lib/use-backup";
+import { useExclusions, guessExclusionKind } from "../../lib/use-exclusions";
 import { SHORTCUTS, emitToast } from "../../lib/shortcuts";
 import { useAnnounce } from "../../lib/use-announce";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
@@ -266,43 +267,7 @@ export function SettingsView({
           Cairn won't observe these apps, URLs, or windows — not even to count
           idle time.
         </p>
-        <ul className="excl-list">
-          <li className="excl-row">
-            <Icon name="lock" size={12} />
-            <code>1Password</code>
-            <span className="excl-kind">app</span>
-            <button className="excl-x" aria-label="Remove">
-              <Icon name="x" size={11} />
-            </button>
-          </li>
-          <li className="excl-row">
-            <Icon name="lock" size={12} />
-            <code>*.bank.com</code>
-            <span className="excl-kind">domain</span>
-            <button className="excl-x" aria-label="Remove">
-              <Icon name="x" size={11} />
-            </button>
-          </li>
-          <li className="excl-row">
-            <Icon name="lock" size={12} />
-            <code>Messages</code>
-            <span className="excl-kind">app</span>
-            <button className="excl-x" aria-label="Remove">
-              <Icon name="x" size={11} />
-            </button>
-          </li>
-          <li className="excl-row excl-add">
-            <Icon name="plus" size={12} />
-            <input
-              placeholder="Add an app, domain, or window title pattern…"
-              aria-label="Add exclusion"
-            />
-          </li>
-        </ul>
-        <label className="settings-check">
-          <input type="checkbox" defaultChecked />
-          <span>Pause tracking on private/incognito browser windows</span>
-        </label>
+        <ExclusionsSection />
       </section>
 
       <section className="settings-block" data-section="accessibility">
@@ -630,5 +595,82 @@ function Toggle({ on, onChange, label }: ToggleProps) {
     >
       <span className="tgl-dot" />
     </button>
+  );
+}
+
+const INCOGNITO_PREF_KEY = "cairn:pause-on-incognito:v1";
+
+/**
+ * The "Never track these" list, wired to the exclusion commands
+ * (list/save/delete). The add field infers the kind from the input
+ * (see `guessExclusionKind`). The incognito toggle has no backend yet —
+ * the browser extension will read this preference — so it persists to
+ * localStorage rather than the DB.
+ */
+function ExclusionsSection() {
+  const excl = useExclusions();
+  const [draft, setDraft] = useState("");
+  const [pauseIncognito, setPauseIncognito] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(INCOGNITO_PREF_KEY) !== "false";
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(INCOGNITO_PREF_KEY, String(pauseIncognito));
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [pauseIncognito]);
+
+  const submit = () => {
+    const value = draft.trim();
+    if (!value) return;
+    void excl.add(guessExclusionKind(value), value).then(() => setDraft(""));
+  };
+
+  return (
+    <>
+      <ul className="excl-list">
+        {excl.exclusions.map((e) => (
+          <li className="excl-row" key={e.id}>
+            <Icon name="lock" size={12} />
+            <code>{e.value}</code>
+            <span className="excl-kind">{e.kind}</span>
+            <button
+              className="excl-x"
+              aria-label={`Remove ${e.value}`}
+              onClick={() => void excl.remove(e.id)}
+            >
+              <Icon name="x" size={11} />
+            </button>
+          </li>
+        ))}
+        <li className="excl-row excl-add">
+          <Icon name="plus" size={12} />
+          <input
+            placeholder="Add an app, domain, or window title pattern…"
+            aria-label="Add exclusion"
+            value={draft}
+            onChange={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          />
+        </li>
+      </ul>
+      {excl.error && <p className="field-error">{excl.error}</p>}
+      <label className="settings-check">
+        <input
+          type="checkbox"
+          checked={pauseIncognito}
+          onChange={(e) => setPauseIncognito(e.currentTarget.checked)}
+        />
+        <span>Pause tracking on private/incognito browser windows</span>
+      </label>
+    </>
   );
 }
