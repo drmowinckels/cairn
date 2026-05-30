@@ -113,7 +113,12 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         snoozer: Arc::new(std::sync::Mutex::new(crate::rules::Snoozer::new())),
         rules_cache,
         rules_mutator: tokio::sync::Mutex::new(()),
-        git_watcher_status: crate::signals::git_watcher::build_status(&[], &[]),
+        git_watcher_status: std::sync::Mutex::new(crate::signals::git_watcher::build_status(
+            &[],
+            &[],
+        )),
+        git_watcher_handle: std::sync::Mutex::new(None),
+        git_roots_mutator: tokio::sync::Mutex::new(()),
         browser_extension: Arc::new(
             crate::signals::browser_extension::BrowserExtensionState::new(),
         ),

@@ -124,6 +124,34 @@ const SKIP_DIRS: &[&str] = &[
     "DerivedData",
 ];
 
+/// Expand a single user-entered root string into an absolute path. A
+/// leading `~` (alone) or `~/` expands to the home directory; every
+/// other input is taken verbatim. Pairs with `display_roots`, which
+/// performs the inverse `$HOME` → `~` collapse for the UI.
+pub fn expand_root(input: &str) -> PathBuf {
+    let trimmed = input.trim();
+    if trimmed == "~" {
+        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(trimmed));
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(trimmed)
+}
+
+/// Expand a list of user-entered roots, dropping blank entries. Order
+/// is preserved; de-duplication is the caller's concern (the IPC layer
+/// normalizes before persisting).
+pub fn expand_roots(inputs: &[String]) -> Vec<PathBuf> {
+    inputs
+        .iter()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| expand_root(s))
+        .collect()
+}
+
 /// Default discovery roots when no user config has been written.
 /// Conventional dev folders that exist on most users' machines.
 /// Missing roots are silently ignored — `discover_repos` walks
@@ -214,7 +242,15 @@ fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
 /// (`lib.rs::setup`) need the repo list *before* the snapshot
 /// stream is built (the stream takes the list for its
 /// `derive_ide_folder` repo-paths fallback).
-pub fn spawn_watcher_task(event_tx: mpsc::Sender<SignalEvent>, repos: Vec<PathBuf>) {
+///
+/// Returns the task's `JoinHandle` so `set_git_discovery_roots` can
+/// `abort()` the running watcher and respawn over a new repo set when
+/// the user edits their discovery roots. Aborting drops the owned
+/// `notify` watcher, which removes every OS-level subscription.
+pub fn spawn_watcher_task(
+    event_tx: mpsc::Sender<SignalEvent>,
+    repos: Vec<PathBuf>,
+) -> tokio::task::JoinHandle<()> {
     log::info!("git_watcher: discovered {} repos", repos.len());
 
     // Spawn into a tokio task — the startup-emit loop does file
@@ -242,7 +278,7 @@ pub fn spawn_watcher_task(event_tx: mpsc::Sender<SignalEvent>, repos: Vec<PathBu
         if let Err(e) = run(repos, event_tx).await {
             log::warn!("git_watcher: task exited: {e}");
         }
-    });
+    })
 }
 
 async fn run(
@@ -498,6 +534,34 @@ mod tests {
         let found = discover_repos(&[tmp.path().to_path_buf(), tmp.path().to_path_buf()]);
         assert_eq!(found.len(), 2);
         assert!(found.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn expand_root_expands_leading_tilde() {
+        let home = dirs::home_dir().expect("home dir available in test env");
+        assert_eq!(expand_root("~/code"), home.join("code"));
+        assert_eq!(expand_root("~"), home);
+    }
+
+    #[test]
+    fn expand_root_leaves_absolute_paths_untouched() {
+        assert_eq!(expand_root("/opt/projects"), PathBuf::from("/opt/projects"));
+        // A tilde mid-path is not a home reference.
+        assert_eq!(expand_root("/a/~b"), PathBuf::from("/a/~b"));
+    }
+
+    #[test]
+    fn expand_roots_drops_blanks_and_preserves_order() {
+        let home = dirs::home_dir().expect("home dir available in test env");
+        let out = expand_roots(&["~/code".into(), "   ".into(), "/srv/git".into(), "".into()]);
+        assert_eq!(out, vec![home.join("code"), PathBuf::from("/srv/git")]);
+    }
+
+    #[test]
+    fn expand_then_display_roundtrips_tilde() {
+        let expanded = expand_root("~/workspace");
+        let displayed = display_roots(&[expanded]);
+        assert_eq!(displayed, vec!["~/workspace".to_string()]);
     }
 
     #[test]

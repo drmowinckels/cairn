@@ -605,6 +605,18 @@ export async function getGitWatcherStatus(): Promise<GitWatcherStatus | null> {
   return invoke<GitWatcherStatus>("get_git_watcher_status");
 }
 
+export async function getGitDiscoveryRoots(): Promise<string[]> {
+  if (!inTauri) return ["~/code"];
+  return invoke<string[]>("get_git_discovery_roots");
+}
+
+export async function setGitDiscoveryRoots(
+  roots: string[],
+): Promise<GitWatcherStatus> {
+  if (!inTauri) return { discoveryRoots: roots, watchedCount: 0 };
+  return invoke<GitWatcherStatus>("set_git_discovery_roots", { roots });
+}
+
 export interface BrowserExtensionStatus {
   connected: boolean;
   lastSeen: string | null;

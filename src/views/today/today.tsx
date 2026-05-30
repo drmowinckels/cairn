@@ -24,7 +24,7 @@ import {
   startToPercent,
   type TimelineSegment,
 } from "../../lib/timeline";
-import { inTauri, type BackendEntry } from "../../lib/ipc";
+import { inTauri, listTasks, saveTask, type BackendEntry } from "../../lib/ipc";
 import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
@@ -61,7 +61,7 @@ export function TodayView({
   addEntryRequest = 0,
 }: Props) {
   const compact = density === "compact";
-  const projects = useProjects();
+  const { projects, create: createProject } = useProjects();
   const today = useToday();
   const upcoming = useUpcoming(3);
   const calendars = useCalendars();
@@ -89,6 +89,8 @@ export function TodayView({
   }, 400);
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [idleProjectId, setIdleProjectId] = useState<string | null>(null);
+  const [idlePickerOpen, setIdlePickerOpen] = useState(false);
 
   const onPickProject = useCallback(
     (id: string) => {
@@ -109,6 +111,13 @@ export function TodayView({
   const onQuickStart = (projectId: string) => {
     timer
       .start({ projectId, description: "" })
+      .then(() => today.refresh())
+      .catch((e) => console.error("start failed", e));
+  };
+
+  const onStartIdle = () => {
+    timer
+      .start({ projectId: idleProjectId, description: "" })
       .then(() => today.refresh())
       .catch((e) => console.error("start failed", e));
   };
@@ -180,6 +189,7 @@ export function TodayView({
       mode: "create",
       draft: {
         projectId: null,
+        taskId: null,
         description: "",
         startedLocal: isoToLocal(start.toISOString()),
         endedLocal: isoToLocal(now.toISOString()),
@@ -194,6 +204,7 @@ export function TodayView({
       draft: {
         id: entry.id,
         projectId: entry.projectId,
+        taskId: entry.taskId,
         description: entry.description,
         startedLocal: isoToLocal(entry.startedAt),
         endedLocal: isoToLocal(entry.endedAt ?? ""),
@@ -217,6 +228,7 @@ export function TodayView({
         await today.update({
           id: payload.id,
           projectId: payload.projectId,
+          taskId: payload.taskId,
           description: payload.description,
           startedAt: payload.startedAt,
           endedAt: payload.endedAt,
@@ -224,6 +236,7 @@ export function TodayView({
       } else {
         await today.create({
           projectId: payload.projectId,
+          taskId: payload.taskId,
           description: payload.description,
           startedAt: payload.startedAt,
           endedAt: payload.endedAt,
@@ -358,7 +371,13 @@ export function TodayView({
             </button>
             <button
               className="btn btn--ghost"
-              onClick={() => dismiss()}
+              onClick={() => {
+                // "Change…" = don't accept the rule's project; dismiss the
+                // suggestion and open the idle project picker so the user
+                // can choose what to start instead.
+                dismiss();
+                setIdlePickerOpen(true);
+              }}
             >
               Change…
             </button>
@@ -507,16 +526,24 @@ export function TodayView({
           !timer.loading && (
             <div className="now-row">
               <div className="now-chips">
-                <span className="now-idle-hint">
-                  No timer running — start one from Quick start or pick a project.
-                </span>
+                <ProjectPickerChip
+                  projectId={idleProjectId}
+                  projects={projects}
+                  open={idlePickerOpen}
+                  setOpen={setIdlePickerOpen}
+                  onPick={(id) => {
+                    setIdleProjectId(id);
+                    setIdlePickerOpen(false);
+                  }}
+                  cbEnabled={cbEnabled}
+                />
               </div>
               <button
-                className="btn btn--stop"
-                aria-label="Stop timer"
-                disabled
+                className="btn btn--primary"
+                aria-label="Start timer"
+                onClick={onStartIdle}
               >
-                <Icon name="stop" size={12} /> Stop
+                <Icon name="play" size={12} /> Start
               </button>
             </div>
           )
@@ -595,6 +622,9 @@ export function TodayView({
               : null
           }
           onSubmit={handleSubmit}
+          onCreateProject={createProject}
+          loadTasks={listTasks}
+          onCreateTask={(projectId, name) => saveTask({ projectId, name })}
           onDelete={modalState.mode === "edit" ? handleDelete : undefined}
           onClose={closeModal}
         />

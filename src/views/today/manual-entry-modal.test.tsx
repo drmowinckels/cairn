@@ -13,15 +13,21 @@ import {
   type ManualEntryDraft,
   type ManualEntrySubmit,
 } from "./manual-entry-modal";
-import type { Project } from "../../lib/types";
+import type { Project, Task } from "../../lib/types";
 
 const PROJECTS: Project[] = [
   { id: "p1", name: "Alpha", clientId: null, color: "#aaa", archived: false },
   { id: "p2", name: "Beta", clientId: null, color: "#bbb", archived: false },
 ];
 
+const TASKS_P1: Task[] = [
+  { id: "t1", projectId: "p1", name: "Design", archived: false },
+  { id: "t2", projectId: "p1", name: "Build", archived: false },
+];
+
 const BASE_DRAFT: ManualEntryDraft = {
   projectId: null,
+  taskId: null,
   description: "",
   startedLocal: "2026-05-26T09:00",
   endedLocal: "2026-05-26T10:00",
@@ -354,6 +360,7 @@ describe("ManualEntryModal — edit mode + delete", () => {
   const EDIT_DRAFT: ManualEntryDraft = {
     id: "entry-1",
     projectId: "p1",
+    taskId: null,
     description: "Existing work",
     startedLocal: "2026-05-26T09:00",
     endedLocal: "2026-05-26T10:00",
@@ -604,6 +611,7 @@ describe("ManualEntryModal — field changes & focus return", () => {
         initial={{
           id: "entry-1",
           projectId: "p1",
+          taskId: null,
           description: "Existing",
           startedLocal: "2026-05-26T09:00",
           endedLocal: "2026-05-26T10:00",
@@ -644,5 +652,407 @@ describe("localToIso / isoToLocal round-trip", () => {
     const iso = localToIso(local);
     const back = isoToLocal(iso);
     expect(back).toBe(local);
+  });
+});
+
+describe("ManualEntryModal — inline create project", () => {
+  it("hides the New-project affordance when onCreateProject is absent", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /new project/i })).toBeNull();
+  });
+
+  it("reveals the sub-form, creates a project, and selects it on the draft", async () => {
+    const created: Project = {
+      id: "p-new",
+      name: "Gamma",
+      clientId: null,
+      color: "#81b29a",
+      archived: false,
+    };
+    const onCreateProject = vi.fn().mockResolvedValue(created);
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={[...PROJECTS, created]}
+        runningRange={null}
+        onSubmit={onSubmit}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    const nameInput = screen.getByLabelText(/new project name/i);
+    fireEvent.change(nameInput, { target: { value: "Gamma" } });
+    fireEvent.click(screen.getByRole("button", { name: /add project/i }));
+
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith({
+        name: "Gamma",
+        color: "#81b29a",
+      }),
+    );
+    // Sub-form collapses and the picker reflects the new selection.
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/new project name/i)).toBeNull(),
+    );
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("p-new"));
+
+    // Saving carries the freshly-created project id through.
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "p-new" }),
+      ),
+    );
+  });
+
+  it("blocks creation with a blank name and surfaces an error", async () => {
+    const onCreateProject = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    // The Add button is disabled while the name is blank, so the user
+    // can't even trigger creation — assert that and that nothing fired.
+    const addBtn = screen.getByRole("button", { name: /add project/i });
+    expect((addBtn as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(addBtn);
+    expect(onCreateProject).not.toHaveBeenCalled();
+
+    // Pressing Enter on a whitespace-only name hits the validation
+    // branch and surfaces an inline error rather than calling through.
+    const nameInput = screen.getByLabelText(/new project name/i);
+    fireEvent.change(nameInput, { target: { value: "   " } });
+    fireEvent.keyDown(nameInput, { key: "Enter" });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/name/i));
+    expect(onCreateProject).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a backend error when project creation fails", async () => {
+    const onCreateProject = vi.fn().mockRejectedValue("disk full");
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    fireEvent.change(screen.getByLabelText(/new project name/i), {
+      target: { value: "Gamma" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add project/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/disk full/i),
+    );
+    // Sub-form stays open so the user can retry.
+    expect(screen.getByLabelText(/new project name/i)).toBeTruthy();
+  });
+
+  it("creates via the Enter key in the name field", async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({
+      id: "p-enter",
+      name: "Epsilon",
+      clientId: null,
+      color: "#81b29a",
+      archived: false,
+    });
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    const nameInput = screen.getByLabelText(/new project name/i);
+    fireEvent.change(nameInput, { target: { value: "Epsilon" } });
+    fireEvent.keyDown(nameInput, { key: "Enter" });
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith({
+        name: "Epsilon",
+        color: "#81b29a",
+      }),
+    );
+  });
+
+  it("picks a color swatch before creating", async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({
+      id: "p-c",
+      name: "Delta",
+      clientId: null,
+      color: "#e07a5f",
+      archived: false,
+    });
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    fireEvent.change(screen.getByLabelText(/new project name/i), {
+      target: { value: "Delta" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /#e07a5f/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add project/i }));
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith({
+        name: "Delta",
+        color: "#e07a5f",
+      }),
+    );
+  });
+
+  it("cancel collapses the sub-form without creating", () => {
+    const onCreateProject = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    expect(screen.getByLabelText(/new project name/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /cancel new project/i }));
+    expect(screen.queryByLabelText(/new project name/i)).toBeNull();
+    expect(onCreateProject).not.toHaveBeenCalled();
+  });
+});
+
+describe("ManualEntryModal — task picker (#21)", () => {
+  const DRAFT_WITH_PROJECT: ManualEntryDraft = {
+    ...BASE_DRAFT,
+    projectId: "p1",
+  };
+
+  it("hides the task picker when no loadTasks is provided", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText(/^task$/i)).toBeNull();
+  });
+
+  it("loads and lists tasks for the selected project", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        loadTasks={loadTasks}
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(loadTasks).toHaveBeenCalledWith("p1"));
+    // The Task select renders the loaded options.
+    expect(await screen.findByRole("option", { name: "Design" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Build" })).toBeTruthy();
+  });
+
+  it("carries the selected task id through on submit", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={onSubmit}
+        loadTasks={loadTasks}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("option", { name: "Design" });
+    fireEvent.change(screen.getByLabelText(/^task$/i), {
+      target: { value: "t2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "p1", taskId: "t2" }),
+      ),
+    );
+  });
+
+  it("creates a task inline and selects it", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    const created: Task = {
+      id: "t3",
+      projectId: "p1",
+      name: "Review",
+      archived: false,
+    };
+    const onCreateTask = vi.fn().mockResolvedValue(created);
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={onSubmit}
+        loadTasks={loadTasks}
+        onCreateTask={onCreateTask}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("option", { name: "Design" });
+    fireEvent.click(screen.getByRole("button", { name: /new task/i }));
+    fireEvent.change(screen.getByLabelText(/new task name/i), {
+      target: { value: "Review" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add task/i }));
+    await waitFor(() =>
+      expect(onCreateTask).toHaveBeenCalledWith("p1", "Review"),
+    );
+    // The new task is now selectable and saving carries it through.
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: "t3" }),
+      ),
+    );
+  });
+
+  it("clears the task selection when the project changes", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{ ...DRAFT_WITH_PROJECT, taskId: "t1" }}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={onSubmit}
+        loadTasks={loadTasks}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("option", { name: "Design" });
+    // Switch project — the task must reset to "No task".
+    fireEvent.change(screen.getByLabelText(/^project$/i), {
+      target: { value: "p2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "p2", taskId: null }),
+      ),
+    );
+  });
+
+  it("surfaces a backend error when task creation fails", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    const onCreateTask = vi.fn().mockRejectedValue("task write failed");
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        loadTasks={loadTasks}
+        onCreateTask={onCreateTask}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("option", { name: "Design" });
+    fireEvent.click(screen.getByRole("button", { name: /new task/i }));
+    fireEvent.change(screen.getByLabelText(/new task name/i), {
+      target: { value: "Review" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add task/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/task write failed/i),
+    );
+    // Sub-form stays open for a retry.
+    expect(screen.getByLabelText(/new task name/i)).toBeTruthy();
+  });
+
+  it("cancel new task collapses the sub-form without creating", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    const onCreateTask = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        loadTasks={loadTasks}
+        onCreateTask={onCreateTask}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("option", { name: "Design" });
+    fireEvent.click(screen.getByRole("button", { name: /new task/i }));
+    expect(screen.getByLabelText(/new task name/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /cancel new task/i }));
+    expect(screen.queryByLabelText(/new task name/i)).toBeNull();
+    expect(onCreateTask).not.toHaveBeenCalled();
   });
 });

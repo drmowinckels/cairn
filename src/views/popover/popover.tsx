@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ErrorBoundary } from "../../error-boundary";
 import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
@@ -7,6 +7,12 @@ import { useA11yPrefs } from "../../lib/use-a11y-prefs";
 import { AnnouncerProvider, useAnnounce } from "../../lib/use-announce";
 import { useSignalCapture } from "../../lib/use-signal-capture";
 import { useOnboarding } from "../../lib/use-onboarding";
+import { usePalette } from "../../lib/use-palette";
+import { usePopoverSize } from "../../lib/use-popover-size";
+import { useTimer } from "../../lib/use-timer";
+import { useProjects } from "../../lib/use-projects";
+import { useRules } from "../../lib/use-rules";
+import { revealDataFolder } from "../../lib/ipc";
 import {
   usePaletteShortcut,
   useToggleTimerShortcut,
@@ -20,8 +26,9 @@ import type {
 import { TodayView } from "../today";
 import { ReportsView } from "../reports";
 import { RulesView } from "../rules";
-import { SettingsView } from "../settings";
+import { SettingsView, type SettingsSectionId } from "../settings";
 import { OnboardingView } from "../onboarding";
+import { CommandPalette, type PaletteContext } from "../palette/palette";
 
 interface Props {
   initialView?: View;
@@ -65,12 +72,57 @@ function PopoverShell({
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [addEntryRequest, setAddEntryRequest] = useState(0);
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSectionId | null>(null);
   const capture = useSignalCapture();
   const onboarding = useOnboarding();
   const announce = useAnnounce();
+  const popoverSize = usePopoverSize();
+
+  // Command-palette wiring (#32). The palette needs read access to the
+  // live timer / projects / rules and a handful of actions; instantiate
+  // the hooks here so the popover owns the context object. The views
+  // keep their own hook instances — all of them are backed by the same
+  // SQLite source of truth and resync on the snapshot stream, so a
+  // palette action surfaces in the open view within the refresh window.
+  const palette = usePalette();
+  const paletteTimer = useTimer();
+  const { projects: paletteProjects } = useProjects();
+  const paletteRules = useRules({ defaultAmbiguity: a11y.ambiguityDefault });
 
   useToggleTimerShortcut({ announce });
-  usePaletteShortcut();
+  usePaletteShortcut({ onOpen: palette.requestOpen });
+
+  const openSettingsSection = (section: SettingsSectionId) => {
+    setView("settings");
+    setSettingsSection(section);
+  };
+
+  const paletteContext: PaletteContext = useMemo(
+    () => ({
+      view,
+      running: paletteTimer.running
+        ? {
+            id: paletteTimer.running.id,
+            projectId: paletteTimer.running.projectId,
+          }
+        : null,
+      projects: paletteProjects,
+      rules: paletteRules.rules,
+      setView,
+      openSettingsSection,
+      startTimer: async (projectId) => {
+        await paletteTimer.start({ projectId, description: "" });
+      },
+      stopTimer: async () => {
+        await paletteTimer.stop();
+      },
+      switchProject: (projectId) => paletteTimer.update({ projectId }),
+      toggleRule: (ruleId, next) => paletteRules.update(ruleId, { enabled: next }),
+      revealDataFolder: () => revealDataFolder(),
+    }),
+    [view, paletteTimer, paletteProjects, paletteRules],
+  );
 
   const requestAddEntry = () => {
     setView("today");
@@ -132,7 +184,12 @@ function PopoverShell({
         <LocalBadge />
         <span className="spacer" />
         <div className="pop-head-actions">
-          <button className="icon-btn" aria-label="Search" title="Search (⌘K)">
+          <button
+            className="icon-btn"
+            aria-label="Search"
+            title="Search (⌘K)"
+            onClick={palette.requestOpen}
+          >
             <Icon name="search" />
           </button>
           <button
@@ -192,6 +249,8 @@ function PopoverShell({
               density={density}
               a11y={a11y}
               capture={capture}
+              scrollToSection={settingsSection}
+              popoverSize={popoverSize}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}
@@ -221,6 +280,12 @@ function PopoverShell({
           </span>
         </span>
       </footer>
+
+      <CommandPalette
+        open={palette.open}
+        onClose={palette.close}
+        context={paletteContext}
+      />
     </div>
   );
 }

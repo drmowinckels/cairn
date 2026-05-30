@@ -109,6 +109,34 @@ describe("ipc helpers (inside Tauri)", () => {
       bytesWritten: 123,
     });
   });
+
+  it("getGitDiscoveryRoots returns the backend list", async () => {
+    invokeMock.mockResolvedValue(["~/code", "~/work"]);
+    const { getGitDiscoveryRoots } = await import("./ipc");
+    const roots = await getGitDiscoveryRoots();
+    expect(invokeMock).toHaveBeenCalledWith("get_git_discovery_roots");
+    expect(roots).toEqual(["~/code", "~/work"]);
+  });
+
+  it("setGitDiscoveryRoots forwards roots and returns the updated status", async () => {
+    invokeMock.mockResolvedValue({ discoveryRoots: ["~/code"], watchedCount: 3 });
+    const { setGitDiscoveryRoots } = await import("./ipc");
+    const status = await setGitDiscoveryRoots(["~/code"]);
+    expect(invokeMock).toHaveBeenCalledWith("set_git_discovery_roots", {
+      roots: ["~/code"],
+    });
+    expect(status).toEqual({ discoveryRoots: ["~/code"], watchedCount: 3 });
+  });
+
+  it("setPopoverSize forwards width/height", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { setPopoverSize } = await import("./ipc");
+    await setPopoverSize(680, 900);
+    expect(invokeMock).toHaveBeenCalledWith("set_popover_size", {
+      width: 680,
+      height: 900,
+    });
+  });
 });
 
 describe("ipc helpers (outside Tauri)", () => {
@@ -128,6 +156,25 @@ describe("ipc helpers (outside Tauri)", () => {
     const { signalCaptureStatus } = await import("./ipc");
     const status = await signalCaptureStatus();
     expect(status).toEqual({ active: false, path: null, bytesWritten: 0 });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("getGitDiscoveryRoots returns the dev default without the backend", async () => {
+    const { getGitDiscoveryRoots } = await import("./ipc");
+    expect(await getGitDiscoveryRoots()).toEqual(["~/code"]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("setGitDiscoveryRoots echoes a synthetic status without the backend", async () => {
+    const { setGitDiscoveryRoots } = await import("./ipc");
+    const status = await setGitDiscoveryRoots(["~/x"]);
+    expect(status).toEqual({ discoveryRoots: ["~/x"], watchedCount: 0 });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("setPopoverSize short-circuits without the backend", async () => {
+    const { setPopoverSize } = await import("./ipc");
+    await setPopoverSize(560, 760);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

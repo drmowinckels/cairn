@@ -65,11 +65,11 @@ afterEach(() => {
 });
 
 describe("TodayView (idle — no running entry)", () => {
-  it("renders the timer card in idle state", () => {
+  it("renders the timer card in idle state with a Start control", () => {
     renderToday({ hideSuggestion: true });
     expect(screen.getByLabelText(/current timer/i)).toBeTruthy();
     expect(screen.getByText(/now · idle/i)).toBeTruthy();
-    expect(screen.getByText(/no timer running/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /start timer/i })).toBeTruthy();
   });
 
   it("renders the elapsed wrapper with aria-live polite", () => {
@@ -78,10 +78,16 @@ describe("TodayView (idle — no running entry)", () => {
     expect(elapsed?.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("Stop button is disabled when nothing is running", () => {
+  it("shows a Start button (not Stop) when nothing is running", () => {
     renderToday({ hideSuggestion: true });
-    const stop = screen.getByRole("button", { name: /stop timer/i });
-    expect(stop.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: /start timer/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /stop timer/i })).toBeNull();
+  });
+
+  it("idle state offers a project picker so a timer can be started with a project", () => {
+    renderToday({ hideSuggestion: true });
+    // The idle row renders the same project-picker chip used while running.
+    expect(screen.getByRole("button", { name: /choose a project/i })).toBeTruthy();
   });
 
   it("renders the auto-detect suggestion banner when the hook surfaces a suggestion", () => {
@@ -552,6 +558,47 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     }
   });
 
+  it("idle Start button invokes start_entry (default layout, no Quick start)", async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_today") return [];
+      if (cmd === "list_projects")
+        return [
+          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+        ];
+      if (cmd === "start_entry")
+        return {
+          id: "new",
+          projectId: null,
+          taskId: null,
+          description: "",
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          source: "manual",
+          ruleId: null,
+        };
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        showIdleModal={false}
+        setShowIdleModal={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("current_running"));
+    const startBtn = await screen.findByRole("button", { name: /start timer/i });
+    fireEvent.click(startBtn);
+    await waitFor(() => {
+      const calls = invoke.mock.calls.filter(([c]) => c === "start_entry");
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   it("renders the picker fallback labels when no project is selected", async () => {
     const running = {
       id: "e1",
@@ -818,7 +865,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
     vi.doMock("../../lib/use-projects", () => ({
-      useProjects: () => [],
+      useProjects: () => ({ projects: [], refresh: vi.fn(), create: vi.fn() }),
     }));
     try {
       const { TodayView } = await import("./today");
@@ -849,7 +896,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
     vi.doMock("../../lib/use-projects", () => ({
-      useProjects: () => [],
+      useProjects: () => ({ projects: [], refresh: vi.fn(), create: vi.fn() }),
     }));
     try {
       const { TodayView } = await import("./today");

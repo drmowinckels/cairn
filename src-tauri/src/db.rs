@@ -28,7 +28,7 @@ impl Db {
     }
 }
 
-async fn seed_if_empty(pool: &SqlitePool) -> anyhow::Result<()> {
+pub(crate) async fn seed_if_empty(pool: &SqlitePool) -> anyhow::Result<()> {
     let count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM projects")
         .fetch_one(pool)
         .await?

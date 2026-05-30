@@ -149,6 +149,26 @@ describe("SettingsView (browser-dev mode)", () => {
     expect(a11y.setTheme).toHaveBeenCalledWith("dark");
   });
 
+  it("adding an exclusion infers the kind and calls save_exclusion", () => {
+    invokeMock.mockResolvedValue({ id: "n", kind: "domain", value: "mail.proton.me" });
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    const input = screen.getByLabelText(/add exclusion/i);
+    fireEvent.change(input, { target: { value: "mail.proton.me" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(invokeMock).toHaveBeenCalledWith("save_exclusion", {
+      input: { kind: "domain", value: "mail.proton.me" },
+    });
+  });
+
+  it("the incognito pause toggle persists its state to localStorage", () => {
+    window.localStorage.removeItem("cairn:pause-on-incognito:v1");
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    const cb = screen.getByRole("checkbox", { name: /private\/incognito/i });
+    expect((cb as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(cb);
+    expect(window.localStorage.getItem("cairn:pause-on-incognito:v1")).toBe("false");
+  });
+
   it("renders the text-scale segmented control with the active option highlighted", () => {
     render(
       <SettingsView density="comfy" a11y={stubA11y({ textScale: "lg" })} capture={stubCapture()} />,
@@ -158,6 +178,29 @@ describe("SettingsView (browser-dev mode)", () => {
       group.querySelectorAll<HTMLElement>('[role="radio"]'),
     ).find((b) => b.getAttribute("aria-checked") === "true");
     expect(active).toBeTruthy();
+  });
+
+  it("hides the popover-size control when no popoverSize prop is given", () => {
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    expect(screen.queryByRole("radiogroup", { name: /popover size/i })).toBeNull();
+  });
+
+  it("renders the popover-size control and drives setSize", () => {
+    const setSize = vi.fn();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        popoverSize={{ size: "compact", setSize }}
+      />,
+    );
+    const group = screen.getByRole("radiogroup", { name: /popover size/i });
+    const compact = screen.getByRole("radio", { name: /compact/i });
+    expect(compact.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: /large/i }));
+    expect(setSize).toHaveBeenCalledWith("large");
+    expect(group).toBeTruthy();
   });
 
   it("renders the Default ambiguity behaviour segmented control with the active option highlighted", () => {
@@ -250,21 +293,16 @@ describe("SettingsView (browser-dev mode)", () => {
       expect(switchView.textContent).toContain("–");
     });
 
-    it("'Reset to defaults' is rendered and clickable (no-op + toast)", () => {
+    it("does not render a fake 'Reset to defaults' shortcuts button", () => {
+      // Shortcuts are display-only constants — there is nothing to
+      // reset, so the no-op button was removed rather than left as a
+      // control that does nothing.
       render(
         <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
       );
-      const btn = screen.getByRole("button", { name: /reset to defaults/i });
-      const toast = vi.fn();
-      window.addEventListener("cairn:toast", toast);
-      try {
-        fireEvent.click(btn);
-        expect(toast).toHaveBeenCalledTimes(1);
-        const evt = toast.mock.calls[0][0] as CustomEvent<string>;
-        expect(evt.detail).toMatch(/defaults/i);
-      } finally {
-        window.removeEventListener("cairn:toast", toast);
-      }
+      expect(
+        screen.queryByRole("button", { name: /reset to defaults/i }),
+      ).toBeNull();
     });
   });
 });

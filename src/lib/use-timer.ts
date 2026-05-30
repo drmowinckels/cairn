@@ -59,6 +59,13 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
 
+  // Id of the entry currently being stopped. `stop()` clears `running`
+  // optimistically for instant feedback, but the snapshot-driven
+  // refresh (throttled, runs on a timer) could read `current_running`
+  // before the stop commits and resurrect the entry — making the timer
+  // reappear and look like Stop "didn't work". Guard against that.
+  const stoppingIdRef = useRef<string | null>(null);
+
   const refresh = useCallback(async () => {
     if (!enabled) {
       setLoading(false);
@@ -66,6 +73,10 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
     }
     try {
       const entry = await fetchFn();
+      if (entry && stoppingIdRef.current === entry.id) {
+        // Mid-stop on this exact entry — don't resurrect it.
+        return;
+      }
       setRunning(entry);
       setError(null);
     } catch (e) {
@@ -134,11 +145,28 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
 
   const stop = useCallback(async () => {
     if (!running) return null;
-    const stopped = await stopFn(running.id);
+    const id = running.id;
+    // Optimistic: clear immediately so the timer + clock stop the instant
+    // the user taps Stop, instead of waiting on the IPC round-trip.
+    stoppingIdRef.current = id;
     setRunning(null);
-    onStoppedRef.current?.(stopped);
-    return stopped;
-  }, [running, stopFn]);
+    setNow(Date.now());
+    try {
+      const stopped = await stopFn(id);
+      onStoppedRef.current?.(stopped);
+      return stopped;
+    } catch (e) {
+      // Stop failed — restore the true state, then surface the error.
+      // refresh() clears `error` on success, so set it *after* the
+      // restore or it'd be wiped.
+      stoppingIdRef.current = null;
+      await refresh();
+      setError(e instanceof Error ? e.message : String(e));
+      return null;
+    } finally {
+      stoppingIdRef.current = null;
+    }
+  }, [running, stopFn, refresh]);
 
   const update = useCallback(
     async (input: Omit<UpdateEntryInput, "id">) => {

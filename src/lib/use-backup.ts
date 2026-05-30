@@ -9,12 +9,30 @@ import {
   inTauri,
   listDataFiles,
   revealDataFolder,
+  setPinned,
   stageImport,
   suggestedBackupName,
   suggestedCsvName,
   type DataFileInfo,
   type DataPaths,
 } from "./ipc";
+
+/**
+ * Run `fn` with the popover temporarily pinned. Native dialogs
+ * (`ask`/`save`/`open`) steal focus, which fires the popover's
+ * blur-to-close handler and hides it mid-flow — the window vanishing
+ * read as a crash on "Delete everything", and silently hid the status
+ * line after an export. Pinning suppresses the blur-hide for the
+ * duration; the pin is always released, even on throw.
+ */
+async function withPopoverPinned<T>(fn: () => Promise<T>): Promise<T> {
+  await setPinned(true);
+  try {
+    return await fn();
+  } finally {
+    await setPinned(false);
+  }
+}
 
 export type BackupStatus =
   | { kind: "idle" }
@@ -68,11 +86,13 @@ export function useBackup(): BackupState {
     if (!inTauri) return;
     try {
       const defaultPath = await suggestedBackupName();
-      const dest = await save({
-        title: "Export Cairn backup",
-        defaultPath,
-        filters: [{ name: "SQLite database", extensions: ["sqlite"] }],
-      });
+      const dest = await withPopoverPinned(() =>
+        save({
+          title: "Export Cairn backup",
+          defaultPath,
+          filters: [{ name: "SQLite database", extensions: ["sqlite"] }],
+        }),
+      );
       if (!dest) return;
       setStatus({ kind: "working", message: "Writing backup…" });
       const written = await exportBackup(dest);
@@ -85,12 +105,14 @@ export function useBackup(): BackupState {
   const importBackupFromFile = useCallback(async () => {
     if (!inTauri) return;
     try {
-      const src = await open({
-        title: "Restore Cairn backup",
-        multiple: false,
-        directory: false,
-        filters: [{ name: "SQLite database", extensions: ["sqlite", "db"] }],
-      });
+      const src = await withPopoverPinned(() =>
+        open({
+          title: "Restore Cairn backup",
+          multiple: false,
+          directory: false,
+          filters: [{ name: "SQLite database", extensions: ["sqlite", "db"] }],
+        }),
+      );
       if (!src || Array.isArray(src)) return;
       setStatus({ kind: "working", message: "Staging restore…" });
       await stageImport(src);
@@ -119,11 +141,13 @@ export function useBackup(): BackupState {
     if (!inTauri) return;
     try {
       const defaultPath = await suggestedCsvName();
-      const dest = await save({
-        title: "Export entries as CSV",
-        defaultPath,
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-      });
+      const dest = await withPopoverPinned(() =>
+        save({
+          title: "Export entries as CSV",
+          defaultPath,
+          filters: [{ name: "CSV", extensions: ["csv"] }],
+        }),
+      );
       if (!dest) return;
       setStatus({ kind: "working", message: "Writing CSV…" });
       const written = await exportCsv(dest);
@@ -145,21 +169,29 @@ export function useBackup(): BackupState {
   const deleteAllData = useCallback(async () => {
     if (!inTauri) return;
     try {
-      const confirmed = await ask(
-        "This deletes every project, entry, rule, and tag stored on this machine. There is no undo. Continue?",
-        {
-          title: "Delete all Cairn data?",
-          kind: "warning",
-          okLabel: "Delete everything",
-          cancelLabel: "Keep my data",
-        },
+      const confirmed = await withPopoverPinned(() =>
+        ask(
+          "This deletes every project, entry, rule, and tag stored on this machine. There is no undo. Continue?",
+          {
+            title: "Delete all Cairn data?",
+            kind: "warning",
+            okLabel: "Delete everything",
+            cancelLabel: "Keep my data",
+          },
+        ),
       );
       if (!confirmed) return;
       setStatus({ kind: "working", message: "Deleting…" });
       await deleteEverything();
-      // The app will exit before this banner renders, but keep the
-      // state coherent in case the exit is delayed.
-      setStatus({ kind: "done", message: "Data deleted. Cairn is quitting." });
+      // The backend wiped + reseeded the DB in place (no exit/restart —
+      // those crashed the app). Reload the webview so every view
+      // refetches the empty state and onboarding re-arms.
+      setStatus({ kind: "done", message: "All data deleted." });
+      try {
+        window.location?.reload?.();
+      } catch {
+        /* non-browser / happy-dom: navigation not implemented — ignore */
+      }
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
     }

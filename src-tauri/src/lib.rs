@@ -66,11 +66,23 @@ pub struct AppState {
     /// Same pattern as `exclusions_mutator`: serializes
     /// `(DB write, rules reload)` pairs.
     pub rules_mutator: tokio::sync::Mutex<()>,
-    /// Snapshot of the git watcher's discovery roots + watched repo
-    /// count, captured at boot. Surface for Settings → Integrations
-    /// (issue #34). The watcher itself doesn't change roots at
-    /// runtime today, so a single boot-time snapshot is faithful.
-    pub git_watcher_status: GitWatcherStatus,
+    /// The git watcher's discovery roots + watched repo count. Seeded
+    /// at boot and rewritten by `set_git_discovery_roots` when the user
+    /// edits their roots (issue #34 / #7). Behind a `Mutex` because the
+    /// configurator IPC mutates it while `get_git_watcher_status` reads
+    /// it; every critical section is a cheap clone/replace with no
+    /// `.await` inside.
+    pub git_watcher_status: std::sync::Mutex<GitWatcherStatus>,
+    /// Abort handle for the live git-watcher task.
+    /// `set_git_discovery_roots` aborts the running watcher and spawns a
+    /// fresh one over the new roots, swapping the handle here.
+    pub git_watcher_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Serializes `set_git_discovery_roots` so two overlapping calls
+    /// (double-click Save, or Save racing a `reset_all_data` re-arm)
+    /// can't interleave the discover → abort → respawn → persist
+    /// sequence and leak an un-abortable watcher. Same pattern as
+    /// `rules_mutator` / `exclusions_mutator`.
+    pub git_roots_mutator: tokio::sync::Mutex<()>,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
     /// here on every push from the local-IPC socket collector in
     /// `signals::browser`; the IPC handler `browser_extension_status`
@@ -146,6 +158,7 @@ pub fn run() {
             ipc::delete_task,
             ipc::list_today,
             ipc::list_week,
+            ipc::report_summary,
             ipc::list_rules,
             ipc::save_rule,
             ipc::delete_rule,
@@ -173,6 +186,8 @@ pub fn run() {
             ipc::calendar_sync_status,
             ipc::current_snapshot,
             ipc::get_git_watcher_status,
+            ipc::get_git_discovery_roots,
+            ipc::set_git_discovery_roots,
             ipc::browser_extension_status,
             ipc::start_signal_capture,
             ipc::stop_signal_capture,
@@ -238,7 +253,18 @@ pub fn run() {
             // repo paths to use for `derive_ide_folder`'s
             // longest-prefix fallback. Then start the actual
             // file-watcher task on each `.git/HEAD`.
-            let discovery_roots = signals::git_watcher::default_discovery_roots();
+            // Use the user's persisted discovery roots if they've
+            // configured any (Settings → Integrations → Configure
+            // roots…); otherwise fall back to the conventional dev
+            // folders. Persisted roots are stored tilde-form and
+            // expanded back to absolute paths here.
+            let configured_roots =
+                tauri::async_runtime::block_on(ipc::load_discovery_roots(&db.pool));
+            let discovery_roots = if configured_roots.is_empty() {
+                signals::git_watcher::default_discovery_roots()
+            } else {
+                signals::git_watcher::expand_roots(&configured_roots)
+            };
             let discovered_repos = signals::git_watcher::discover_repos(&discovery_roots);
             let git_watcher_status =
                 signals::git_watcher::build_status(&discovery_roots, &discovered_repos);
@@ -265,9 +291,13 @@ pub fn run() {
 
             // Spawn the git watcher *after* the stream so the
             // initial Git events flow into the stream's sender. Same
-            // runtime-context requirement as above.
-            tauri::async_runtime::block_on(async {
-                signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos);
+            // runtime-context requirement as above. The async block
+            // yields the task's JoinHandle (itself a future) on
+            // purpose — we keep it so `set_git_discovery_roots` can
+            // abort + respawn — so silence `async_yields_async` here.
+            #[allow(clippy::async_yields_async)]
+            let git_watcher_handle = tauri::async_runtime::block_on(async {
+                signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos)
             });
 
             // Browser-signal IPC socket (M7 #35). Listens on
@@ -376,7 +406,9 @@ pub fn run() {
                 snoozer: snoozer_for_state,
                 rules_cache,
                 rules_mutator: tokio::sync::Mutex::new(()),
-                git_watcher_status,
+                git_watcher_status: std::sync::Mutex::new(git_watcher_status),
+                git_watcher_handle: std::sync::Mutex::new(Some(git_watcher_handle)),
+                git_roots_mutator: tokio::sync::Mutex::new(()),
                 browser_extension: browser_extension_state,
             });
 

@@ -16,6 +16,8 @@ vi.mock("@tauri-apps/plugin-autostart", () => ({
 
 const listCalendarSources = vi.fn();
 const getGitWatcherStatus = vi.fn();
+const getGitDiscoveryRoots = vi.fn();
+const setGitDiscoveryRoots = vi.fn();
 const browserExtensionStatus = vi.fn();
 
 vi.mock("../../lib/ipc", async () => {
@@ -27,6 +29,8 @@ vi.mock("../../lib/ipc", async () => {
     inTauri: true,
     listCalendarSources: (...args: unknown[]) => listCalendarSources(...args),
     getGitWatcherStatus: (...args: unknown[]) => getGitWatcherStatus(...args),
+    getGitDiscoveryRoots: (...args: unknown[]) => getGitDiscoveryRoots(...args),
+    setGitDiscoveryRoots: (...args: unknown[]) => setGitDiscoveryRoots(...args),
     browserExtensionStatus: (...args: unknown[]) =>
       browserExtensionStatus(...args),
   };
@@ -44,6 +48,8 @@ import { formatRelativeTime } from "../../lib/relative-time";
 beforeEach(() => {
   listCalendarSources.mockReset();
   getGitWatcherStatus.mockReset();
+  getGitDiscoveryRoots.mockReset();
+  setGitDiscoveryRoots.mockReset();
   browserExtensionStatus.mockReset();
 });
 
@@ -212,6 +218,156 @@ describe("GitStatusLine", () => {
     await waitFor(() => screen.getByText("Watching 3 repos under ~/code"));
     expect(container.querySelector('[data-integration="git"]'))
       .toMatchSnapshot();
+  });
+
+  it("opens the configurator, adds a root, saves, and refreshes the status", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 2,
+    });
+    getGitDiscoveryRoots.mockResolvedValue(["~/code"]);
+    setGitDiscoveryRoots.mockResolvedValue({
+      discoveryRoots: ["~/code", "~/work"],
+      watchedCount: 5,
+    });
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    await waitFor(() =>
+      screen.getByText("Watching 2 repos under ~/code"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Configure roots…/ }));
+    // The modal loads the current roots.
+    await waitFor(() => screen.getByText("~/code"));
+
+    fireEvent.change(screen.getByLabelText(/new discovery root/i), {
+      target: { value: "~/work" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(setGitDiscoveryRoots).toHaveBeenCalledWith(["~/code", "~/work"]),
+    );
+    // Modal closed and the status line reflects the saved result.
+    await waitFor(() =>
+      expect(screen.getByText("Watching 5 repos under 2 folders")).toBeTruthy(),
+    );
+  });
+
+  it("reset-to-defaults persists an empty override and reloads the defaults", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/work"],
+      watchedCount: 4,
+    });
+    // First call (on mount) → the configured root; second call (after
+    // reset) → the reloaded built-in defaults.
+    getGitDiscoveryRoots
+      .mockResolvedValueOnce(["~/work"])
+      .mockResolvedValueOnce(["~/code"]);
+    setGitDiscoveryRoots.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 1,
+    });
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Configure roots…/ }),
+    );
+    await screen.findByText("~/work");
+    fireEvent.click(screen.getByRole("button", { name: /reset to defaults/i }));
+
+    await waitFor(() =>
+      expect(setGitDiscoveryRoots).toHaveBeenCalledWith([]),
+    );
+    // The reloaded defaults render in the list.
+    await waitFor(() => expect(screen.getByText("~/code")).toBeTruthy());
+  });
+
+  it("surfaces an error when saving the roots fails", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 2,
+    });
+    getGitDiscoveryRoots.mockResolvedValue(["~/code"]);
+    setGitDiscoveryRoots.mockRejectedValue("/ resolves to the filesystem root");
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Configure roots…/ }),
+    );
+    await screen.findByText("~/code");
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/filesystem root/i),
+    );
+  });
+
+  it("shows an error when the configurator fails to load roots", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 2,
+    });
+    getGitDiscoveryRoots.mockRejectedValue("cannot read roots");
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Configure roots…/ }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/cannot read roots/i),
+    );
+  });
+
+  it("removes a root in the configurator before saving", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code", "~/work"],
+      watchedCount: 6,
+    });
+    getGitDiscoveryRoots.mockResolvedValue(["~/code", "~/work"]);
+    setGitDiscoveryRoots.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 3,
+    });
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Configure roots…/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Remove ~\/work/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(setGitDiscoveryRoots).toHaveBeenCalledWith(["~/code"]),
+    );
   });
 });
 

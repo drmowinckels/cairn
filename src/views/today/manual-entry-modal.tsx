@@ -8,11 +8,24 @@ import {
   type FormEvent,
 } from "react";
 import { Icon } from "../../lib/icon";
-import type { Project } from "../../lib/types";
+import type { SaveProjectInput } from "../../lib/ipc";
+import type { Project, Task } from "../../lib/types";
+
+/** Swatches offered when creating a project inline. Mirrors the
+ *  default-seed palette so new projects look at home next to them. */
+const PROJECT_COLORS = [
+  "#81b29a",
+  "#f2cc8f",
+  "#e07a5f",
+  "#9a9bb0",
+  "#c8b8e0",
+  "#6d9dc5",
+];
 
 export interface ManualEntryDraft {
   id?: string;
   projectId: string | null;
+  taskId: string | null;
   description: string;
   /** Local-datetime form value, e.g. "2026-05-26T09:30". */
   startedLocal: string;
@@ -23,6 +36,7 @@ export interface ManualEntryDraft {
 export interface ManualEntrySubmit {
   id?: string;
   projectId: string | null;
+  taskId: string | null;
   description: string;
   /** RFC 3339 UTC timestamp. */
   startedAt: string;
@@ -41,12 +55,28 @@ interface Props {
    */
   runningRange: { startedAt: string; id: string } | null;
   onSubmit: (payload: ManualEntrySubmit) => Promise<void>;
+  /**
+   * Create a project inline from the Project field. When provided, a
+   * "New project" affordance appears beside the picker; the freshly
+   * created project is selected on the draft. Omitted in contexts with
+   * no live project store (the create flow is simply hidden).
+   */
+  onCreateProject?: (input: SaveProjectInput) => Promise<Project>;
+  /**
+   * Load the tasks for a project (the entry's optional sub-label).
+   * When provided alongside a selected project, a Task picker appears.
+   * Omitted in contexts with no task store (the picker stays hidden).
+   */
+  loadTasks?: (projectId: string) => Promise<Task[]>;
+  /** Create a task under a project inline from the Task picker. */
+  onCreateTask?: (projectId: string, name: string) => Promise<Task>;
   onDelete?: (id: string) => Promise<void>;
   onClose: () => void;
 }
 
 const EMPTY_DRAFT: ManualEntryDraft = {
   projectId: null,
+  taskId: null,
   description: "",
   startedLocal: "",
   endedLocal: "",
@@ -59,10 +89,15 @@ export function ManualEntryModal({
   projects,
   runningRange,
   onSubmit,
+  onCreateProject,
+  loadTasks,
+  onCreateTask,
   onDelete,
   onClose,
 }: Props) {
   const titleId = useId();
+  const projectFieldId = useId();
+  const taskFieldId = useId();
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
@@ -72,6 +107,43 @@ export function ManualEntryModal({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Inline create-project sub-form (#21 / #4).
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
+  const [creatingProjectBusy, setCreatingProjectBusy] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | null>(
+    null,
+  );
+  const newProjectNameRef = useRef<HTMLInputElement | null>(null);
+
+  // Task picker (#21). Tasks are project-scoped, so the list reloads
+  // whenever the selected project changes.
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [newTaskName, setNewTaskName] = useState("");
+  const [creatingTaskBusy, setCreatingTaskBusy] = useState(false);
+  const [createTaskError, setCreateTaskError] = useState<string | null>(null);
+  const newTaskNameRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!loadTasks || !draft.projectId) {
+      setTasks([]);
+      return;
+    }
+    let cancelled = false;
+    void loadTasks(draft.projectId)
+      .then((t) => {
+        if (!cancelled) setTasks(t);
+      })
+      .catch(() => {
+        if (!cancelled) setTasks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadTasks, draft.projectId]);
 
   // Only seed draft + capture opener on the `open` false→true transition.
   // If we depended on `initial` here, every parent re-render (timer
@@ -84,6 +156,17 @@ export function ManualEntryModal({
       setDraft(initial);
       setConfirmDelete(false);
       setError(null);
+      setCreatingProject(false);
+      setNewProjectName("");
+      setNewProjectColor(PROJECT_COLORS[0]);
+      setCreateProjectError(null);
+      setCreatingTask(false);
+      setCreatingTaskBusy(false);
+      setNewTaskName("");
+      setCreateTaskError(null);
+      // Drop the previous project's tasks so a reopen for a different
+      // project can't flash a stale list before loadTasks resolves.
+      setTasks([]);
       const id = window.requestAnimationFrame(() => {
         firstFieldRef.current?.focus();
       });
@@ -137,6 +220,9 @@ export function ManualEntryModal({
       await onSubmit({
         id: draft.id,
         projectId: draft.projectId,
+        // A task only makes sense with a project; never send a dangling
+        // task id if the project was cleared.
+        taskId: draft.projectId ? draft.taskId : null,
         description: draft.description.trim(),
         startedAt: localToIso(draft.startedLocal),
         endedAt: draft.endedLocal ? localToIso(draft.endedLocal) : null,
@@ -163,9 +249,79 @@ export function ManualEntryModal({
     }
   };
 
+  const openCreateProject = () => {
+    setCreatingProject(true);
+    setCreateProjectError(null);
+    window.requestAnimationFrame(() => newProjectNameRef.current?.focus());
+  };
+
+  const cancelCreateProject = () => {
+    setCreatingProject(false);
+    setNewProjectName("");
+    setCreateProjectError(null);
+  };
+
+  const handleCreateProject = async () => {
+    if (!onCreateProject) return;
+    const name = newProjectName.trim();
+    if (!name) {
+      setCreateProjectError("Give the project a name.");
+      newProjectNameRef.current?.focus();
+      return;
+    }
+    setCreatingProjectBusy(true);
+    setCreateProjectError(null);
+    try {
+      const project = await onCreateProject({ name, color: newProjectColor });
+      setDraft((d) => ({ ...d, projectId: project.id }));
+      setCreatingProject(false);
+      setNewProjectName("");
+    } catch (err) {
+      setCreateProjectError(String(err));
+    } finally {
+      setCreatingProjectBusy(false);
+    }
+  };
+
+  const openCreateTask = () => {
+    setCreatingTask(true);
+    setCreateTaskError(null);
+    window.requestAnimationFrame(() => newTaskNameRef.current?.focus());
+  };
+
+  const cancelCreateTask = () => {
+    setCreatingTask(false);
+    setNewTaskName("");
+    setCreateTaskError(null);
+  };
+
+  const handleCreateTask = async () => {
+    if (!onCreateTask || !draft.projectId) return;
+    const name = newTaskName.trim();
+    if (!name) {
+      setCreateTaskError("Give the task a name.");
+      newTaskNameRef.current?.focus();
+      return;
+    }
+    setCreatingTaskBusy(true);
+    setCreateTaskError(null);
+    try {
+      const task = await onCreateTask(draft.projectId, name);
+      setTasks((prev) => [...prev.filter((t) => t.id !== task.id), task]);
+      setDraft((d) => ({ ...d, taskId: task.id }));
+      setCreatingTask(false);
+      setNewTaskName("");
+    } catch (err) {
+      setCreateTaskError(String(err));
+    } finally {
+      setCreatingTaskBusy(false);
+    }
+  };
+
   if (!open) return null;
 
   const title = mode === "edit" ? "Edit entry" : "New entry";
+  const showTaskPicker = Boolean(loadTasks && draft.projectId);
 
   return (
     <div
@@ -213,15 +369,31 @@ export function ManualEntryModal({
             />
           </label>
 
-          <label className="field">
-            <span className="field-label">Project</span>
+          <div className="field">
+            <div className="field-label-row">
+              <label className="field-label" htmlFor={projectFieldId}>
+                Project
+              </label>
+              {onCreateProject && !creatingProject && (
+                <button
+                  type="button"
+                  className="field-action"
+                  onClick={openCreateProject}
+                >
+                  <Icon name="plus" size={11} /> New project
+                </button>
+              )}
+            </div>
             <select
+              id={projectFieldId}
               className="field-input"
               value={draft.projectId ?? ""}
               onChange={(e) =>
                 setDraft((d) => ({
                   ...d,
                   projectId: e.target.value === "" ? null : e.target.value,
+                  // Changing project invalidates the task selection.
+                  taskId: null,
                 }))
               }
             >
@@ -232,7 +404,153 @@ export function ManualEntryModal({
                 </option>
               ))}
             </select>
-          </label>
+          </div>
+
+          {onCreateProject && creatingProject && (
+            <div className="create-project" role="group" aria-label="New project">
+              <input
+                ref={newProjectNameRef}
+                type="text"
+                className="field-input"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreateProject();
+                  }
+                }}
+                placeholder="New project name"
+                aria-label="New project name"
+                disabled={creatingProjectBusy}
+              />
+              <div
+                className="swatch-row"
+                role="radiogroup"
+                aria-label="Project color"
+              >
+                {PROJECT_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`swatch${c === newProjectColor ? " is-on" : ""}`}
+                    style={{ background: c }}
+                    role="radio"
+                    aria-checked={c === newProjectColor}
+                    aria-label={`Color ${c}`}
+                    onClick={() => setNewProjectColor(c)}
+                    disabled={creatingProjectBusy}
+                  />
+                ))}
+              </div>
+              {createProjectError && (
+                <p className="field-error" role="alert">
+                  {createProjectError}
+                </p>
+              )}
+              <div className="create-project-actions">
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={cancelCreateProject}
+                  disabled={creatingProjectBusy}
+                  aria-label="Cancel new project"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void handleCreateProject()}
+                  disabled={creatingProjectBusy || !newProjectName.trim()}
+                >
+                  <Icon name="check" size={12} /> Add project
+                </button>
+              </div>
+            </div>
+          )}
+
+          {showTaskPicker && (
+            <div className="field">
+              <div className="field-label-row">
+                <label className="field-label" htmlFor={taskFieldId}>
+                  Task
+                </label>
+                {onCreateTask && !creatingTask && (
+                  <button
+                    type="button"
+                    className="field-action"
+                    onClick={openCreateTask}
+                  >
+                    <Icon name="plus" size={11} /> New task
+                  </button>
+                )}
+              </div>
+              <select
+                id={taskFieldId}
+                className="field-input"
+                value={draft.taskId ?? ""}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    taskId: e.target.value === "" ? null : e.target.value,
+                  }))
+                }
+              >
+                <option value="">No task</option>
+                {tasks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {showTaskPicker && onCreateTask && creatingTask && (
+            <div className="create-project" role="group" aria-label="New task">
+              <input
+                ref={newTaskNameRef}
+                type="text"
+                className="field-input"
+                value={newTaskName}
+                onChange={(e) => setNewTaskName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreateTask();
+                  }
+                }}
+                placeholder="New task name"
+                aria-label="New task name"
+                disabled={creatingTaskBusy}
+              />
+              {createTaskError && (
+                <p className="field-error" role="alert">
+                  {createTaskError}
+                </p>
+              )}
+              <div className="create-project-actions">
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={cancelCreateTask}
+                  disabled={creatingTaskBusy}
+                  aria-label="Cancel new task"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void handleCreateTask()}
+                  disabled={creatingTaskBusy || !newTaskName.trim()}
+                >
+                  <Icon name="check" size={12} /> Add task
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="field-row">
             <label className="field">
@@ -261,8 +579,6 @@ export function ManualEntryModal({
               />
             </label>
           </div>
-
-          {/* TODO(#21 tags): wire chip input once tags / entry_tags IPC lands. */}
 
           {validation.startError && (
             <p className="field-error" role="alert">

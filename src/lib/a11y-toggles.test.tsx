@@ -58,21 +58,21 @@ describe("a11y toggles: data-attribute + CSS reaction", () => {
     const mdFontBase = getComputedStyle(root)
       .getPropertyValue("--font-base")
       .trim();
-    expect(mdFontBase).toBe("16px");
+    expect(mdFontBase).toBe("17.5px");
 
     act(() => result.current.setTextScale("xl"));
     expect(root.dataset.textScale).toBe("xl");
     const xlFontBase = getComputedStyle(root)
       .getPropertyValue("--font-base")
       .trim();
-    expect(xlFontBase).toBe("20px");
+    expect(xlFontBase).toBe("23px");
     expect(xlFontBase).not.toBe(mdFontBase);
 
     act(() => result.current.setTextScale("sm"));
     const smFontBase = getComputedStyle(root)
       .getPropertyValue("--font-base")
       .trim();
-    expect(smFontBase).toBe("14px");
+    expect(smFontBase).toBe("15.5px");
   });
 
   it("text size: --font-small and --font-tiny scale alongside --font-base", () => {
@@ -81,9 +81,9 @@ describe("a11y toggles: data-attribute + CSS reaction", () => {
 
     act(() => result.current.setTextScale("xl"));
     const cs = getComputedStyle(root);
-    expect(cs.getPropertyValue("--font-small").trim()).toBe("17px");
-    expect(cs.getPropertyValue("--font-tiny").trim()).toBe("14.5px");
-    expect(cs.getPropertyValue("--font-display").trim()).toBe("54px");
+    expect(cs.getPropertyValue("--font-small").trim()).toBe("19.5px");
+    expect(cs.getPropertyValue("--font-tiny").trim()).toBe("16.5px");
+    expect(cs.getPropertyValue("--font-display").trim()).toBe("60px");
   });
 
   // ----- High contrast ---------------------------------------------

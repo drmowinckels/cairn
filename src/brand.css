@@ -41,10 +41,10 @@
   --pad-y: 22px;
   --gap: 22px;
   --row-h: 46px;
-  --font-base: 16px;
-  --font-small: 14px;
-  --font-tiny: 12.5px;
-  --font-display: 42px;
+  --font-base: 17.5px;
+  --font-small: 15px;
+  --font-tiny: 13px;
+  --font-display: 45px;
   --line-base: 1.55;
 
   /* Type system */
@@ -111,6 +111,24 @@ body {
   overflow: hidden;
 }
 
+/* Links anywhere in the popover inherit the brand accent rather than the
+   browser default blue. More specific rules (e.g. `.privacy-attrib a`)
+   still win where a context wants a quieter treatment. */
+.pop a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--hairline-strong);
+  text-underline-offset: 2px;
+}
+.pop a:hover {
+  text-decoration-color: var(--accent);
+}
+.pop a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* ─── POPOVER FRAME ─────────────────────────────────────────────────── */
 .pop {
   position: absolute;
@@ -132,6 +150,12 @@ body {
 }
 .pop[data-density="compact"] {
   width: 420px;
+}
+/* Popover size preset (#1). "large" widens the card to fill the larger
+   window the size toggle requests via set_popover_size; the window keeps
+   ~60px of inset for the tray tail + margins, matching the compact case. */
+:root[data-popover-size="large"] .pop {
+  width: 620px;
 }
 /* Onboarding renders a single position:absolute overlay (.onboarding-overlay,
    inset:0) as the only child of .pop. With no in-flow children a flex column
@@ -958,9 +982,16 @@ body {
   color: var(--ink);
 }
 .seg-btn.is-on {
+  /* --surface and the --bg-soft track are near-identical creams, so the
+     old surface fill + faint shadow made the selected segment invisible.
+     Mark it with an accent ring + accent-ink text + heavier weight so the
+     current choice reads at a glance in both themes. */
   background: var(--surface);
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgba(61, 64, 91, 0.08);
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 1px 3px rgba(61, 64, 91, 0.18);
 }
 .seg--sm .seg-btn {
   padding: 3px 7px;
@@ -2277,6 +2308,73 @@ select.rule-conf {
   justify-content: flex-end;
 }
 
+/* Git discovery-roots configurator (#7) */
+.modal-sub code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  background: var(--bg-soft);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.git-roots-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.git-roots-empty {
+  color: var(--ink-mute);
+  font-size: var(--font-small);
+  padding: 8px 2px;
+}
+.git-root-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+.git-root-path {
+  font-size: var(--font-small);
+  color: var(--ink);
+  word-break: break-all;
+}
+.git-roots-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.git-roots-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  font-size: var(--font-small);
+}
+.git-roots-field input {
+  padding: 6px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+}
+.git-roots-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.git-roots-foot .spacer {
+  flex: 1;
+}
+
 .settings-foot {
   font-size: 12px;
   color: var(--ink-mute);
@@ -2660,6 +2758,69 @@ select.rule-conf {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.field-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-ink);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.field-action:hover {
+  background: var(--accent-soft);
+}
+.field-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.create-project {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+.swatch-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 0.5px var(--hairline-strong);
+}
+.swatch.is-on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--surface);
+}
+.swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.create-project-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
 .field-error {
   color: #8a3a23;
   font-size: var(--font-tiny);
@@ -2726,28 +2887,28 @@ select.rule-conf {
  * user who lands on "md" doesn't inherit a stale scale.
  */
 :root[data-text-scale="sm"] {
-  --font-base: 14px;
-  --font-small: 12.5px;
-  --font-tiny: 11px;
-  --font-display: 36px;
+  --font-base: 15.5px;
+  --font-small: 13.5px;
+  --font-tiny: 12px;
+  --font-display: 38px;
 }
 :root[data-text-scale="md"] {
-  --font-base: 16px;
-  --font-small: 14px;
-  --font-tiny: 12.5px;
-  --font-display: 42px;
+  --font-base: 17.5px;
+  --font-small: 15px;
+  --font-tiny: 13px;
+  --font-display: 45px;
 }
 :root[data-text-scale="lg"] {
-  --font-base: 18px;
-  --font-small: 15.5px;
-  --font-tiny: 13.5px;
-  --font-display: 48px;
-}
-:root[data-text-scale="xl"] {
   --font-base: 20px;
   --font-small: 17px;
   --font-tiny: 14.5px;
-  --font-display: 54px;
+  --font-display: 52px;
+}
+:root[data-text-scale="xl"] {
+  --font-base: 23px;
+  --font-small: 19.5px;
+  --font-tiny: 16.5px;
+  --font-display: 60px;
 }
 
 :root[data-reduce-motion="on"] *,

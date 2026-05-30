@@ -545,6 +545,237 @@ pub async fn list_week(state: State<'_, AppState>) -> Result<Vec<WeekDayAgg>, St
     Ok(out)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportProjectSlice {
+    pub project_id: Option<String>,
+    pub seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportDayBucket {
+    pub date: String,
+    pub by_project: Vec<ReportProjectSlice>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSourceSplit {
+    pub rule: i64,
+    pub calendar: i64,
+    pub manual: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSummary {
+    pub total_seconds: i64,
+    pub prev_total_seconds: i64,
+    pub by_day: Vec<ReportDayBucket>,
+    pub by_project: Vec<ReportProjectSlice>,
+    pub by_source: ReportSourceSplit,
+}
+
+/// One entry reduced to what the report needs: project, signal source,
+/// and a concrete [start, end] (open entries are resolved to `now`
+/// before they reach the pure aggregator).
+#[derive(Debug, Clone)]
+struct ReportRow {
+    project_id: Option<String>,
+    source: String,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+}
+
+/// Local-date half-open window [start, end) for `range`, anchored on
+/// `anchor` (today, normally). Unknown ranges fall back to the week.
+fn report_window(range: &str, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
+    match range {
+        "day" => (anchor, anchor + Duration::days(1)),
+        "month" => {
+            let first = first_of_month(anchor);
+            (first, first_of_next_month(first))
+        }
+        _ => {
+            let monday = monday_of(anchor);
+            (monday, monday + Duration::days(7))
+        }
+    }
+}
+
+/// The window immediately preceding `report_window(range, anchor)` —
+/// the "vs last period" baseline.
+fn prev_report_window(range: &str, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
+    let (start, _) = report_window(range, anchor);
+    match range {
+        "day" => (start - Duration::days(1), start),
+        "month" => (first_of_month(start - Duration::days(1)), start),
+        _ => (start - Duration::days(7), start),
+    }
+}
+
+fn first_of_month(d: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(d.year(), d.month(), 1).expect("day 1 is valid")
+}
+
+fn first_of_next_month(first: NaiveDate) -> NaiveDate {
+    if first.month() == 12 {
+        NaiveDate::from_ymd_opt(first.year() + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(first.year(), first.month() + 1, 1)
+    }
+    .expect("first of next month is valid")
+}
+
+fn source_bucket<'a>(split: &'a mut ReportSourceSplit, source: &str) -> &'a mut i64 {
+    if source.starts_with("rule") {
+        &mut split.rule
+    } else if source == "calendar" {
+        &mut split.calendar
+    } else {
+        &mut split.manual
+    }
+}
+
+fn total_seconds(rows: &[ReportRow]) -> i64 {
+    rows.iter()
+        .map(|r| (r.end - r.start).num_seconds())
+        .filter(|s| *s > 0)
+        .sum()
+}
+
+/// Pure heart of `report_summary`: from the rows in [start, end) (open
+/// entries pre-resolved to `now`), produce the total, per-project
+/// rollup, one per-day bucket for every calendar day in the window (in
+/// order, empty days included), and the rule/calendar/manual split.
+fn aggregate_report(
+    rows: &[ReportRow],
+    start_day: NaiveDate,
+    end_day: NaiveDate,
+) -> (
+    i64,
+    Vec<ReportProjectSlice>,
+    Vec<ReportDayBucket>,
+    ReportSourceSplit,
+) {
+    use std::collections::BTreeMap;
+    let mut by_project: BTreeMap<Option<String>, i64> = BTreeMap::new();
+    let mut by_day: BTreeMap<NaiveDate, BTreeMap<Option<String>, i64>> = BTreeMap::new();
+    let mut by_source = ReportSourceSplit::default();
+    let mut total = 0i64;
+
+    for r in rows {
+        let secs = (r.end - r.start).num_seconds();
+        if secs <= 0 {
+            continue;
+        }
+        total += secs;
+        *by_project.entry(r.project_id.clone()).or_insert(0) += secs;
+        let date = r.start.with_timezone(&Local).date_naive();
+        *by_day
+            .entry(date)
+            .or_default()
+            .entry(r.project_id.clone())
+            .or_insert(0) += secs;
+        *source_bucket(&mut by_source, &r.source) += secs;
+    }
+
+    let by_project_vec = by_project
+        .into_iter()
+        .map(|(project_id, seconds)| ReportProjectSlice {
+            project_id,
+            seconds,
+        })
+        .collect();
+
+    let mut day_buckets = Vec::new();
+    let mut d = start_day;
+    while d < end_day {
+        let slices = by_day
+            .get(&d)
+            .map(|m| {
+                m.iter()
+                    .map(|(p, s)| ReportProjectSlice {
+                        project_id: p.clone(),
+                        seconds: *s,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        day_buckets.push(ReportDayBucket {
+            date: d.to_string(),
+            by_project: slices,
+        });
+        d += Duration::days(1);
+    }
+
+    (total, by_project_vec, day_buckets, by_source)
+}
+
+async fn fetch_report_rows(
+    pool: &sqlx::SqlitePool,
+    start_day: NaiveDate,
+    end_day: NaiveDate,
+    now: DateTime<Utc>,
+) -> Result<Vec<ReportRow>, String> {
+    let start_utc = local_midnight_utc(start_day);
+    let end_utc = local_midnight_utc(end_day);
+    let sqlrows = sqlx::query(
+        r#"
+        SELECT project_id, source, started_at, ended_at
+          FROM entries
+         WHERE started_at >= ?1 AND started_at < ?2
+        "#,
+    )
+    .bind(start_utc.to_rfc3339())
+    .bind(end_utc.to_rfc3339())
+    .fetch_all(pool)
+    .await
+    .map_err(err)?;
+
+    let mut rows = Vec::with_capacity(sqlrows.len());
+    for row in sqlrows {
+        let start = parse_ts(row.get::<String, _>("started_at"))?;
+        let end = match row.get::<Option<String>, _>("ended_at") {
+            Some(s) => parse_ts(s)?,
+            None => now,
+        };
+        rows.push(ReportRow {
+            project_id: row.get("project_id"),
+            source: row.get("source"),
+            start,
+            end,
+        });
+    }
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn report_summary(
+    state: State<'_, AppState>,
+    range: String,
+) -> Result<ReportSummary, String> {
+    let anchor = Local::now().date_naive();
+    let now = Utc::now();
+
+    let (start_day, end_day) = report_window(&range, anchor);
+    let (prev_start, prev_end) = prev_report_window(&range, anchor);
+
+    let cur_rows = fetch_report_rows(&state.db.pool, start_day, end_day, now).await?;
+    let prev_rows = fetch_report_rows(&state.db.pool, prev_start, prev_end, now).await?;
+
+    let (total, by_project, by_day, by_source) = aggregate_report(&cur_rows, start_day, end_day);
+
+    Ok(ReportSummary {
+        total_seconds: total,
+        prev_total_seconds: total_seconds(&prev_rows),
+        by_day,
+        by_project,
+        by_source,
+    })
+}
+
 fn monday_of(d: NaiveDate) -> NaiveDate {
     let offset = d.weekday().num_days_from_monday() as i64;
     d - Duration::days(offset)
@@ -762,7 +993,7 @@ pub async fn reorder_rules(state: State<'_, AppState>, ids: Vec<String>) -> Resu
 /// The DB write that triggered the reload has already succeeded;
 /// the cache lag converges as soon as the next mutator (or app
 /// restart) loads cleanly.
-async fn reload_rules(state: &State<'_, AppState>) {
+pub(crate) async fn reload_rules(state: &State<'_, AppState>) {
     let fresh = match crate::signals::fanout::load_engine_rules(&state.db.pool).await {
         Ok(rules) => rules,
         Err(e) => {
@@ -922,7 +1153,7 @@ pub async fn delete_exclusion(state: State<'_, AppState>, id: String) -> Result<
 /// Reload the in-memory exclusion matcher from the DB. Called after
 /// every `save_exclusion` / `delete_exclusion` so the snapshot
 /// stream driver sees the new state on the very next event.
-async fn reload_exclusions(state: &State<'_, AppState>) {
+pub(crate) async fn reload_exclusions(state: &State<'_, AppState>) {
     let fresh = crate::signals::exclusions::ExclusionMatcher::load(&state.db.pool).await;
     match state.exclusions.write() {
         Ok(mut guard) => *guard = fresh,
@@ -1456,10 +1687,23 @@ pub fn set_pinned(state: State<'_, AppState>, pinned: bool) -> Result<(), String
 
 #[tauri::command]
 pub fn set_popover_size(app: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    // Validate at the trust boundary: this is an invokable command, so
+    // don't assume the caller is the fixed client-side preset. Reject
+    // non-finite sizes and clamp to a sane on-screen range.
+    if !width.is_finite() || !height.is_finite() {
+        return Err("popover size must be finite".into());
+    }
+    let width = width.clamp(320.0, 1200.0);
+    let height = height.clamp(400.0, 1400.0);
     if let Some(window) = app.get_webview_window("popover") {
         window
             .set_size(tauri::LogicalSize::new(width, height))
             .map_err(err)?;
+        // The popover is anchored top-right (see popover::toggle). After
+        // a resize the origin would otherwise stay put and the wider /
+        // taller card could drift off-screen, so re-anchor it.
+        use tauri_plugin_positioner::{Position, WindowExt};
+        let _ = window.move_window(Position::TopRight);
     }
     Ok(())
 }
@@ -1475,11 +1719,140 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 }
 
 #[cfg(test)]
+mod report_pure_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn row(project: Option<&str>, source: &str, ymdh: (i32, u32, u32, u32), dur: i64) -> ReportRow {
+        let s = Utc
+            .with_ymd_and_hms(ymdh.0, ymdh.1, ymdh.2, ymdh.3, 0, 0)
+            .unwrap();
+        ReportRow {
+            project_id: project.map(str::to_string),
+            source: source.to_string(),
+            start: s,
+            end: s + Duration::seconds(dur),
+        }
+    }
+
+    #[test]
+    fn report_window_day_week_month() {
+        let anchor = NaiveDate::from_ymd_opt(2026, 5, 30).unwrap(); // Saturday
+        assert_eq!(
+            report_window("day", anchor),
+            (anchor, NaiveDate::from_ymd_opt(2026, 5, 31).unwrap())
+        );
+        let (ws, we) = report_window("week", anchor);
+        assert_eq!(ws.weekday(), Weekday::Mon);
+        assert_eq!((we - ws).num_days(), 7);
+        assert_eq!(
+            report_window("month", anchor),
+            (
+                NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()
+            )
+        );
+        // Unknown range falls back to the current week (matches the
+        // command's lenient deserialization of the `range` arg).
+        assert_eq!(
+            report_window("bogus", anchor),
+            report_window("week", anchor)
+        );
+    }
+
+    #[test]
+    fn month_window_rolls_over_year_in_december() {
+        let dec = NaiveDate::from_ymd_opt(2026, 12, 15).unwrap();
+        assert_eq!(
+            report_window("month", dec),
+            (
+                NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn prev_window_precedes_current() {
+        let anchor = NaiveDate::from_ymd_opt(2026, 5, 30).unwrap();
+        let (cs, _) = report_window("day", anchor);
+        let (ps, pe) = prev_report_window("day", anchor);
+        assert_eq!(pe, cs);
+        assert_eq!(ps, cs - Duration::days(1));
+
+        let (ms, _) = report_window("month", anchor);
+        let (pms, pme) = prev_report_window("month", anchor);
+        assert_eq!(pme, ms);
+        assert_eq!(pms, NaiveDate::from_ymd_opt(2026, 4, 1).unwrap());
+    }
+
+    #[test]
+    fn aggregate_totals_projects_days_and_sources() {
+        let start_day = NaiveDate::from_ymd_opt(2026, 5, 25).unwrap(); // Monday
+        let end_day = start_day + Duration::days(7);
+        let rows = vec![
+            row(Some("a"), "manual", (2026, 5, 25, 9), 3600),
+            row(Some("a"), "rule:branch=x", (2026, 5, 26, 9), 1800),
+            row(Some("b"), "calendar", (2026, 5, 27, 9), 1200),
+            row(None, "manual", (2026, 5, 27, 11), 600),
+            row(Some("a"), "manual", (2026, 5, 30, 9), 0), // zero-length, ignored
+        ];
+        let (total, by_project, by_day, by_source) = aggregate_report(&rows, start_day, end_day);
+
+        assert_eq!(total, 3600 + 1800 + 1200 + 600);
+        // One bucket per calendar day in the window, tz-independent.
+        assert_eq!(by_day.len(), 7);
+        let a = by_project
+            .iter()
+            .find(|s| s.project_id.as_deref() == Some("a"))
+            .unwrap();
+        assert_eq!(a.seconds, 5400);
+        let none = by_project.iter().find(|s| s.project_id.is_none()).unwrap();
+        assert_eq!(none.seconds, 600);
+        assert_eq!(by_source.manual, 3600 + 600);
+        assert_eq!(by_source.rule, 1800);
+        assert_eq!(by_source.calendar, 1200);
+    }
+
+    #[test]
+    fn total_seconds_ignores_negative_spans() {
+        let s = Utc.with_ymd_and_hms(2026, 5, 25, 9, 0, 0).unwrap();
+        let rows = vec![
+            ReportRow {
+                project_id: None,
+                source: "manual".into(),
+                start: s,
+                end: s + Duration::seconds(60),
+            },
+            ReportRow {
+                project_id: None,
+                source: "manual".into(),
+                start: s,
+                end: s - Duration::seconds(10),
+            },
+        ];
+        assert_eq!(total_seconds(&rows), 60);
+    }
+}
+
+#[cfg(test)]
 #[cfg(not(target_os = "windows"))]
 mod tests {
     use super::*;
     use crate::test_support::mock_app_with_db;
     use tauri::Manager;
+
+    #[tokio::test]
+    async fn report_summary_on_fresh_db_is_zero_with_full_day_buckets() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let summary = report_summary(state, "week".into()).await.unwrap();
+        assert_eq!(summary.total_seconds, 0);
+        assert_eq!(summary.prev_total_seconds, 0);
+        assert_eq!(summary.by_day.len(), 7);
+        assert!(summary.by_project.is_empty());
+        assert_eq!(summary.by_source.manual, 0);
+    }
 
     #[tokio::test]
     async fn list_projects_returns_seeded_projects() {
@@ -2878,6 +3251,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_entry_sets_project_and_task_in_one_call() {
+        // The manual-entry modal always sends BOTH project_id and
+        // task_id on save. Correctness depends on the project branch
+        // (which nulls task_id) running before the task branch
+        // re-applies it. Pin that interplay so a reorder can't silently
+        // drop the task.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let entry = start_entry(state.clone(), start_input(Some("cairn"), "x"))
+            .await
+            .unwrap();
+        let task = save_task(state.clone(), task_input(None, "cairn", "Build"))
+            .await
+            .unwrap();
+
+        let after = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: Some(Some("cairn".into())),
+                task_id: Some(Some(task.id.clone())),
+                description: None,
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(after.project_id.as_deref(), Some("cairn"));
+        assert_eq!(
+            after.task_id.as_deref(),
+            Some(task.id.as_str()),
+            "task set in the same call as project must survive"
+        );
+    }
+
+    #[tokio::test]
     async fn update_entry_can_set_started_and_ended() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
@@ -3408,6 +3819,133 @@ mod tests {
         // mock_app_with_db boots with empty roots — see test_support.rs.
         assert_eq!(status.watched_count, 0);
         assert!(status.discovery_roots.is_empty());
+    }
+
+    #[test]
+    fn normalize_roots_trims_drops_blanks_and_dedupes() {
+        let out = normalize_roots(&[
+            "  ~/code  ".into(),
+            "".into(),
+            "   ".into(),
+            "~/code".into(),
+            "/srv/git".into(),
+        ]);
+        assert_eq!(out, vec!["~/code".to_string(), "/srv/git".to_string()]);
+    }
+
+    #[test]
+    fn validate_roots_accepts_ordinary_paths_and_empty() {
+        assert!(validate_roots(&[]).is_ok());
+        assert!(validate_roots(&["~/code".into(), "/srv/git".into()]).is_ok());
+    }
+
+    #[test]
+    fn validate_roots_rejects_filesystem_root() {
+        assert!(validate_roots(&["/".into()]).is_err());
+    }
+
+    #[test]
+    fn validate_roots_rejects_bare_home() {
+        // Only meaningful when a home dir resolves in the test env.
+        if dirs::home_dir().is_some() {
+            assert!(validate_roots(&["~".into()]).is_err());
+        }
+    }
+
+    #[test]
+    fn validate_roots_rejects_too_many() {
+        let many: Vec<String> = (0..MAX_DISCOVERY_ROOTS + 1)
+            .map(|i| format!("/p/{i}"))
+            .collect();
+        assert!(validate_roots(&many).is_err());
+    }
+
+    #[tokio::test]
+    async fn get_git_discovery_roots_falls_back_to_defaults_when_unset() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let configured = {
+            let state = app.state::<crate::AppState>();
+            get_git_discovery_roots(state).await.unwrap()
+        };
+        // With no override persisted, the command returns the built-in
+        // defaults in display form — which equals display_roots of
+        // default_discovery_roots (possibly empty on a CI box with no
+        // conventional dev dirs, but never an error).
+        let expected = crate::signals::git_watcher::display_roots(
+            &crate::signals::git_watcher::default_discovery_roots(),
+        );
+        assert_eq!(configured, expected);
+    }
+
+    #[tokio::test]
+    async fn set_git_discovery_roots_rejects_filesystem_root_without_persisting() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let result = {
+            let state = app.state::<crate::AppState>();
+            set_git_discovery_roots(state, vec!["/".into()]).await
+        };
+        assert!(result.is_err());
+        // Nothing persisted (validation runs before any write).
+        assert!(load_discovery_roots(&db.pool).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn discovery_roots_default_to_empty_then_roundtrip() {
+        let (_dir, _app, db) = mock_app_with_db().await;
+        // Unset → empty (caller treats as "use defaults").
+        assert!(load_discovery_roots(&db.pool).await.is_empty());
+
+        persist_discovery_roots(&db.pool, &["~/work".into(), "/opt/x".into()])
+            .await
+            .unwrap();
+        let loaded = load_discovery_roots(&db.pool).await;
+        assert_eq!(loaded, vec!["~/work".to_string(), "/opt/x".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn set_git_discovery_roots_persists_discovers_and_updates_status() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("proj");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+
+        let status = {
+            let state = app.state::<crate::AppState>();
+            set_git_discovery_roots(state, vec![root.clone(), "  ".into(), root.clone()])
+                .await
+                .unwrap()
+        };
+        assert_eq!(status.watched_count, 1);
+        assert_eq!(status.discovery_roots, vec![root.clone()]);
+
+        // Persisted, deduped, blanks dropped.
+        assert_eq!(load_discovery_roots(&db.pool).await, vec![root.clone()]);
+
+        // The cached status the UI reads now reflects the new roots.
+        let got = {
+            let state = app.state::<crate::AppState>();
+            get_git_watcher_status(state).unwrap()
+        };
+        assert_eq!(got.watched_count, 1);
+        assert_eq!(got.discovery_roots, vec![root]);
+    }
+
+    #[tokio::test]
+    async fn set_git_discovery_roots_empty_clears_override() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        persist_discovery_roots(&db.pool, &["/seeded".into()])
+            .await
+            .unwrap();
+        {
+            let state = app.state::<crate::AppState>();
+            set_git_discovery_roots(state, vec!["   ".into(), "".into()])
+                .await
+                .unwrap();
+        }
+        // Override cleared → load returns empty (defaults apply).
+        assert!(load_discovery_roots(&db.pool).await.is_empty());
     }
 
     #[tokio::test]
@@ -3952,7 +4490,189 @@ pub async fn current_snapshot(
 /// an interior mutability primitive.
 #[tauri::command]
 pub fn get_git_watcher_status(state: State<'_, AppState>) -> Result<GitWatcherStatus, String> {
-    Ok(state.git_watcher_status.clone())
+    Ok(state
+        .git_watcher_status
+        .lock()
+        .map_err(|_| "git watcher status lock poisoned".to_string())?
+        .clone())
+}
+
+/// Read the user's configured git discovery roots (issue #7). Returns
+/// the persisted tilde-form roots, or the built-in defaults (in
+/// tilde-form) when the user hasn't configured any — so the editor
+/// always shows what the watcher is actually using.
+#[tauri::command]
+pub async fn get_git_discovery_roots(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let configured = load_discovery_roots(&state.db.pool).await;
+    if configured.is_empty() {
+        Ok(crate::signals::git_watcher::display_roots(
+            &crate::signals::git_watcher::default_discovery_roots(),
+        ))
+    } else {
+        Ok(configured)
+    }
+}
+
+/// Persist a new set of git discovery roots and re-arm the watcher
+/// over them (issue #7). Blank entries are dropped and duplicates
+/// collapsed (order preserved). An empty list clears the override, so
+/// the watcher falls back to the built-in defaults. The live watcher
+/// task is aborted and respawned against the freshly-discovered repos,
+/// and the cached status is rewritten so Settings → Integrations
+/// reflects the new roots immediately. Returns the updated status.
+///
+/// Caveat: the snapshot stream's repo-path list (used by
+/// `derive_ide_folder`'s longest-prefix fallback) is fixed at boot, so
+/// IDE-folder→repo resolution for *newly added* roots only takes full
+/// effect after the next launch. Branch detection for the new repos
+/// works immediately via the respawned watcher.
+#[tauri::command]
+pub async fn set_git_discovery_roots(
+    state: State<'_, AppState>,
+    roots: Vec<String>,
+) -> Result<GitWatcherStatus, String> {
+    // Serialize the whole discover → respawn → persist sequence so two
+    // overlapping calls can't interleave and leak an un-abortable
+    // watcher (same pattern as rules_mutator / exclusions_mutator).
+    let _guard = state.git_roots_mutator.lock().await;
+
+    let cleaned = normalize_roots(&roots);
+    validate_roots(&cleaned)?;
+
+    let expanded = if cleaned.is_empty() {
+        crate::signals::git_watcher::default_discovery_roots()
+    } else {
+        crate::signals::git_watcher::expand_roots(&cleaned)
+    };
+    // Discovery is a synchronous recursive filesystem walk — run it on
+    // the blocking pool so a deep/slow root can't stall the async
+    // runtime worker (and with it, unrelated IPC).
+    let walk_roots = expanded.clone();
+    let repos = tauri::async_runtime::spawn_blocking(move || {
+        crate::signals::git_watcher::discover_repos(&walk_roots)
+    })
+    .await
+    .map_err(|e| format!("discovery task failed: {e}"))?;
+    let status = crate::signals::git_watcher::build_status(&expanded, &repos);
+
+    // Abort the running watcher and respawn over the new repo set.
+    {
+        let mut handle_guard = state
+            .git_watcher_handle
+            .lock()
+            .map_err(|_| "git watcher handle lock poisoned".to_string())?;
+        if let Some(handle) = handle_guard.take() {
+            handle.abort();
+        }
+        let handle =
+            crate::signals::git_watcher::spawn_watcher_task(state.stream.event_sender(), repos);
+        *handle_guard = Some(handle);
+    }
+    *state
+        .git_watcher_status
+        .lock()
+        .map_err(|_| "git watcher status lock poisoned".to_string())? = status.clone();
+
+    // Persist LAST: the live session is already re-armed, so a DB write
+    // failure leaves the running watcher correct (it reverts to the old
+    // roots only on the next launch) rather than the DB getting ahead of
+    // the live state.
+    persist_discovery_roots(&state.db.pool, &cleaned).await?;
+
+    Ok(status)
+}
+
+/// Maximum number of discovery roots a user may configure — a guard
+/// against a pathological config (or crafted import) that would make
+/// the watcher register an unbounded number of OS subscriptions.
+pub(crate) const MAX_DISCOVERY_ROOTS: usize = 64;
+
+/// Reject pathological roots before they reach the filesystem walk:
+/// too many entries, or a root that expands to the filesystem root or
+/// the bare home directory (either would walk a huge slice of the disk
+/// to `MAX_DISCOVERY_DEPTH` and register a flood of watches).
+pub(crate) fn validate_roots(cleaned: &[String]) -> Result<(), String> {
+    if cleaned.len() > MAX_DISCOVERY_ROOTS {
+        return Err(format!(
+            "Too many discovery roots ({}); the maximum is {MAX_DISCOVERY_ROOTS}.",
+            cleaned.len()
+        ));
+    }
+    let home = dirs::home_dir();
+    for raw in cleaned {
+        let expanded = crate::signals::git_watcher::expand_root(raw);
+        if expanded.parent().is_none() {
+            return Err(format!(
+                "\u{201c}{raw}\u{201d} resolves to the filesystem root \u{2014} pick a project folder instead."
+            ));
+        }
+        if let Some(home) = home.as_deref() {
+            if expanded == home {
+                return Err(format!(
+                    "\u{201c}{raw}\u{201d} is your entire home folder \u{2014} pick a project subfolder instead."
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Trim, drop blanks, and de-duplicate user-entered roots, preserving
+/// first-seen order. Pure helper so the cleanup is unit-testable
+/// independent of the DB.
+pub(crate) fn normalize_roots(roots: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in roots {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let owned = trimmed.to_string();
+        if !out.contains(&owned) {
+            out.push(owned);
+        }
+    }
+    out
+}
+
+/// Read the persisted discovery-roots JSON from `app_state`. Returns
+/// an empty vec when unset or unparseable (the caller treats empty as
+/// "use defaults").
+pub(crate) async fn load_discovery_roots(pool: &sqlx::SqlitePool) -> Vec<String> {
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT git_discovery_roots FROM app_state WHERE singleton = 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    match raw {
+        None => Vec::new(),
+        Some(s) => match serde_json::from_str::<Vec<String>>(&s) {
+            Ok(roots) => roots,
+            Err(e) => {
+                // Corrupt / hand-edited value: degrade to defaults but
+                // make the corruption diagnosable rather than silent.
+                log::warn!("git_watcher: ignoring unparseable git_discovery_roots ({e})");
+                Vec::new()
+            }
+        },
+    }
+}
+
+/// Write the discovery-roots override to `app_state` as a JSON array.
+/// An empty slice persists `[]`, which `load_discovery_roots` reads
+/// back as "no override" → defaults.
+pub(crate) async fn persist_discovery_roots(
+    pool: &sqlx::SqlitePool,
+    roots: &[String],
+) -> Result<(), String> {
+    let json = serde_json::to_string(roots).map_err(err)?;
+    sqlx::query("UPDATE app_state SET git_discovery_roots = ?1 WHERE singleton = 1")
+        .bind(json)
+        .execute(pool)
+        .await
+        .map_err(err)?;
+    Ok(())
 }
 
 /// Settings → Integrations card status for the browser extension.

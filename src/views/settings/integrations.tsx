@@ -12,6 +12,7 @@ import {
 import { useAutostart } from "../../lib/use-autostart";
 import { autostartCopy, detectPlatform } from "../../lib/autostart-copy";
 import { CalendarManager } from "./calendar-manager";
+import { GitRootsManager } from "./git-roots-manager";
 
 const EXTENSION_INSTALL_URL =
   "https://github.com/drmowinckels/cairn#browser-extension";
@@ -70,6 +71,7 @@ export function CalendarStatusLine({ onManage }: CalendarStatusLineProps) {
 
 export function GitStatusLine() {
   const [status, setStatus] = useState<GitWatcherStatus | null>(null);
+  const [configuring, setConfiguring] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,12 +99,16 @@ export function GitStatusLine() {
       <button
         type="button"
         className="link-btn"
-        onClick={() => {
-          /* roots configurator lands with the full watcher in M7 */
-        }}
+        onClick={() => setConfiguring(true)}
       >
         Configure roots…
       </button>
+      {configuring && (
+        <GitRootsManager
+          onClose={() => setConfiguring(false)}
+          onSaved={(next) => setStatus(next)}
+        />
+      )}
     </li>
   );
 }

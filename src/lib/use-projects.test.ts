@@ -6,7 +6,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 
 const invokeMock = vi.fn();
 
@@ -29,8 +29,25 @@ describe("useProjects (outside Tauri)", () => {
   it("seeds with the fixture projects in browser-dev mode", async () => {
     const { useProjects } = await import("./use-projects");
     const { result } = renderHook(() => useProjects());
-    expect(result.current.length).toBeGreaterThan(0);
+    expect(result.current.projects.length).toBeGreaterThan(0);
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("create() synthesizes a local project without calling the backend", async () => {
+    const { useProjects } = await import("./use-projects");
+    const { result } = renderHook(() => useProjects());
+    const before = result.current.projects.length;
+    let made: { id: string; name: string } | undefined;
+    await act(async () => {
+      made = await result.current.create({ name: "Side Quest", color: "#81b29a" });
+    });
+    expect(made?.id).toBe("local-side-quest");
+    expect(made?.name).toBe("Side Quest");
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(result.current.projects).toHaveLength(before + 1);
+    expect(result.current.projects.some((p) => p.id === "local-side-quest")).toBe(
+      true,
+    );
   });
 });
 
@@ -53,20 +70,22 @@ describe("useProjects (inside Tauri)", () => {
 
   it("starts empty, then replaces with backend projects", async () => {
     invokeMock.mockResolvedValue([
-      { id: "p1", name: "Cairn", client: null, color: "#e07a5f" },
+      { id: "p1", name: "Cairn", clientId: null, color: "#e07a5f", archived: false },
     ]);
     const { useProjects } = await import("./use-projects");
     const { result } = renderHook(() => useProjects());
-    expect(result.current).toEqual([]);
-    await waitFor(() => expect(result.current).toHaveLength(1));
-    expect(result.current[0]?.name).toBe("Cairn");
+    expect(result.current.projects).toEqual([]);
+    await waitFor(() => expect(result.current.projects).toHaveLength(1));
+    expect(result.current.projects[0]?.name).toBe("Cairn");
   });
 
   it("falls back to fixtures when the backend returns an empty list", async () => {
     invokeMock.mockResolvedValue([]);
     const { useProjects } = await import("./use-projects");
     const { result } = renderHook(() => useProjects());
-    await waitFor(() => expect(result.current.length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(result.current.projects.length).toBeGreaterThan(0),
+    );
   });
 
   it("falls back to fixtures when the IPC call rejects", async () => {
@@ -75,9 +94,38 @@ describe("useProjects (inside Tauri)", () => {
       invokeMock.mockRejectedValue(new Error("boom"));
       const { useProjects } = await import("./use-projects");
       const { result } = renderHook(() => useProjects());
-      await waitFor(() => expect(result.current.length).toBeGreaterThan(0));
+      await waitFor(() =>
+        expect(result.current.projects.length).toBeGreaterThan(0),
+      );
     } finally {
       errSpy.mockRestore();
     }
+  });
+
+  it("create() saves via the backend and adds the returned project", async () => {
+    const saved = {
+      id: "srv-1",
+      name: "New",
+      clientId: null,
+      color: "#f2cc8f",
+      archived: false,
+    };
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "list_projects") return Promise.resolve([]);
+      if (cmd === "save_project") return Promise.resolve(saved);
+      return Promise.resolve(null);
+    });
+    const { useProjects } = await import("./use-projects");
+    const { result } = renderHook(() => useProjects());
+    await waitFor(() =>
+      expect(result.current.projects.length).toBeGreaterThan(0),
+    );
+    await act(async () => {
+      await result.current.create({ name: "New", color: "#f2cc8f" });
+    });
+    expect(invokeMock).toHaveBeenCalledWith("save_project", {
+      project: { name: "New", color: "#f2cc8f" },
+    });
+    expect(result.current.projects.some((p) => p.id === "srv-1")).toBe(true);
   });
 });
