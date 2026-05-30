@@ -3,8 +3,7 @@ import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
 import { useBackup } from "../../lib/use-backup";
 import { useExclusions, guessExclusionKind } from "../../lib/use-exclusions";
-import { SHORTCUTS, emitToast } from "../../lib/shortcuts";
-import { useAnnounce } from "../../lib/use-announce";
+import { SHORTCUTS } from "../../lib/shortcuts";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type {
@@ -109,7 +108,6 @@ export function SettingsView({
   scrollNonce = 0,
 }: Props) {
   const backup = useBackup();
-  const announce = useAnnounce();
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -129,12 +127,6 @@ export function SettingsView({
     target.setAttribute("tabindex", "-1");
     target.focus({ preventScroll: true });
   }, [scrollToSection, scrollNonce]);
-
-  const resetShortcuts = () => {
-    const msg = "Shortcuts already at defaults";
-    announce(msg);
-    emitToast(msg);
-  };
 
   const requestStartCapture = () => setConfirmCapture(true);
   const confirmStartCapture = async () => {
@@ -414,13 +406,6 @@ export function SettingsView({
           <h3 className="settings-h" id="shortcuts-h">
             Shortcuts
           </h3>
-          <button
-            type="button"
-            className="link-btn"
-            onClick={resetShortcuts}
-          >
-            Reset to defaults
-          </button>
         </div>
         <ul className="short-list">
           {SHORTCUTS.map((sc) => (

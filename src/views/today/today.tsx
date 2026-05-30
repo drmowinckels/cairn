@@ -367,7 +367,13 @@ export function TodayView({
             </button>
             <button
               className="btn btn--ghost"
-              onClick={() => dismiss()}
+              onClick={() => {
+                // "Change…" = don't accept the rule's project; dismiss the
+                // suggestion and open the idle project picker so the user
+                // can choose what to start instead.
+                dismiss();
+                setIdlePickerOpen(true);
+              }}
             >
               Change…
             </button>

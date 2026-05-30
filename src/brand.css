@@ -41,10 +41,10 @@
   --pad-y: 22px;
   --gap: 22px;
   --row-h: 46px;
-  --font-base: 16px;
-  --font-small: 14px;
-  --font-tiny: 12.5px;
-  --font-display: 42px;
+  --font-base: 17.5px;
+  --font-small: 15px;
+  --font-tiny: 13px;
+  --font-display: 45px;
   --line-base: 1.55;
 
   /* Type system */
@@ -2726,28 +2726,28 @@ select.rule-conf {
  * user who lands on "md" doesn't inherit a stale scale.
  */
 :root[data-text-scale="sm"] {
-  --font-base: 14px;
-  --font-small: 12.5px;
-  --font-tiny: 11px;
-  --font-display: 36px;
+  --font-base: 15.5px;
+  --font-small: 13.5px;
+  --font-tiny: 12px;
+  --font-display: 38px;
 }
 :root[data-text-scale="md"] {
-  --font-base: 16px;
-  --font-small: 14px;
-  --font-tiny: 12.5px;
-  --font-display: 42px;
+  --font-base: 17.5px;
+  --font-small: 15px;
+  --font-tiny: 13px;
+  --font-display: 45px;
 }
 :root[data-text-scale="lg"] {
-  --font-base: 18px;
-  --font-small: 15.5px;
-  --font-tiny: 13.5px;
-  --font-display: 48px;
-}
-:root[data-text-scale="xl"] {
   --font-base: 20px;
   --font-small: 17px;
   --font-tiny: 14.5px;
-  --font-display: 54px;
+  --font-display: 52px;
+}
+:root[data-text-scale="xl"] {
+  --font-base: 23px;
+  --font-small: 19.5px;
+  --font-tiny: 16.5px;
+  --font-display: 60px;
 }
 
 :root[data-reduce-motion="on"] *,

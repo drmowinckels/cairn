@@ -15,6 +15,31 @@ import {
 } from "../../lib/privacy-copy";
 import { inTauri, saveProject } from "../../lib/ipc";
 
+const ACCESSIBILITY_PREFS_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
+/**
+ * Open macOS' Accessibility privacy pane. Uses the Tauri opener plugin
+ * (which handles the `x-apple.systempreferences:` scheme natively);
+ * falls back to `window.open` outside Tauri (e.g. browser tests) so the
+ * URL is still surfaced. The plugin is imported lazily so the onboarding
+ * view renders without it in non-Tauri test environments.
+ */
+async function openAccessibilitySettings(): Promise<void> {
+  if (inTauri) {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(ACCESSIBILITY_PREFS_URL);
+      return;
+    } catch {
+      /* fall through to window.open */
+    }
+  }
+  if (typeof window !== "undefined") {
+    window.open(ACCESSIBILITY_PREFS_URL, "_blank", "noopener,noreferrer");
+  }
+}
+
 /**
  * Linear state machine for first-run onboarding (issue #31).
  *
@@ -389,18 +414,7 @@ function PermissionsStep() {
           <button
             type="button"
             className="btn btn--ghost btn--sm"
-            onClick={() => {
-              // Best-effort opener. The Tauri opener plugin is wired
-              // elsewhere; here we just surface the URL so a user
-              // outside Tauri (e.g. browser tests) can still copy it.
-              if (typeof window !== "undefined") {
-                window.open(
-                  "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-                  "_blank",
-                  "noopener,noreferrer",
-                );
-              }
-            }}
+            onClick={() => void openAccessibilitySettings()}
           >
             Open settings
           </button>

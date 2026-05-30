@@ -270,21 +270,16 @@ describe("SettingsView (browser-dev mode)", () => {
       expect(switchView.textContent).toContain("–");
     });
 
-    it("'Reset to defaults' is rendered and clickable (no-op + toast)", () => {
+    it("does not render a fake 'Reset to defaults' shortcuts button", () => {
+      // Shortcuts are display-only constants — there is nothing to
+      // reset, so the no-op button was removed rather than left as a
+      // control that does nothing.
       render(
         <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
       );
-      const btn = screen.getByRole("button", { name: /reset to defaults/i });
-      const toast = vi.fn();
-      window.addEventListener("cairn:toast", toast);
-      try {
-        fireEvent.click(btn);
-        expect(toast).toHaveBeenCalledTimes(1);
-        const evt = toast.mock.calls[0][0] as CustomEvent<string>;
-        expect(evt.detail).toMatch(/defaults/i);
-      } finally {
-        window.removeEventListener("cairn:toast", toast);
-      }
+      expect(
+        screen.queryByRole("button", { name: /reset to defaults/i }),
+      ).toBeNull();
     });
   });
 });
