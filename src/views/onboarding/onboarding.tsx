@@ -13,7 +13,7 @@ import {
   PRIVACY_REPO_LABEL,
   PRIVACY_REPO_URL,
 } from "../../lib/privacy-copy";
-import { saveProject } from "../../lib/ipc";
+import { inTauri, saveProject } from "../../lib/ipc";
 import { useAutostart } from "../../lib/use-autostart";
 
 const ACCESSIBILITY_PREFS_URL =
