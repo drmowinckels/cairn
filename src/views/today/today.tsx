@@ -24,7 +24,7 @@ import {
   startToPercent,
   type TimelineSegment,
 } from "../../lib/timeline";
-import { inTauri, type BackendEntry } from "../../lib/ipc";
+import { inTauri, listTasks, saveTask, type BackendEntry } from "../../lib/ipc";
 import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
@@ -189,6 +189,7 @@ export function TodayView({
       mode: "create",
       draft: {
         projectId: null,
+        taskId: null,
         description: "",
         startedLocal: isoToLocal(start.toISOString()),
         endedLocal: isoToLocal(now.toISOString()),
@@ -203,6 +204,7 @@ export function TodayView({
       draft: {
         id: entry.id,
         projectId: entry.projectId,
+        taskId: entry.taskId,
         description: entry.description,
         startedLocal: isoToLocal(entry.startedAt),
         endedLocal: isoToLocal(entry.endedAt ?? ""),
@@ -226,6 +228,7 @@ export function TodayView({
         await today.update({
           id: payload.id,
           projectId: payload.projectId,
+          taskId: payload.taskId,
           description: payload.description,
           startedAt: payload.startedAt,
           endedAt: payload.endedAt,
@@ -233,6 +236,7 @@ export function TodayView({
       } else {
         await today.create({
           projectId: payload.projectId,
+          taskId: payload.taskId,
           description: payload.description,
           startedAt: payload.startedAt,
           endedAt: payload.endedAt,
@@ -619,6 +623,8 @@ export function TodayView({
           }
           onSubmit={handleSubmit}
           onCreateProject={createProject}
+          loadTasks={listTasks}
+          onCreateTask={(projectId, name) => saveTask({ projectId, name })}
           onDelete={modalState.mode === "edit" ? handleDelete : undefined}
           onClose={closeModal}
         />
