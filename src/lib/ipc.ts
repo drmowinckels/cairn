@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Client, Project, Task } from "./types";
+import type { Client, IdleResumeEvent, Project, Task } from "./types";
 
 export interface BackendEntry {
   id: string;
@@ -489,7 +489,12 @@ export async function dryRunRules(
   return invoke<DryRunResult | null>("dry_run_rules", { snapshot });
 }
 
-export type IdleChoice = "keep" | "discard" | "break";
+export type IdleChoice =
+  | "keep"
+  | "discard"
+  | "break"
+  | "discard-continue"
+  | "new-session";
 
 export interface ResolveIdleInput {
   entryId: string;
@@ -500,6 +505,16 @@ export interface ResolveIdleInput {
 
 export async function resolveIdle(input: ResolveIdleInput): Promise<BackendEntry | null> {
   return invoke<BackendEntry | null>("resolve_idle", { input });
+}
+
+export async function pendingIdle(): Promise<IdleResumeEvent | null> {
+  if (!inTauri) return null;
+  return invoke<IdleResumeEvent | null>("pending_idle");
+}
+
+export async function dismissIdle(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("dismiss_idle");
 }
 
 export interface SnoozeSnapshot {
