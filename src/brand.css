@@ -976,9 +976,16 @@ body {
   color: var(--ink);
 }
 .seg-btn.is-on {
+  /* --surface and the --bg-soft track are near-identical creams, so the
+     old surface fill + faint shadow made the selected segment invisible.
+     Mark it with an accent ring + accent-ink text + heavier weight so the
+     current choice reads at a glance in both themes. */
   background: var(--surface);
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgba(61, 64, 91, 0.08);
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 1px 3px rgba(61, 64, 91, 0.18);
 }
 .seg--sm .seg-btn {
   padding: 3px 7px;
