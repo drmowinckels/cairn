@@ -82,7 +82,7 @@ export function RulesView({
   const { rules, add, update, remove, duplicate, move } = useRules({
     defaultAmbiguity: ambiguityDefault,
   });
-  const projects = useProjects();
+  const { projects } = useProjects();
   const projectById = useMemo(
     () => new Map(projects.map((p) => [p.id, p])),
     [projects],

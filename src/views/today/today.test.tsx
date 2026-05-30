@@ -865,7 +865,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
     vi.doMock("../../lib/use-projects", () => ({
-      useProjects: () => [],
+      useProjects: () => ({ projects: [], refresh: vi.fn(), create: vi.fn() }),
     }));
     try {
       const { TodayView } = await import("./today");
@@ -896,7 +896,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
     vi.doMock("../../lib/use-projects", () => ({
-      useProjects: () => [],
+      useProjects: () => ({ projects: [], refresh: vi.fn(), create: vi.fn() }),
     }));
     try {
       const { TodayView } = await import("./today");

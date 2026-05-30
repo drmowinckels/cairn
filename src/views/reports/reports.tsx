@@ -33,7 +33,7 @@ const RANGE_LABEL: Record<ReportRange, string> = {
 
 export function ReportsView({ density }: Props) {
   const backup = useBackup();
-  const projects = useProjects();
+  const { projects } = useProjects();
   const projectsById = useMemo<Record<string, Project>>(
     () => Object.fromEntries(projects.map((p) => [p.id, p])),
     [projects],

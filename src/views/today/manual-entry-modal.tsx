@@ -8,7 +8,19 @@ import {
   type FormEvent,
 } from "react";
 import { Icon } from "../../lib/icon";
+import type { SaveProjectInput } from "../../lib/ipc";
 import type { Project } from "../../lib/types";
+
+/** Swatches offered when creating a project inline. Mirrors the
+ *  default-seed palette so new projects look at home next to them. */
+const PROJECT_COLORS = [
+  "#81b29a",
+  "#f2cc8f",
+  "#e07a5f",
+  "#9a9bb0",
+  "#c8b8e0",
+  "#6d9dc5",
+];
 
 export interface ManualEntryDraft {
   id?: string;
@@ -41,6 +53,13 @@ interface Props {
    */
   runningRange: { startedAt: string; id: string } | null;
   onSubmit: (payload: ManualEntrySubmit) => Promise<void>;
+  /**
+   * Create a project inline from the Project field. When provided, a
+   * "New project" affordance appears beside the picker; the freshly
+   * created project is selected on the draft. Omitted in contexts with
+   * no live project store (the create flow is simply hidden).
+   */
+  onCreateProject?: (input: SaveProjectInput) => Promise<Project>;
   onDelete?: (id: string) => Promise<void>;
   onClose: () => void;
 }
@@ -59,10 +78,12 @@ export function ManualEntryModal({
   projects,
   runningRange,
   onSubmit,
+  onCreateProject,
   onDelete,
   onClose,
 }: Props) {
   const titleId = useId();
+  const projectFieldId = useId();
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
@@ -72,6 +93,16 @@ export function ManualEntryModal({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Inline create-project sub-form (#21 / #4).
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
+  const [creatingProjectBusy, setCreatingProjectBusy] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | null>(
+    null,
+  );
+  const newProjectNameRef = useRef<HTMLInputElement | null>(null);
 
   // Only seed draft + capture opener on the `open` false→true transition.
   // If we depended on `initial` here, every parent re-render (timer
@@ -84,6 +115,10 @@ export function ManualEntryModal({
       setDraft(initial);
       setConfirmDelete(false);
       setError(null);
+      setCreatingProject(false);
+      setNewProjectName("");
+      setNewProjectColor(PROJECT_COLORS[0]);
+      setCreateProjectError(null);
       const id = window.requestAnimationFrame(() => {
         firstFieldRef.current?.focus();
       });
@@ -163,6 +198,40 @@ export function ManualEntryModal({
     }
   };
 
+  const openCreateProject = () => {
+    setCreatingProject(true);
+    setCreateProjectError(null);
+    window.requestAnimationFrame(() => newProjectNameRef.current?.focus());
+  };
+
+  const cancelCreateProject = () => {
+    setCreatingProject(false);
+    setNewProjectName("");
+    setCreateProjectError(null);
+  };
+
+  const handleCreateProject = async () => {
+    if (!onCreateProject) return;
+    const name = newProjectName.trim();
+    if (!name) {
+      setCreateProjectError("Give the project a name.");
+      newProjectNameRef.current?.focus();
+      return;
+    }
+    setCreatingProjectBusy(true);
+    setCreateProjectError(null);
+    try {
+      const project = await onCreateProject({ name, color: newProjectColor });
+      setDraft((d) => ({ ...d, projectId: project.id }));
+      setCreatingProject(false);
+      setNewProjectName("");
+    } catch (err) {
+      setCreateProjectError(String(err));
+    } finally {
+      setCreatingProjectBusy(false);
+    }
+  };
+
   if (!open) return null;
 
   const title = mode === "edit" ? "Edit entry" : "New entry";
@@ -213,9 +282,23 @@ export function ManualEntryModal({
             />
           </label>
 
-          <label className="field">
-            <span className="field-label">Project</span>
+          <div className="field">
+            <div className="field-label-row">
+              <label className="field-label" htmlFor={projectFieldId}>
+                Project
+              </label>
+              {onCreateProject && !creatingProject && (
+                <button
+                  type="button"
+                  className="field-action"
+                  onClick={openCreateProject}
+                >
+                  <Icon name="plus" size={11} /> New project
+                </button>
+              )}
+            </div>
             <select
+              id={projectFieldId}
               className="field-input"
               value={draft.projectId ?? ""}
               onChange={(e) =>
@@ -232,7 +315,71 @@ export function ManualEntryModal({
                 </option>
               ))}
             </select>
-          </label>
+          </div>
+
+          {onCreateProject && creatingProject && (
+            <div className="create-project" role="group" aria-label="New project">
+              <input
+                ref={newProjectNameRef}
+                type="text"
+                className="field-input"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreateProject();
+                  }
+                }}
+                placeholder="New project name"
+                aria-label="New project name"
+                disabled={creatingProjectBusy}
+              />
+              <div
+                className="swatch-row"
+                role="radiogroup"
+                aria-label="Project color"
+              >
+                {PROJECT_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`swatch${c === newProjectColor ? " is-on" : ""}`}
+                    style={{ background: c }}
+                    role="radio"
+                    aria-checked={c === newProjectColor}
+                    aria-label={`Color ${c}`}
+                    onClick={() => setNewProjectColor(c)}
+                    disabled={creatingProjectBusy}
+                  />
+                ))}
+              </div>
+              {createProjectError && (
+                <p className="field-error" role="alert">
+                  {createProjectError}
+                </p>
+              )}
+              <div className="create-project-actions">
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={cancelCreateProject}
+                  disabled={creatingProjectBusy}
+                  aria-label="Cancel new project"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void handleCreateProject()}
+                  disabled={creatingProjectBusy || !newProjectName.trim()}
+                >
+                  <Icon name="check" size={12} /> Add project
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="field-row">
             <label className="field">

@@ -61,7 +61,7 @@ export function TodayView({
   addEntryRequest = 0,
 }: Props) {
   const compact = density === "compact";
-  const projects = useProjects();
+  const { projects, create: createProject } = useProjects();
   const today = useToday();
   const upcoming = useUpcoming(3);
   const calendars = useCalendars();
@@ -618,6 +618,7 @@ export function TodayView({
               : null
           }
           onSubmit={handleSubmit}
+          onCreateProject={createProject}
           onDelete={modalState.mode === "edit" ? handleDelete : undefined}
           onClose={closeModal}
         />

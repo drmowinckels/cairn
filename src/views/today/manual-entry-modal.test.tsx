@@ -646,3 +646,188 @@ describe("localToIso / isoToLocal round-trip", () => {
     expect(back).toBe(local);
   });
 });
+
+describe("ManualEntryModal — inline create project", () => {
+  it("hides the New-project affordance when onCreateProject is absent", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /new project/i })).toBeNull();
+  });
+
+  it("reveals the sub-form, creates a project, and selects it on the draft", async () => {
+    const created: Project = {
+      id: "p-new",
+      name: "Gamma",
+      clientId: null,
+      color: "#81b29a",
+      archived: false,
+    };
+    const onCreateProject = vi.fn().mockResolvedValue(created);
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={[...PROJECTS, created]}
+        runningRange={null}
+        onSubmit={onSubmit}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    const nameInput = screen.getByLabelText(/new project name/i);
+    fireEvent.change(nameInput, { target: { value: "Gamma" } });
+    fireEvent.click(screen.getByRole("button", { name: /add project/i }));
+
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith({
+        name: "Gamma",
+        color: "#81b29a",
+      }),
+    );
+    // Sub-form collapses and the picker reflects the new selection.
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/new project name/i)).toBeNull(),
+    );
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("p-new"));
+
+    // Saving carries the freshly-created project id through.
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "p-new" }),
+      ),
+    );
+  });
+
+  it("blocks creation with a blank name and surfaces an error", async () => {
+    const onCreateProject = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    // The Add button is disabled while the name is blank, so the user
+    // can't even trigger creation — assert that and that nothing fired.
+    const addBtn = screen.getByRole("button", { name: /add project/i });
+    expect((addBtn as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(addBtn);
+    expect(onCreateProject).not.toHaveBeenCalled();
+
+    // Pressing Enter on a whitespace-only name hits the validation
+    // branch and surfaces an inline error rather than calling through.
+    const nameInput = screen.getByLabelText(/new project name/i);
+    fireEvent.change(nameInput, { target: { value: "   " } });
+    fireEvent.keyDown(nameInput, { key: "Enter" });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/name/i));
+    expect(onCreateProject).not.toHaveBeenCalled();
+  });
+
+  it("creates via the Enter key in the name field", async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({
+      id: "p-enter",
+      name: "Epsilon",
+      clientId: null,
+      color: "#81b29a",
+      archived: false,
+    });
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    const nameInput = screen.getByLabelText(/new project name/i);
+    fireEvent.change(nameInput, { target: { value: "Epsilon" } });
+    fireEvent.keyDown(nameInput, { key: "Enter" });
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith({
+        name: "Epsilon",
+        color: "#81b29a",
+      }),
+    );
+  });
+
+  it("picks a color swatch before creating", async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({
+      id: "p-c",
+      name: "Delta",
+      clientId: null,
+      color: "#e07a5f",
+      archived: false,
+    });
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    fireEvent.change(screen.getByLabelText(/new project name/i), {
+      target: { value: "Delta" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /#e07a5f/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add project/i }));
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith({
+        name: "Delta",
+        color: "#e07a5f",
+      }),
+    );
+  });
+
+  it("cancel collapses the sub-form without creating", () => {
+    const onCreateProject = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    expect(screen.getByLabelText(/new project name/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /cancel new project/i }));
+    expect(screen.queryByLabelText(/new project name/i)).toBeNull();
+    expect(onCreateProject).not.toHaveBeenCalled();
+  });
+});
