@@ -40,7 +40,7 @@ pub(crate) fn dispatch_menu_id(id: &str) -> TrayMenuAction {
 }
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    let icon = default_icon(app)?;
+    let icon = tray_icon()?;
     let menu = build_menu(app)?;
 
     TrayIconBuilder::with_id("cairn-tray")
@@ -108,10 +108,14 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .build()
 }
 
-fn default_icon(app: &AppHandle) -> tauri::Result<Image<'_>> {
-    app.default_window_icon()
-        .cloned()
-        .ok_or_else(|| tauri::Error::AssetNotFound("default tray icon".into()))
+/// The menu-bar tray uses a dedicated monochrome template rendered from
+/// the Cairn brand mark (`icons/tray.png`) — NOT the full-colour app
+/// icon. As a macOS template image (`icon_as_template(true)`) only the
+/// alpha channel matters, so a full-bleed colour icon would collapse to
+/// a solid blob; the template is the cairn silhouette on transparency,
+/// which macOS then tints for the light/dark menu bar.
+fn tray_icon() -> tauri::Result<Image<'static>> {
+    Image::from_bytes(include_bytes!("../icons/tray.png"))
 }
 
 #[cfg(test)]

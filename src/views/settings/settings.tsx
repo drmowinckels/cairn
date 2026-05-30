@@ -11,6 +11,7 @@ import type {
   Density,
   DetectionPrompts,
   TextScale,
+  ThemePref,
 } from "../../lib/types";
 import { AMBIGUITY_OPTIONS as AMBIGUITY_VALUES } from "../../lib/use-rules";
 import {
@@ -57,6 +58,12 @@ interface Props {
   /** Monotonically-incrementing token so repeat targets re-fire. */
   scrollNonce?: number;
 }
+
+const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
 
 const TEXT_SCALES: Array<{ value: TextScale; label: string }> = [
   { value: "sm", label: "A−" },
@@ -301,6 +308,22 @@ export function SettingsView({
       <section className="settings-block" data-section="accessibility">
         <h3 className="settings-h">Accessibility</h3>
         <p className="settings-sub">Cairn should be usable by everyone.</p>
+
+        <SetRow label="Theme" hint="Match your system, or force light or dark.">
+          <div className="seg seg--sm" role="radiogroup" aria-label="Theme">
+            {THEME_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                role="radio"
+                aria-checked={a11y.theme === opt.value}
+                className={`seg-btn${a11y.theme === opt.value ? " is-on" : ""}`}
+                onClick={() => a11y.setTheme(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </SetRow>
 
         <SetRow label="Text size" hint="Scales the whole UI.">
           <div className="seg seg--sm" role="radiogroup" aria-label="Text size">

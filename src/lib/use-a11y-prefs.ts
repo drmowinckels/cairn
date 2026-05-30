@@ -4,6 +4,8 @@ import type {
   AmbiguityBehavior,
   DetectionPrompts,
   TextScale,
+  Theme,
+  ThemePref,
 } from "./types";
 import { coerceAmbiguity } from "./use-rules";
 
@@ -24,6 +26,18 @@ const DEFAULTS: A11yPrefs = {
 function matchesReduceMotion(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function darkSchemeQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || !window.matchMedia) return null;
+  return window.matchMedia("(prefers-color-scheme: dark)");
+}
+
+/** Resolve a theme preference to the concrete theme to paint. "system"
+ *  follows the OS via prefers-color-scheme; an explicit pref wins. */
+function resolveTheme(pref: ThemePref, mq: MediaQueryList | null): Theme {
+  if (pref === "system") return mq?.matches ? "dark" : "light";
+  return pref;
 }
 
 function load(): A11yPrefs {
@@ -48,6 +62,7 @@ function load(): A11yPrefs {
 }
 
 export interface UseA11yPrefs extends A11yPrefs {
+  setTheme: (v: ThemePref) => void;
   setTextScale: (v: TextScale) => void;
   setHighContrast: (v: boolean) => void;
   setReduceMotion: (v: boolean) => void;
@@ -74,6 +89,19 @@ export function useA11yPrefs(): UseA11yPrefs {
     root.dataset.colorblind = prefs.colorblindSafe ? "on" : "off";
     root.dataset.focusRing = prefs.alwaysFocusRing ? "always" : "kbd";
     root.dataset.detectionPrompts = prefs.detectionPrompts;
+
+    // Theme drives the brand.css [data-theme="dark"] token overrides.
+    // "system" resolves against the OS and tracks live changes; an
+    // explicit light/dark wins and needs no listener.
+    const mq = darkSchemeQuery();
+    const applyTheme = () => {
+      root.dataset.theme = resolveTheme(prefs.theme, mq);
+    };
+    applyTheme();
+    if (prefs.theme === "system" && mq) {
+      mq.addEventListener("change", applyTheme);
+      return () => mq.removeEventListener("change", applyTheme);
+    }
   }, [prefs]);
 
   const patch = useCallback(
@@ -84,6 +112,7 @@ export function useA11yPrefs(): UseA11yPrefs {
 
   return {
     ...prefs,
+    setTheme: (v) => patch("theme", v),
     setTextScale: (v) => patch("textScale", v),
     setHighContrast: (v) => patch("highContrast", v),
     setReduceMotion: (v) => patch("reduceMotion", v),

@@ -32,6 +32,7 @@ function stubA11y(overrides: Partial<UseA11yPrefs> = {}): UseA11yPrefs {
     alwaysFocusRing: false,
     detectionPrompts: "subtle",
     ambiguityDefault: "prompt",
+    setTheme: vi.fn(),
     setTextScale: vi.fn(),
     setHighContrast: vi.fn(),
     setReduceMotion: vi.fn(),
@@ -130,6 +131,22 @@ describe("SettingsView (browser-dev mode)", () => {
     const sw = screen.getByRole("switch", { name: /high contrast/i });
     fireEvent.click(sw);
     expect(a11y.setHighContrast).toHaveBeenCalledWith(true);
+  });
+
+  it("renders the Theme control with the current pref checked", () => {
+    const a11y = stubA11y({ theme: "dark" });
+    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
+    const group = screen.getByRole("radiogroup", { name: /^theme$/i });
+    expect(group).toBeTruthy();
+    const dark = screen.getByRole("radio", { name: /^dark$/i });
+    expect(dark.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("selecting a theme calls setTheme with the chosen pref", () => {
+    const a11y = stubA11y({ theme: "system" });
+    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^dark$/i }));
+    expect(a11y.setTheme).toHaveBeenCalledWith("dark");
   });
 
   it("renders the text-scale segmented control with the active option highlighted", () => {

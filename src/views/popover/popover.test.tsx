@@ -46,6 +46,7 @@ import { Popover } from "./popover";
 
 beforeEach(() => {
   document.body.removeAttribute("data-theme");
+  delete document.documentElement.dataset.theme;
 });
 
 afterEach(() => {
@@ -117,15 +118,13 @@ describe("Popover shell", () => {
     }
   });
 
-  it("sets the data-theme attribute when theme prop is explicit", () => {
-    const { rerender, unmount } = render(<Popover theme="dark" />);
-    expect(document.body.dataset.theme).toBe("dark");
-    rerender(<Popover theme="light" />);
-    expect(document.body.dataset.theme).toBe("light");
-    // system theme removes the attribute entirely.
-    rerender(<Popover theme="system" />);
-    expect(document.body.dataset.theme).toBeUndefined();
-    unmount();
+  it("applies the persisted theme to the document root on mount", () => {
+    // Theme is owned by useA11yPrefs (persisted), not a Popover prop.
+    // Default pref is "system" → resolves to light here (happy-dom
+    // reports no dark preference). The full theme matrix is covered in
+    // use-a11y-prefs.test.tsx.
+    render(<Popover />);
+    expect(document.documentElement.dataset.theme).toBe("light");
   });
 
   it("renders the LocalBadge in the header with the privacy tooltip", () => {
@@ -232,12 +231,16 @@ describe("Popover — first-run onboarding gating (#31)", () => {
     );
     const { Popover } = await import("./popover");
     render(<Popover />);
-    await waitFor(() =>
-      expect(
-        screen.getByRole("dialog", { name: /first-run onboarding/i }),
-      ).toBeTruthy(),
-    );
+    let dialog!: HTMLElement;
+    await waitFor(() => {
+      dialog = screen.getByRole("dialog", { name: /first-run onboarding/i });
+      expect(dialog).toBeTruthy();
+    });
     expect(screen.getByText(/welcome to cairn/i)).toBeTruthy();
+    // The onboarding overlay is position:absolute (out of flow), so .pop has no
+    // in-flow children and collapses unless this attribute pins its height
+    // (brand.css .pop[data-onboarding]). Without it the popover renders blank.
+    expect(dialog.getAttribute("data-onboarding")).toBe("true");
   });
 
   it("renders the normal popover when completedAt is set", async () => {

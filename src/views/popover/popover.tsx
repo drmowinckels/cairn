@@ -15,7 +15,6 @@ import type {
   Density,
   LayoutVariant,
   RulesComplexity,
-  Theme,
   View,
 } from "../../lib/types";
 import { TodayView } from "../today";
@@ -29,7 +28,6 @@ interface Props {
   density?: Density;
   layoutVariant?: LayoutVariant;
   ruleComplexity?: RulesComplexity;
-  theme?: Theme | "system";
 }
 
 export function Popover({
@@ -37,7 +35,6 @@ export function Popover({
   density = "comfy",
   layoutVariant = "default",
   ruleComplexity = "medium",
-  theme = "system",
 }: Props) {
   const a11y = useA11yPrefs();
   return (
@@ -47,14 +44,13 @@ export function Popover({
         density={density}
         layoutVariant={layoutVariant}
         ruleComplexity={ruleComplexity}
-        theme={theme}
         a11y={a11y}
       />
     </AnnouncerProvider>
   );
 }
 
-interface ShellProps extends Required<Pick<Props, "initialView" | "density" | "layoutVariant" | "ruleComplexity" | "theme">> {
+interface ShellProps extends Required<Pick<Props, "initialView" | "density" | "layoutVariant" | "ruleComplexity">> {
   a11y: ReturnType<typeof useA11yPrefs>;
 }
 
@@ -63,7 +59,6 @@ function PopoverShell({
   density,
   layoutVariant,
   ruleComplexity,
-  theme,
   a11y,
 }: ShellProps) {
   const [view, setView] = useState<View>(initialView);
@@ -81,14 +76,6 @@ function PopoverShell({
     setView("today");
     setAddEntryRequest((n) => n + 1);
   };
-
-  useEffect(() => {
-    if (theme === "system") {
-      document.body.removeAttribute("data-theme");
-    } else {
-      document.body.dataset.theme = theme;
-    }
-  }, [theme]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -114,6 +101,7 @@ function PopoverShell({
         <div
           className="pop"
           data-density={density}
+          data-onboarding="true"
           role="dialog"
           aria-label="Cairn first-run onboarding"
         >

@@ -99,7 +99,12 @@ body {
 }
 body {
   font-family: var(--sans);
-  background: #d5d0bb;
+  /* The popover lives in a transparent OS window, so the body must not
+     paint — otherwise its fill shows as an opaque rectangle behind the
+     rounded .pop card, making the card look like it sits inside a second
+     window. Only .pop (its own surface + radius + shadow) should be
+     visible; everything around it is the live desktop. */
+  background: transparent;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -127,6 +132,13 @@ body {
 }
 .pop[data-density="compact"] {
   width: 420px;
+}
+/* Onboarding renders a single position:absolute overlay (.onboarding-overlay,
+   inset:0) as the only child of .pop. With no in-flow children a flex column
+   collapses to ~0 height, and .pop's overflow:hidden then clips the overlay to
+   nothing. Pin a definite height so the overlay has a box to fill. */
+.pop[data-onboarding="true"] {
+  height: calc(100vh - 56px);
 }
 .pop::before {
   /* Tail pointing up to tray icon */
