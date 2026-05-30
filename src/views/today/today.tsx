@@ -4,15 +4,9 @@ import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { useAnnounce } from "../../lib/use-announce";
-import {
-  fmtClock,
-  fmtClockFromIso,
-  fmtHm,
-  fmtIdleDuration,
-} from "../../lib/time";
+import { fmtClock, fmtHm } from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
 import { useSuggestion } from "../../lib/use-suggestion";
-import { useIdlePrompt } from "../../lib/use-idle-prompt";
 import { useProjects } from "../../lib/use-projects";
 import { useToday } from "../../lib/use-today";
 import { useUpcoming } from "../../lib/use-upcoming";
@@ -39,8 +33,6 @@ interface Props {
   density: Density;
   layoutVariant: LayoutVariant;
   onOpenRule: (id: string) => void;
-  showIdleModal: boolean;
-  setShowIdleModal: (v: boolean) => void;
   detectionPrompts?: DetectionPrompts;
   announce?: boolean;
   /**
@@ -54,8 +46,6 @@ export function TodayView({
   density,
   layoutVariant,
   onOpenRule,
-  showIdleModal,
-  setShowIdleModal,
   detectionPrompts = "subtle",
   announce = true,
   addEntryRequest = 0,
@@ -68,9 +58,6 @@ export function TodayView({
   const timer = useTimer({ onStopped: () => void today.refresh() });
   const { suggestion, confirm, dismiss } = useSuggestion({
     currentRunningRuleId: timer.running?.ruleId ?? null,
-  });
-  const idle = useIdlePrompt({
-    runningEntryId: timer.running?.id ?? null,
   });
 
   const runningProject = timer.running?.projectId ?? null;
@@ -147,14 +134,6 @@ export function TodayView({
       announceMsg(`Suggestion: ${suggestion.ruleName}`);
     }
   }, [suggestion, announceMsg]);
-
-  useEffect(() => {
-    if (idle.prompt) {
-      announceMsg(
-        `You were away for ${fmtIdleDuration(idle.prompt.durationSeconds)} — choose how to handle it`,
-      );
-    }
-  }, [idle.prompt, announceMsg]);
 
   useEffect(() => {
     if (!suggestion || detectionPrompts === "off") return;
@@ -385,59 +364,7 @@ export function TodayView({
         </section>
       )}
 
-      {(showIdleModal || idle.prompt) && (
-        <section className="idle" role="alertdialog" aria-labelledby="idle-h">
-          <div className="idle-head">
-            <Icon name="moon" size={14} /> <span id="idle-h">You were away</span>
-          </div>
-          <div className="idle-body">
-            {idle.prompt ? (
-              <>
-                No input detected from{" "}
-                <strong>{fmtClockFromIso(idle.prompt.since)}</strong> to{" "}
-                <strong>{fmtClockFromIso(idle.prompt.until)}</strong>
-                <span className="idle-dur">
-                  {fmtIdleDuration(idle.prompt.durationSeconds)}
-                </span>
-              </>
-            ) : (
-              <>
-                No input detected from <strong>14:50</strong> to <strong>15:02</strong>
-                <span className="idle-dur">12 min</span>
-              </>
-            )}
-          </div>
-          <div className="idle-actions">
-            <button
-              className="btn btn--primary"
-              onClick={() => {
-                void idle.keep();
-                setShowIdleModal(false);
-              }}
-            >
-              Keep
-            </button>
-            <button
-              className="btn btn--ghost"
-              onClick={() => {
-                void idle.discard();
-                setShowIdleModal(false);
-              }}
-            >
-              Discard idle
-            </button>
-            <button
-              className="btn btn--ghost"
-              onClick={() => {
-                void idle.moveToBreak();
-                setShowIdleModal(false);
-              }}
-            >
-              Move to break
-            </button>
-          </div>
-        </section>
-      )}
+      {/* Idle resolution now lives in the dedicated idle window (#93). */}
 
       {timer.error && (
         <ErrorBanner

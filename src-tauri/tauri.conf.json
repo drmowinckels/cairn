@@ -25,6 +25,21 @@
         "visible": false,
         "focus": true,
         "hiddenTitle": true
+      },
+      {
+        "label": "idle",
+        "title": "Cairn — idle time",
+        "url": "index.html?win=idle",
+        "width": 380,
+        "height": 360,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": true,
+        "hiddenTitle": true
       }
     ],
     "security": {

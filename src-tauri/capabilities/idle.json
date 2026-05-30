@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "idle",
+  "description": "Capabilities for the idle-time prompt window (#93): invoke the idle-resolution commands and listen for the idle-resume event. Deliberately omits dialog / autostart / global-shortcut / positioner / opener — the idle window needs none of them.",
+  "windows": ["idle"],
+  "permissions": ["core:default", "core:event:default", "log:default"]
+}

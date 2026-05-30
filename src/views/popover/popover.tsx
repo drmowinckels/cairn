@@ -70,7 +70,6 @@ function PopoverShell({
 }: ShellProps) {
   const [view, setView] = useState<View>(initialView);
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
-  const [showIdleModal, setShowIdleModal] = useState(false);
   const [addEntryRequest, setAddEntryRequest] = useState(0);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionId | null>(null);
@@ -219,8 +218,6 @@ function PopoverShell({
               density={density}
               layoutVariant={layoutVariant}
               onOpenRule={openRule}
-              showIdleModal={showIdleModal}
-              setShowIdleModal={setShowIdleModal}
               detectionPrompts={a11y.detectionPrompts}
               announce={a11y.announce}
               addEntryRequest={addEntryRequest}

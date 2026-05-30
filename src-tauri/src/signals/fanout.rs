@@ -29,6 +29,10 @@ use crate::signals::stream::IdleResume;
 /// notes on PR #5.
 pub const POPOVER_LABEL: &str = "popover";
 
+/// Window label for the idle-time prompt (#93). Shown centered +
+/// focused when the user returns from an idle period.
+pub const IDLE_LABEL: &str = "idle";
+
 /// Event name fired on every published snapshot. The Live Signals
 /// card in Rules subscribes here.
 pub const EVENT_SNAPSHOT: &str = "signal:snapshot";
@@ -290,8 +294,28 @@ pub async fn run_idle_resume<R: Runtime>(
     loop {
         match rx.recv().await {
             Ok(resume) => {
-                if let Err(e) = app.emit_to(POPOVER_LABEL, EVENT_IDLE_RESUME, &resume) {
-                    log::debug!("fanout: emit_to {POPOVER_LABEL} {EVENT_IDLE_RESUME} failed: {e}");
+                use tauri::Manager;
+                // Present the dedicated idle prompt window (#93),
+                // centered + focused so it lands where the user's
+                // attention is on return.
+                if let Some(win) = app.get_webview_window(IDLE_LABEL) {
+                    use tauri_plugin_positioner::{Position, WindowExt};
+                    let _ = win.move_window(Position::Center);
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                } else {
+                    log::warn!("fanout: idle window missing; idle prompt not shown");
+                }
+                if let Err(e) = app.emit_to(IDLE_LABEL, EVENT_IDLE_RESUME, &resume) {
+                    log::debug!("fanout: emit_to {IDLE_LABEL} {EVENT_IDLE_RESUME} failed: {e}");
+                }
+                // Stash for the cold-start race: the window's webview
+                // may not be listening yet on the first show, so it
+                // fetches this via `pending_idle` on mount.
+                if let Some(state) = app.try_state::<crate::AppState>() {
+                    if let Ok(mut guard) = state.last_idle.lock() {
+                        *guard = Some(resume);
+                    }
                 }
             }
             Err(broadcast::error::RecvError::Closed) => return,

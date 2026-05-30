@@ -25,7 +25,7 @@ use signals::calendar::CalendarRegistry;
 use signals::capture::SignalCapture;
 use signals::exclusions::ExclusionMatcher;
 use signals::git_watcher::GitWatcherStatus;
-use signals::stream::SnapshotStream;
+use signals::stream::{IdleResume, SnapshotStream};
 
 pub struct AppState {
     pub db: Db,
@@ -83,6 +83,11 @@ pub struct AppState {
     /// sequence and leak an un-abortable watcher. Same pattern as
     /// `rules_mutator` / `exclusions_mutator`.
     pub git_roots_mutator: tokio::sync::Mutex<()>,
+    /// Most recent idle-resume event, stored so the idle prompt window
+    /// (#93) can fetch it on mount via `pending_idle` — covering the
+    /// cold-start race where the window's webview isn't yet listening
+    /// when the event is emitted. Cleared by `dismiss_idle`.
+    pub last_idle: std::sync::Mutex<Option<IdleResume>>,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
     /// here on every push from the local-IPC socket collector in
     /// `signals::browser`; the IPC handler `browser_extension_status`
@@ -173,6 +178,8 @@ pub fn run() {
             ipc::update_entry,
             ipc::delete_entry,
             ipc::resolve_idle,
+            ipc::pending_idle,
+            ipc::dismiss_idle,
             ipc::hide_popover,
             ipc::set_pinned,
             ipc::set_popover_size,
@@ -409,6 +416,7 @@ pub fn run() {
                 git_watcher_status: std::sync::Mutex::new(git_watcher_status),
                 git_watcher_handle: std::sync::Mutex::new(Some(git_watcher_handle)),
                 git_roots_mutator: tokio::sync::Mutex::new(()),
+                last_idle: std::sync::Mutex::new(None),
                 browser_extension: browser_extension_state,
             });
 
