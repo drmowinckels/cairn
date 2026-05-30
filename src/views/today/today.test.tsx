@@ -35,28 +35,23 @@ import { TodayView } from "./index";
 
 interface RenderArgs {
   layoutVariant?: "default" | "projects-first";
-  showIdleModal?: boolean;
   hideSuggestion?: boolean;
 }
 
 function renderToday({
   layoutVariant = "default",
-  showIdleModal = false,
   hideSuggestion = false,
 }: RenderArgs = {}) {
   suggestionOverride = hideSuggestion ? null : SUGGESTION_FIXTURE;
-  const setShowIdleModal = vi.fn();
   const onOpenRule = vi.fn();
   const result = render(
     <TodayView
       density="comfy"
       layoutVariant={layoutVariant}
       onOpenRule={onOpenRule}
-      showIdleModal={showIdleModal}
-      setShowIdleModal={setShowIdleModal}
     />,
   );
-  return { ...result, setShowIdleModal, onOpenRule };
+  return { ...result, onOpenRule };
 }
 
 afterEach(() => {
@@ -144,22 +139,6 @@ describe("TodayView (idle — no running entry)", () => {
     expect(tag?.textContent).toBe("#dev");
   });
 
-  it("shows the idle modal as an alertdialog when showIdleModal=true", () => {
-    renderToday({ showIdleModal: true });
-    const modal = screen.getByRole("alertdialog");
-    expect(modal).toBeTruthy();
-    expect(modal.getAttribute("aria-labelledby")).toBe("idle-h");
-  });
-
-  it("each idle-modal action calls setShowIdleModal(false)", () => {
-    const { setShowIdleModal } = renderToday({ showIdleModal: true });
-    for (const name of [/^keep$/i, /discard idle/i, /move to break/i]) {
-      setShowIdleModal.mockClear();
-      fireEvent.click(screen.getByRole("button", { name }));
-      expect(setShowIdleModal).toHaveBeenCalledWith(false);
-    }
-  });
-
   it("renders the timeline empty state when no entries exist today", () => {
     renderToday({ hideSuggestion: true });
     const empty = document.querySelector(".timeline .empty");
@@ -183,8 +162,6 @@ describe("TodayView (idle — no running entry)", () => {
         density="comfy"
         layoutVariant="projects-first"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
       />,
     );
     expect(screen.getByLabelText(/quick-start a project/i)).toBeTruthy();
@@ -260,8 +237,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     return { ...utils, invoke };
@@ -438,8 +414,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="default"
           onOpenRule={vi.fn()}
-          showIdleModal={false}
-          setShowIdleModal={vi.fn()}
+
         />,
       );
       const input = (await screen.findByLabelText(/task description/i)) as HTMLInputElement;
@@ -489,8 +464,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="default"
           onOpenRule={vi.fn()}
-          showIdleModal={false}
-          setShowIdleModal={vi.fn()}
+
         />,
       );
       const chip = await screen.findByRole("button", {
@@ -530,8 +504,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="projects-first"
           onOpenRule={vi.fn()}
-          showIdleModal={false}
-          setShowIdleModal={vi.fn()}
+
         />,
       );
       await waitFor(() =>
@@ -586,8 +559,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("current_running"));
@@ -626,8 +598,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     expect(
@@ -664,8 +635,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     await waitFor(() =>
@@ -708,8 +678,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     await waitFor(() =>
@@ -745,8 +714,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
         announce={false}
       />,
     );
@@ -784,8 +752,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     await waitFor(() =>
@@ -822,8 +789,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     await waitFor(() =>
@@ -874,8 +840,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="default"
           onOpenRule={vi.fn()}
-          showIdleModal={false}
-          setShowIdleModal={vi.fn()}
+
         />,
       );
       const chip = await screen.findByRole("button", { name: /choose a project/i });
@@ -905,8 +870,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="projects-first"
           onOpenRule={vi.fn()}
-          showIdleModal={false}
-          setShowIdleModal={vi.fn()}
+
         />,
       );
       await waitFor(() =>
@@ -925,8 +889,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
         detectionPrompts="modal"
       />,
     );
@@ -942,8 +905,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     const body = document.querySelector(".suggest-body");
@@ -971,8 +933,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        showIdleModal={false}
-        setShowIdleModal={vi.fn()}
+
       />,
     );
     const banner = await screen.findByText(/couldn't reach the local timer/i);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const resolve = vi.fn().mockResolvedValue(undefined);
 const dismiss = vi.fn().mockResolvedValue(undefined);

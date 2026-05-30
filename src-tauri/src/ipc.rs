@@ -1476,7 +1476,12 @@ pub async fn delete_entry(state: State<'_, AppState>, id: String) -> Result<(), 
 ///   no running timer afterwards — the UI should reflect that.
 /// - Break: a new entry started at `until` with the same project /
 ///   task / description as the entry that was running before the
-///   idle. That new entry is what's returned.
+///   idle, plus a logged `idle-break` entry over the gap. That new
+///   entry is what's returned.
+/// - DiscardContinue (#93): like Break but the gap is dropped, not
+///   logged — close at `since`, resume the same work at `until`.
+/// - NewSession (#93): close at `since`, start a fresh blank running
+///   entry at `until` (`source = "idle-new"`) for the user to label.
 #[tauri::command]
 pub async fn resolve_idle(
     state: State<'_, AppState>,
@@ -1715,8 +1720,12 @@ pub async fn resolve_idle(
             let resumed_id = uuid::Uuid::new_v4().to_string();
             let resumed_project = if carry { project_id.clone() } else { None };
             let resumed_task = if carry { task_id.clone() } else { None };
-            let resumed_desc = if carry { description.clone() } else { String::new() };
-            let resumed_source = if carry { "idle-resume" } else { "manual" };
+            let resumed_desc = if carry {
+                description.clone()
+            } else {
+                String::new()
+            };
+            let resumed_source = if carry { "idle-resume" } else { "idle-new" };
             sqlx::query(
                 r#"
                 INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
@@ -2421,7 +2430,7 @@ mod tests {
         assert!(fresh.project_id.is_none(), "new session must be blank");
         assert!(fresh.task_id.is_none());
         assert_eq!(fresh.description, "");
-        assert_eq!(fresh.source, "manual");
+        assert_eq!(fresh.source, "idle-new");
         assert!(fresh.ended_at.is_none());
         assert!((fresh.started_at - until).num_seconds().abs() <= 1);
 
@@ -2581,6 +2590,51 @@ mod tests {
         // current_running is exactly the resumed entry.
         let running = current_running(state).await.unwrap().unwrap();
         assert_eq!(running.id, resumed.id);
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_discard_continue_closes_other_open_entries() {
+        // DiscardContinue must also keep the single-running-timer
+        // invariant if a manual start raced the prompt.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (entry, since, until) = setup_idle_entry(state.clone()).await;
+        let interloper = uuid::Uuid::new_v4().to_string();
+        let now_str = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+            VALUES (?1, 'cairn', NULL, 'interloper', ?2, NULL, 'manual', NULL, ?2, ?2)
+            "#,
+        )
+        .bind(&interloper)
+        .bind(&now_str)
+        .execute(&state.db.pool)
+        .await
+        .unwrap();
+
+        let resumed = resolve_idle(
+            state.clone(),
+            ResolveIdleInput {
+                entry_id: entry.id.clone(),
+                since: since.to_rfc3339(),
+                until: until.to_rfc3339(),
+                choice: IdleChoice::DiscardContinue,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let ended_at: Option<String> = sqlx::query("SELECT ended_at FROM entries WHERE id = ?1")
+            .bind(&interloper)
+            .fetch_one(&state.db.pool)
+            .await
+            .unwrap()
+            .get("ended_at");
+        assert!(ended_at.is_some(), "must close other open entries");
+        let running = current_running(state).await.unwrap().unwrap();
+        assert_eq!(running.id, resumed.id, "only the resumed entry runs");
     }
 
     #[tokio::test]
