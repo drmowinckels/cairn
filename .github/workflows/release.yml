@@ -1,0 +1,182 @@
+name: Release
+
+# End-to-end beta release pipeline (M9 #46). Takes a version tag and
+# produces signed bundles for all three platforms, attached to a DRAFT
+# GitHub Release for manual review before publishing.
+#
+# Triggers:
+#   - pushing a `v*` tag (e.g. `v0.1.0-beta`)
+#   - manual `workflow_dispatch` with an explicit tag (re-runs / dry runs)
+#
+# macOS bundles are code-signed with a Developer ID Application cert and
+# notarized + stapled by tauri-action when the APPLE_* secrets are set
+# (see RELEASING.md). When those secrets are absent the macOS job still
+# runs and produces an UNSIGNED bundle, so the pipeline is exercisable
+# before the cert is provisioned.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0-beta). Must already exist."
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # Resolve the tag, extract the release notes from the topmost
+  # CHANGELOG.md section, and create the draft release exactly ONCE.
+  # The three matrix jobs then upload into this release by id — without
+  # a single owner, parallel matrix jobs would each create-or-find the
+  # release and could produce duplicate drafts for one tag.
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      release_id: ${{ steps.mkrelease.outputs.result }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Build the code AT the tag, not whatever branch a dispatch
+          # was launched from. On a tag push this is the tag; on
+          # workflow_dispatch it's the input tag (which must exist).
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Resolve tag
+        id: resolve
+        shell: bash
+        # Pass both the event name and the dispatch input through `env`
+        # rather than interpolating `${{ … }}` straight into the script
+        # body — that avoids shell injection from a crafted tag input.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing tag: $tag"
+      - name: Extract release notes from CHANGELOG.md
+        id: extract
+        shell: bash
+        run: |
+          # Print everything under the FIRST `## ` heading up to the
+          # next `## ` heading - i.e. the most recent release section.
+          notes="$(awk '/^## / { if (seen) exit; seen=1; next } seen { print }' CHANGELOG.md)"
+          if [ -z "$notes" ]; then
+            notes="See CHANGELOG.md."
+          fi
+          {
+            echo "body<<__CAIRN_NOTES__"
+            echo "$notes"
+            echo "__CAIRN_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create or reuse the draft release
+        id: mkrelease
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          BODY: ${{ steps.extract.outputs.body }}
+        with:
+          # Create the draft once; on a re-run for the same tag the
+          # create returns 422 and we fall back to the existing release,
+          # so matrix jobs always have an id to upload into (idempotent).
+          script: |
+            const tag = process.env.TAG;
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            try {
+              const { data } = await github.rest.repos.createRelease({
+                ...repo,
+                tag_name: tag,
+                name: `Cairn ${tag}`,
+                body: process.env.BODY,
+                draft: true,
+                prerelease: true,
+              });
+              return data.id;
+            } catch (e) {
+              if (e.status !== 422) throw e;
+              const { data } = await github.rest.repos.getReleaseByTag({ ...repo, tag });
+              return data.id;
+            }
+
+  release:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+            rust-targets: ""
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # Gate the release on the same suites CI runs, so a broken commit
+      # can never produce a published artifact.
+      - name: Test (frontend)
+        run: npm run test
+      - name: Test (Rust)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Build, sign, notarize, and upload to the draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- macOS code-signing + notarization (#42) ---------------
+          # All optional: when unset, tauri-action produces an unsigned
+          # macOS bundle and skips notarization. See RELEASING.md.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # Upload into the single draft release created by `prepare`,
+          # rather than each matrix job creating its own. No race.
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          args: ${{ matrix.args }}
