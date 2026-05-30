@@ -296,3 +296,57 @@ describe("Popover header — add-entry button (#21)", () => {
     expect(todayTab.getAttribute("aria-selected")).toBe("true");
   });
 });
+
+describe("Popover — command palette (#32)", () => {
+  it("opens via the header Search button and lists commands", async () => {
+    render(<Popover />);
+    expect(
+      screen.queryByRole("textbox", { name: /command palette/i }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    expect(
+      await screen.findByRole("textbox", { name: /command palette/i }),
+    ).toBeTruthy();
+    // A known navigation command is surfaced (current view is Today,
+    // so other views appear as switch targets).
+    expect(screen.getByText(/Switch view: Reports/i)).toBeTruthy();
+  });
+
+  it("opens via ⌘K", async () => {
+    render(<Popover />);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(
+      await screen.findByRole("textbox", { name: /command palette/i }),
+    ).toBeTruthy();
+  });
+
+  it("running a 'Switch view' command changes the active view", async () => {
+    render(<Popover />);
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    await screen.findByRole("textbox", { name: /command palette/i });
+    fireEvent.click(screen.getByText(/Switch view: Reports/i));
+    await waitFor(() => {
+      const reportsTab = screen
+        .getAllByRole("tab")
+        .find((t) => /reports/i.test(t.textContent ?? ""))!;
+      expect(reportsTab.getAttribute("aria-selected")).toBe("true");
+    });
+  });
+
+  it("filters commands by query and runs the match", async () => {
+    render(<Popover />);
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    const input = await screen.findByRole("textbox", {
+      name: /command palette/i,
+    });
+    fireEvent.change(input, { target: { value: "settings privacy" } });
+    const cmd = await screen.findByText(/Open settings: Privacy/i);
+    fireEvent.click(cmd);
+    await waitFor(() => {
+      const settingsTab = screen
+        .getAllByRole("tab")
+        .find((t) => /settings/i.test(t.textContent ?? ""))!;
+      expect(settingsTab.getAttribute("aria-selected")).toBe("true");
+    });
+  });
+});
