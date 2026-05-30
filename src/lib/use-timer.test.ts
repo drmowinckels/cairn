@@ -178,6 +178,34 @@ describe("useTimer (inside Tauri)", () => {
     expect(result.current.running).toBeNull();
   });
 
+  it("stop() restores state and surfaces an error when stop_entry fails", async () => {
+    const stopEntry = vi.fn(async () => {
+      throw new Error("backend down");
+    });
+    const fetchCurrent = vi.fn(async () => ENTRY);
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(async () => () => {}) as unknown as typeof import(
+          "@tauri-apps/api/event"
+        ).listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
+        tickMs: 60_000,
+      }),
+    );
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    // Optimistic clear rolled back by the failure-path refresh; error shown.
+    expect(result.current.error).toMatch(/backend down/i);
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+  });
+
   it("a refresh mid-stop does not resurrect the stopping entry", async () => {
     let resolveStop: ((e: import("./ipc").BackendEntry) => void) | undefined;
     const stopEntry = vi.fn(

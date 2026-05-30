@@ -752,6 +752,32 @@ describe("ManualEntryModal — inline create project", () => {
     expect(onCreateProject).not.toHaveBeenCalled();
   });
 
+  it("surfaces a backend error when project creation fails", async () => {
+    const onCreateProject = vi.fn().mockRejectedValue("disk full");
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={onCreateProject}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    fireEvent.change(screen.getByLabelText(/new project name/i), {
+      target: { value: "Gamma" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add project/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/disk full/i),
+    );
+    // Sub-form stays open so the user can retry.
+    expect(screen.getByLabelText(/new project name/i)).toBeTruthy();
+  });
+
   it("creates via the Enter key in the name field", async () => {
     const onCreateProject = vi.fn().mockResolvedValue({
       id: "p-enter",
@@ -975,5 +1001,58 @@ describe("ManualEntryModal — task picker (#21)", () => {
         expect.objectContaining({ projectId: "p2", taskId: null }),
       ),
     );
+  });
+
+  it("surfaces a backend error when task creation fails", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    const onCreateTask = vi.fn().mockRejectedValue("task write failed");
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        loadTasks={loadTasks}
+        onCreateTask={onCreateTask}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("option", { name: "Design" });
+    fireEvent.click(screen.getByRole("button", { name: /new task/i }));
+    fireEvent.change(screen.getByLabelText(/new task name/i), {
+      target: { value: "Review" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add task/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/task write failed/i),
+    );
+    // Sub-form stays open for a retry.
+    expect(screen.getByLabelText(/new task name/i)).toBeTruthy();
+  });
+
+  it("cancel new task collapses the sub-form without creating", async () => {
+    const loadTasks = vi.fn().mockResolvedValue(TASKS_P1);
+    const onCreateTask = vi.fn();
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={DRAFT_WITH_PROJECT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        loadTasks={loadTasks}
+        onCreateTask={onCreateTask}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("option", { name: "Design" });
+    fireEvent.click(screen.getByRole("button", { name: /new task/i }));
+    expect(screen.getByLabelText(/new task name/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /cancel new task/i }));
+    expect(screen.queryByLabelText(/new task name/i)).toBeNull();
+    expect(onCreateTask).not.toHaveBeenCalled();
   });
 });

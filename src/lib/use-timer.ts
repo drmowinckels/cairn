@@ -156,10 +156,12 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
       onStoppedRef.current?.(stopped);
       return stopped;
     } catch (e) {
-      // Stop failed — restore the true state and surface the error.
-      setError(e instanceof Error ? e.message : String(e));
+      // Stop failed — restore the true state, then surface the error.
+      // refresh() clears `error` on success, so set it *after* the
+      // restore or it'd be wiped.
       stoppingIdRef.current = null;
       await refresh();
+      setError(e instanceof Error ? e.message : String(e));
       return null;
     } finally {
       stoppingIdRef.current = null;

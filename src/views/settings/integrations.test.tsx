@@ -308,6 +308,27 @@ describe("GitStatusLine", () => {
     );
   });
 
+  it("shows an error when the configurator fails to load roots", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    getGitWatcherStatus.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 2,
+    });
+    getGitDiscoveryRoots.mockRejectedValue("cannot read roots");
+
+    render(
+      <ul>
+        <GitStatusLine />
+      </ul>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Configure roots…/ }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/cannot read roots/i),
+    );
+  });
+
   it("removes a root in the configurator before saving", async () => {
     const { fireEvent } = await import("@testing-library/react");
     getGitWatcherStatus.mockResolvedValue({

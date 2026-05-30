@@ -349,4 +349,53 @@ describe("Popover — command palette (#32)", () => {
       expect(settingsTab.getAttribute("aria-selected")).toBe("true");
     });
   });
+
+  it("executes a 'Start timer' command (idle) without throwing", async () => {
+    render(<Popover />);
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    const input = await screen.findByRole("textbox", {
+      name: /command palette/i,
+    });
+    fireEvent.change(input, { target: { value: "start timer" } });
+    const cmds = await screen.findAllByText(/Start timer for/i);
+    fireEvent.click(cmds[0]);
+    // Running a command closes the palette (and the start-timer callback ran).
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: /command palette/i }),
+      ).toBeNull(),
+    );
+  });
+
+  it("executes a rule-toggle command without throwing", async () => {
+    render(<Popover />);
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    const input = await screen.findByRole("textbox", {
+      name: /command palette/i,
+    });
+    fireEvent.change(input, { target: { value: "rule" } });
+    const cmds = await screen.findAllByText(/(Enable|Disable) rule:/i);
+    fireEvent.click(cmds[0]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: /command palette/i }),
+      ).toBeNull(),
+    );
+  });
+
+  it("executes the 'Open log file' command without throwing", async () => {
+    render(<Popover />);
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    const input = await screen.findByRole("textbox", {
+      name: /command palette/i,
+    });
+    fireEvent.change(input, { target: { value: "log file" } });
+    const cmd = await screen.findByText(/Open log file/i);
+    fireEvent.click(cmd);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: /command palette/i }),
+      ).toBeNull(),
+    );
+  });
 });
