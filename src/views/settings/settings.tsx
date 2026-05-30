@@ -5,6 +5,7 @@ import { useBackup } from "../../lib/use-backup";
 import { useExclusions, guessExclusionKind } from "../../lib/use-exclusions";
 import { SHORTCUTS } from "../../lib/shortcuts";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
+import type { UsePopoverSize, PopoverSize } from "../../lib/use-popover-size";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type {
   AmbiguityBehavior,
@@ -57,7 +58,18 @@ interface Props {
   scrollToSection?: SettingsSectionId | null;
   /** Monotonically-incrementing token so repeat targets re-fire. */
   scrollNonce?: number;
+  /**
+   * Popover size preset control (issue #1). Optional so settings tests
+   * can render without the live window hook; when absent the row is
+   * hidden.
+   */
+  popoverSize?: UsePopoverSize;
 }
+
+const POPOVER_SIZES: Array<{ value: PopoverSize; label: string }> = [
+  { value: "compact", label: "Compact" },
+  { value: "large", label: "Large" },
+];
 
 const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
   { value: "system", label: "System" },
@@ -106,6 +118,7 @@ export function SettingsView({
   onRerunOnboarding,
   scrollToSection = null,
   scrollNonce = 0,
+  popoverSize,
 }: Props) {
   const backup = useBackup();
   const [confirmCapture, setConfirmCapture] = useState(false);
@@ -297,6 +310,31 @@ export function SettingsView({
             ))}
           </div>
         </SetRow>
+
+        {popoverSize && (
+          <SetRow
+            label="Popover size"
+            hint="Compact stays out of the way; large gives reports more room."
+          >
+            <div
+              className="seg seg--sm"
+              role="radiogroup"
+              aria-label="Popover size"
+            >
+              {POPOVER_SIZES.map((opt) => (
+                <button
+                  key={opt.value}
+                  role="radio"
+                  aria-checked={popoverSize.size === opt.value}
+                  className={`seg-btn${popoverSize.size === opt.value ? " is-on" : ""}`}
+                  onClick={() => popoverSize.setSize(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </SetRow>
+        )}
 
         <SetRow label="High contrast" hint="Stronger borders and text contrast.">
           <Toggle

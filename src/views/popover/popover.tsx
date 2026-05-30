@@ -8,6 +8,7 @@ import { AnnouncerProvider, useAnnounce } from "../../lib/use-announce";
 import { useSignalCapture } from "../../lib/use-signal-capture";
 import { useOnboarding } from "../../lib/use-onboarding";
 import { usePalette } from "../../lib/use-palette";
+import { usePopoverSize } from "../../lib/use-popover-size";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
@@ -76,6 +77,7 @@ function PopoverShell({
   const capture = useSignalCapture();
   const onboarding = useOnboarding();
   const announce = useAnnounce();
+  const popoverSize = usePopoverSize();
 
   // Command-palette wiring (#32). The palette needs read access to the
   // live timer / projects / rules and a handful of actions; instantiate
@@ -248,6 +250,7 @@ function PopoverShell({
               a11y={a11y}
               capture={capture}
               scrollToSection={settingsSection}
+              popoverSize={popoverSize}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}

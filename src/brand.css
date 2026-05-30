@@ -151,6 +151,12 @@ body {
 .pop[data-density="compact"] {
   width: 420px;
 }
+/* Popover size preset (#1). "large" widens the card to fill the larger
+   window the size toggle requests via set_popover_size; the window keeps
+   ~60px of inset for the tray tail + margins, matching the compact case. */
+:root[data-popover-size="large"] .pop {
+  width: 620px;
+}
 /* Onboarding renders a single position:absolute overlay (.onboarding-overlay,
    inset:0) as the only child of .pop. With no in-flow children a flex column
    collapses to ~0 height, and .pop's overflow:hidden then clips the overlay to

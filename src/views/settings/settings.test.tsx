@@ -180,6 +180,29 @@ describe("SettingsView (browser-dev mode)", () => {
     expect(active).toBeTruthy();
   });
 
+  it("hides the popover-size control when no popoverSize prop is given", () => {
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    expect(screen.queryByRole("radiogroup", { name: /popover size/i })).toBeNull();
+  });
+
+  it("renders the popover-size control and drives setSize", () => {
+    const setSize = vi.fn();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        popoverSize={{ size: "compact", setSize }}
+      />,
+    );
+    const group = screen.getByRole("radiogroup", { name: /popover size/i });
+    const compact = screen.getByRole("radio", { name: /compact/i });
+    expect(compact.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: /large/i }));
+    expect(setSize).toHaveBeenCalledWith("large");
+    expect(group).toBeTruthy();
+  });
+
   it("renders the Default ambiguity behaviour segmented control with the active option highlighted", () => {
     render(
       <SettingsView
