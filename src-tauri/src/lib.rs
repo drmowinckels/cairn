@@ -256,9 +256,7 @@ pub fn run() {
                     calendar.clone(),
                     exclusions.clone(),
                     signals::stream::DEFAULT_DEBOUNCE,
-                    std::time::Duration::from_secs(
-                        signals::stream::DEFAULT_IDLE_THRESHOLD_SECS,
-                    ),
+                    std::time::Duration::from_secs(signals::stream::DEFAULT_IDLE_THRESHOLD_SECS),
                     discovered_repos.clone(),
                 );
                 signals::stream::spawn_default_sources(&stream);
@@ -269,10 +267,7 @@ pub fn run() {
             // initial Git events flow into the stream's sender. Same
             // runtime-context requirement as above.
             tauri::async_runtime::block_on(async {
-                signals::git_watcher::spawn_watcher_task(
-                    stream.event_sender(),
-                    discovered_repos,
-                );
+                signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos);
             });
 
             // Browser-signal IPC socket (M7 #35). Listens on
