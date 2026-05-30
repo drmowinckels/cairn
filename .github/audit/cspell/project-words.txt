@@ -163,3 +163,15 @@ ndjson
 lede
 systempreferences
 fuzzysort
+xcrun
+codesign
+codesigning
+spctl
+notarytool
+stapler
+appleid
+TEAMID
+Authenticode
+notarize
+notarized
+notarization
