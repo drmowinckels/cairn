@@ -287,6 +287,22 @@ pub async fn run<R: Runtime>(
 /// this task re-emits each as `signal:idle-resume` to the popover
 /// window. Exits cleanly when every clone of the broadcast sender
 /// has been dropped (driver shutdown).
+/// True iff some entry is currently open (`ended_at IS NULL`) — i.e. a
+/// timer is running. On a query error we fail safe and return false so
+/// the idle prompt is suppressed rather than shown spuriously.
+pub(crate) async fn running_entry_exists(pool: &SqlitePool) -> bool {
+    match sqlx::query("SELECT 1 FROM entries WHERE ended_at IS NULL LIMIT 1")
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(row) => row.is_some(),
+        Err(e) => {
+            log::warn!("fanout: running-entry check failed: {e}; suppressing idle prompt");
+            false
+        }
+    }
+}
+
 pub async fn run_idle_resume<R: Runtime>(
     mut rx: broadcast::Receiver<IdleResume>,
     app: AppHandle<R>,
@@ -295,6 +311,24 @@ pub async fn run_idle_resume<R: Runtime>(
         match rx.recv().await {
             Ok(resume) => {
                 use tauri::Manager;
+                // Only prompt if a timer was running through the idle
+                // period (#93 follow-up). The timer keeps running across
+                // idle, so a still-open entry on return means the user
+                // was tracking work; if nothing is running they weren't
+                // working, and there's no idle time to attribute — skip.
+                // Borrow of `state` is scoped to this match so it is not
+                // held across the later window/emit work + re-fetch.
+                let has_running = match app.try_state::<crate::AppState>() {
+                    Some(state) => running_entry_exists(&state.db.pool).await,
+                    None => {
+                        log::warn!("fanout: AppState unavailable; idle prompt skipped");
+                        false
+                    }
+                };
+                if !has_running {
+                    log::debug!("fanout: idle resume but no running timer; skipping idle prompt");
+                    continue;
+                }
                 // Present the dedicated idle prompt window (#93),
                 // centered + focused so it lands where the user's
                 // attention is on return.
@@ -578,5 +612,34 @@ mod tests {
             .await
             .expect("run() exits on sender drop even with closed pool")
             .expect("run() task joined cleanly");
+    }
+
+    #[tokio::test]
+    async fn running_entry_exists_reflects_open_entries() {
+        let (_dir, db) = crate::test_support::test_db().await;
+        // Fresh DB seeds projects but no entries → nothing running.
+        assert!(!running_entry_exists(&db.pool).await);
+
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, created_at, updated_at) \
+             VALUES ('e-open', NULL, NULL, '', ?1, NULL, 'manual', ?1, ?1)",
+        )
+        .bind(&now)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(running_entry_exists(&db.pool).await, "open entry → running");
+
+        // Close it — no longer running.
+        sqlx::query("UPDATE entries SET ended_at = ?1 WHERE id = 'e-open'")
+            .bind(&now)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(
+            !running_entry_exists(&db.pool).await,
+            "closed entry → not running"
+        );
     }
 }
