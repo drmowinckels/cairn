@@ -1880,6 +1880,19 @@ pub fn set_tray_title(app: tauri::AppHandle, title: String) -> Result<(), String
     Ok(())
 }
 
+/// Rebuild the tray's right-click menu from the live timer / project
+/// state (#104). The popover webview owns that state (running entry +
+/// project list) and pushes a fresh model whenever it changes — the
+/// same flow `set_tray_title` uses. A no-op if the tray isn't present.
+#[tauri::command]
+pub fn update_tray_menu(
+    app: tauri::AppHandle,
+    model: crate::tray::TrayMenuModel,
+) -> Result<(), String> {
+    crate::tray::update_menu(&app, &model);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_pinned(state: State<'_, AppState>, pinned: bool) -> Result<(), String> {
     state
@@ -4214,6 +4227,23 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         crate::tray::set_title(&app.handle().clone(), Some("● Cairn"));
         crate::tray::set_title(&app.handle().clone(), None);
+    }
+
+    #[tokio::test]
+    async fn update_tray_menu_is_a_noop_without_a_tray() {
+        // Same contract as the title path (#104): the mock app has no
+        // tray, so pushing a menu model must short-circuit cleanly
+        // rather than panic on the missing tray icon.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let model = crate::tray::TrayMenuModel {
+            status_label: "Tracking: Cairn — 1m".into(),
+            is_running: true,
+            projects: vec![crate::tray::TrayProject {
+                id: "p1".into(),
+                name: "Cairn".into(),
+            }],
+        };
+        crate::tray::update_menu(&app.handle().clone(), &model);
     }
 
     #[test]

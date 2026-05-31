@@ -15,8 +15,10 @@ import { useWorkingHours } from "../../lib/use-working-hours";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
-import { revealDataFolder, setTrayTitle } from "../../lib/ipc";
+import { revealDataFolder, setTrayTitle, updateTrayMenu } from "../../lib/ipc";
 import { formatTrayTitle } from "../../lib/tray-title";
+import { buildTrayMenuModel, pushTrayMenuIfChanged } from "../../lib/tray-menu";
+import { useTrayListeners } from "../../lib/use-tray-listeners";
 import {
   usePaletteShortcut,
   useToggleTimerShortcut,
@@ -99,6 +101,7 @@ function PopoverShell({
 
   useToggleTimerShortcut({ announce });
   usePaletteShortcut({ onOpen: palette.requestOpen });
+  useTrayListeners({ announce });
 
   // Mirror the tracked project into the menu-bar tray title when the
   // user enables it (#: tray current-project info). The popover webview
@@ -117,6 +120,23 @@ function PopoverShell({
     lastTrayTitleRef.current = title;
     void setTrayTitle(title);
   }, [trayDetail.enabled, running, paletteProjects]);
+
+  // Keep the tray right-click menu in sync with live state (#104): the
+  // status line, whether "Stop tracking" shows, and the quick-start
+  // project list. `elapsedMs` ticks every second, so quantise to whole
+  // minutes — that's the granularity the status line renders — and only
+  // push when the serialised model actually changes, so the native menu
+  // isn't rebuilt 60×/minute.
+  const elapsedMinutes = Math.floor(paletteTimer.elapsedMs / 60_000);
+  const lastTrayMenuRef = useRef<string | null>(null);
+  useEffect(() => {
+    const model = buildTrayMenuModel({
+      running,
+      elapsedMs: elapsedMinutes * 60_000,
+      projects: paletteProjects,
+    });
+    pushTrayMenuIfChanged(model, lastTrayMenuRef, (m) => void updateTrayMenu(m));
+  }, [running, paletteProjects, elapsedMinutes]);
 
   const openSettingsSection = (section: SettingsSectionId) => {
     setView("settings");

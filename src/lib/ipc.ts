@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Client, IdleResumeEvent, Project, Task } from "./types";
 import { ROUNDING_OFF, type Rounding } from "./rounding";
+import type { TrayMenuModel } from "./tray-menu";
 
 export interface BackendEntry {
   id: string;
@@ -629,6 +630,11 @@ export async function resetOnboarding(): Promise<OnboardingState> {
 export async function setTrayTitle(title: string): Promise<void> {
   if (!inTauri) return;
   await invoke("set_tray_title", { title });
+}
+
+export async function updateTrayMenu(model: TrayMenuModel): Promise<void> {
+  if (!inTauri) return;
+  await invoke("update_tray_menu", { model });
 }
 
 export interface Diagnostics {
