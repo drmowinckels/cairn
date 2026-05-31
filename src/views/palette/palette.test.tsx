@@ -105,7 +105,7 @@ describe("buildCommands — surfaced commands", () => {
       "Calendar",
       "Shortcuts",
       "Integrations",
-      "Advanced",
+      "About",
     ]) {
       expect(labels).toContain(`Open settings: ${s}`);
     }

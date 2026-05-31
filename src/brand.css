@@ -571,6 +571,49 @@ body {
   gap: 10px;
 }
 
+/* ─── ABOUT CARD ────────────────────────────────────────────────────── */
+.about-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.about-mark .stone {
+  fill: var(--accent);
+}
+.about-name {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.about-version {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  color: var(--ink-mute);
+}
+.about-by {
+  margin: 0;
+  font-size: var(--font-small);
+  color: var(--ink-soft);
+}
+.about-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.about-hint {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+}
+
 /* ─── IDLE PROMPT WINDOW (#93) ──────────────────────────────────────── */
 .idle-win {
   display: flex;

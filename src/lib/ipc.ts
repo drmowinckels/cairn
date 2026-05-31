@@ -610,6 +610,22 @@ export async function resetOnboarding(): Promise<OnboardingState> {
   return invoke<OnboardingState>("reset_onboarding");
 }
 
+export interface Diagnostics {
+  appVersion: string;
+  os: string;
+  arch: string;
+  projects: number;
+  clients: number;
+  rules: number;
+  exclusions: number;
+  entries: number;
+}
+
+export async function diagnostics(): Promise<Diagnostics | null> {
+  if (!inTauri) return null;
+  return invoke<Diagnostics>("diagnostics");
+}
+
 export interface GitWatcherStatus {
   discoveryRoots: string[];
   watchedCount: number;

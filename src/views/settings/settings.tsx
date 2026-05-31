@@ -21,6 +21,7 @@ import {
   PRIVACY_REPO_URL,
 } from "../../lib/privacy-copy";
 import { IntegrationsCard } from "./integrations";
+import { AboutCard } from "./about-card";
 
 /**
  * Anchors the command palette's "Open settings: X" commands can
@@ -35,7 +36,7 @@ export type SettingsSectionId =
   | "shortcuts"
   | "integrations"
   | "calendar"
-  | "advanced";
+  | "about";
 
 interface Props {
   density: Density;
@@ -411,13 +412,13 @@ export function SettingsView({
 
       <section
         className="settings-block"
-        aria-label="Advanced"
-        data-section="advanced"
+        aria-label="About"
+        data-section="about"
       >
-        <h3 className="settings-h">Advanced</h3>
+        <h3 className="settings-h">About</h3>
+        <AboutCard />
         <p className="settings-sub">
-          Troubleshooting tools. Off by default and never persisted across
-          launches.
+          Diagnostics. Off by default and never persisted across launches.
         </p>
 
         <SetRow
@@ -499,7 +500,7 @@ export function SettingsView({
       )}
 
       <p className="settings-foot">
-        Cairn v0.0.1 · {PRIVACY_LICENSE_LABEL} ·{" "}
+        {PRIVACY_LICENSE_LABEL} ·{" "}
         <a href={PRIVACY_REPO_URL} target="_blank" rel="noreferrer noopener">
           github.com/drmowinckels/cairn
         </a>

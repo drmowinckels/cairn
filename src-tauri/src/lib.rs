@@ -192,6 +192,7 @@ pub fn run() {
             ipc::upcoming_calendar_events,
             ipc::calendar_sync_status,
             ipc::current_snapshot,
+            ipc::diagnostics,
             ipc::get_git_watcher_status,
             ipc::get_git_discovery_roots,
             ipc::set_git_discovery_roots,

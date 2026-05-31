@@ -111,7 +111,7 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
     { id: "calendar", label: "Calendar", icon: "calendar" },
     { id: "shortcuts", label: "Shortcuts", icon: "keyboard" },
     { id: "integrations", label: "Integrations", icon: "globe" },
-    { id: "advanced", label: "Advanced", icon: "info" },
+    { id: "about", label: "About", icon: "info" },
   ];
   for (const s of SECTIONS) {
     out.push({

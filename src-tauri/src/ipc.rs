@@ -1796,6 +1796,53 @@ pub fn dismiss_idle(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     Ok(())
 }
 
+/// Privacy-safe diagnostics for bug reports (About → Copy diagnostics).
+/// Deliberately carries no user content — only the app version, the
+/// platform, and table *sizes* (counts, never names/titles/URLs).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Diagnostics {
+    pub app_version: String,
+    pub os: String,
+    pub arch: String,
+    pub projects: i64,
+    pub clients: i64,
+    pub rules: i64,
+    pub exclusions: i64,
+    pub entries: i64,
+}
+
+#[tauri::command]
+pub async fn diagnostics(state: State<'_, AppState>) -> Result<Diagnostics, String> {
+    async fn count(pool: &sqlx::SqlitePool, table: &str) -> i64 {
+        // `table` is a hardcoded literal from the call sites below, never
+        // user input — safe to format into the query. The assert keeps it
+        // that way: a future non-literal would trip it in debug builds.
+        debug_assert!(
+            matches!(
+                table,
+                "projects" | "clients" | "rules" | "exclusions" | "entries"
+            ),
+            "diagnostics count table must be a known literal"
+        );
+        sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(pool)
+            .await
+            .unwrap_or(-1)
+    }
+    let pool = &state.db.pool;
+    Ok(Diagnostics {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        projects: count(pool, "projects").await,
+        clients: count(pool, "clients").await,
+        rules: count(pool, "rules").await,
+        exclusions: count(pool, "exclusions").await,
+        entries: count(pool, "entries").await,
+    })
+}
+
 #[tauri::command]
 pub fn set_pinned(state: State<'_, AppState>, pinned: bool) -> Result<(), String> {
     state
@@ -4072,6 +4119,24 @@ mod tests {
         // mock_app_with_db boots with empty roots — see test_support.rs.
         assert_eq!(status.watched_count, 0);
         assert!(status.discovery_roots.is_empty());
+    }
+
+    #[tokio::test]
+    async fn diagnostics_reports_version_platform_and_counts() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let diag = {
+            let state = app.state::<crate::AppState>();
+            diagnostics(state).await.unwrap()
+        };
+        assert!(!diag.app_version.is_empty(), "version present");
+        assert!(!diag.os.is_empty());
+        assert!(!diag.arch.is_empty());
+        // Fresh DB seeds default projects/clients; no entries/rules yet.
+        assert!(diag.projects > 0, "seeded projects counted");
+        assert!(diag.clients > 0);
+        assert_eq!(diag.entries, 0);
+        assert_eq!(diag.rules, 0);
+        // No user content leaks — the struct is counts + platform only.
     }
 
     #[test]

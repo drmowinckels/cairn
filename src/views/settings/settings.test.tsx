@@ -288,14 +288,19 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 });
 
-describe("SettingsView · Advanced / Capture raw signals", () => {
-  it("renders the Advanced section as the last block", () => {
+describe("SettingsView · About / Capture raw signals", () => {
+  it("renders the About section as the last block with version + diagnostics toggle", () => {
     render(
       <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
     );
-    const advanced = screen.getByRole("region", { name: /advanced/i });
-    expect(advanced).toBeTruthy();
-    expect(advanced.textContent).toContain("Capture raw signals");
+    const about = screen.getByRole("region", { name: /about/i });
+    expect(about).toBeTruthy();
+    expect(about.textContent).toContain("Cairn");
+    expect(about.textContent).toContain("Capture raw signals");
+    // The diagnostics copy action lives here too.
+    expect(
+      screen.getByRole("button", { name: /copy diagnostics/i }),
+    ).toBeTruthy();
   });
 
   it("opens the confirmation dialog instead of starting capture immediately", async () => {
