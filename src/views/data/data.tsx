@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { Empty } from "../../lib/components";
 import { cbColor } from "../../lib/colorblind";
@@ -18,30 +18,68 @@ const PROJECT_COLORS = [
   "#6d9dc5",
 ];
 
-interface Density {
+/** Wraps a mutating action so a backend rejection surfaces an error
+ *  instead of becoming an unhandled promise rejection. */
+type Run = (fn: () => Promise<unknown>) => Promise<void>;
+
+interface Props {
   density: "comfy" | "compact";
 }
 
-export function DataView({ density }: Density) {
+export function DataView({ density }: Props) {
   const projects = useProjects();
   const clients = useClients();
   const cbEnabled = useColorblindEnabled();
+  const [error, setError] = useState<string | null>(null);
+
+  const run = useCallback<Run>(async (fn) => {
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
 
   const clientName = useMemo(() => {
     const map = new Map(clients.clients.map((c) => [c.id, c.name]));
     return (id: string | null) => (id ? (map.get(id) ?? "—") : "No client");
   }, [clients.clients]);
 
+  // Deleting a client cascades `client_id = NULL` onto referencing
+  // projects in the backend; refresh the (separate) projects hook so the
+  // UI doesn't keep showing the dead association.
+  const deleteClient = useCallback(
+    (id: string) =>
+      run(async () => {
+        await clients.remove(id);
+        await projects.refresh();
+      }),
+    [run, clients, projects],
+  );
+
   return (
     <div className="view view-data" data-density={density}>
+      {error && (
+        <div className="privacy-banner privacy-banner--error" role="alert">
+          <Icon name="x" size={13} />
+          <span>{error}</span>
+        </div>
+      )}
       <ProjectsSection
         projects={projects}
         clients={clients.clients}
         clientName={clientName}
         cbEnabled={cbEnabled}
+        run={run}
       />
-      <ClientsSection clients={clients} projects={projects.projects} />
-      <TasksSection projects={projects.projects} />
+      <ClientsSection
+        clients={clients}
+        projects={projects.projects}
+        onDelete={deleteClient}
+        run={run}
+      />
+      <TasksSection projects={projects.projects} run={run} />
       <section className="data-block" aria-label="Storage">
         <div className="sect-label">
           <span>Storage</span>
@@ -52,6 +90,61 @@ export function DataView({ density }: Density) {
   );
 }
 
+// ── Inline delete confirmation ──────────────────────────────────────────
+
+interface RowActionsProps {
+  label: string;
+  confirming: boolean;
+  onEdit?: () => void;
+  onAskDelete: () => void;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
+}
+
+function RowActions({
+  label,
+  confirming,
+  onEdit,
+  onAskDelete,
+  onConfirmDelete,
+  onCancelDelete,
+}: RowActionsProps) {
+  if (confirming) {
+    return (
+      <span className="data-row-actions">
+        <span className="data-confirm-text">Delete?</span>
+        <button
+          type="button"
+          className="link-btn link-btn--danger"
+          onClick={onConfirmDelete}
+        >
+          Delete
+        </button>
+        <button type="button" className="link-btn" onClick={onCancelDelete}>
+          Cancel
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="data-row-actions">
+      {onEdit && (
+        <button type="button" className="link-btn" onClick={onEdit}>
+          Edit
+        </button>
+      )}
+      <button
+        type="button"
+        className="link-btn link-btn--danger"
+        onClick={onAskDelete}
+        aria-label={`Delete ${label}`}
+      >
+        Delete
+      </button>
+    </span>
+  );
+}
+
 // ── Projects ──────────────────────────────────────────────────────────
 
 interface ProjectsSectionProps {
@@ -59,6 +152,7 @@ interface ProjectsSectionProps {
   clients: Client[];
   clientName: (id: string | null) => string;
   cbEnabled: boolean;
+  run: Run;
 }
 
 function ProjectsSection({
@@ -66,9 +160,11 @@ function ProjectsSection({
   clients,
   clientName,
   cbEnabled,
+  run,
 }: ProjectsSectionProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   return (
     <section className="data-block" aria-label="Projects">
@@ -90,8 +186,10 @@ function ProjectsSection({
           clients={clients}
           onCancel={() => setAdding(false)}
           onSubmit={async (input) => {
-            await projects.create(input);
-            setAdding(false);
+            await run(async () => {
+              await projects.create(input);
+              setAdding(false);
+            });
           }}
         />
       )}
@@ -108,8 +206,10 @@ function ProjectsSection({
                   clients={clients}
                   onCancel={() => setEditing(null)}
                   onSubmit={async (input) => {
-                    await projects.update({ ...input, id: p.id });
-                    setEditing(null);
+                    await run(async () => {
+                      await projects.update({ ...input, id: p.id });
+                      setEditing(null);
+                    });
                   }}
                 />
               </li>
@@ -121,23 +221,17 @@ function ProjectsSection({
                 />
                 <span className="data-name">{p.name}</span>
                 <span className="data-meta">{clientName(p.clientId)}</span>
-                <span className="data-row-actions">
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => setEditing(p.id)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="link-btn link-btn--danger"
-                    onClick={() => void projects.remove(p.id)}
-                    aria-label={`Delete ${p.name}`}
-                  >
-                    Delete
-                  </button>
-                </span>
+                <RowActions
+                  label={p.name}
+                  confirming={confirmId === p.id}
+                  onEdit={() => setEditing(p.id)}
+                  onAskDelete={() => setConfirmId(p.id)}
+                  onConfirmDelete={() => {
+                    setConfirmId(null);
+                    void run(() => projects.remove(p.id));
+                  }}
+                  onCancelDelete={() => setConfirmId(null)}
+                />
               </li>
             ),
           )}
@@ -243,10 +337,13 @@ function ProjectForm({ initial, clients, onCancel, onSubmit }: ProjectFormProps)
 interface ClientsSectionProps {
   clients: ReturnType<typeof useClients>;
   projects: Project[];
+  onDelete: (id: string) => Promise<void>;
+  run: Run;
 }
 
-function ClientsSection({ clients, projects }: ClientsSectionProps) {
+function ClientsSection({ clients, projects, onDelete, run }: ClientsSectionProps) {
   const [draft, setDraft] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const projectCount = useMemo(() => {
     const counts = new Map<string, number>();
     for (const p of projects) {
@@ -259,7 +356,7 @@ function ClientsSection({ clients, projects }: ClientsSectionProps) {
     const name = draft.trim();
     if (!name) return;
     setDraft("");
-    await clients.create({ name });
+    await run(() => clients.create({ name }));
   };
 
   return (
@@ -271,25 +368,27 @@ function ClientsSection({ clients, projects }: ClientsSectionProps) {
         <Empty title="No clients" body="Group projects under a client (optional)." tone="soft" />
       ) : (
         <ul className="data-list">
-          {clients.clients.map((c) => (
-            <li key={c.id} className="data-row">
-              <span className="data-name">{c.name}</span>
-              <span className="data-meta">
-                {projectCount.get(c.id) ?? 0} project
-                {(projectCount.get(c.id) ?? 0) === 1 ? "" : "s"}
-              </span>
-              <span className="data-row-actions">
-                <button
-                  type="button"
-                  className="link-btn link-btn--danger"
-                  onClick={() => void clients.remove(c.id)}
-                  aria-label={`Delete ${c.name}`}
-                >
-                  Delete
-                </button>
-              </span>
-            </li>
-          ))}
+          {clients.clients.map((c) => {
+            const count = projectCount.get(c.id) ?? 0;
+            return (
+              <li key={c.id} className="data-row">
+                <span className="data-name">{c.name}</span>
+                <span className="data-meta">
+                  {count} project{count === 1 ? "" : "s"}
+                </span>
+                <RowActions
+                  label={c.name}
+                  confirming={confirmId === c.id}
+                  onAskDelete={() => setConfirmId(c.id)}
+                  onConfirmDelete={() => {
+                    setConfirmId(null);
+                    void onDelete(c.id);
+                  }}
+                  onCancelDelete={() => setConfirmId(null)}
+                />
+              </li>
+            );
+          })}
         </ul>
       )}
       <div className="data-add-row">
@@ -321,18 +420,19 @@ function ClientsSection({ clients, projects }: ClientsSectionProps) {
 
 // ── Tasks ─────────────────────────────────────────────────────────────
 
-function TasksSection({ projects }: { projects: Project[] }) {
+function TasksSection({ projects, run }: { projects: Project[]; run: Run }) {
   const [projectId, setProjectId] = useState<string | null>(
     projects[0]?.id ?? null,
   );
   const tasks = useTasks(projectId);
   const [draft, setDraft] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const add = async () => {
     const name = draft.trim();
     if (!name) return;
     setDraft("");
-    await tasks.create(name);
+    await run(() => tasks.create(name));
   };
 
   return (
@@ -363,16 +463,16 @@ function TasksSection({ projects }: { projects: Project[] }) {
               {tasks.tasks.map((t) => (
                 <li key={t.id} className="data-row">
                   <span className="data-name">{t.name}</span>
-                  <span className="data-row-actions">
-                    <button
-                      type="button"
-                      className="link-btn link-btn--danger"
-                      onClick={() => void tasks.remove(t.id)}
-                      aria-label={`Delete ${t.name}`}
-                    >
-                      Delete
-                    </button>
-                  </span>
+                  <RowActions
+                    label={t.name}
+                    confirming={confirmId === t.id}
+                    onAskDelete={() => setConfirmId(t.id)}
+                    onConfirmDelete={() => {
+                      setConfirmId(null);
+                      void run(() => tasks.remove(t.id));
+                    }}
+                    onCancelDelete={() => setConfirmId(null)}
+                  />
                 </li>
               ))}
             </ul>

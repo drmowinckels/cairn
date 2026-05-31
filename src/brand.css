@@ -529,7 +529,12 @@ body {
 .data-row-actions {
   margin-left: auto;
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+.data-confirm-text {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
 }
 .link-btn--danger {
   color: #8a3a23;
