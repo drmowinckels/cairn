@@ -50,6 +50,19 @@ describe("useRoundingPrefs", () => {
     });
   });
 
+  it("coerces a valid-JSON object with missing/invalid fields to defaults", () => {
+    // Valid JSON, but neither field is usable: interval non-numeric, mode bogus.
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ intervalMinutes: "x", mode: "sideways" }),
+    );
+    const { result } = renderHook(() => useRoundingPrefs());
+    expect(result.current.rounding).toEqual({
+      intervalMinutes: 0,
+      mode: "nearest",
+    });
+  });
+
   it("coerces a negative interval to disabled", () => {
     const { result } = renderHook(() => useRoundingPrefs());
     act(() => result.current.setIntervalMinutes(-5));

@@ -812,6 +812,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn csv_duration_minutes_handles_open_and_unparseable() {
+        let now = DateTime::parse_from_rfc3339("2026-05-25T10:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let off = Rounding::off();
+        let start = "2026-05-25T09:00:00+00:00";
+        // Closed 8-minute entry.
+        assert_eq!(
+            csv_duration_minutes(start, Some("2026-05-25T09:08:00+00:00"), now, off),
+            "8"
+        );
+        // Open entry measures to `now` (60 minutes).
+        assert_eq!(csv_duration_minutes(start, None, now, off), "60");
+        // Unparseable start or end degrades to an empty cell.
+        assert_eq!(csv_duration_minutes("nope", Some(start), now, off), "");
+        assert_eq!(csv_duration_minutes(start, Some("nope"), now, off), "");
+    }
+
+    #[tokio::test]
+    async fn export_csv_command_writes_a_file() {
+        let (dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let dest = dir.path().join("cmd.csv");
+        let out = export_csv(state, dest.to_string_lossy().to_string(), None)
+            .await
+            .unwrap();
+        assert!(out.contains("cmd.csv"));
+        assert!(tokio::fs::try_exists(&dest).await.unwrap());
+    }
+
     #[tokio::test]
     async fn export_stage_swap_reopen_round_trips_entries() {
         // Source machine

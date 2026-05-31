@@ -32,6 +32,12 @@ describe("DataView", () => {
     ).toBeTruthy();
   });
 
+  it("Export CSV in the Storage section is wired (no-op outside Tauri) (#107)", () => {
+    render(<DataView density="comfy" />);
+    const btn = screen.getByRole("button", { name: /export csv/i });
+    expect(() => fireEvent.click(btn)).not.toThrow();
+  });
+
   it("orders the sections Client → Project → Task (#103)", () => {
     render(<DataView density="comfy" />);
     const clients = screen.getByRole("region", { name: /^clients$/i });
