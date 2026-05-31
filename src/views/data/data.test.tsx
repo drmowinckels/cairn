@@ -74,10 +74,10 @@ describe("DataView", () => {
     render(<DataView density="comfy" />);
     const clients = screen.getByRole("region", { name: /^clients$/i });
     fireEvent.change(within(clients).getByLabelText(/new client name/i), {
-      target: { value: "Globex" },
+      target: { value: "Studio" },
     });
     fireEvent.click(within(clients).getByRole("button", { name: /^add$/i }));
-    await waitFor(() => expect(within(clients).getByText("Globex")).toBeTruthy());
+    await waitFor(() => expect(within(clients).getByText("Studio")).toBeTruthy());
   });
 
   it("adds a task to the selected project", async () => {
