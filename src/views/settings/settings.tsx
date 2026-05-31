@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
-import { useBackup } from "../../lib/use-backup";
 import { useExclusions, guessExclusionKind } from "../../lib/use-exclusions";
 import { SHORTCUTS } from "../../lib/shortcuts";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
@@ -16,7 +15,6 @@ import type {
 } from "../../lib/types";
 import { AMBIGUITY_OPTIONS as AMBIGUITY_VALUES } from "../../lib/use-rules";
 import {
-  formatBytes,
   PRIVACY_GUARANTEES,
   PRIVACY_LICENSE_LABEL,
   PRIVACY_REPO_LABEL,
@@ -120,7 +118,6 @@ export function SettingsView({
   scrollNonce = 0,
   popoverSize,
 }: Props) {
-  const backup = useBackup();
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -179,58 +176,10 @@ export function SettingsView({
           ))}
         </ul>
         <p className="privacy-hint">
-          Backup or restore by saving the database file anywhere — including a
-          folder synced by iCloud Drive, Google Drive, or Syncthing. Cairn
-          never talks to those services itself.
+          Manage, back up, and delete your data in the <strong>Data</strong>{" "}
+          tab. Cairn never talks to a server — your data is a single file on
+          this machine.
         </p>
-        <div className="privacy-actions">
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={backup.exportBackupToFile}
-          >
-            Export all data…
-          </button>
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={backup.importBackupFromFile}
-          >
-            Restore from file…
-          </button>
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={backup.exportCsvToFile}
-          >
-            Export CSV…
-          </button>
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={backup.revealDataFolder}
-          >
-            View what's stored
-          </button>
-          <button
-            className="btn btn--ghost btn--sm privacy-danger"
-            onClick={backup.deleteAllData}
-          >
-            Delete everything…
-          </button>
-        </div>
-        {backup.dataFiles.length > 0 && (
-          <ul
-            className="privacy-files"
-            aria-label="Files currently stored on this machine"
-          >
-            {backup.dataFiles.map((file) => (
-              <li key={file.name}>
-                <Icon name="folder" size={11} />
-                <code>{file.name}</code>
-                <span className="privacy-files-size">
-                  {formatBytes(file.sizeBytes)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
         <p className="privacy-attrib">
           <a
             href={PRIVACY_REPO_URL}
@@ -241,29 +190,6 @@ export function SettingsView({
           </a>{" "}
           · {PRIVACY_LICENSE_LABEL}
         </p>
-        {backup.pendingImport && (
-          <div className="privacy-banner privacy-banner--pending" role="status">
-            <Icon name="info" size={13} />
-            <span>
-              A restore is staged and will apply the next time Cairn starts.
-            </span>
-            <button className="link-btn" onClick={backup.cancelImport}>
-              Cancel
-            </button>
-          </div>
-        )}
-        {backup.status.kind !== "idle" && (
-          <div
-            className={`privacy-banner privacy-banner--${backup.status.kind}`}
-            role={backup.status.kind === "error" ? "alert" : "status"}
-          >
-            <Icon
-              name={backup.status.kind === "error" ? "x" : "check"}
-              size={13}
-            />
-            <span>{backup.status.message}</span>
-          </div>
-        )}
       </section>
 
       <section className="settings-block" data-section="exclusions">

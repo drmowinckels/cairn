@@ -486,6 +486,86 @@ body {
   gap: 6px;
 }
 
+/* ─── DATA TAB ──────────────────────────────────────────────────────── */
+.view-data {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.data-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.data-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.data-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  font-size: var(--font-small);
+}
+.data-row--editing {
+  display: block;
+}
+.data-name {
+  font-weight: 500;
+  color: var(--ink);
+}
+.data-meta {
+  color: var(--ink-mute);
+  font-size: var(--font-tiny);
+}
+.data-row-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.link-btn--danger {
+  color: #8a3a23;
+}
+[data-theme="dark"] .link-btn--danger {
+  color: #f5b4a0;
+}
+.data-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+.data-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.data-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.data-add-row .field-input {
+  flex: 1;
+}
+.data-storage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* ─── IDLE PROMPT WINDOW (#93) ──────────────────────────────────────── */
 .idle-win {
   display: flex;

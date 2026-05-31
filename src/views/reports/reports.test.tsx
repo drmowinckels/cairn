@@ -80,17 +80,23 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 
-  it("today bar (when present) carries the .is-today class, future bars carry .is-future", () => {
-    // The week fixture marks one day today and a few as future. Assert
-    // those classes survive the render.
-    const { container } = render(<ReportsView density="comfy" />);
-    const todayBar = container.querySelector(".bar-col.is-today");
-    // The fixture may or may not include "today" depending on weekday;
-    // but the future-day class should always be present.
-    expect(container.querySelector(".bar-col.is-future")).toBeTruthy();
-    // If today exists, its bar should have an inset-ring class.
-    if (todayBar) {
-      expect(todayBar.className).toMatch(/is-today/);
+  it("today bar carries .is-today and future bars carry .is-future (mid-week)", () => {
+    // report-fixture builds the week from the real `new Date()`, so on a
+    // Sunday there are no future days left and the week has no future
+    // bar. Pin to a Wednesday so both a "today" and "future" day always
+    // exist, making the assertion deterministic.
+    vi.useFakeTimers();
+    const wed = new Date(2026, 0, 1, 12, 0, 0);
+    wed.setDate(wed.getDate() + ((3 - wed.getDay() + 7) % 7)); // next Wed
+    vi.setSystemTime(wed);
+    try {
+      const { container } = render(<ReportsView density="comfy" />);
+      const todayBar = container.querySelector(".bar-col.is-today");
+      expect(todayBar).toBeTruthy();
+      expect(todayBar?.className).toMatch(/is-today/);
+      expect(container.querySelector(".bar-col.is-future")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

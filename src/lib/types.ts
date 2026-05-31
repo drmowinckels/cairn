@@ -191,7 +191,7 @@ export type Density = "comfy" | "compact";
 export type LayoutVariant = "default" | "projects-first";
 export type RulesComplexity = "light" | "medium" | "heavy";
 export type Theme = "light" | "dark";
-export type View = "today" | "reports" | "rules" | "projects" | "settings";
+export type View = "today" | "reports" | "rules" | "data" | "settings";
 
 export type TextScale = "sm" | "md" | "lg" | "xl";
 export type DetectionPrompts = "off" | "subtle" | "modal";

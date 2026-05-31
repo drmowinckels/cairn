@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { inTauri, listProjects, saveProject, type SaveProjectInput } from "./ipc";
+import {
+  deleteProject,
+  inTauri,
+  listProjects,
+  saveProject,
+  type SaveProjectInput,
+} from "./ipc";
 import type { Project } from "./types";
 import { PROJECTS as FIXTURE_PROJECTS } from "../test-fixtures/data";
 
@@ -7,6 +13,12 @@ export interface UseProjects {
   projects: Project[];
   refresh: () => Promise<void>;
   create: (input: SaveProjectInput) => Promise<Project>;
+  update: (input: SaveProjectInput & { id: string }) => Promise<Project>;
+  remove: (id: string) => Promise<void>;
+}
+
+function localId(name: string): string {
+  return `local-${name.trim().toLowerCase().replace(/\s+/g, "-")}`;
 }
 
 export function useProjects(): UseProjects {
@@ -32,10 +44,9 @@ export function useProjects(): UseProjects {
   const create = useCallback(
     async (input: SaveProjectInput): Promise<Project> => {
       if (!inTauri) {
-        // Browser-dev: there's no backend, so synthesize a local project
-        // from the fixture set so the create flow is exercisable.
+        // Browser-dev: synthesize a local project so the flow works.
         const local: Project = {
-          id: `local-${input.name.trim().toLowerCase().replace(/\s+/g, "-")}`,
+          id: localId(input.name),
           name: input.name.trim(),
           clientId: input.clientId ?? null,
           color: input.color,
@@ -53,5 +64,30 @@ export function useProjects(): UseProjects {
     [],
   );
 
-  return { projects, refresh, create };
+  const update = useCallback(
+    async (input: SaveProjectInput & { id: string }): Promise<Project> => {
+      if (!inTauri) {
+        const next: Project = {
+          id: input.id,
+          name: input.name.trim(),
+          clientId: input.clientId ?? null,
+          color: input.color,
+          archived: input.archived ?? false,
+        };
+        setProjects((prev) => prev.map((p) => (p.id === next.id ? next : p)));
+        return next;
+      }
+      const saved = await saveProject(input);
+      setProjects((prev) => prev.map((p) => (p.id === saved.id ? saved : p)));
+      return saved;
+    },
+    [],
+  );
+
+  const remove = useCallback(async (id: string): Promise<void> => {
+    if (inTauri) await deleteProject(id);
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  return { projects, refresh, create, update, remove };
 }
