@@ -24,7 +24,12 @@ interface Props {
 
 const DEFAULT_DOT = "var(--ink-faint)";
 
-export function RecentList({ entries, projectsById, onEdit, emptyAction }: Props) {
+export function RecentList({
+  entries,
+  projectsById,
+  onEdit,
+  emptyAction,
+}: Props) {
   const cbEnabled = useColorblindEnabled();
   if (entries.length === 0) {
     return (
@@ -40,6 +45,8 @@ export function RecentList({ entries, projectsById, onEdit, emptyAction }: Props
       {entries.map((e) => {
         const project = e.projectId ? projectsById[e.projectId] : undefined;
         const color = project ? cbColor(project.color, cbEnabled) : DEFAULT_DOT;
+        const projectName = project?.name ?? "No project";
+        const description = e.description || "(no description)";
         const duration = durationMinutes(e.startedAt, e.endedAt);
         const sourceMeta = sourceFor(e.source);
         const row = (
@@ -50,9 +57,15 @@ export function RecentList({ entries, projectsById, onEdit, emptyAction }: Props
               style={{ background: color }}
               aria-hidden="true"
             />
-            <span className="entry-task">{e.description || "(no description)"}</span>
+            <span className="entry-main">
+              <span className="entry-proj">{projectName}</span>
+              <span className="entry-task">{description}</span>
+            </span>
             <span className="entry-dur">{fmtHm(duration)}</span>
-            <span className="entry-src" aria-label={`source: ${sourceMeta.label}`}>
+            <span
+              className="entry-src"
+              aria-label={`source: ${sourceMeta.label}`}
+            >
               {sourceMeta.icon}
             </span>
           </>
@@ -64,7 +77,7 @@ export function RecentList({ entries, projectsById, onEdit, emptyAction }: Props
                 type="button"
                 className="entry-btn"
                 onClick={() => onEdit(e.id)}
-                aria-label={`Edit entry: ${e.description || "(no description)"}`}
+                aria-label={`Edit entry: ${projectName} — ${description}`}
               >
                 {row}
               </button>

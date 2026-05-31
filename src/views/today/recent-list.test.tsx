@@ -31,9 +31,7 @@ function entry(overrides: Partial<RecentEntry> = {}): RecentEntry {
 
 describe("RecentList", () => {
   it("renders an empty state when there are no entries", () => {
-    render(
-      <RecentList entries={[]} projectsById={PROJECTS_BY_ID} />,
-    );
+    render(<RecentList entries={[]} projectsById={PROJECTS_BY_ID} />);
     expect(screen.getByRole("status")).toBeTruthy();
     expect(screen.getByText(/no entries yet today/i)).toBeTruthy();
   });
@@ -41,7 +39,10 @@ describe("RecentList", () => {
   it("renders one row per entry with duration in hh/mm form", () => {
     render(
       <RecentList
-        entries={[entry({}), entry({ id: "e2", endedAt: "2026-05-26T11:00:00Z" })]}
+        entries={[
+          entry({}),
+          entry({ id: "e2", endedAt: "2026-05-26T11:00:00Z" }),
+        ]}
         projectsById={PROJECTS_BY_ID}
       />,
     );
@@ -128,7 +129,7 @@ describe("RecentList", () => {
       />,
     );
     const button = screen.getByRole("button", {
-      name: /edit entry: rule preview ui/i,
+      name: /edit entry: cairn — rule preview ui/i,
     });
     fireEvent.click(button);
     expect(onEdit).toHaveBeenCalledWith("e1");
@@ -150,14 +151,47 @@ describe("RecentList", () => {
     );
     expect(screen.getByText(/\(no description\)/i)).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /edit entry: \(no description\)/i }),
+      screen.getByRole("button", {
+        name: /edit entry: cairn — \(no description\)/i,
+      }),
     ).toBeTruthy();
+  });
+
+  it("renders the project name alongside the description (#102)", () => {
+    render(<RecentList entries={[entry({})]} projectsById={PROJECTS_BY_ID} />);
+    expect(screen.getByText("Cairn")).toBeTruthy();
+    expect(screen.getByText("Rule preview UI")).toBeTruthy();
+  });
+
+  it("shows 'No project' when the entry has no project (#102)", () => {
+    render(
+      <RecentList
+        entries={[entry({ projectId: null })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    expect(screen.getByText(/no project/i)).toBeTruthy();
+  });
+
+  it("shows 'No project' when the project id is unknown (#102)", () => {
+    render(
+      <RecentList
+        entries={[entry({ projectId: "ghost-proj" })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    expect(screen.getByText(/no project/i)).toBeTruthy();
   });
 
   it("treats null endedAt as a running entry and uses Date.now() for duration", () => {
     render(
       <RecentList
-        entries={[entry({ endedAt: null, startedAt: new Date(Date.now() - 60_000).toISOString() })]}
+        entries={[
+          entry({
+            endedAt: null,
+            startedAt: new Date(Date.now() - 60_000).toISOString(),
+          }),
+        ]}
         projectsById={PROJECTS_BY_ID}
       />,
     );
