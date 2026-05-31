@@ -4,6 +4,7 @@
   "language": "en,en-GB",
   "files": ["**/*.{md,ts,tsx,rs,json,toml,yml,yaml}"],
   "ignorePaths": [
+    "**/CLAUDE.md",
     "**/node_modules/**",
     "**/dist/**",
     "**/target/**",
