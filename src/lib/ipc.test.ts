@@ -52,6 +52,13 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(result).toEqual({ id: "e2" });
   });
 
+  it("idleSeconds invokes the command and returns the count", async () => {
+    invokeMock.mockResolvedValue(420);
+    const { idleSeconds } = await import("./ipc");
+    expect(await idleSeconds()).toBe(420);
+    expect(invokeMock).toHaveBeenCalledWith("idle_seconds");
+  });
+
   it("deleteEntry forwards the id and ignores the response", async () => {
     invokeMock.mockResolvedValue(null);
     const { deleteEntry } = await import("./ipc");
@@ -175,6 +182,12 @@ describe("ipc helpers (outside Tauri)", () => {
   it("setPopoverSize short-circuits without the backend", async () => {
     const { setPopoverSize } = await import("./ipc");
     await setPopoverSize(560, 760);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("idleSeconds short-circuits to null without the backend", async () => {
+    const { idleSeconds } = await import("./ipc");
+    expect(await idleSeconds()).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

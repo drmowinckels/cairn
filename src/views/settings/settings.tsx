@@ -7,6 +7,7 @@ import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UsePopoverSize, PopoverSize } from "../../lib/use-popover-size";
 import type { UseTrayDetail } from "../../lib/use-tray-detail";
 import type { UseRoundingPrefs } from "../../lib/use-rounding-prefs";
+import type { UseWorkingHours } from "../../lib/use-working-hours";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import {
   ROUNDING_INTERVALS,
@@ -82,6 +83,11 @@ interface Props {
    * render without it; when absent the rounding rows are hidden.
    */
   rounding?: UseRoundingPrefs;
+  /**
+   * Working-hours reminder preference (issue #99). Optional so tests can
+   * render without it; when absent the reminder rows are hidden.
+   */
+  workingHours?: UseWorkingHours;
 }
 
 const POPOVER_SIZES: Array<{ value: PopoverSize; label: string }> = [
@@ -114,6 +120,27 @@ const DETECTION_OPTIONS: Array<{ value: DetectionPrompts; label: string }> = [
   { value: "modal", label: "Modal" },
 ];
 
+const REMINDER_THROTTLES = [15, 30, 60, 120];
+const REMINDER_IDLE_MINUTES = [5, 10, 15, 30];
+
+/** minutes-since-midnight → "HH:MM" for an `<input type="time">`. */
+export function minutesToHhMm(minutes: number): string {
+  const clamped = Math.min(Math.max(0, Math.floor(minutes)), 24 * 60 - 1);
+  const hh = String(Math.floor(clamped / 60)).padStart(2, "0");
+  const mm = String(clamped % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/** "HH:MM" → minutes-since-midnight; `null` when unparseable. */
+export function hhMmToMinutes(value: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
 /**
  * Settings-specific labels for each `AmbiguityBehavior`. Derived
  * from the canonical `AMBIGUITY_VALUES` so a future fourth variant
@@ -145,6 +172,7 @@ export function SettingsView({
   popoverSize,
   trayDetail,
   rounding,
+  workingHours,
 }: Props) {
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -457,6 +485,8 @@ export function SettingsView({
         </section>
       )}
 
+      {workingHours && <WorkingHoursSection workingHours={workingHours} />}
+
       <section
         className="settings-block"
         aria-labelledby="shortcuts-h"
@@ -640,6 +670,109 @@ function Toggle({ on, onChange, label }: ToggleProps) {
     >
       <span className="tgl-dot" />
     </button>
+  );
+}
+
+interface WorkingHoursSectionProps {
+  workingHours: UseWorkingHours;
+}
+
+/**
+ * The #99 working-hours reminder controls. Off by default. When on, Cairn
+ * shows a subtle, non-modal prompt to start tracking when the user is idle
+ * during these hours with no timer running — gated by the throttle so it
+ * never nags. It only offers; the user's tap starts the timer.
+ */
+function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
+  const { workingHours: cfg } = workingHours;
+  return (
+    <section className="settings-block" aria-label="Working-hours reminder">
+      <h3 className="settings-h">Reminders</h3>
+      <p className="settings-sub">
+        When you're idle during your working hours with no timer running,
+        Cairn can offer to start tracking. It only suggests — nothing is
+        logged until you tap.
+      </p>
+
+      <SetRow
+        label="Remind me to track time"
+        hint="Only inside the hours below, and never more often than the throttle."
+      >
+        <Toggle
+          on={cfg.enabled}
+          onChange={workingHours.setEnabled}
+          label="Remind me to track time"
+        />
+      </SetRow>
+
+      {cfg.enabled && (
+        <>
+          <SetRow label="Working hours start" hint="When the reminder window opens.">
+            <input
+              type="time"
+              className="field-input"
+              aria-label="Working hours start"
+              value={minutesToHhMm(cfg.startMinute)}
+              onChange={(e) => {
+                const m = hhMmToMinutes(e.target.value);
+                if (m !== null) workingHours.setStartMinute(m);
+              }}
+            />
+          </SetRow>
+
+          <SetRow label="Working hours end" hint="When the reminder window closes.">
+            <input
+              type="time"
+              className="field-input"
+              aria-label="Working hours end"
+              value={minutesToHhMm(cfg.endMinute)}
+              onChange={(e) => {
+                const m = hhMmToMinutes(e.target.value);
+                if (m !== null) workingHours.setEndMinute(m);
+              }}
+            />
+          </SetRow>
+
+          <SetRow
+            label="Idle before reminding"
+            hint="How long with no input before a reminder is eligible."
+          >
+            <select
+              className="field-input"
+              aria-label="Idle before reminding"
+              value={cfg.idleMinutes}
+              onChange={(e) => workingHours.setIdleMinutes(Number(e.target.value))}
+            >
+              {REMINDER_IDLE_MINUTES.map((m) => (
+                <option key={m} value={m}>
+                  {m} min
+                </option>
+              ))}
+            </select>
+          </SetRow>
+
+          <SetRow
+            label="Don't remind more than every"
+            hint="The throttle that keeps the reminder from nagging."
+          >
+            <select
+              className="field-input"
+              aria-label="Reminder throttle"
+              value={cfg.throttleMinutes}
+              onChange={(e) =>
+                workingHours.setThrottleMinutes(Number(e.target.value))
+              }
+            >
+              {REMINDER_THROTTLES.map((m) => (
+                <option key={m} value={m}>
+                  {m} min
+                </option>
+              ))}
+            </select>
+          </SetRow>
+        </>
+      )}
+    </section>
   );
 }
 
