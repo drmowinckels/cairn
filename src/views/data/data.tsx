@@ -66,17 +66,17 @@ export function DataView({ density }: Props) {
           <span>{error}</span>
         </div>
       )}
+      <ClientsSection
+        clients={clients}
+        projects={projects.projects}
+        onDelete={deleteClient}
+        run={run}
+      />
       <ProjectsSection
         projects={projects}
         clients={clients.clients}
         clientName={clientName}
         cbEnabled={cbEnabled}
-        run={run}
-      />
-      <ClientsSection
-        clients={clients}
-        projects={projects.projects}
-        onDelete={deleteClient}
         run={run}
       />
       <TasksSection projects={projects.projects} run={run} />
@@ -163,39 +163,33 @@ function ProjectsSection({
   run,
 }: ProjectsSectionProps) {
   const [editing, setEditing] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+
+  // Quick-add mirrors the client/task pattern: name only. The colour rotates
+  // through the palette so successive projects differ at a glance; colour and
+  // client are refined afterwards via Edit.
+  const add = async () => {
+    const name = draft.trim();
+    if (!name) return;
+    setDraft("");
+    const color =
+      PROJECT_COLORS[projects.projects.length % PROJECT_COLORS.length];
+    await run(() => projects.create({ name, color, clientId: null }));
+  };
 
   return (
     <section className="data-block" aria-label="Projects">
       <div className="sect-label">
         <span>Projects</span>
-        {!adding && (
-          <button
-            type="button"
-            className="field-action"
-            onClick={() => setAdding(true)}
-          >
-            <Icon name="plus" size={11} /> New project
-          </button>
-        )}
       </div>
 
-      {adding && (
-        <ProjectForm
-          clients={clients}
-          onCancel={() => setAdding(false)}
-          onSubmit={async (input) => {
-            await run(async () => {
-              await projects.create(input);
-              setAdding(false);
-            });
-          }}
+      {projects.projects.length === 0 ? (
+        <Empty
+          title="No projects yet"
+          body="Add one to start tracking."
+          tone="soft"
         />
-      )}
-
-      {projects.projects.length === 0 && !adding ? (
-        <Empty title="No projects yet" body="Add one to start tracking." tone="soft" />
       ) : (
         <ul className="data-list">
           {projects.projects.map((p) =>
@@ -237,12 +231,37 @@ function ProjectsSection({
           )}
         </ul>
       )}
+      <div className="data-add-row">
+        <input
+          className="field-input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void add();
+            }
+          }}
+          placeholder="New project name"
+          aria-label="New project name"
+        />
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={() => void add()}
+          disabled={!draft.trim()}
+        >
+          Add
+        </button>
+      </div>
     </section>
   );
 }
 
+// Edit-only form: name is quick-added inline, so this exists solely to refine
+// an existing project's colour and client.
 interface ProjectFormProps {
-  initial?: Project;
+  initial: Project;
   clients: Client[];
   onCancel: () => void;
   onSubmit: (input: {
@@ -252,12 +271,15 @@ interface ProjectFormProps {
   }) => Promise<void>;
 }
 
-function ProjectForm({ initial, clients, onCancel, onSubmit }: ProjectFormProps) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [color, setColor] = useState(initial?.color ?? PROJECT_COLORS[0]);
-  const [clientId, setClientId] = useState<string | null>(
-    initial?.clientId ?? null,
-  );
+function ProjectForm({
+  initial,
+  clients,
+  onCancel,
+  onSubmit,
+}: ProjectFormProps) {
+  const [name, setName] = useState(initial.name);
+  const [color, setColor] = useState(initial.color);
+  const [clientId, setClientId] = useState<string | null>(initial.clientId);
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -271,7 +293,7 @@ function ProjectForm({ initial, clients, onCancel, onSubmit }: ProjectFormProps)
   };
 
   return (
-    <div className="data-form" role="group" aria-label={initial ? "Edit project" : "New project"}>
+    <div className="data-form" role="group" aria-label="Edit project">
       <input
         className="field-input"
         value={name}
@@ -304,7 +326,9 @@ function ProjectForm({ initial, clients, onCancel, onSubmit }: ProjectFormProps)
       <select
         className="field-input"
         value={clientId ?? ""}
-        onChange={(e) => setClientId(e.target.value === "" ? null : e.target.value)}
+        onChange={(e) =>
+          setClientId(e.target.value === "" ? null : e.target.value)
+        }
         aria-label="Client"
         disabled={busy}
       >
@@ -316,7 +340,12 @@ function ProjectForm({ initial, clients, onCancel, onSubmit }: ProjectFormProps)
         ))}
       </select>
       <div className="data-form-actions">
-        <button type="button" className="btn btn--ghost btn--sm" onClick={onCancel} disabled={busy}>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={onCancel}
+          disabled={busy}
+        >
           Cancel
         </button>
         <button
@@ -341,7 +370,12 @@ interface ClientsSectionProps {
   run: Run;
 }
 
-function ClientsSection({ clients, projects, onDelete, run }: ClientsSectionProps) {
+function ClientsSection({
+  clients,
+  projects,
+  onDelete,
+  run,
+}: ClientsSectionProps) {
   const [draft, setDraft] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const projectCount = useMemo(() => {
@@ -365,7 +399,11 @@ function ClientsSection({ clients, projects, onDelete, run }: ClientsSectionProp
         <span>Clients</span>
       </div>
       {clients.clients.length === 0 ? (
-        <Empty title="No clients" body="Group projects under a client (optional)." tone="soft" />
+        <Empty
+          title="No clients"
+          body="Group projects under a client (optional)."
+          tone="soft"
+        />
       ) : (
         <ul className="data-list">
           {clients.clients.map((c) => {
@@ -443,7 +481,9 @@ function TasksSection({ projects, run }: { projects: Project[]; run: Run }) {
       <select
         className="field-input"
         value={projectId ?? ""}
-        onChange={(e) => setProjectId(e.target.value === "" ? null : e.target.value)}
+        onChange={(e) =>
+          setProjectId(e.target.value === "" ? null : e.target.value)
+        }
         aria-label="Project for tasks"
       >
         <option value="">Select a project…</option>
@@ -457,7 +497,11 @@ function TasksSection({ projects, run }: { projects: Project[]; run: Run }) {
       {projectId && (
         <>
           {tasks.tasks.length === 0 ? (
-            <Empty title="No tasks" body="Add tasks to break this project down." tone="soft" />
+            <Empty
+              title="No tasks"
+              body="Add tasks to break this project down."
+              tone="soft"
+            />
           ) : (
             <ul className="data-list">
               {tasks.tasks.map((t) => (
