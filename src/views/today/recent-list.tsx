@@ -4,6 +4,7 @@ import { Icon } from "../../lib/icon";
 import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { fmtClockFromIso, fmtHm } from "../../lib/time";
+import { ROUNDING_OFF, roundMinutes, type Rounding } from "../../lib/rounding";
 import type { Project } from "../../lib/types";
 
 export interface RecentEntry {
@@ -20,6 +21,7 @@ interface Props {
   projectsById: Record<string, Project | undefined>;
   onEdit?: (id: string) => void;
   emptyAction?: ReactNode;
+  rounding?: Rounding;
 }
 
 const DEFAULT_DOT = "var(--ink-faint)";
@@ -29,6 +31,7 @@ export function RecentList({
   projectsById,
   onEdit,
   emptyAction,
+  rounding = ROUNDING_OFF,
 }: Props) {
   const cbEnabled = useColorblindEnabled();
   if (entries.length === 0) {
@@ -47,7 +50,10 @@ export function RecentList({
         const color = project ? cbColor(project.color, cbEnabled) : DEFAULT_DOT;
         const projectName = project?.name ?? "No project";
         const description = e.description || "(no description)";
-        const duration = durationMinutes(e.startedAt, e.endedAt);
+        const duration = roundMinutes(
+          durationMinutes(e.startedAt, e.endedAt),
+          rounding,
+        );
         const sourceMeta = sourceFor(e.source);
         const row = (
           <>

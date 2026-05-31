@@ -6,7 +6,15 @@ import { SHORTCUTS } from "../../lib/shortcuts";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UsePopoverSize, PopoverSize } from "../../lib/use-popover-size";
 import type { UseTrayDetail } from "../../lib/use-tray-detail";
+import type { UseRoundingPrefs } from "../../lib/use-rounding-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
+import {
+  ROUNDING_INTERVALS,
+  ROUND_MODES,
+  isRoundingActive,
+  roundingLabel,
+  type RoundMode,
+} from "../../lib/rounding";
 import type {
   AmbiguityBehavior,
   Density,
@@ -69,12 +77,23 @@ interface Props {
    * can render without it; when absent the row is hidden.
    */
   trayDetail?: UseTrayDetail;
+  /**
+   * Global time-rounding preference (issue #107). Optional so tests can
+   * render without it; when absent the rounding rows are hidden.
+   */
+  rounding?: UseRoundingPrefs;
 }
 
 const POPOVER_SIZES: Array<{ value: PopoverSize; label: string }> = [
   { value: "compact", label: "Compact" },
   { value: "large", label: "Large" },
 ];
+
+const MODE_LABEL: Record<RoundMode, string> = {
+  nearest: "Nearest",
+  up: "Up",
+  down: "Down",
+};
 
 const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
   { value: "system", label: "System" },
@@ -125,6 +144,7 @@ export function SettingsView({
   scrollNonce = 0,
   popoverSize,
   trayDetail,
+  rounding,
 }: Props) {
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -381,6 +401,61 @@ export function SettingsView({
           </div>
         </SetRow>
       </section>
+
+      {rounding && (
+        <section className="settings-block" aria-label="Time rounding">
+          <h3 className="settings-h">Reporting</h3>
+          <p className="settings-sub">
+            Rounding is applied to reports and CSV export only — your raw start
+            and stop times are never changed.
+          </p>
+
+          <SetRow
+            label="Round time to"
+            hint="Each entry's duration is rounded to this interval before it's totalled or exported."
+          >
+            <select
+              className="field-input"
+              aria-label="Rounding interval"
+              value={rounding.rounding.intervalMinutes}
+              onChange={(e) =>
+                rounding.setIntervalMinutes(Number(e.target.value))
+              }
+            >
+              {ROUNDING_INTERVALS.map((m) => (
+                <option key={m} value={m}>
+                  {roundingLabel(m)}
+                </option>
+              ))}
+            </select>
+          </SetRow>
+
+          {isRoundingActive(rounding.rounding) && (
+            <SetRow
+              label="Rounding direction"
+              hint="Nearest is fairest; up favours the worker; down favours the client."
+            >
+              <div
+                className="seg seg--sm"
+                role="radiogroup"
+                aria-label="Rounding direction"
+              >
+                {ROUND_MODES.map((mode) => (
+                  <button
+                    key={mode}
+                    role="radio"
+                    aria-checked={rounding.rounding.mode === mode}
+                    className={`seg-btn${rounding.rounding.mode === mode ? " is-on" : ""}`}
+                    onClick={() => rounding.setMode(mode as RoundMode)}
+                  >
+                    {MODE_LABEL[mode]}
+                  </button>
+                ))}
+              </div>
+            </SetRow>
+          )}
+        </section>
+      )}
 
       <section
         className="settings-block"

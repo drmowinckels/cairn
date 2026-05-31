@@ -1,5 +1,6 @@
 import { Icon } from "../../lib/icon";
 import { useBackup } from "../../lib/use-backup";
+import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { formatBytes } from "../../lib/privacy-copy";
 
 /**
@@ -10,6 +11,7 @@ import { formatBytes } from "../../lib/privacy-copy";
  */
 export function DataStorageActions() {
   const backup = useBackup();
+  const { rounding } = useRoundingPrefs();
 
   return (
     <section className="data-storage" aria-label="Local data storage">
@@ -34,7 +36,7 @@ export function DataStorageActions() {
         </button>
         <button
           className="btn btn--ghost btn--sm"
-          onClick={backup.exportCsvToFile}
+          onClick={() => backup.exportCsvToFile(rounding)}
         >
           Export CSV…
         </button>

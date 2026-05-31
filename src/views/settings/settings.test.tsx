@@ -18,6 +18,18 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 import { SettingsView } from "./index";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
+import type { UseRoundingPrefs } from "../../lib/use-rounding-prefs";
+
+function stubRounding(
+  overrides: Partial<UseRoundingPrefs> = {},
+): UseRoundingPrefs {
+  return {
+    rounding: { intervalMinutes: 0, mode: "nearest" },
+    setIntervalMinutes: vi.fn(),
+    setMode: vi.fn(),
+    ...overrides,
+  };
+}
 
 type WithInternals = { __TAURI_INTERNALS__?: unknown };
 
@@ -104,6 +116,56 @@ describe("SettingsView (browser-dev mode)", () => {
     expect(
       container.querySelector(".excl-list, .settings-block"),
     ).toBeTruthy();
+  });
+
+  it("hides the rounding control when no rounding prefs are provided", () => {
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+    );
+    expect(screen.queryByLabelText(/rounding interval/i)).toBeNull();
+  });
+
+  it("changing the rounding interval calls setIntervalMinutes", () => {
+    const rounding = stubRounding();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        rounding={rounding}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/rounding interval/i), {
+      target: { value: "15" },
+    });
+    expect(rounding.setIntervalMinutes).toHaveBeenCalledWith(15);
+  });
+
+  it("shows the direction control only when rounding is active, and sets the mode", () => {
+    const off = stubRounding();
+    const { rerender } = render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        rounding={off}
+      />,
+    );
+    expect(screen.queryByRole("radiogroup", { name: /direction/i })).toBeNull();
+
+    const active = stubRounding({
+      rounding: { intervalMinutes: 15, mode: "nearest" },
+    });
+    rerender(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        rounding={active}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /^up$/i }));
+    expect(active.setMode).toHaveBeenCalledWith("up");
   });
 
   it("clicking an accessibility toggle calls the matching a11y setter", () => {
