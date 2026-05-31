@@ -68,11 +68,14 @@ describe("DataView", () => {
     );
   });
 
-  it("adds a project with the Enter key", async () => {
+  it("adds a project with the Enter key (and ignores other keys)", async () => {
     render(<DataView density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
     const input = within(projects).getByLabelText(/new project name/i);
     fireEvent.change(input, { target: { value: "Comet" } });
+    // A non-Enter key is a no-op; only Enter submits.
+    fireEvent.keyDown(input, { key: "a" });
+    expect(within(projects).queryByText("Comet")).toBeNull();
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() =>
       expect(within(projects).getByText("Comet")).toBeTruthy(),
@@ -112,6 +115,25 @@ describe("DataView", () => {
     );
   });
 
+  it("clears a project's client (No client) through the Edit form", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // acme-web starts with a client; "No client" rows exist for others.
+    const before = within(projects).getAllByText(/^no client$/i).length;
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    fireEvent.change(within(projects).getByLabelText(/^client$/i), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).getAllByText(/^no client$/i).length).toBe(
+        before + 1,
+      ),
+    );
+  });
+
   it("switches the task project via the selector", () => {
     render(<DataView density="comfy" />);
     const tasksRegion = screen.getByRole("region", { name: /^tasks$/i });
@@ -120,6 +142,9 @@ describe("DataView", () => {
     ) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "cairn" } });
     expect(select.value).toBe("cairn");
+    // Back to no project selected (the "" → null branch).
+    fireEvent.change(select, { target: { value: "" } });
+    expect(select.value).toBe("");
   });
 
   it("deletes a project after inline confirmation", async () => {
