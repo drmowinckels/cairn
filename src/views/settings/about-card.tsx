@@ -25,7 +25,9 @@ export function formatDiagnostics(d: Diagnostics | null): string {
  */
 export function AboutCard() {
   const [diag, setDiag] = useState<Diagnostics | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -45,12 +47,20 @@ export function AboutCard() {
     const text = formatDiagnostics(diag);
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      setCopyState("copied");
     } catch (e) {
       console.warn("clipboard write failed", e);
+      setCopyState("failed");
     }
+    window.setTimeout(() => setCopyState("idle"), 2000);
   };
+
+  const copyLabel =
+    copyState === "copied"
+      ? "Copied diagnostics"
+      : copyState === "failed"
+        ? "Copy failed"
+        : "Copy diagnostics";
 
   return (
     <div className="about-card">
@@ -77,8 +87,8 @@ export function AboutCard() {
       </p>
       <div className="about-actions">
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => void copy()}>
-          <Icon name={copied ? "check" : "folder"} size={12} />{" "}
-          {copied ? "Copied diagnostics" : "Copy diagnostics"}
+          <Icon name={copyState === "copied" ? "check" : "folder"} size={12} />{" "}
+          {copyLabel}
         </button>
         <span className="about-hint">For bug reports — version + platform + counts, no personal data.</span>
       </div>

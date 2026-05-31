@@ -24,7 +24,7 @@ export interface UseSignalCapture {
 /**
  * Debug "Capture raw signals" hook. The state is owned by the backend
  * (`signals::capture::SignalCapture`); this hook polls it once a second
- * so the footer banner and the Settings → Advanced toggle stay
+ * so the footer banner and the Settings → About toggle stay
  * synchronized even if some other window flipped the toggle.
  *
  * Polling errors are swallowed so a transient IPC blip doesn't flicker

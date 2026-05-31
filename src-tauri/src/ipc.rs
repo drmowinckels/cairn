@@ -1816,7 +1816,15 @@ pub struct Diagnostics {
 pub async fn diagnostics(state: State<'_, AppState>) -> Result<Diagnostics, String> {
     async fn count(pool: &sqlx::SqlitePool, table: &str) -> i64 {
         // `table` is a hardcoded literal from the call sites below, never
-        // user input — safe to format into the query.
+        // user input — safe to format into the query. The assert keeps it
+        // that way: a future non-literal would trip it in debug builds.
+        debug_assert!(
+            matches!(
+                table,
+                "projects" | "clients" | "rules" | "exclusions" | "entries"
+            ),
+            "diagnostics count table must be a known literal"
+        );
         sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
             .fetch_one(pool)
             .await

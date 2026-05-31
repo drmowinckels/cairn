@@ -500,7 +500,7 @@ export function SettingsView({
       )}
 
       <p className="settings-foot">
-        Cairn v0.0.1 · {PRIVACY_LICENSE_LABEL} ·{" "}
+        {PRIVACY_LICENSE_LABEL} ·{" "}
         <a href={PRIVACY_REPO_URL} target="_blank" rel="noreferrer noopener">
           github.com/drmowinckels/cairn
         </a>

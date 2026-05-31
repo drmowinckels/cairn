@@ -71,6 +71,15 @@ describe("AboutCard", () => {
     expect(await screen.findByText(/copied diagnostics/i)).toBeTruthy();
   });
 
+  it("shows 'Copy failed' when the clipboard write rejects", async () => {
+    diagnostics.mockResolvedValue(DIAG);
+    writeText.mockRejectedValue(new Error("denied"));
+    render(<AboutCard />);
+    await waitFor(() => expect(screen.getByText(/v0\.0\.1/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /copy diagnostics/i }));
+    expect(await screen.findByText(/copy failed/i)).toBeTruthy();
+  });
+
   it("renders a dev version when diagnostics is unavailable", async () => {
     diagnostics.mockResolvedValue(null);
     const { container } = render(<AboutCard />);
