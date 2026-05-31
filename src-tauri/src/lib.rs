@@ -2,6 +2,7 @@ mod backup;
 mod db;
 mod ipc;
 mod popover;
+mod rounding;
 mod rules;
 mod shutdown;
 mod signals;

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tauri::{Manager, State};
 
+use crate::rounding::Rounding;
 use crate::signals::browser_extension::BrowserExtensionStatus;
 use crate::signals::calendar::{ActiveEvent, CalendarKind, CalendarSource, SyncStatus};
 use crate::signals::git_watcher::GitWatcherStatus;
@@ -648,10 +649,11 @@ fn source_bucket<'a>(split: &'a mut ReportSourceSplit, source: &str) -> &'a mut 
     }
 }
 
-fn total_seconds(rows: &[ReportRow]) -> i64 {
+fn total_seconds(rows: &[ReportRow], rounding: Rounding) -> i64 {
     rows.iter()
         .map(|r| (r.end - r.start).num_seconds())
         .filter(|s| *s > 0)
+        .map(|s| rounding.round_secs(s))
         .sum()
 }
 
@@ -663,6 +665,7 @@ fn aggregate_report(
     rows: &[ReportRow],
     start_day: NaiveDate,
     end_day: NaiveDate,
+    rounding: Rounding,
 ) -> (
     i64,
     Vec<ReportProjectSlice>,
@@ -676,7 +679,7 @@ fn aggregate_report(
     let mut total = 0i64;
 
     for r in rows {
-        let secs = (r.end - r.start).num_seconds();
+        let secs = rounding.round_secs((r.end - r.start).num_seconds());
         if secs <= 0 {
             continue;
         }
@@ -765,7 +768,9 @@ async fn fetch_report_rows(
 pub async fn report_summary(
     state: State<'_, AppState>,
     range: String,
+    rounding: Option<Rounding>,
 ) -> Result<ReportSummary, String> {
+    let rounding = rounding.unwrap_or_default();
     let anchor = Local::now().date_naive();
     let now = Utc::now();
 
@@ -775,11 +780,12 @@ pub async fn report_summary(
     let cur_rows = fetch_report_rows(&state.db.pool, start_day, end_day, now).await?;
     let prev_rows = fetch_report_rows(&state.db.pool, prev_start, prev_end, now).await?;
 
-    let (total, by_project, by_day, by_source) = aggregate_report(&cur_rows, start_day, end_day);
+    let (total, by_project, by_day, by_source) =
+        aggregate_report(&cur_rows, start_day, end_day, rounding);
 
     Ok(ReportSummary {
         total_seconds: total,
-        prev_total_seconds: total_seconds(&prev_rows),
+        prev_total_seconds: total_seconds(&prev_rows, rounding),
         by_day,
         by_project,
         by_source,
@@ -1979,7 +1985,8 @@ mod report_pure_tests {
             row(None, "manual", (2026, 5, 27, 11), 600),
             row(Some("a"), "manual", (2026, 5, 30, 9), 0), // zero-length, ignored
         ];
-        let (total, by_project, by_day, by_source) = aggregate_report(&rows, start_day, end_day);
+        let (total, by_project, by_day, by_source) =
+            aggregate_report(&rows, start_day, end_day, Rounding::off());
 
         assert_eq!(total, 3600 + 1800 + 1200 + 600);
         // One bucket per calendar day in the window, tz-independent.
@@ -2013,7 +2020,30 @@ mod report_pure_tests {
                 end: s - Duration::seconds(10),
             },
         ];
-        assert_eq!(total_seconds(&rows), 60);
+        assert_eq!(total_seconds(&rows, Rounding::off()), 60);
+    }
+
+    #[test]
+    fn aggregate_rounds_each_entry_before_summing() {
+        let start_day = NaiveDate::from_ymd_opt(2026, 5, 25).unwrap();
+        let end_day = start_day + Duration::days(7);
+        let rows = vec![
+            row(Some("a"), "manual", (2026, 5, 25, 9), 8 * 60), // 8m → 15m
+            row(Some("a"), "manual", (2026, 5, 26, 9), 7 * 60), // 7m → 0m
+            row(Some("a"), "manual", (2026, 5, 27, 9), 23 * 60), // 23m → 30m
+        ];
+        let nearest15 = Rounding {
+            interval_minutes: 15,
+            mode: crate::rounding::RoundMode::Nearest,
+        };
+        let (total, by_project, _, _) = aggregate_report(&rows, start_day, end_day, nearest15);
+        // Per-entry rounding: 15 + 0 + 30 = 45m, not the raw 38m rounded.
+        assert_eq!(total, 45 * 60);
+        let a = by_project
+            .iter()
+            .find(|s| s.project_id.as_deref() == Some("a"))
+            .unwrap();
+        assert_eq!(a.seconds, 45 * 60);
     }
 }
 
@@ -2028,7 +2058,7 @@ mod tests {
     async fn report_summary_on_fresh_db_is_zero_with_full_day_buckets() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let summary = report_summary(state, "week".into()).await.unwrap();
+        let summary = report_summary(state, "week".into(), None).await.unwrap();
         assert_eq!(summary.total_seconds, 0);
         assert_eq!(summary.prev_total_seconds, 0);
         assert_eq!(summary.by_day.len(), 7);
