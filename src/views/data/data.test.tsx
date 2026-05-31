@@ -68,6 +68,60 @@ describe("DataView", () => {
     );
   });
 
+  it("adds a project with the Enter key", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    const input = within(projects).getByLabelText(/new project name/i);
+    fireEvent.change(input, { target: { value: "Comet" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(within(projects).getByText("Comet")).toBeTruthy(),
+    );
+  });
+
+  it("ignores Enter on an empty project name", () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    const before = within(projects).getAllByRole("button", {
+      name: /^delete /i,
+    }).length;
+    fireEvent.keyDown(within(projects).getByLabelText(/new project name/i), {
+      key: "Enter",
+    });
+    expect(
+      within(projects).getAllByRole("button", { name: /^delete /i }).length,
+    ).toBe(before);
+  });
+
+  it("reassigns a project's client through the Edit form", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // "Open source" appears once as a project's client (Cairn) before the edit.
+    const before = within(projects).getAllByText("Open source").length;
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    fireEvent.change(within(projects).getByLabelText(/^client$/i), {
+      target: { value: "c-os" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).getAllByText("Open source").length).toBe(
+        before + 1,
+      ),
+    );
+  });
+
+  it("switches the task project via the selector", () => {
+    render(<DataView density="comfy" />);
+    const tasksRegion = screen.getByRole("region", { name: /^tasks$/i });
+    const select = within(tasksRegion).getByLabelText(
+      /project for tasks/i,
+    ) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "cairn" } });
+    expect(select.value).toBe("cairn");
+  });
+
   it("deletes a project after inline confirmation", async () => {
     render(<DataView density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
