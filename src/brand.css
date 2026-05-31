@@ -229,6 +229,7 @@ body {
 /* ─── NAV TABS ──────────────────────────────────────────────────────── */
 .pop-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 6px var(--pad-x) 0;
   border-bottom: 0.5px solid var(--hairline);
@@ -274,10 +275,12 @@ body {
   padding-bottom: 8px;
   font-variant-numeric: tabular-nums;
 }
-/* At narrow widths (resized small) drop the shortcut hint so all five
-   tabs stay visible without side-scrolling (#100). */
-@media (max-width: 560px) {
-  .pop-nav .nav-meta {
+/* At narrow widths (resized small) drop the shortcut hint + the flex
+   spacer so the five tabs use the full width and wrap cleanly instead
+   of side-scrolling or clipping (#100). */
+@media (max-width: 600px) {
+  .pop-nav .nav-meta,
+  .pop-nav .nav-spacer {
     display: none;
   }
 }

@@ -135,6 +135,13 @@ pub fn run() {
         // is excluded from state management.
         .plugin(
             tauri_plugin_window_state::Builder::default()
+                // Only geometry — NOT visibility. The default flags
+                // include VISIBLE, which would auto-show the tray-toggled
+                // popover on every launch if it was open at quit.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
                 .with_denylist(&["idle"])
                 .build(),
         )
