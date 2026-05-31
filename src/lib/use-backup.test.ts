@@ -368,8 +368,30 @@ describe("useBackup (inside Tauri)", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("export_csv", {
       dest: "/tmp/entries.csv",
+      rounding: { intervalMinutes: 0, mode: "nearest" },
     });
     expect(result.current.status.kind).toBe("done");
+  });
+
+  it("exportCsvToFile forwards the rounding preference (#107)", async () => {
+    mockInvoke({
+      suggested_csv_name: () => "entries.csv",
+      export_csv: () => "/tmp/entries.csv",
+    });
+    saveMock.mockResolvedValue("/tmp/entries.csv");
+
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.exportCsvToFile({ intervalMinutes: 15, mode: "up" });
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("export_csv", {
+      dest: "/tmp/entries.csv",
+      rounding: { intervalMinutes: 15, mode: "up" },
+    });
   });
 
   it("exportCsvToFile is a no-op when the save dialog is cancelled", async () => {
