@@ -1880,14 +1880,12 @@ pub fn set_popover_size(app: tauri::AppHandle, width: f64, height: f64) -> Resul
     let width = width.clamp(320.0, 1200.0);
     let height = height.clamp(400.0, 1400.0);
     if let Some(window) = app.get_webview_window("popover") {
+        // Size only — never reposition. The window is a persistent,
+        // user-positioned window (#100) whose geometry is owned by
+        // tauri-plugin-window-state; re-anchoring here would fight it.
         window
             .set_size(tauri::LogicalSize::new(width, height))
             .map_err(err)?;
-        // The popover is anchored top-right (see popover::toggle). After
-        // a resize the origin would otherwise stay put and the wider /
-        // taller card could drift off-screen, so re-anchor it.
-        use tauri_plugin_positioner::{Position, WindowExt};
-        let _ = window.move_window(Position::TopRight);
     }
     Ok(())
 }

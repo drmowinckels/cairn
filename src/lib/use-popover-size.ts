@@ -47,16 +47,15 @@ export function usePopoverSize(): UsePopoverSize {
   const [size, setSizeState] = useState<PopoverSize>(() => readStored());
 
   useEffect(() => {
-    // Drive the card width via a root dataset attr (same pattern as the
-    // a11y prefs) so the preset is visible in browser-dev too, and
-    // resize the real OS window when running under Tauri.
+    // Reflect the preset on the root dataset for any styling/tests.
+    // Do NOT resize the window here: the window is freely resizable and
+    // its geometry is restored from tauri-plugin-window-state on launch
+    // (#100); applying on mount would clobber the user's saved size.
     try {
       document.documentElement.dataset.popoverSize = size;
     } catch {
       /* no document (non-DOM test env) — skip */
     }
-    if (inTauri) applySize(size);
-    // Only re-apply when the stored preset changes, not every render.
   }, [size]);
 
   const setSize = useCallback((next: PopoverSize) => {
@@ -66,6 +65,9 @@ export function usePopoverSize(): UsePopoverSize {
     } catch {
       /* private mode / no storage — preset just won't persist */
     }
+    // Quick-resize on an explicit choice only; window-state then
+    // persists whatever the user lands on.
+    if (inTauri) applySize(next);
   }, []);
 
   return { size, setSize };

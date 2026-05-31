@@ -10,7 +10,7 @@ mod tray;
 #[cfg(test)]
 mod test_support;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
 use tauri::{Manager, WindowEvent};
@@ -122,23 +122,29 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "popover" {
+                    // The close button hides the window rather than quitting;
+                    // the tray icon (and ⌃⌥T) toggle it back. As a persistent
+                    // window (#100) it no longer auto-hides on focus loss.
                     api.prevent_close();
                     let _ = window.hide();
                 }
             }
-            if let WindowEvent::Focused(false) = event {
-                if window.label() == "popover" {
-                    let pinned = window
-                        .app_handle()
-                        .try_state::<AppState>()
-                        .map(|s| s.pinned.load(Ordering::Relaxed))
-                        .unwrap_or(false);
-                    if !pinned {
-                        let _ = window.hide();
-                    }
-                }
-            }
         })
+        // Persist + restore the popover's position and size across
+        // launches (#100). The idle window is centered on demand, so it
+        // is excluded from state management.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // Only geometry — NOT visibility. The default flags
+                // include VISIBLE, which would auto-show the tray-toggled
+                // popover on every launch if it was open at quit.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
+                .with_denylist(&["idle"])
+                .build(),
+        )
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             popover::toggle(app);
         }))

@@ -131,13 +131,17 @@ body {
 
 /* ─── POPOVER FRAME ─────────────────────────────────────────────────── */
 .pop {
-  position: absolute;
-  top: 36px;
-  right: 26px;
-  width: 500px;
+  /* Persistent, resizable window (#100): the card fills the whole
+     window so dragging the window's edges resizes the content. The
+     window itself is frameless + transparent, so the rounded card with
+     its border + shadow reads as the app surface. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100vh;
+  box-sizing: border-box;
   font-size: var(--font-base);
   line-height: var(--line-base, 1.5);
-  max-height: calc(100vh - 56px);
   background: var(--surface);
   border-radius: var(--radius-lg);
   border: 0.5px solid var(--hairline-strong);
@@ -147,36 +151,6 @@ body {
   overflow: hidden;
   z-index: 20;
   isolation: isolate;
-}
-.pop[data-density="compact"] {
-  width: 420px;
-}
-/* Popover size preset (#1). "large" widens the card to fill the larger
-   window the size toggle requests via set_popover_size; the window keeps
-   ~60px of inset for the tray tail + margins, matching the compact case. */
-:root[data-popover-size="large"] .pop {
-  width: 620px;
-}
-/* Onboarding renders a single position:absolute overlay (.onboarding-overlay,
-   inset:0) as the only child of .pop. With no in-flow children a flex column
-   collapses to ~0 height, and .pop's overflow:hidden then clips the overlay to
-   nothing. Pin a definite height so the overlay has a box to fill. */
-.pop[data-onboarding="true"] {
-  height: calc(100vh - 56px);
-}
-.pop::before {
-  /* Tail pointing up to tray icon */
-  content: "";
-  position: absolute;
-  top: -7px;
-  right: 38px;
-  width: 14px;
-  height: 14px;
-  background: var(--surface);
-  border-top: 0.5px solid var(--hairline-strong);
-  border-left: 0.5px solid var(--hairline-strong);
-  transform: rotate(45deg);
-  z-index: 1;
 }
 
 /* ─── POPOVER HEADER ────────────────────────────────────────────────── */
@@ -255,6 +229,7 @@ body {
 /* ─── NAV TABS ──────────────────────────────────────────────────────── */
 .pop-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 6px var(--pad-x) 0;
   border-bottom: 0.5px solid var(--hairline);
@@ -267,7 +242,7 @@ body {
   font-size: var(--font-small);
   font-weight: 500;
   color: var(--ink-mute);
-  padding: 10px 12px 12px;
+  padding: 10px 10px 12px;
   border-bottom: 1.5px solid transparent;
   margin-bottom: -0.5px;
   cursor: default;
@@ -275,6 +250,8 @@ body {
   align-items: center;
   gap: 5px;
   letter-spacing: 0.005em;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 .pop-nav-btn:hover {
   color: var(--ink);
@@ -297,6 +274,15 @@ body {
   align-self: center;
   padding-bottom: 8px;
   font-variant-numeric: tabular-nums;
+}
+/* At narrow widths (resized small) drop the shortcut hint + the flex
+   spacer so the five tabs use the full width and wrap cleanly instead
+   of side-scrolling or clipping (#100). */
+@media (max-width: 600px) {
+  .pop-nav .nav-meta,
+  .pop-nav .nav-spacer {
+    display: none;
+  }
 }
 
 /* ─── POPOVER BODY ──────────────────────────────────────────────────── */

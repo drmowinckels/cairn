@@ -34,12 +34,9 @@ describe("usePopoverSize", () => {
     expect(document.documentElement.dataset.popoverSize).toBe("compact");
   });
 
-  it("applies the compact dimensions to the window on mount under Tauri", () => {
+  it("does NOT resize the window on mount (window-state owns geometry)", () => {
     renderHook(() => usePopoverSize());
-    expect(setPopoverSize).toHaveBeenCalledWith(
-      POPOVER_DIMENSIONS.compact.width,
-      POPOVER_DIMENSIONS.compact.height,
-    );
+    expect(setPopoverSize).not.toHaveBeenCalled();
   });
 
   it("setSize('large') persists, updates the dataset, and resizes the window", () => {
