@@ -831,6 +831,8 @@ mod tests {
         assert_eq!(csv_duration_minutes(start, Some("nope"), now, off), "");
     }
 
+    // Tauri's MockRuntime (mock_app_with_db) is unavailable on Windows.
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn export_csv_command_writes_a_file() {
         let (dir, app, _db) = crate::test_support::mock_app_with_db().await;
