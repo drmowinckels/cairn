@@ -30,9 +30,25 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
 });
 
 describe("ReportsView (fixture mode, no Tauri)", () => {
+  it("shows a rounding badge when rounding is active (#107)", () => {
+    window.localStorage.setItem(
+      "cairn:rounding:v1",
+      JSON.stringify({ intervalMinutes: 15, mode: "nearest" }),
+    );
+    render(<ReportsView density="comfy" />);
+    expect(screen.getByText(/rounded to 15 min/i)).toBeTruthy();
+  });
+
+  it("Export CSV button is wired (no-op outside Tauri) (#107)", () => {
+    render(<ReportsView density="comfy" />);
+    const btn = screen.getByRole("button", { name: /export csv/i });
+    expect(() => fireEvent.click(btn)).not.toThrow();
+  });
+
   it("renders the title and the segmented control with Week active", () => {
     render(<ReportsView density="comfy" />);
     expect(screen.getByRole("heading", { name: /this week/i })).toBeTruthy();
@@ -56,9 +72,9 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
 
     fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
     expect(screen.getByRole("heading", { name: /this month/i })).toBeTruthy();
-    expect(container.querySelectorAll(".bar-col").length).toBeGreaterThanOrEqual(
-      28,
-    );
+    expect(
+      container.querySelectorAll(".bar-col").length,
+    ).toBeGreaterThanOrEqual(28);
   });
 
   it("renders the honesty meter with rule/calendar/manual segments and textual labels", () => {
@@ -125,7 +141,11 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "report_summary") return Promise.resolve(summary);
       if (cmd === "data_paths")
-        return Promise.resolve({ dataDir: "", dbPath: "", pendingImport: null });
+        return Promise.resolve({
+          dataDir: "",
+          dbPath: "",
+          pendingImport: null,
+        });
       if (cmd === "list_projects") return Promise.resolve([]);
       return Promise.resolve(null);
     });
@@ -142,7 +162,10 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
       totalSeconds: 5400,
       prevTotalSeconds: 1800,
       byDay: [
-        { date: isoYesterday, byProject: [{ projectId: "cairn", seconds: 1800 }] },
+        {
+          date: isoYesterday,
+          byProject: [{ projectId: "cairn", seconds: 1800 }],
+        },
         { date: isoToday, byProject: [{ projectId: "cairn", seconds: 3600 }] },
         { date: isoTomorrow, byProject: [] },
       ],
@@ -172,9 +195,7 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
       expect(r).toBeTruthy();
       expect(r!.style.width).toBe("25%");
     });
-    const c = container.querySelector(
-      '[data-testid="hon-cal"]',
-    ) as HTMLElement;
+    const c = container.querySelector('[data-testid="hon-cal"]') as HTMLElement;
     const m = container.querySelector(
       '[data-testid="hon-manual"]',
     ) as HTMLElement;
@@ -274,7 +295,11 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "report_summary") return Promise.reject(new Error("db down"));
       if (cmd === "data_paths")
-        return Promise.resolve({ dataDir: "", dbPath: "", pendingImport: null });
+        return Promise.resolve({
+          dataDir: "",
+          dbPath: "",
+          pendingImport: null,
+        });
       if (cmd === "list_projects") return Promise.resolve([]);
       return Promise.resolve(null);
     });
@@ -298,7 +323,9 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     };
     const { container } = await renderWithSummary(summary);
     await waitFor(() => {
-      const downArrow = container.querySelector(".rep-delta--down .rep-delta-arrow");
+      const downArrow = container.querySelector(
+        ".rep-delta--down .rep-delta-arrow",
+      );
       expect(downArrow).toBeTruthy();
       expect(downArrow!.textContent).toBe("▼");
     });
@@ -341,7 +368,11 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
           bySource: { rule: 0, calendar: 0, manual: 3600 },
         } satisfies ReportSummary);
       if (cmd === "data_paths")
-        return Promise.resolve({ dataDir: "", dbPath: "", pendingImport: null });
+        return Promise.resolve({
+          dataDir: "",
+          dbPath: "",
+          pendingImport: null,
+        });
       if (cmd === "list_projects")
         return Promise.resolve([
           {
@@ -357,7 +388,9 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     const { ReportsView: View } = await import("./reports");
     const { container } = render(<View density="comfy" />);
     await waitFor(() =>
-      expect(container.querySelector(".bd-name")?.textContent).toBe("unknown-proj"),
+      expect(container.querySelector(".bd-name")?.textContent).toBe(
+        "unknown-proj",
+      ),
     );
     const dot = container.querySelector(".proj-dot") as HTMLElement;
     expect(dot.style.background).toContain("var(--ink-faint)");
@@ -379,7 +412,11 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
           bySource: { rule: 3600, calendar: 0, manual: 0 },
         } satisfies ReportSummary);
       if (cmd === "data_paths")
-        return Promise.resolve({ dataDir: "", dbPath: "", pendingImport: null });
+        return Promise.resolve({
+          dataDir: "",
+          dbPath: "",
+          pendingImport: null,
+        });
       if (cmd === "list_projects")
         return Promise.resolve([
           {
@@ -421,13 +458,13 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
       bySource: { rule: 0, calendar: 0, manual: 7200 },
     };
     await renderWithSummary(summary);
-    await waitFor(() =>
-      expect(screen.getByText(/no project/i)).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText(/no project/i)).toBeTruthy());
   });
 
   it("logs to console.error when clipboard write rejects", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     writeText.mockRejectedValue(new Error("denied"));
     const summary: ReportSummary = {
       totalSeconds: 3600,

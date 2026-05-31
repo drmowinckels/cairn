@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Client, IdleResumeEvent, Project, Task } from "./types";
+import { ROUNDING_OFF, type Rounding } from "./rounding";
 
 export interface BackendEntry {
   id: string;
@@ -134,9 +135,10 @@ export interface ReportSummary {
 
 export async function reportSummary(
   range: ReportRange,
+  rounding: Rounding = ROUNDING_OFF,
 ): Promise<ReportSummary | null> {
   if (!inTauri) return null;
-  return invoke<ReportSummary>("report_summary", { range });
+  return invoke<ReportSummary>("report_summary", { range, rounding });
 }
 
 export interface BackendRule {
@@ -286,8 +288,11 @@ export async function cancelPendingImport(): Promise<void> {
   await invoke("cancel_pending_import");
 }
 
-export async function exportCsv(dest: string): Promise<string> {
-  return invoke<string>("export_csv", { dest });
+export async function exportCsv(
+  dest: string,
+  rounding: Rounding = ROUNDING_OFF,
+): Promise<string> {
+  return invoke<string>("export_csv", { dest, rounding });
 }
 
 export async function suggestedBackupName(): Promise<string> {

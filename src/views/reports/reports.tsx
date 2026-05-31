@@ -6,6 +6,8 @@ import { buildWeekSummary } from "../../lib/summary";
 import { useBackup } from "../../lib/use-backup";
 import { useProjects } from "../../lib/use-projects";
 import { useReportSummary } from "../../lib/use-report-summary";
+import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
+import { isRoundingActive, roundingLabel } from "../../lib/rounding";
 import {
   buildStackedDays,
   computeDelta,
@@ -40,7 +42,10 @@ export function ReportsView({ density }: Props) {
   );
   const [range, setRange] = useState<ReportRange>("week");
   const [copied, setCopied] = useState(false);
-  const { data, loading, error, refresh } = useReportSummary(range);
+  const { rounding } = useRoundingPrefs();
+  const { data, loading, error, refresh } = useReportSummary(range, {
+    rounding,
+  });
 
   const stackedDays = useMemo(
     () => (data ? buildStackedDays(data) : []),
@@ -116,7 +121,14 @@ export function ReportsView({ density }: Props) {
       <header className="view-head">
         <div>
           <h2 className="view-title">{rangeTitle(range)}</h2>
-          <p className="view-sub">{data ? formatRangeLabel(data) : ""}</p>
+          <p className="view-sub">
+            {data ? formatRangeLabel(data) : ""}
+            {isRoundingActive(rounding) && (
+              <span className="rep-rounding-badge" title="Durations rounded">
+                {" · "}rounded to {roundingLabel(rounding.intervalMinutes)}
+              </span>
+            )}
+          </p>
         </div>
         <div className="seg" role="radiogroup" aria-label="Period">
           {RANGES.map((r) => (
@@ -316,7 +328,7 @@ export function ReportsView({ density }: Props) {
         <button
           type="button"
           className="link-btn"
-          onClick={backup.exportCsvToFile}
+          onClick={() => backup.exportCsvToFile(rounding)}
         >
           Export CSV
         </button>

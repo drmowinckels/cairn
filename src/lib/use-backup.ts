@@ -16,6 +16,7 @@ import {
   type DataFileInfo,
   type DataPaths,
 } from "./ipc";
+import { ROUNDING_OFF, type Rounding } from "./rounding";
 
 /**
  * Run `fn` with the popover temporarily pinned. Native dialogs
@@ -48,7 +49,7 @@ export interface BackupState {
   exportBackupToFile: () => Promise<void>;
   importBackupFromFile: () => Promise<void>;
   cancelImport: () => Promise<void>;
-  exportCsvToFile: () => Promise<void>;
+  exportCsvToFile: (rounding?: Rounding) => Promise<void>;
   revealDataFolder: () => Promise<void>;
   refreshDataFiles: () => Promise<void>;
   deleteAllData: () => Promise<void>;
@@ -137,25 +138,28 @@ export function useBackup(): BackupState {
     }
   }, [refreshPaths]);
 
-  const exportCsvToFile = useCallback(async () => {
-    if (!inTauri) return;
-    try {
-      const defaultPath = await suggestedCsvName();
-      const dest = await withPopoverPinned(() =>
-        save({
-          title: "Export entries as CSV",
-          defaultPath,
-          filters: [{ name: "CSV", extensions: ["csv"] }],
-        }),
-      );
-      if (!dest) return;
-      setStatus({ kind: "working", message: "Writing CSV…" });
-      const written = await exportCsv(dest);
-      setStatus({ kind: "done", message: `Entries written to ${written}` });
-    } catch (e) {
-      setStatus({ kind: "error", message: String(e) });
-    }
-  }, []);
+  const exportCsvToFile = useCallback(
+    async (rounding: Rounding = ROUNDING_OFF) => {
+      if (!inTauri) return;
+      try {
+        const defaultPath = await suggestedCsvName();
+        const dest = await withPopoverPinned(() =>
+          save({
+            title: "Export entries as CSV",
+            defaultPath,
+            filters: [{ name: "CSV", extensions: ["csv"] }],
+          }),
+        );
+        if (!dest) return;
+        setStatus({ kind: "working", message: "Writing CSV…" });
+        const written = await exportCsv(dest, rounding);
+        setStatus({ kind: "done", message: `Entries written to ${written}` });
+      } catch (e) {
+        setStatus({ kind: "error", message: String(e) });
+      }
+    },
+    [],
+  );
 
   const revealFolder = useCallback(async () => {
     if (!inTauri) return;

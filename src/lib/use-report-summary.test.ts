@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { useReportSummary } from "./use-report-summary";
 import type { ReportSummary } from "./ipc";
+import { ROUNDING_OFF } from "./rounding";
 
 const sample = (totalSeconds: number): ReportSummary => ({
   totalSeconds,
@@ -43,7 +44,7 @@ describe("useReportSummary", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data?.totalSeconds).toBe(3600);
     expect(result.current.error).toBeNull();
-    expect(fetchFn).toHaveBeenCalledWith("week");
+    expect(fetchFn).toHaveBeenCalledWith("week", ROUNDING_OFF);
   });
 
   it("captures fetch errors", async () => {
@@ -117,8 +118,17 @@ describe("useReportSummary", () => {
     await waitFor(() => expect(result.current.data?.totalSeconds).toBe(10));
     rerender({ r: "day" as R });
     await waitFor(() => expect(result.current.data?.totalSeconds).toBe(20));
-    expect(fetchFn).toHaveBeenNthCalledWith(1, "week");
-    expect(fetchFn).toHaveBeenNthCalledWith(2, "day");
+    expect(fetchFn).toHaveBeenNthCalledWith(1, "week", ROUNDING_OFF);
+    expect(fetchFn).toHaveBeenNthCalledWith(2, "day", ROUNDING_OFF);
+  });
+
+  it("forwards the rounding preference to the fetch (#107)", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(sample(900));
+    const rounding = { intervalMinutes: 15, mode: "nearest" } as const;
+    renderHook(() =>
+      useReportSummary("week", { enabled: true, fetch: fetchFn, rounding }),
+    );
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledWith("week", rounding));
   });
 
   it("ignores stale responses when a newer request resolves first", async () => {

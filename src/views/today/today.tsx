@@ -3,6 +3,7 @@ import { Icon } from "../../lib/icon";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
+import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { useAnnounce } from "../../lib/use-announce";
 import { fmtClock, fmtHm } from "../../lib/time";
 import { useTimer } from "../../lib/use-timer";
@@ -112,6 +113,7 @@ export function TodayView({
   const todayEntries = today.entries;
   const projectsById = useMemo(() => projectById(projects), [projects]);
   const cbEnabled = useColorblindEnabled();
+  const { rounding } = useRoundingPrefs();
   const announceMsg = useAnnounce();
   const prevRunningIdRef = useRef<string | null>(timer.running?.id ?? null);
 
@@ -522,6 +524,7 @@ export function TodayView({
             entries={recentEntries}
             projectsById={projectsById}
             onEdit={onEditRecent}
+            rounding={rounding}
           />
         </section>
       )}

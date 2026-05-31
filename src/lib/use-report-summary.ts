@@ -5,6 +5,7 @@ import {
   type ReportRange,
   type ReportSummary,
 } from "./ipc";
+import { ROUNDING_OFF, type Rounding } from "./rounding";
 import { fixtureReportSummary } from "./report-fixture";
 
 export interface UseReportSummaryState {
@@ -20,6 +21,8 @@ export interface UseReportSummaryOpts {
   /** Bypass the inTauri guard so the hook can be exercised in vitest
    *  without faking `__TAURI_INTERNALS__`. */
   enabled?: boolean;
+  /** Per-entry rounding applied backend-side before aggregation (#107). */
+  rounding?: Rounding;
 }
 
 export function useReportSummary(
@@ -28,6 +31,7 @@ export function useReportSummary(
 ): UseReportSummaryState {
   const enabled = opts.enabled ?? inTauri;
   const fetchFn = opts.fetch ?? reportSummary;
+  const rounding = opts.rounding ?? ROUNDING_OFF;
   const [data, setData] = useState<ReportSummary | null>(
     enabled ? null : fixtureReportSummary(range),
   );
@@ -45,7 +49,7 @@ export function useReportSummary(
     const reqId = ++reqIdRef.current;
     setLoading(true);
     setError(null);
-    fetchFn(range)
+    fetchFn(range, rounding)
       .then((result) => {
         if (reqIdRef.current !== reqId) return;
         setData(result);
@@ -56,7 +60,7 @@ export function useReportSummary(
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
-  }, [enabled, fetchFn, range]);
+  }, [enabled, fetchFn, range, rounding.intervalMinutes, rounding.mode]);
 
   useEffect(() => {
     load();

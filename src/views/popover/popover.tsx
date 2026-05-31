@@ -10,6 +10,7 @@ import { useOnboarding } from "../../lib/use-onboarding";
 import { usePalette } from "../../lib/use-palette";
 import { usePopoverSize } from "../../lib/use-popover-size";
 import { useTrayDetail } from "../../lib/use-tray-detail";
+import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
@@ -81,6 +82,7 @@ function PopoverShell({
   const announce = useAnnounce();
   const popoverSize = usePopoverSize();
   const trayDetail = useTrayDetail();
+  const rounding = useRoundingPrefs();
 
   // Command-palette wiring (#32). The palette needs read access to the
   // live timer / projects / rules and a handful of actions; instantiate
@@ -288,6 +290,7 @@ function PopoverShell({
               scrollToSection={settingsSection}
               popoverSize={popoverSize}
               trayDetail={trayDetail}
+              rounding={rounding}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}

@@ -1165,6 +1165,10 @@ body {
   margin: 4px 0 0;
   line-height: 1.5;
 }
+.rep-rounding-badge {
+  color: var(--accent-ink, var(--ink-soft));
+  font-variant-numeric: tabular-nums;
+}
 .rep-big {
   font-family: var(--serif);
   font-size: 30px;
