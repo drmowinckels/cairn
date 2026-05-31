@@ -73,7 +73,11 @@ describe("AboutCard", () => {
 
   it("renders a dev version when diagnostics is unavailable", async () => {
     diagnostics.mockResolvedValue(null);
-    render(<AboutCard />);
-    await waitFor(() => expect(screen.getByText(/vdev/i)).toBeTruthy());
+    const { container } = render(<AboutCard />);
+    await waitFor(() =>
+      expect(container.querySelector(".about-version")?.textContent).toMatch(
+        /dev/i,
+      ),
+    );
   });
 });
