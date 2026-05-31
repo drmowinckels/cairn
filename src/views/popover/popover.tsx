@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBoundary } from "../../error-boundary";
 import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
@@ -101,13 +101,17 @@ function PopoverShell({
   // stays alive while hidden, so it keeps the title current as the timer
   // changes; pushing "" clears it when the feature is off.
   const running = paletteTimer.running;
+  const lastTrayTitleRef = useRef<string | null>(null);
   useEffect(() => {
     const projectName = running?.projectId
       ? (paletteProjects.find((p) => p.id === running.projectId)?.name ?? null)
       : null;
-    void setTrayTitle(
-      formatTrayTitle(trayDetail.enabled, projectName, Boolean(running)),
-    );
+    const title = formatTrayTitle(trayDetail.enabled, projectName, Boolean(running));
+    // `running` gets a fresh object every ~2s snapshot refresh even when
+    // unchanged; only push when the computed title actually changed.
+    if (title === lastTrayTitleRef.current) return;
+    lastTrayTitleRef.current = title;
+    void setTrayTitle(title);
   }, [trayDetail.enabled, running, paletteProjects]);
 
   const openSettingsSection = (section: SettingsSectionId) => {

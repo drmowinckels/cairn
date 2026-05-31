@@ -7,13 +7,13 @@ use tauri::{
 
 use crate::popover;
 
-/// Menu item id: opens the popover. Same effect as left-clicking
-/// the tray icon, surfaced explicitly so users discovering the
-/// menu first don't have to guess.
 /// Tray icon id — shared by `setup` and `set_title` so a rename can't
 /// silently break the title updates.
 pub const TRAY_ID: &str = "cairn-tray";
 
+/// Menu item id: opens the popover. Same effect as left-clicking
+/// the tray icon, surfaced explicitly so users discovering the
+/// menu first don't have to guess.
 const MENU_ID_OPEN: &str = "tray.open";
 
 /// Menu item id: quits the application. Closes #54 — until this
