@@ -329,6 +329,9 @@ pub async fn run_idle_resume<R: Runtime>(
                     log::debug!("fanout: idle resume but no running timer; skipping idle prompt");
                     continue;
                 }
+                // (The window also re-checks current_running at resolve
+                // time — see use-idle-window.ts — to cover the timer being
+                // stopped between this show and the user's choice.)
                 // Present the dedicated idle prompt window (#93),
                 // centered + focused so it lands where the user's
                 // attention is on return.
@@ -641,5 +644,61 @@ mod tests {
             !running_entry_exists(&db.pool).await,
             "closed entry → not running"
         );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn run_idle_resume_only_prompts_when_a_timer_is_running() {
+        use crate::AppState;
+        use tauri::Manager;
+        let (_dir, _app, db) = crate::test_support::mock_app_with_db().await;
+        let app = _app.handle().clone();
+        let (tx, rx) = broadcast::channel::<IdleResume>(8);
+        let task = tokio::spawn(async move { run_idle_resume(rx, app).await });
+
+        let now = chrono::Utc::now();
+        let resume = IdleResume {
+            since: now - chrono::Duration::minutes(10),
+            until: now,
+            duration_seconds: 600,
+        };
+
+        // No running entry → the prompt is skipped; last_idle stays None.
+        tx.send(resume.clone()).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        assert!(
+            _app.try_state::<AppState>()
+                .unwrap()
+                .last_idle
+                .lock()
+                .unwrap()
+                .is_none(),
+            "no running timer → no idle prompt"
+        );
+
+        // Open an entry → the prompt proceeds; last_idle is stashed.
+        let n = now.to_rfc3339();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, created_at, updated_at) \
+             VALUES ('e-run', NULL, NULL, '', ?1, NULL, 'manual', ?1, ?1)",
+        )
+        .bind(&n)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        tx.send(resume).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        assert!(
+            _app.try_state::<AppState>()
+                .unwrap()
+                .last_idle
+                .lock()
+                .unwrap()
+                .is_some(),
+            "running timer → idle prompt presented"
+        );
+
+        drop(tx);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task).await;
     }
 }
