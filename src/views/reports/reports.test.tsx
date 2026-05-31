@@ -82,9 +82,8 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
 
   it("today bar carries .is-today and future bars carry .is-future (mid-week)", () => {
     // report-fixture builds the week from the real `new Date()`, so on a
-    // Sunday there are no future days left and the week has no future
-    // bar. Pin to a Wednesday so both a "today" and "future" day always
-    // exist, making the assertion deterministic.
+    // Sunday there are no future days left. Pin to a Wednesday so both a
+    // "today" and "future" day always exist, making this deterministic.
     vi.useFakeTimers();
     const wed = new Date(2026, 0, 1, 12, 0, 0);
     wed.setDate(wed.getDate() + ((3 - wed.getDay() + 7) % 7)); // next Wed
