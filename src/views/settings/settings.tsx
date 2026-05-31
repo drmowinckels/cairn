@@ -5,6 +5,7 @@ import { useExclusions, guessExclusionKind } from "../../lib/use-exclusions";
 import { SHORTCUTS } from "../../lib/shortcuts";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UsePopoverSize, PopoverSize } from "../../lib/use-popover-size";
+import type { UseTrayDetail } from "../../lib/use-tray-detail";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type {
   AmbiguityBehavior,
@@ -63,6 +64,11 @@ interface Props {
    * hidden.
    */
   popoverSize?: UsePopoverSize;
+  /**
+   * Menu-bar tray "show tracked project" preference. Optional so tests
+   * can render without it; when absent the row is hidden.
+   */
+  trayDetail?: UseTrayDetail;
 }
 
 const POPOVER_SIZES: Array<{ value: PopoverSize; label: string }> = [
@@ -118,6 +124,7 @@ export function SettingsView({
   scrollToSection = null,
   scrollNonce = 0,
   popoverSize,
+  trayDetail,
 }: Props) {
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -260,6 +267,19 @@ export function SettingsView({
                 </button>
               ))}
             </div>
+          </SetRow>
+        )}
+
+        {trayDetail && (
+          <SetRow
+            label="Show project in menu bar"
+            hint="Display the currently-tracked project (or “Idle”) beside the tray icon."
+          >
+            <Toggle
+              on={trayDetail.enabled}
+              onChange={trayDetail.setEnabled}
+              label="Show project in menu bar"
+            />
           </SetRow>
         )}
 

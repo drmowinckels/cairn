@@ -1843,6 +1843,24 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<Diagnostics, Stri
     })
 }
 
+/// Set the tray icon's title to the currently-tracked project (or
+/// "Idle"). The popover webview computes the text and pushes it as the
+/// timer changes; an empty string clears the title (feature off / no
+/// detail). See `tray::set_title`.
+#[tauri::command]
+pub fn set_tray_title(app: tauri::AppHandle, title: String) -> Result<(), String> {
+    let trimmed = title.trim();
+    crate::tray::set_title(
+        &app,
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        },
+    );
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_pinned(state: State<'_, AppState>, pinned: bool) -> Result<(), String> {
     state
@@ -4137,6 +4155,15 @@ mod tests {
         assert_eq!(diag.entries, 0);
         assert_eq!(diag.rules, 0);
         // No user content leaks — the struct is counts + platform only.
+    }
+
+    #[tokio::test]
+    async fn tray_set_title_is_a_noop_without_a_tray() {
+        // The mock app has no tray icon (the real one is created in
+        // lib.rs::setup); set_title must no-op cleanly, not panic.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        crate::tray::set_title(&app.handle().clone(), Some("● Cairn"));
+        crate::tray::set_title(&app.handle().clone(), None);
     }
 
     #[test]

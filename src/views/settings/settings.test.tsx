@@ -184,6 +184,28 @@ describe("SettingsView (browser-dev mode)", () => {
     expect(group).toBeTruthy();
   });
 
+  it("hides the tray-detail toggle when no trayDetail prop is given", () => {
+    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    expect(
+      screen.queryByRole("switch", { name: /show project in menu bar/i }),
+    ).toBeNull();
+  });
+
+  it("renders the tray-detail toggle and drives setEnabled", () => {
+    const setEnabled = vi.fn();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        trayDetail={{ enabled: false, setEnabled }}
+      />,
+    );
+    const sw = screen.getByRole("switch", { name: /show project in menu bar/i });
+    fireEvent.click(sw);
+    expect(setEnabled).toHaveBeenCalledWith(true);
+  });
+
   it("renders the Default ambiguity behaviour segmented control with the active option highlighted", () => {
     render(
       <SettingsView

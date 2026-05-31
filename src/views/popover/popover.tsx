@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBoundary } from "../../error-boundary";
 import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
@@ -9,10 +9,12 @@ import { useSignalCapture } from "../../lib/use-signal-capture";
 import { useOnboarding } from "../../lib/use-onboarding";
 import { usePalette } from "../../lib/use-palette";
 import { usePopoverSize } from "../../lib/use-popover-size";
+import { useTrayDetail } from "../../lib/use-tray-detail";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
-import { revealDataFolder } from "../../lib/ipc";
+import { revealDataFolder, setTrayTitle } from "../../lib/ipc";
+import { formatTrayTitle } from "../../lib/tray-title";
 import {
   usePaletteShortcut,
   useToggleTimerShortcut,
@@ -78,6 +80,7 @@ function PopoverShell({
   const onboarding = useOnboarding();
   const announce = useAnnounce();
   const popoverSize = usePopoverSize();
+  const trayDetail = useTrayDetail();
 
   // Command-palette wiring (#32). The palette needs read access to the
   // live timer / projects / rules and a handful of actions; instantiate
@@ -92,6 +95,24 @@ function PopoverShell({
 
   useToggleTimerShortcut({ announce });
   usePaletteShortcut({ onOpen: palette.requestOpen });
+
+  // Mirror the tracked project into the menu-bar tray title when the
+  // user enables it (#: tray current-project info). The popover webview
+  // stays alive while hidden, so it keeps the title current as the timer
+  // changes; pushing "" clears it when the feature is off.
+  const running = paletteTimer.running;
+  const lastTrayTitleRef = useRef<string | null>(null);
+  useEffect(() => {
+    const projectName = running?.projectId
+      ? (paletteProjects.find((p) => p.id === running.projectId)?.name ?? null)
+      : null;
+    const title = formatTrayTitle(trayDetail.enabled, projectName, Boolean(running));
+    // `running` gets a fresh object every ~2s snapshot refresh even when
+    // unchanged; only push when the computed title actually changed.
+    if (title === lastTrayTitleRef.current) return;
+    lastTrayTitleRef.current = title;
+    void setTrayTitle(title);
+  }, [trayDetail.enabled, running, paletteProjects]);
 
   const openSettingsSection = (section: SettingsSectionId) => {
     setView("settings");
@@ -263,6 +284,7 @@ function PopoverShell({
               capture={capture}
               scrollToSection={settingsSection}
               popoverSize={popoverSize}
+              trayDetail={trayDetail}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}
