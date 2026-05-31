@@ -49,6 +49,34 @@ describe("useProjects (outside Tauri)", () => {
       true,
     );
   });
+
+  it("update() replaces a project in place", async () => {
+    const { useProjects } = await import("./use-projects");
+    const { result } = renderHook(() => useProjects());
+    const target = result.current.projects[0];
+    await act(async () => {
+      await result.current.update({
+        id: target.id,
+        name: "Renamed",
+        color: "#e07a5f",
+        clientId: null,
+      });
+    });
+    const updated = result.current.projects.find((p) => p.id === target.id);
+    expect(updated?.name).toBe("Renamed");
+    expect(updated?.color).toBe("#e07a5f");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("remove() drops a project", async () => {
+    const { useProjects } = await import("./use-projects");
+    const { result } = renderHook(() => useProjects());
+    const target = result.current.projects[0];
+    await act(async () => {
+      await result.current.remove(target.id);
+    });
+    expect(result.current.projects.some((p) => p.id === target.id)).toBe(false);
+  });
 });
 
 describe("useProjects (inside Tauri)", () => {

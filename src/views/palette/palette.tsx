@@ -90,6 +90,7 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
     { id: "today", label: "Today", icon: "today" },
     { id: "reports", label: "Reports", icon: "reports" },
     { id: "rules", label: "Rules", icon: "rules" },
+    { id: "data", label: "Data", icon: "folder" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
   for (const v of VIEWS) {

@@ -26,6 +26,7 @@ import type {
 import { TodayView } from "../today";
 import { ReportsView } from "../reports";
 import { RulesView } from "../rules";
+import { DataView } from "../data";
 import { SettingsView, type SettingsSectionId } from "../settings";
 import { OnboardingView } from "../onboarding";
 import { CommandPalette, type PaletteContext } from "../palette/palette";
@@ -131,11 +132,19 @@ function PopoverShell({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      )
+        return;
       if (e.key === "1") setView("today");
       if (e.key === "2") setView("reports");
       if (e.key === "3") setView("rules");
-      if (e.key === "4") setView("settings");
+      if (e.key === "4") setView("data");
+      if (e.key === "5") setView("settings");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -206,6 +215,7 @@ function PopoverShell({
         <NavTab view="today" current={view} onSelect={setView} icon="today" label="Today" />
         <NavTab view="reports" current={view} onSelect={setView} icon="reports" label="Reports" />
         <NavTab view="rules" current={view} onSelect={setView} icon="rules" label="Rules" />
+        <NavTab view="data" current={view} onSelect={setView} icon="folder" label="Data" />
         <NavTab view="settings" current={view} onSelect={setView} icon="settings" label="Settings" />
         <span className="nav-spacer" />
         <span className="nav-meta">⌃⌥T</span>
@@ -238,6 +248,11 @@ function PopoverShell({
               density={density}
               ambiguityDefault={a11y.ambiguityDefault}
             />
+          </ErrorBoundary>
+        )}
+        {view === "data" && (
+          <ErrorBoundary area="Data">
+            <DataView density={density} />
           </ErrorBoundary>
         )}
         {view === "settings" && (
@@ -291,7 +306,7 @@ interface NavTabProps {
   view: View;
   current: View;
   onSelect: (v: View) => void;
-  icon: "today" | "reports" | "rules" | "settings";
+  icon: "today" | "reports" | "rules" | "folder" | "settings";
   label: string;
 }
 

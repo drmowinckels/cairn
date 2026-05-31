@@ -63,15 +63,16 @@ describe("Popover shell", () => {
     expect(screen.getByRole("tabpanel")).toBeTruthy();
   });
 
-  it("renders all four tabs with the right active state", () => {
+  it("renders all five tabs with the right active state", () => {
     render(<Popover initialView="reports" />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(4);
+    expect(tabs).toHaveLength(5);
     const labels = tabs.map((t) => t.textContent?.trim());
     expect(labels).toEqual([
       expect.stringMatching(/today/i),
       expect.stringMatching(/reports/i),
       expect.stringMatching(/rules/i),
+      expect.stringMatching(/data/i),
       expect.stringMatching(/settings/i),
     ]);
     const reportsTab = tabs.find((t) => /reports/i.test(t.textContent ?? ""))!;
@@ -89,13 +90,16 @@ describe("Popover shell", () => {
     expect(screen.getByRole("heading", { name: /^rules$/i })).toBeTruthy();
   });
 
-  it("keyboard shortcuts 1-4 switch views (outside input/textarea)", () => {
+  it("keyboard shortcuts 1-5 switch views (outside input/textarea)", () => {
     render(<Popover />);
     fireEvent.keyDown(window, { key: "2" });
     expect(screen.getByRole("heading", { name: /this week/i })).toBeTruthy();
     fireEvent.keyDown(window, { key: "3" });
     expect(screen.getByRole("heading", { name: /^rules$/i })).toBeTruthy();
     fireEvent.keyDown(window, { key: "4" });
+    // Data view: assert a section unique to it.
+    expect(screen.getByRole("region", { name: /^clients$/i })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "5" });
     expect(screen.getByRole("heading", { name: /your data stays here/i })).toBeTruthy();
     fireEvent.keyDown(window, { key: "1" });
     // Today view doesn't have a heading-level title, so check the timeline label.
