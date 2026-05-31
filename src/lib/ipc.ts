@@ -610,6 +610,11 @@ export async function resetOnboarding(): Promise<OnboardingState> {
   return invoke<OnboardingState>("reset_onboarding");
 }
 
+export async function setTrayTitle(title: string): Promise<void> {
+  if (!inTauri) return;
+  await invoke("set_tray_title", { title });
+}
+
 export interface Diagnostics {
   appVersion: string;
   os: string;

@@ -10,6 +10,10 @@ use crate::popover;
 /// Menu item id: opens the popover. Same effect as left-clicking
 /// the tray icon, surfaced explicitly so users discovering the
 /// menu first don't have to guess.
+/// Tray icon id — shared by `setup` and `set_title` so a rename can't
+/// silently break the title updates.
+pub const TRAY_ID: &str = "cairn-tray";
+
 const MENU_ID_OPEN: &str = "tray.open";
 
 /// Menu item id: quits the application. Closes #54 — until this
@@ -43,7 +47,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let icon = tray_icon()?;
     let menu = build_menu(app)?;
 
-    TrayIconBuilder::with_id("cairn-tray")
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .icon_as_template(true)
         .menu(&menu)
@@ -88,6 +92,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .build(app)?;
 
     Ok(())
+}
+
+/// Set (or clear) the tray icon's title — the text shown beside the
+/// menu-bar icon (#: show current project). `None` clears it. Driven by
+/// the popover webview via the `set_tray_title` command as the running
+/// timer changes; a no-op if the tray isn't present.
+pub fn set_title<R: Runtime>(app: &AppHandle<R>, title: Option<&str>) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if let Err(e) = tray.set_title(title) {
+            log::warn!("tray: set_title failed: {e}");
+        }
+    }
 }
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {

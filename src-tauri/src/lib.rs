@@ -193,6 +193,7 @@ pub fn run() {
             ipc::calendar_sync_status,
             ipc::current_snapshot,
             ipc::diagnostics,
+            ipc::set_tray_title,
             ipc::get_git_watcher_status,
             ipc::get_git_discovery_roots,
             ipc::set_git_discovery_roots,

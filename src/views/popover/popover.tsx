@@ -9,10 +9,12 @@ import { useSignalCapture } from "../../lib/use-signal-capture";
 import { useOnboarding } from "../../lib/use-onboarding";
 import { usePalette } from "../../lib/use-palette";
 import { usePopoverSize } from "../../lib/use-popover-size";
+import { useTrayDetail } from "../../lib/use-tray-detail";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
-import { revealDataFolder } from "../../lib/ipc";
+import { revealDataFolder, setTrayTitle } from "../../lib/ipc";
+import { formatTrayTitle } from "../../lib/tray-title";
 import {
   usePaletteShortcut,
   useToggleTimerShortcut,
@@ -78,6 +80,7 @@ function PopoverShell({
   const onboarding = useOnboarding();
   const announce = useAnnounce();
   const popoverSize = usePopoverSize();
+  const trayDetail = useTrayDetail();
 
   // Command-palette wiring (#32). The palette needs read access to the
   // live timer / projects / rules and a handful of actions; instantiate
@@ -92,6 +95,20 @@ function PopoverShell({
 
   useToggleTimerShortcut({ announce });
   usePaletteShortcut({ onOpen: palette.requestOpen });
+
+  // Mirror the tracked project into the menu-bar tray title when the
+  // user enables it (#: tray current-project info). The popover webview
+  // stays alive while hidden, so it keeps the title current as the timer
+  // changes; pushing "" clears it when the feature is off.
+  const running = paletteTimer.running;
+  useEffect(() => {
+    const projectName = running?.projectId
+      ? (paletteProjects.find((p) => p.id === running.projectId)?.name ?? null)
+      : null;
+    void setTrayTitle(
+      formatTrayTitle(trayDetail.enabled, projectName, Boolean(running)),
+    );
+  }, [trayDetail.enabled, running, paletteProjects]);
 
   const openSettingsSection = (section: SettingsSectionId) => {
     setView("settings");
@@ -263,6 +280,7 @@ function PopoverShell({
               capture={capture}
               scrollToSection={settingsSection}
               popoverSize={popoverSize}
+              trayDetail={trayDetail}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}
