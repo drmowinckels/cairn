@@ -206,12 +206,15 @@ function PopoverShell({
       aria-label="Cairn time tracker"
     >
       <header className="pop-head">
-        <span className="brand">
+        {/* The title + the gap are the window drag handle (#100); the
+            action buttons stay clickable since the attribute is only on
+            these non-interactive elements. */}
+        <span className="brand" data-tauri-drag-region>
           <CairnMark />
           Cairn
         </span>
         <LocalBadge />
-        <span className="spacer" />
+        <span className="spacer" data-tauri-drag-region />
         <div className="pop-head-actions">
           <button
             className="icon-btn"

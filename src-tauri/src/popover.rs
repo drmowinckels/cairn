@@ -1,6 +1,5 @@
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use tauri_plugin_positioner::{Position, WindowExt};
 
 /// Frontend listens for this on the popover webview and runs the
 /// JS-side start/stop logic (project resolution + IPC + announcer).
@@ -21,7 +20,9 @@ pub fn toggle(app: &AppHandle) {
             let _ = window.hide();
         }
         _ => {
-            let _ = window.move_window(Position::TopRight);
+            // Persistent window (#100): show where the user left it
+            // (restored by tauri-plugin-window-state) rather than re-
+            // anchoring to the tray corner on every open.
             let _ = window.show();
             let _ = window.set_focus();
         }

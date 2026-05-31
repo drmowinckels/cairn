@@ -13,6 +13,8 @@
     "core:window:allow-close",
     "core:window:allow-set-position",
     "core:window:allow-set-focus",
+    "core:window:allow-set-size",
+    "core:window:allow-start-dragging",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     "autostart:default",
@@ -23,6 +25,7 @@
     "dialog:allow-ask",
     "dialog:allow-confirm",
     "positioner:default",
-    "global-shortcut:default"
+    "global-shortcut:default",
+    "window-state:default"
   ]
 }
