@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
@@ -21,20 +27,124 @@ describe("DataView", () => {
     expect(screen.getByRole("region", { name: /^projects$/i })).toBeTruthy();
     expect(screen.getByRole("region", { name: /^clients$/i })).toBeTruthy();
     expect(screen.getByRole("region", { name: /^tasks$/i })).toBeTruthy();
-    expect(screen.getByRole("region", { name: /local data storage/i })).toBeTruthy();
+    expect(
+      screen.getByRole("region", { name: /local data storage/i }),
+    ).toBeTruthy();
   });
 
-  it("adds a project through the inline form", async () => {
+  it("orders the sections Client → Project → Task (#103)", () => {
+    render(<DataView density="comfy" />);
+    const clients = screen.getByRole("region", { name: /^clients$/i });
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    const tasks = screen.getByRole("region", { name: /^tasks$/i });
+    const following = Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(clients.compareDocumentPosition(projects) & following).toBeTruthy();
+    expect(projects.compareDocumentPosition(tasks) & following).toBeTruthy();
+  });
+
+  it("adds a project through the inline add row (#103)", async () => {
     render(<DataView density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
-    fireEvent.click(within(projects).getByRole("button", { name: /new project/i }));
-    fireEvent.change(within(projects).getByLabelText(/project name/i), {
+    fireEvent.change(within(projects).getByLabelText(/new project name/i), {
       target: { value: "Telescope" },
     });
-    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    fireEvent.click(within(projects).getByRole("button", { name: /^add$/i }));
     await waitFor(() =>
       expect(within(projects).getByText("Telescope")).toBeTruthy(),
     );
+  });
+
+  it("edits a project's name through the Edit form", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    const nameInput = within(projects).getByLabelText(/^project name$/i);
+    fireEvent.change(nameInput, { target: { value: "Renamed" } });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).getByText("Renamed")).toBeTruthy(),
+    );
+  });
+
+  it("adds a project with the Enter key (and ignores other keys)", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    const input = within(projects).getByLabelText(/new project name/i);
+    fireEvent.change(input, { target: { value: "Comet" } });
+    // A non-Enter key is a no-op; only Enter submits.
+    fireEvent.keyDown(input, { key: "a" });
+    expect(within(projects).queryByText("Comet")).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(within(projects).getByText("Comet")).toBeTruthy(),
+    );
+  });
+
+  it("ignores Enter on an empty project name", () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    const before = within(projects).getAllByRole("button", {
+      name: /^delete /i,
+    }).length;
+    fireEvent.keyDown(within(projects).getByLabelText(/new project name/i), {
+      key: "Enter",
+    });
+    expect(
+      within(projects).getAllByRole("button", { name: /^delete /i }).length,
+    ).toBe(before);
+  });
+
+  it("reassigns a project's client through the Edit form", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // "Open source" appears once as a project's client (Cairn) before the edit.
+    const before = within(projects).getAllByText("Open source").length;
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    fireEvent.change(within(projects).getByLabelText(/^client$/i), {
+      target: { value: "c-os" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).getAllByText("Open source").length).toBe(
+        before + 1,
+      ),
+    );
+  });
+
+  it("clears a project's client (No client) through the Edit form", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // acme-web starts with a client; "No client" rows exist for others.
+    const before = within(projects).getAllByText(/^no client$/i).length;
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    fireEvent.change(within(projects).getByLabelText(/^client$/i), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).getAllByText(/^no client$/i).length).toBe(
+        before + 1,
+      ),
+    );
+  });
+
+  it("switches the task project via the selector", () => {
+    render(<DataView density="comfy" />);
+    const tasksRegion = screen.getByRole("region", { name: /^tasks$/i });
+    const select = within(tasksRegion).getByLabelText(
+      /project for tasks/i,
+    ) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "cairn" } });
+    expect(select.value).toBe("cairn");
+    // Back to no project selected (the "" → null branch).
+    fireEvent.change(select, { target: { value: "" } });
+    expect(select.value).toBe("");
   });
 
   it("deletes a project after inline confirmation", async () => {
@@ -48,7 +158,9 @@ describe("DataView", () => {
     fireEvent.click(deleteButtons[0]);
     expect(within(projects).getByText("Delete?")).toBeTruthy();
     // Confirm.
-    fireEvent.click(within(projects).getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(
+      within(projects).getByRole("button", { name: /^delete$/i }),
+    );
     await waitFor(() =>
       expect(
         within(projects).getAllByRole("button", { name: /^delete /i }).length,
@@ -59,12 +171,15 @@ describe("DataView", () => {
   it("cancel keeps the project", async () => {
     render(<DataView density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
-    const before = within(projects).getAllByRole("button", { name: /^delete /i })
-      .length;
+    const before = within(projects).getAllByRole("button", {
+      name: /^delete /i,
+    }).length;
     fireEvent.click(
       within(projects).getAllByRole("button", { name: /^delete /i })[0],
     );
-    fireEvent.click(within(projects).getByRole("button", { name: /^cancel$/i }));
+    fireEvent.click(
+      within(projects).getByRole("button", { name: /^cancel$/i }),
+    );
     expect(
       within(projects).getAllByRole("button", { name: /^delete /i }).length,
     ).toBe(before);
@@ -77,7 +192,9 @@ describe("DataView", () => {
       target: { value: "Studio" },
     });
     fireEvent.click(within(clients).getByRole("button", { name: /^add$/i }));
-    await waitFor(() => expect(within(clients).getByText("Studio")).toBeTruthy());
+    await waitFor(() =>
+      expect(within(clients).getByText("Studio")).toBeTruthy(),
+    );
   });
 
   it("adds a task to the selected project", async () => {
@@ -86,7 +203,9 @@ describe("DataView", () => {
     // A project is preselected (projects[0]); the add row is visible.
     const input = within(tasksRegion).getByLabelText(/new task name/i);
     fireEvent.change(input, { target: { value: "Wireframes" } });
-    fireEvent.click(within(tasksRegion).getByRole("button", { name: /^add$/i }));
+    fireEvent.click(
+      within(tasksRegion).getByRole("button", { name: /^add$/i }),
+    );
     await waitFor(() =>
       expect(within(tasksRegion).getByText("Wireframes")).toBeTruthy(),
     );
@@ -106,7 +225,13 @@ describe("DataView (inside Tauri)", () => {
 
   function backend(overrides: Record<string, unknown> = {}) {
     const projects = [
-      { id: "p1", name: "Cairn", clientId: "c1", color: "#81b29a", archived: false },
+      {
+        id: "p1",
+        name: "Cairn",
+        clientId: "c1",
+        color: "#81b29a",
+        archived: false,
+      },
     ];
     const clients = [{ id: "c1", name: "ACME", color: null, archived: false }];
     let listProjectsCalls = 0;
@@ -118,7 +243,11 @@ describe("DataView (inside Tauri)", () => {
       if (cmd === "list_clients") return Promise.resolve(clients);
       if (cmd === "list_tasks") return Promise.resolve([]);
       if (cmd === "data_paths")
-        return Promise.resolve({ dataDir: "/d", dbPath: "/d/x", pendingImport: null });
+        return Promise.resolve({
+          dataDir: "/d",
+          dbPath: "/d/x",
+          pendingImport: null,
+        });
       if (cmd === "list_data_files") return Promise.resolve([]);
       if (cmd in overrides) {
         const v = overrides[cmd];
@@ -126,7 +255,11 @@ describe("DataView (inside Tauri)", () => {
       }
       return Promise.resolve(null);
     });
-    return { get listProjectsCalls() { return listProjectsCalls; } };
+    return {
+      get listProjectsCalls() {
+        return listProjectsCalls;
+      },
+    };
   }
 
   it("surfaces a backend error when a delete fails", async () => {
@@ -134,8 +267,12 @@ describe("DataView (inside Tauri)", () => {
     const { DataView: Fresh } = await import("./data");
     render(<Fresh density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
-    fireEvent.click(await within(projects).findByRole("button", { name: /^delete /i }));
-    fireEvent.click(within(projects).getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(
+      await within(projects).findByRole("button", { name: /^delete /i }),
+    );
+    fireEvent.click(
+      within(projects).getByRole("button", { name: /^delete$/i }),
+    );
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       expect.stringMatching(/db locked/),
