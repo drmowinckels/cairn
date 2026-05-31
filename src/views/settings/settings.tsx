@@ -446,7 +446,7 @@ export function SettingsView({
                     role="radio"
                     aria-checked={rounding.rounding.mode === mode}
                     className={`seg-btn${rounding.rounding.mode === mode ? " is-on" : ""}`}
-                    onClick={() => rounding.setMode(mode as RoundMode)}
+                    onClick={() => rounding.setMode(mode)}
                   >
                     {MODE_LABEL[mode]}
                   </button>

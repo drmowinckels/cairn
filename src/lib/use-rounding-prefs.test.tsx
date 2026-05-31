@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useRoundingPrefs } from "./use-rounding-prefs";
 
@@ -54,5 +54,22 @@ describe("useRoundingPrefs", () => {
     const { result } = renderHook(() => useRoundingPrefs());
     act(() => result.current.setIntervalMinutes(-5));
     expect(result.current.rounding.intervalMinutes).toBe(0);
+  });
+
+  it("keeps an earlier change when persistence fails (private mode)", () => {
+    const spy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("denied");
+      });
+    const { result } = renderHook(() => useRoundingPrefs());
+    act(() => result.current.setIntervalMinutes(15));
+    act(() => result.current.setMode("up"));
+    // setMode must not clobber the interval set while storage was failing.
+    expect(result.current.rounding).toEqual({
+      intervalMinutes: 15,
+      mode: "up",
+    });
+    spy.mockRestore();
   });
 });

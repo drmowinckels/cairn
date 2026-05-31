@@ -34,25 +34,27 @@ function read(): Rounding {
 export function useRoundingPrefs(): UseRoundingPrefs {
   const [rounding, setRounding] = useState<Rounding>(() => read());
 
-  const persist = useCallback((next: Rounding) => {
-    setRounding(next);
-    try {
-      window.localStorage?.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* private mode — preference just won't persist */
-    }
+  // Merge against the current React state, not a fresh localStorage read, so
+  // an in-memory change survives even when the write fails (private mode).
+  const update = useCallback((patch: Partial<Rounding>) => {
+    setRounding((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        window.localStorage?.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* private mode — preference just won't persist */
+      }
+      return next;
+    });
   }, []);
 
   const setIntervalMinutes = useCallback(
     (minutes: number) =>
-      persist({ ...read(), intervalMinutes: Math.max(0, Math.floor(minutes)) }),
-    [persist],
+      update({ intervalMinutes: Math.max(0, Math.floor(minutes)) }),
+    [update],
   );
 
-  const setMode = useCallback(
-    (mode: RoundMode) => persist({ ...read(), mode }),
-    [persist],
-  );
+  const setMode = useCallback((mode: RoundMode) => update({ mode }), [update]);
 
   return { rounding, setIntervalMinutes, setMode };
 }
