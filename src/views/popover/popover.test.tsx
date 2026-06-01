@@ -268,16 +268,6 @@ describe("Popover — first-run onboarding gating (#31)", () => {
   });
 });
 
-describe("Popover header — close button", () => {
-  it("renders a × close button wired to hide the popover", () => {
-    render(<Popover />);
-    const close = screen.getByRole("button", { name: /^close$/i });
-    expect(close).toBeTruthy();
-    // hide_popover is a no-op outside Tauri; just confirm it's wired safely.
-    expect(() => fireEvent.click(close)).not.toThrow();
-  });
-});
-
 describe("Add manual entry — command palette (#21)", () => {
   async function runAddEntry() {
     fireEvent.click(screen.getByRole("button", { name: /^search$/i }));

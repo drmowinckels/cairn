@@ -20,13 +20,12 @@
         "minWidth": 480,
         "minHeight": 540,
         "resizable": true,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
         "visible": false,
-        "focus": true,
-        "hiddenTitle": true
+        "focus": true
       },
       {
         "label": "idle",

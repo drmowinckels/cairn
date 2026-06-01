@@ -17,12 +17,7 @@ import { useRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
-import {
-  hidePopover,
-  revealDataFolder,
-  setTrayTitle,
-  updateTrayMenu,
-} from "../../lib/ipc";
+import { revealDataFolder, setTrayTitle, updateTrayMenu } from "../../lib/ipc";
 import { formatTrayTitle } from "../../lib/tray-title";
 import { buildTrayMenuModel, pushTrayMenuIfChanged } from "../../lib/tray-menu";
 import { useTrayListeners } from "../../lib/use-tray-listeners";
@@ -238,15 +233,14 @@ function PopoverShell({
       aria-label="Cairn time tracker"
     >
       <header className="pop-head">
-        {/* The title + the gap are the window drag handle (#100); the
-            action buttons stay clickable since the attribute is only on
-            these non-interactive elements. */}
-        <span className="brand" data-tauri-drag-region>
+        {/* The window now ships OS decorations (title bar handles drag +
+            close/min/max), so the header is just app content. */}
+        <span className="brand">
           <CairnMark />
           Cairn
         </span>
         <LocalBadge />
-        <span className="spacer" data-tauri-drag-region />
+        <span className="spacer" />
         <div className="pop-head-actions">
           <button
             className="icon-btn"
@@ -255,14 +249,6 @@ function PopoverShell({
             onClick={palette.requestOpen}
           >
             <Icon name="search" />
-          </button>
-          <button
-            className="icon-btn"
-            aria-label="Close"
-            title="Close window"
-            onClick={() => void hidePopover()}
-          >
-            <Icon name="x" />
           </button>
         </div>
       </header>
