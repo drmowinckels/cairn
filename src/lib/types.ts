@@ -17,9 +17,16 @@ export interface Project {
   clientId: ClientId | null;
   color: string;
   archived: boolean;
+  estimateHours: number | null;
   /** Per-project rounding override (#107). `null`/absent = inherit the global
    *  rounding preference; a value (incl. `intervalMinutes: 0`) overrides it. */
   rounding?: Rounding | null;
+}
+
+export interface ProjectBudgetStatus {
+  projectId: ProjectId;
+  usedSeconds: number;
+  estimateHours: number | null;
 }
 
 export interface Task {

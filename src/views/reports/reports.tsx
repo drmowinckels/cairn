@@ -98,6 +98,7 @@ export function ReportsView({ density }: Props) {
           clientId: null,
           color: "#999",
           archived: false,
+          estimateHours: null,
         },
       },
     });

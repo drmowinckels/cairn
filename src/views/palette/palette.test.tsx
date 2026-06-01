@@ -9,9 +9,9 @@ import type { Project, Rule } from "../../lib/types";
 import { createMruStore } from "../../lib/use-palette";
 
 const PROJECTS: Project[] = [
-  { id: "alpha", name: "Alpha", clientId: null, color: "#aaa", archived: false },
-  { id: "beta", name: "Beta", clientId: null, color: "#bbb", archived: false },
-  { id: "gamma", name: "Gamma", clientId: null, color: "#ccc", archived: false },
+  { id: "alpha", name: "Alpha", clientId: null, color: "#aaa", archived: false, estimateHours: null },
+  { id: "beta", name: "Beta", clientId: null, color: "#bbb", archived: false, estimateHours: null },
+  { id: "gamma", name: "Gamma", clientId: null, color: "#ccc", archived: false, estimateHours: null },
 ];
 
 const RULES: Rule[] = [

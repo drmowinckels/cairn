@@ -12,8 +12,8 @@ import type { BackendEntry } from "./ipc";
 import type { Project } from "./types";
 
 const PROJECTS: Project[] = [
-  { id: "p1", name: "Cairn", clientId: null, color: "#abc", archived: false },
-  { id: "p2", name: "Ops", clientId: null, color: "#def", archived: false },
+  { id: "p1", name: "Cairn", clientId: null, color: "#abc", archived: false, estimateHours: null },
+  { id: "p2", name: "Ops", clientId: null, color: "#def", archived: false, estimateHours: null },
 ];
 
 describe("startToPercent", () => {

@@ -94,6 +94,56 @@ describe("DataView", () => {
     );
   });
 
+  it("initialises and edits the estimate-hours field (#106)", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // acme-web carries estimateHours: 40 in the fixture.
+    const row = within(projects).getByText("acme-web").closest("li");
+    fireEvent.click(
+      within(row as HTMLElement).getByRole("button", { name: /^edit$/i }),
+    );
+    const est = within(projects).getByLabelText(
+      /estimate hours/i,
+    ) as HTMLInputElement;
+    expect(est.value).toBe("40");
+    fireEvent.change(est, { target: { value: "20" } });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).queryByLabelText(/estimate hours/i)).toBeNull(),
+    );
+  });
+
+  it("saves a project with no estimate (empty → null) (#106)", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // Cairn has estimateHours: null in the fixture → the field starts empty.
+    const row = within(projects).getByText("Cairn").closest("li");
+    fireEvent.click(
+      within(row as HTMLElement).getByRole("button", { name: /^edit$/i }),
+    );
+    const est = within(projects).getByLabelText(
+      /estimate hours/i,
+    ) as HTMLInputElement;
+    expect(est.value).toBe("");
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).queryByLabelText(/estimate hours/i)).toBeNull(),
+    );
+  });
+
+  it("ignores Edit-form submit when the name is blank (#106 guard)", () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    const nameInput = within(projects).getByLabelText(/^project name$/i);
+    fireEvent.change(nameInput, { target: { value: "   " } });
+    fireEvent.keyDown(nameInput, { key: "Enter" });
+    // The early return keeps the form open.
+    expect(within(projects).getByLabelText(/^project name$/i)).toBeTruthy();
+  });
+
   it("sets and clears a per-project rounding override through the Edit form (#107)", async () => {
     render(<DataView density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
@@ -356,5 +406,77 @@ describe("DataView (inside Tauri)", () => {
     await waitFor(() =>
       expect(tracker.listProjectsCalls).toBeGreaterThan(callsBefore),
     );
+  });
+
+  it("shows estimate hours input in the Edit form", async () => {
+    backend();
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    expect(within(projects).getByLabelText(/estimate hours/i)).toBeTruthy();
+  });
+
+  it("saves estimate_hours when a value is entered", async () => {
+    backend();
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(projects).getByLabelText(/estimate hours/i), {
+      target: { value: "40" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_project",
+        expect.objectContaining({
+          project: expect.objectContaining({ estimateHours: 40 }),
+        }),
+      ),
+    );
+  });
+
+  it("saves null estimate when the estimate field is cleared", async () => {
+    backend();
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(projects).getByLabelText(/estimate hours/i), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_project",
+        expect.objectContaining({
+          project: expect.objectContaining({ estimateHours: null }),
+        }),
+      ),
+    );
+  });
+
+  it("shows the budget bar when estimate_hours is set and budget status is available", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "list_projects")
+        return Promise.resolve([
+          { id: "p1", name: "Cairn", clientId: "c1", color: "#81b29a", archived: false, estimateHours: 10 },
+        ]);
+      if (cmd === "list_clients")
+        return Promise.resolve([{ id: "c1", name: "ACME", color: null, archived: false }]);
+      if (cmd === "list_tasks") return Promise.resolve([]);
+      if (cmd === "data_paths")
+        return Promise.resolve({ dataDir: "/d", dbPath: "/d/x", pendingImport: null });
+      if (cmd === "list_data_files") return Promise.resolve([]);
+      if (cmd === "project_budget_status")
+        return Promise.resolve({ projectId: "p1", usedSeconds: 18000, estimateHours: 10 });
+      return Promise.resolve(null);
+    });
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    const bar = await within(projects).findByRole("progressbar");
+    expect(bar.getAttribute("aria-valuenow")).toBe("50");
   });
 });

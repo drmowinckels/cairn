@@ -22,11 +22,11 @@ export const CLIENT_BY_ID = Object.fromEntries(
 ) as Record<string, Client>;
 
 export const PROJECTS: Project[] = [
-  { id: "acme",  name: "acme-web",      clientId: "c-acme",     color: "#81b29a", archived: false },
-  { id: "cairn", name: "Cairn",         clientId: "c-os",       color: "#f2cc8f", archived: false },
-  { id: "site",  name: "Personal site", clientId: null,         color: "#e07a5f", archived: false },
-  { id: "ops",   name: "Operations",    clientId: "c-internal", color: "#9a9bb0", archived: false },
-  { id: "mtg",   name: "Meetings",      clientId: null,         color: "#c8b8e0", archived: false },
+  { id: "acme",  name: "acme-web",      clientId: "c-acme",     color: "#81b29a", archived: false, estimateHours: 40 },
+  { id: "cairn", name: "Cairn",         clientId: "c-os",       color: "#f2cc8f", archived: false, estimateHours: null },
+  { id: "site",  name: "Personal site", clientId: null,         color: "#e07a5f", archived: false, estimateHours: null },
+  { id: "ops",   name: "Operations",    clientId: "c-internal", color: "#9a9bb0", archived: false, estimateHours: null },
+  { id: "mtg",   name: "Meetings",      clientId: null,         color: "#c8b8e0", archived: false, estimateHours: null },
 ];
 
 export const PROJECT_BY_ID = Object.fromEntries(

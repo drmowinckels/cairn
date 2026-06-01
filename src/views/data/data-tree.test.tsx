@@ -50,6 +50,7 @@ describe("buildGroups", () => {
       clientId: "c-ghost",
       color: "#fff",
       archived: false,
+      estimateHours: null,
     };
     const groups = buildGroups([orphan], CLIENTS);
     expect(groups.length).toBe(1);
@@ -89,6 +90,7 @@ function makeProjects(overrides: Partial<UseProjects> = {}): UseProjects {
         color: input.color,
         clientId: input.clientId ?? null,
         archived: false,
+        estimateHours: null,
       };
       projects = [...projects, p];
       return p;
@@ -311,7 +313,14 @@ describe("DataTree", () => {
 
   it("projects with no tasks show an empty state", async () => {
     const projectsWithNoTasks: Project[] = [
-      { id: "empty-proj", name: "Empty", clientId: null, color: "#fff", archived: false },
+      {
+        id: "empty-proj",
+        name: "Empty",
+        clientId: null,
+        color: "#fff",
+        archived: false,
+        estimateHours: null,
+      },
     ];
     const p = makeProjects({ projects: projectsWithNoTasks } as unknown as Partial<UseProjects>);
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);
@@ -324,7 +333,14 @@ describe("DataTree", () => {
       { id: "c-empty", name: "Ghost client", color: null, archived: false },
     ];
     const projectsUnderOtherClient: Project[] = [
-      { id: "p1", name: "Alpha", clientId: "c-other", color: "#abc", archived: false },
+      {
+        id: "p1",
+        name: "Alpha",
+        clientId: "c-other",
+        color: "#abc",
+        archived: false,
+        estimateHours: null,
+      },
     ];
     const p = makeProjects({ projects: projectsUnderOtherClient } as unknown as Partial<UseProjects>);
     const c = makeClients({ clients: clientsOnly } as unknown as Partial<UseClients>);
