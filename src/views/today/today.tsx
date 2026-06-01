@@ -133,20 +133,25 @@ export function TodayView({
     [debouncedDesc, timer],
   );
 
-  const onStop = useCallback(() => {
-    if (!timer.running) return;
-    debouncedDesc.flush();
-    const entry = {
-      projectId: timer.running.projectId,
-      description: timer.running.description,
-    };
-    if (!canStop(entry, requiredFields)) {
-      setStopBlocked(true);
-      return;
-    }
-    setStopBlocked(false);
-    timer.stop().catch((e) => console.error("stop failed", e));
-  }, [debouncedDesc, timer, requiredFields]);
+  // `running` is supplied by the call site, which only renders the Stop
+  // button inside the `timer.running` branch — so there's no dead null-guard
+  // here to leave uncovered.
+  const onStop = useCallback(
+    (running: BackendEntry) => {
+      debouncedDesc.flush();
+      const entry = {
+        projectId: running.projectId,
+        description: running.description,
+      };
+      if (!canStop(entry, requiredFields)) {
+        setStopBlocked(true);
+        return;
+      }
+      setStopBlocked(false);
+      timer.stop().catch((e) => console.error("stop failed", e));
+    },
+    [debouncedDesc, timer, requiredFields],
+  );
 
   const onQuickStart = (projectId: string) => {
     timer
@@ -569,7 +574,7 @@ export function TodayView({
               <button
                 className="btn btn--stop"
                 aria-label="Stop timer"
-                onClick={onStop}
+                onClick={() => onStop(timer.running!)}
               >
                 <Icon name="stop" size={12} /> Stop
               </button>

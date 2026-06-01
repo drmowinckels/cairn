@@ -156,6 +156,26 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
         expect(input.getAttribute("aria-invalid")).toBe("true"),
       );
     });
+
+    it("auto-clears the block once the requirement is satisfied", async () => {
+      const { rerender } = await freshRender(
+        { ...baseRunning, description: "" },
+        { requireProject: false, requireDescription: true },
+      );
+      fireEvent.click(screen.getByRole("button", { name: /stop timer/i }));
+      await screen.findByRole("alert");
+      // Relaxing the requirement makes canStop() true → the effect clears it.
+      const { TodayView } = await import("./today");
+      rerender(
+        <TodayView
+          density="comfy"
+          layoutVariant="default"
+          onOpenRule={vi.fn()}
+          requiredFields={{ requireProject: false, requireDescription: false }}
+        />,
+      );
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    });
   });
 
   describe("both prefs on", () => {
