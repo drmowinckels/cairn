@@ -51,6 +51,7 @@ export function useProjects(): UseProjects {
           clientId: input.clientId ?? null,
           color: input.color,
           archived: input.archived ?? false,
+          estimateHours: input.estimateHours ?? null,
         };
         setProjects((prev) =>
           prev.some((p) => p.id === local.id) ? prev : [...prev, local],
@@ -73,6 +74,7 @@ export function useProjects(): UseProjects {
           clientId: input.clientId ?? null,
           color: input.color,
           archived: input.archived ?? false,
+          estimateHours: input.estimateHours ?? null,
         };
         setProjects((prev) => prev.map((p) => (p.id === next.id ? next : p)));
         return next;

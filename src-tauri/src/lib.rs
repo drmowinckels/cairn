@@ -166,6 +166,7 @@ pub fn run() {
             ipc::list_projects,
             ipc::save_project,
             ipc::delete_project,
+            ipc::project_budget_status,
             ipc::list_tasks,
             ipc::save_task,
             ipc::delete_task,

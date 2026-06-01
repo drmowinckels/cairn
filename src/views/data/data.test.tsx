@@ -321,4 +321,76 @@ describe("DataView (inside Tauri)", () => {
       expect(tracker.listProjectsCalls).toBeGreaterThan(callsBefore),
     );
   });
+
+  it("shows estimate hours input in the Edit form", async () => {
+    backend();
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    expect(within(projects).getByLabelText(/estimate hours/i)).toBeTruthy();
+  });
+
+  it("saves estimate_hours when a value is entered", async () => {
+    backend();
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(projects).getByLabelText(/estimate hours/i), {
+      target: { value: "40" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_project",
+        expect.objectContaining({
+          project: expect.objectContaining({ estimateHours: 40 }),
+        }),
+      ),
+    );
+  });
+
+  it("saves null estimate when the estimate field is cleared", async () => {
+    backend();
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(projects).getByLabelText(/estimate hours/i), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_project",
+        expect.objectContaining({
+          project: expect.objectContaining({ estimateHours: null }),
+        }),
+      ),
+    );
+  });
+
+  it("shows the budget bar when estimate_hours is set and budget status is available", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "list_projects")
+        return Promise.resolve([
+          { id: "p1", name: "Cairn", clientId: "c1", color: "#81b29a", archived: false, estimateHours: 10 },
+        ]);
+      if (cmd === "list_clients")
+        return Promise.resolve([{ id: "c1", name: "ACME", color: null, archived: false }]);
+      if (cmd === "list_tasks") return Promise.resolve([]);
+      if (cmd === "data_paths")
+        return Promise.resolve({ dataDir: "/d", dbPath: "/d/x", pendingImport: null });
+      if (cmd === "list_data_files") return Promise.resolve([]);
+      if (cmd === "project_budget_status")
+        return Promise.resolve({ projectId: "p1", usedSeconds: 18000, estimateHours: 10 });
+      return Promise.resolve(null);
+    });
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    const bar = await within(projects).findByRole("progressbar");
+    expect(bar.getAttribute("aria-valuenow")).toBe("50");
+  });
 });

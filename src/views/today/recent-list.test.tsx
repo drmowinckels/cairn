@@ -10,6 +10,7 @@ const PROJECTS_BY_ID: Record<string, Project | undefined> = {
     clientId: null,
     color: "#f2cc8f",
     archived: false,
+    estimateHours: null,
   },
 };
 

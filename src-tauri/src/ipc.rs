@@ -38,6 +38,7 @@ pub struct Project {
     pub client_id: Option<String>,
     pub color: String,
     pub archived: bool,
+    pub estimate_hours: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -51,6 +52,20 @@ pub struct ProjectInput {
     pub color: String,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub estimate_hours: Option<f64>,
+}
+
+/// How a project's tracked hours compare to its estimate.
+/// Returned by `project_budget_status`. When `estimate_hours` is `None`
+/// the project has no budget; `used_seconds` is still included so callers
+/// can display total usage without a separate query.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBudgetStatus {
+    pub project_id: String,
+    pub used_seconds: i64,
+    pub estimate_hours: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,7 +319,7 @@ pub async fn delete_client(state: State<'_, AppState>, id: String) -> Result<(),
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
     let rows = sqlx::query(
-        "SELECT id, name, client_id, color, archived FROM projects WHERE archived = 0 ORDER BY name",
+        "SELECT id, name, client_id, color, archived, estimate_hours FROM projects WHERE archived = 0 ORDER BY name",
     )
     .fetch_all(&state.db.pool)
     .await
@@ -317,6 +332,7 @@ pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, S
             client_id: r.get("client_id"),
             color: r.get("color"),
             archived: r.get::<i64, _>("archived") != 0,
+            estimate_hours: r.get("estimate_hours"),
         })
         .collect())
 }
@@ -332,13 +348,14 @@ pub async fn save_project(
     let now = Utc::now().to_rfc3339();
     sqlx::query(
         r#"
-        INSERT INTO projects (id, name, client_id, color, archived, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+        INSERT INTO projects (id, name, client_id, color, archived, estimate_hours, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             client_id = excluded.client_id,
             color = excluded.color,
             archived = excluded.archived,
+            estimate_hours = excluded.estimate_hours,
             updated_at = excluded.updated_at
         "#,
     )
@@ -347,6 +364,7 @@ pub async fn save_project(
     .bind(&project.client_id)
     .bind(&project.color)
     .bind(project.archived as i64)
+    .bind(project.estimate_hours)
     .bind(&now)
     .execute(&state.db.pool)
     .await
@@ -357,6 +375,7 @@ pub async fn save_project(
         client_id: project.client_id,
         color: project.color,
         archived: project.archived,
+        estimate_hours: project.estimate_hours,
     })
 }
 
@@ -368,6 +387,58 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()
         .await
         .map_err(err)?;
     Ok(())
+}
+
+/// Total tracked seconds for a project, plus its estimate (if set).
+/// Open entries (no `ended_at`) count up to `now` so the progress bar
+/// reflects live time. Returns `used_seconds = 0` when no entries exist.
+pub(crate) async fn budget_status_for(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    now: DateTime<Utc>,
+) -> Result<ProjectBudgetStatus, String> {
+    let est_row = sqlx::query("SELECT estimate_hours FROM projects WHERE id = ?1")
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(err)?;
+
+    let estimate_hours: Option<f64> = est_row.as_ref().and_then(|r| r.get("estimate_hours"));
+
+    let rows = sqlx::query("SELECT started_at, ended_at FROM entries WHERE project_id = ?1")
+        .bind(project_id)
+        .fetch_all(pool)
+        .await
+        .map_err(err)?;
+
+    let mut used_seconds: i64 = 0;
+    for row in rows {
+        let start = parse_ts(row.get::<String, _>("started_at"))?;
+        let end = match row.get::<Option<String>, _>("ended_at") {
+            Some(s) => parse_ts(s)?,
+            None => now,
+        };
+        let secs = (end - start).num_seconds();
+        if secs > 0 {
+            used_seconds += secs;
+        }
+    }
+
+    Ok(ProjectBudgetStatus {
+        project_id: project_id.to_string(),
+        used_seconds,
+        estimate_hours,
+    })
+}
+
+/// Return the budget status (used seconds vs. estimate) for one project.
+/// Open entries count up to now. `estimate_hours = null` means no budget set.
+#[tauri::command]
+pub async fn project_budget_status(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ProjectBudgetStatus, String> {
+    budget_status_for(&state.db.pool, &project_id, Utc::now()).await
 }
 
 #[tauri::command]
@@ -2918,6 +2989,7 @@ mod tests {
             client_id: client_id.map(|s| s.into()),
             color: color.into(),
             archived: false,
+            estimate_hours: None,
         }
     }
 
@@ -5344,5 +5416,125 @@ mod onboarding_tests {
             .unwrap()
             .get("n");
         assert_eq!(count, 1, "app_state must remain a single-row table");
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(target_os = "windows"))]
+mod budget_tests {
+    use super::*;
+    use crate::test_support::mock_app_with_db;
+    use tauri::Manager;
+
+    async fn insert_project(pool: &sqlx::SqlitePool, id: &str, estimate_hours: Option<f64>) {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, estimate_hours, created_at, updated_at) \
+             VALUES (?1, ?2, NULL, '#000', 0, ?3, ?4, ?4)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(estimate_hours)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_entry(
+        pool: &sqlx::SqlitePool,
+        project_id: &str,
+        started_at: DateTime<Utc>,
+        ended_at: Option<DateTime<Utc>>,
+    ) {
+        let now = Utc::now().to_rfc3339();
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at) \
+             VALUES (?1, ?2, NULL, '', ?3, ?4, 'manual', NULL, ?5, ?5)",
+        )
+        .bind(&id)
+        .bind(project_id)
+        .bind(started_at.to_rfc3339())
+        .bind(ended_at.map(|t| t.to_rfc3339()))
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn no_entries_returns_zero_used() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "p1", Some(40.0)).await;
+        let now = Utc::now();
+        let status = budget_status_for(pool, "p1", now).await.unwrap();
+        assert_eq!(status.used_seconds, 0);
+        assert_eq!(status.estimate_hours, Some(40.0));
+    }
+
+    #[tokio::test]
+    async fn no_estimate_returns_none() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "p2", None).await;
+        let now = Utc::now();
+        let status = budget_status_for(pool, "p2", now).await.unwrap();
+        assert!(status.estimate_hours.is_none());
+    }
+
+    #[tokio::test]
+    async fn closed_entries_sum_correctly() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "p3", Some(10.0)).await;
+        let base = Utc::now() - Duration::hours(5);
+        insert_entry(pool, "p3", base, Some(base + Duration::hours(2))).await;
+        insert_entry(
+            pool,
+            "p3",
+            base + Duration::hours(3),
+            Some(base + Duration::hours(4)),
+        )
+        .await;
+        let now = Utc::now();
+        let status = budget_status_for(pool, "p3", now).await.unwrap();
+        // 2h + 1h = 3h = 10800s (allow ±5s for wall-clock drift)
+        assert!(
+            (status.used_seconds - 10800).abs() < 5,
+            "expected ~10800s, got {}",
+            status.used_seconds
+        );
+    }
+
+    #[tokio::test]
+    async fn open_entry_counted_up_to_now() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "p4", Some(8.0)).await;
+        let started = Utc::now() - Duration::hours(1);
+        insert_entry(pool, "p4", started, None).await;
+        let now = Utc::now();
+        let status = budget_status_for(pool, "p4", now).await.unwrap();
+        // ~3600s open entry; allow generous ±10s
+        assert!(
+            status.used_seconds >= 3590 && status.used_seconds <= 3610,
+            "expected ~3600s, got {}",
+            status.used_seconds
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_duration_entry_excluded() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "p5", Some(5.0)).await;
+        let t = Utc::now() - Duration::hours(1);
+        // ended_at == started_at → zero seconds, must be excluded
+        insert_entry(pool, "p5", t, Some(t)).await;
+        let now = Utc::now();
+        let status = budget_status_for(pool, "p5", now).await.unwrap();
+        assert_eq!(status.used_seconds, 0);
     }
 }

@@ -16,8 +16,8 @@ import {
 import type { Project, Task } from "../../lib/types";
 
 const PROJECTS: Project[] = [
-  { id: "p1", name: "Alpha", clientId: null, color: "#aaa", archived: false },
-  { id: "p2", name: "Beta", clientId: null, color: "#bbb", archived: false },
+  { id: "p1", name: "Alpha", clientId: null, color: "#aaa", archived: false, estimateHours: null },
+  { id: "p2", name: "Beta", clientId: null, color: "#bbb", archived: false, estimateHours: null },
 ];
 
 const TASKS_P1: Task[] = [
@@ -678,6 +678,7 @@ describe("ManualEntryModal — inline create project", () => {
       clientId: null,
       color: "#81b29a",
       archived: false,
+      estimateHours: null,
     };
     const onCreateProject = vi.fn().mockResolvedValue(created);
     const onSubmit = vi.fn().mockResolvedValue(undefined);

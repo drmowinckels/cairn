@@ -58,6 +58,7 @@ export interface SaveProjectInput {
   clientId?: string | null;
   color: string;
   archived?: boolean;
+  estimateHours?: number | null;
 }
 
 export async function saveProject(project: SaveProjectInput): Promise<Project> {
@@ -66,6 +67,12 @@ export async function saveProject(project: SaveProjectInput): Promise<Project> {
 
 export async function deleteProject(id: string): Promise<void> {
   await invoke("delete_project", { id });
+}
+
+export async function projectBudgetStatus(
+  projectId: string,
+): Promise<import("./types").ProjectBudgetStatus> {
+  return invoke<import("./types").ProjectBudgetStatus>("project_budget_status", { projectId });
 }
 
 export async function listTasks(projectId?: string | null): Promise<Task[]> {

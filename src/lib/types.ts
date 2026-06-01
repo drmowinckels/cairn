@@ -15,6 +15,13 @@ export interface Project {
   clientId: ClientId | null;
   color: string;
   archived: boolean;
+  estimateHours: number | null;
+}
+
+export interface ProjectBudgetStatus {
+  projectId: ProjectId;
+  usedSeconds: number;
+  estimateHours: number | null;
 }
 
 export interface Task {

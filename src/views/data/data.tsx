@@ -6,7 +6,13 @@ import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { useProjects } from "../../lib/use-projects";
 import { useClients } from "../../lib/use-clients";
 import { useTasks } from "../../lib/use-tasks";
-import type { Client, Project } from "../../lib/types";
+import {
+  budgetFraction,
+  budgetLevel,
+  formatHours,
+  useBudget,
+} from "../../lib/use-budget";
+import type { Client, Project, ProjectBudgetStatus } from "../../lib/types";
 import { DataStorageActions } from "./data-storage";
 
 const PROJECT_COLORS = [
@@ -145,6 +151,48 @@ function RowActions({
   );
 }
 
+// ── Budget bar ───────────────────────────────────────────────────────
+
+interface BudgetBarProps {
+  status: ProjectBudgetStatus;
+}
+
+function BudgetBar({ status }: BudgetBarProps) {
+  if (status.estimateHours === null) return null;
+  const fraction = budgetFraction(status);
+  const level = budgetLevel(status);
+  const usedH = formatHours(status.usedSeconds);
+  const estH = `${status.estimateHours}h`;
+  const remainSecs = Math.max(0, status.estimateHours * 3600 - status.usedSeconds);
+  const remainH = formatHours(remainSecs);
+  const pct = Math.round(fraction * 100);
+
+  return (
+    <div
+      className={`budget-bar budget-bar--${level}`}
+      aria-label={`Budget: ${usedH} used of ${estH}, ${remainH} remaining`}
+    >
+      <div className="budget-bar-track" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+        <div className="budget-bar-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="budget-bar-text">
+        {usedH} / {estH}
+        {level === "over" ? (
+          <span className="budget-bar-over"> over budget</span>
+        ) : (
+          <span className="budget-bar-remain"> ({remainH} left)</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function ProjectBudgetRow({ projectId }: { projectId: string }) {
+  const { status } = useBudget(projectId);
+  if (!status || status.estimateHours === null) return null;
+  return <BudgetBar status={status} />;
+}
+
 // ── Projects ──────────────────────────────────────────────────────────
 
 interface ProjectsSectionProps {
@@ -201,31 +249,38 @@ function ProjectsSection({
                   onCancel={() => setEditing(null)}
                   onSubmit={async (input) => {
                     await run(async () => {
-                      await projects.update({ ...input, id: p.id });
+                      await projects.update({
+                        ...input,
+                        id: p.id,
+                        estimateHours: input.estimateHours,
+                      });
                       setEditing(null);
                     });
                   }}
                 />
               </li>
             ) : (
-              <li key={p.id} className="data-row">
-                <span
-                  className="proj-dot"
-                  style={{ background: cbColor(p.color, cbEnabled) }}
-                />
-                <span className="data-name">{p.name}</span>
-                <span className="data-meta">{clientName(p.clientId)}</span>
-                <RowActions
-                  label={p.name}
-                  confirming={confirmId === p.id}
-                  onEdit={() => setEditing(p.id)}
-                  onAskDelete={() => setConfirmId(p.id)}
-                  onConfirmDelete={() => {
-                    setConfirmId(null);
-                    void run(() => projects.remove(p.id));
-                  }}
-                  onCancelDelete={() => setConfirmId(null)}
-                />
+              <li key={p.id} className="data-row data-row--project">
+                <div className="data-row-main">
+                  <span
+                    className="proj-dot"
+                    style={{ background: cbColor(p.color, cbEnabled) }}
+                  />
+                  <span className="data-name">{p.name}</span>
+                  <span className="data-meta">{clientName(p.clientId)}</span>
+                  <RowActions
+                    label={p.name}
+                    confirming={confirmId === p.id}
+                    onEdit={() => setEditing(p.id)}
+                    onAskDelete={() => setConfirmId(p.id)}
+                    onConfirmDelete={() => {
+                      setConfirmId(null);
+                      void run(() => projects.remove(p.id));
+                    }}
+                    onCancelDelete={() => setConfirmId(null)}
+                  />
+                </div>
+                <ProjectBudgetRow projectId={p.id} />
               </li>
             ),
           )}
@@ -259,7 +314,7 @@ function ProjectsSection({
 }
 
 // Edit-only form: name is quick-added inline, so this exists solely to refine
-// an existing project's colour and client.
+// an existing project's colour, client, and estimate.
 interface ProjectFormProps {
   initial: Project;
   clients: Client[];
@@ -268,6 +323,7 @@ interface ProjectFormProps {
     name: string;
     color: string;
     clientId: string | null;
+    estimateHours: number | null;
   }) => Promise<void>;
 }
 
@@ -280,13 +336,19 @@ function ProjectForm({
   const [name, setName] = useState(initial.name);
   const [color, setColor] = useState(initial.color);
   const [clientId, setClientId] = useState<string | null>(initial.clientId);
+  const [estimateDraft, setEstimateDraft] = useState(
+    initial.estimateHours !== null ? String(initial.estimateHours) : "",
+  );
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     if (!name.trim()) return;
+    const parsed = estimateDraft.trim() === "" ? null : Number(estimateDraft);
+    const estimateHours =
+      parsed !== null && !Number.isNaN(parsed) && parsed > 0 ? parsed : null;
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), color, clientId });
+      await onSubmit({ name: name.trim(), color, clientId, estimateHours });
     } finally {
       setBusy(false);
     }
@@ -339,6 +401,17 @@ function ProjectForm({
           </option>
         ))}
       </select>
+      <input
+        className="field-input"
+        type="number"
+        min="0"
+        step="0.5"
+        value={estimateDraft}
+        onChange={(e) => setEstimateDraft(e.target.value)}
+        placeholder="Estimate (hours, optional)"
+        aria-label="Estimate hours"
+        disabled={busy}
+      />
       <div className="data-form-actions">
         <button
           type="button"

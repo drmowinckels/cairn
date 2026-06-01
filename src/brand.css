@@ -557,6 +557,65 @@ body {
   gap: 10px;
 }
 
+/* Project row with budget bar */
+.data-row--project {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.data-row-main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* ─── BUDGET BAR ─────────────────────────────────────────────────────── */
+.budget-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.budget-bar-track {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ink-faint);
+  overflow: hidden;
+}
+.budget-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--teal);
+  transition: width 0.3s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .budget-bar-fill {
+    transition: none;
+  }
+}
+.budget-bar--warning .budget-bar-fill {
+  background: var(--apricot);
+}
+.budget-bar--over .budget-bar-fill {
+  background: var(--accent);
+}
+.budget-bar-text {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+  line-height: 1.3;
+}
+.budget-bar--warning .budget-bar-text {
+  color: var(--ink-soft);
+}
+.budget-bar--over .budget-bar-text {
+  color: var(--accent-ink);
+}
+.budget-bar-over {
+  font-weight: 500;
+}
+.budget-bar-remain {
+  opacity: 0.8;
+}
+
 /* ─── ABOUT CARD ────────────────────────────────────────────────────── */
 .about-card {
   display: flex;
