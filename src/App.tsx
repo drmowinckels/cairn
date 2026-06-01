@@ -1,29 +1,41 @@
 import { Popover } from "./views/popover";
 import { IdleWindow } from "./views/idle/idle-window";
+import { AboutWindow } from "./views/about/about-window";
 import { ErrorBoundary } from "./error-boundary";
 
-/** The idle prompt window loads `index.html?win=idle` (#93). */
-function isIdleWindow(): boolean {
+/** Which window this webview is — secondary windows load `index.html?win=…`. */
+function windowKind(): "idle" | "about" | "popover" {
   try {
-    return new URLSearchParams(window.location.search).get("win") === "idle";
+    const win = new URLSearchParams(window.location.search).get("win");
+    if (win === "idle") return "idle";
+    if (win === "about") return "about";
+    return "popover";
   } catch {
-    return false;
+    return "popover";
   }
 }
 
 function App() {
-  if (isIdleWindow()) {
-    return (
-      <ErrorBoundary area="Idle prompt">
-        <IdleWindow />
-      </ErrorBoundary>
-    );
+  switch (windowKind()) {
+    case "idle":
+      return (
+        <ErrorBoundary area="Idle prompt">
+          <IdleWindow />
+        </ErrorBoundary>
+      );
+    case "about":
+      return (
+        <ErrorBoundary area="About">
+          <AboutWindow />
+        </ErrorBoundary>
+      );
+    default:
+      return (
+        <ErrorBoundary area="Popover">
+          <Popover />
+        </ErrorBoundary>
+      );
   }
-  return (
-    <ErrorBoundary area="Popover">
-      <Popover />
-    </ErrorBoundary>
-  );
 }
 
 export default App;

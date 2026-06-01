@@ -18,6 +18,13 @@ pub const TRAY_ID: &str = "cairn-tray";
 /// menu first don't have to guess.
 const MENU_ID_OPEN: &str = "tray.open";
 
+/// Menu item id: shows the small About window (`?win=about`).
+const MENU_ID_ABOUT: &str = "tray.about";
+
+/// Window label of the About window — must match the `label` in
+/// `tauri.conf.json` and the `?win=about` route the webview reads.
+const ABOUT_LABEL: &str = "about";
+
 /// Menu item id: quits the application. Closes #54 — until this
 /// existed, the only way to quit was Force Quit from the OS
 /// (the popover's close button just hides the window).
@@ -90,6 +97,7 @@ pub struct TrayMenuModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TrayMenuAction {
     OpenPopover,
+    ShowAbout,
     Quit,
     StartProject(String),
     StopTimer,
@@ -101,6 +109,7 @@ pub(crate) enum TrayMenuAction {
 pub(crate) fn dispatch_menu_id(id: &str) -> TrayMenuAction {
     match id {
         MENU_ID_OPEN => TrayMenuAction::OpenPopover,
+        MENU_ID_ABOUT => TrayMenuAction::ShowAbout,
         MENU_ID_QUIT => TrayMenuAction::Quit,
         MENU_ID_STOP => TrayMenuAction::StopTimer,
         _ => match id.strip_prefix(MENU_ID_START_PREFIX) {
@@ -121,6 +130,7 @@ pub(crate) fn dispatch_menu_id(id: &str) -> TrayMenuAction {
 fn apply_action(app: &AppHandle, action: TrayMenuAction) {
     match action {
         TrayMenuAction::OpenPopover => popover::toggle(app),
+        TrayMenuAction::ShowAbout => show_about(app),
         TrayMenuAction::Quit => {
             // `app.exit(0)` triggers `RunEvent::ExitRequested`,
             // which the run-loop handler in `lib.rs` uses to
@@ -152,6 +162,22 @@ fn apply_action(app: &AppHandle, action: TrayMenuAction) {
             // silently no-op-ing.
             log::warn!("tray: unknown menu event id");
         }
+    }
+}
+
+/// Show the small About window (`?win=about`), centered + focused.
+/// The window is created hidden in `tauri.conf.json`; this reveals it
+/// (and re-centres on each open). The webview's close button hides it
+/// again. Mirrors the idle window's show flow.
+fn show_about<R: Runtime>(app: &AppHandle<R>) {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window(ABOUT_LABEL) {
+        use tauri_plugin_positioner::{Position, WindowExt};
+        let _ = win.move_window(Position::Center);
+        let _ = win.show();
+        let _ = win.set_focus();
+    } else {
+        log::warn!("tray: about window missing; not shown");
     }
 }
 
@@ -211,6 +237,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, model: &TrayMenuModel) -> tauri::R
         .build(app)?;
 
     let open = MenuItemBuilder::with_id(MENU_ID_OPEN, "Open Cairn").build(app)?;
+    let about = MenuItemBuilder::with_id(MENU_ID_ABOUT, "About Cairn").build(app)?;
     // `CmdOrCtrl+Q` is the standard quit accelerator: Cmd+Q on
     // macOS, Ctrl+Q on Linux+Windows. Tauri registers it as a
     // menu accelerator (active whenever the menu is alive — i.e.
@@ -245,6 +272,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, model: &TrayMenuModel) -> tauri::R
     builder
         .separator()
         .item(&open)
+        .item(&about)
         .separator()
         .item(&quit)
         .build()
@@ -294,6 +322,11 @@ mod tests {
     #[test]
     fn dispatch_open_menu_id_returns_open_action() {
         assert_eq!(dispatch_menu_id(MENU_ID_OPEN), TrayMenuAction::OpenPopover);
+    }
+
+    #[test]
+    fn dispatch_about_menu_id_returns_show_about_action() {
+        assert_eq!(dispatch_menu_id(MENU_ID_ABOUT), TrayMenuAction::ShowAbout);
     }
 
     #[test]

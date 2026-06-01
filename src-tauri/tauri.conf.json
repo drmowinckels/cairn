@@ -42,6 +42,21 @@
         "visible": false,
         "focus": true,
         "hiddenTitle": true
+      },
+      {
+        "label": "about",
+        "title": "About Cairn",
+        "url": "index.html?win=about",
+        "width": 340,
+        "height": 320,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": true,
+        "hiddenTitle": true
       }
     ],
     "security": {
