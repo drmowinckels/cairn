@@ -17,7 +17,12 @@ import { useRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
-import { revealDataFolder, setTrayTitle, updateTrayMenu } from "../../lib/ipc";
+import {
+  hidePopover,
+  revealDataFolder,
+  setTrayTitle,
+  updateTrayMenu,
+} from "../../lib/ipc";
 import { formatTrayTitle } from "../../lib/tray-title";
 import { buildTrayMenuModel, pushTrayMenuIfChanged } from "../../lib/tray-menu";
 import { useTrayListeners } from "../../lib/use-tray-listeners";
@@ -169,14 +174,13 @@ function PopoverShell({
       switchProject: (projectId) => paletteTimer.update({ projectId }),
       toggleRule: (ruleId, next) => paletteRules.update(ruleId, { enabled: next }),
       revealDataFolder: () => revealDataFolder(),
+      addEntry: () => {
+        setView("today");
+        setAddEntryRequest((n) => n + 1);
+      },
     }),
     [view, paletteTimer, paletteProjects, paletteRules],
   );
-
-  const requestAddEntry = () => {
-    setView("today");
-    setAddEntryRequest((n) => n + 1);
-  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -254,11 +258,11 @@ function PopoverShell({
           </button>
           <button
             className="icon-btn"
-            aria-label="Add manual entry"
-            title="Add entry"
-            onClick={requestAddEntry}
+            aria-label="Close"
+            title="Close window"
+            onClick={() => void hidePopover()}
           >
-            <Icon name="plus" />
+            <Icon name="x" />
           </button>
         </div>
       </header>

@@ -40,6 +40,8 @@ export interface PaletteContext {
   switchProject: (projectId: string) => void | Promise<void>;
   toggleRule: (ruleId: string, next: boolean) => void | Promise<void>;
   revealDataFolder: () => void | Promise<void>;
+  /** Open the manual-entry modal on the Today view (was the header `+`). */
+  addEntry: () => void;
 }
 
 /**
@@ -55,6 +57,15 @@ export interface PaletteContext {
 export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
   const out: PaletteCommand[] = [];
   const running = ctx.running;
+
+  out.push({
+    id: "add-entry",
+    label: "Add manual entry",
+    hint: "Log time by hand",
+    group: "Timer",
+    icon: "plus",
+    run: () => ctx.addEntry(),
+  });
 
   if (running) {
     for (const p of ctx.projects) {

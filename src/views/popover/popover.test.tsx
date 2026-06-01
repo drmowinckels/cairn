@@ -268,19 +268,35 @@ describe("Popover — first-run onboarding gating (#31)", () => {
   });
 });
 
-describe("Popover header — add-entry button (#21)", () => {
-  it("clicking the header + button opens the manual-entry modal on Today", async () => {
+describe("Popover header — close button", () => {
+  it("renders a × close button wired to hide the popover", () => {
     render(<Popover />);
-    const plus = screen.getByRole("button", { name: /add manual entry/i });
-    fireEvent.click(plus);
+    const close = screen.getByRole("button", { name: /^close$/i });
+    expect(close).toBeTruthy();
+    // hide_popover is a no-op outside Tauri; just confirm it's wired safely.
+    expect(() => fireEvent.click(close)).not.toThrow();
+  });
+});
+
+describe("Add manual entry — command palette (#21)", () => {
+  async function runAddEntry() {
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    const input = await screen.findByRole("textbox", {
+      name: /command palette/i,
+    });
+    fireEvent.change(input, { target: { value: "add manual entry" } });
+    fireEvent.click(await screen.findByText(/Add manual entry/i));
+  }
+
+  it("opens the manual-entry modal on Today", async () => {
+    render(<Popover />);
+    await runAddEntry();
     await waitFor(() =>
-      expect(
-        screen.getByRole("dialog", { name: /new entry/i }),
-      ).toBeTruthy(),
+      expect(screen.getByRole("dialog", { name: /new entry/i })).toBeTruthy(),
     );
   });
 
-  it("opening from a non-Today view switches to Today first", async () => {
+  it("switches to Today first when run from another view", async () => {
     render(<Popover />);
     const rulesTab = screen
       .getAllByRole("tab")
@@ -288,13 +304,9 @@ describe("Popover header — add-entry button (#21)", () => {
     fireEvent.click(rulesTab);
     expect(rulesTab.getAttribute("aria-selected")).toBe("true");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /add manual entry/i }),
-    );
+    await runAddEntry();
     await waitFor(() =>
-      expect(
-        screen.getByRole("dialog", { name: /new entry/i }),
-      ).toBeTruthy(),
+      expect(screen.getByRole("dialog", { name: /new entry/i })).toBeTruthy(),
     );
     const todayTab = screen
       .getAllByRole("tab")
