@@ -5,7 +5,8 @@ import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { useAnnounce } from "../../lib/use-announce";
-import { fmtClock, fmtHm } from "../../lib/time";
+import { fmtClock, fmtClockFromIso, fmtHm } from "../../lib/time";
+import { startEditError, validateStartEdit } from "../../lib/edit-start";
 import { useTimer } from "../../lib/use-timer";
 import { useSuggestion } from "../../lib/use-suggestion";
 import { useProjects } from "../../lib/use-projects";
@@ -121,6 +122,30 @@ export function TodayView({
   const [idleProjectId, setIdleProjectId] = useState<string | null>(null);
   const [idlePickerOpen, setIdlePickerOpen] = useState(false);
   const [stopBlocked, setStopBlocked] = useState(false);
+  const [editingStart, setEditingStart] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const startInputRef = useRef<HTMLInputElement>(null);
+
+  // #: edit the running timer's start time ("forgot to start it"). Only the
+  // start moves; project/description are untouched (update_entry is partial).
+  const onCommitStart = useCallback(() => {
+    const result = validateStartEdit(startInputRef.current?.value ?? "", Date.now());
+    if (!result.ok) {
+      setStartError(startEditError(result.reason));
+      return;
+    }
+    setStartError(null);
+    setEditingStart(false);
+    timer
+      .update({ startedAt: result.iso })
+      .then(() => today.refresh())
+      .catch((e) => console.error("update start failed", e));
+  }, [timer, today]);
+
+  const onCancelStartEdit = useCallback(() => {
+    setEditingStart(false);
+    setStartError(null);
+  }, []);
 
   const onPickProject = useCallback(
     (id: string) => {
@@ -527,6 +552,51 @@ export function TodayView({
             {ss}
           </span>
         </div>
+        {!timer.loading && timer.running && !editingStart && (
+          <button
+            className="now-started"
+            onClick={() => {
+              setStartError(null);
+              setEditingStart(true);
+            }}
+            title="Edit start time"
+            aria-label="Edit start time"
+          >
+            <Icon name="edit" size={10} /> started{" "}
+            {fmtClockFromIso(timer.running.startedAt)}
+          </button>
+        )}
+        {timer.running && editingStart && (
+          <div className="now-start-edit">
+            <input
+              ref={startInputRef}
+              type="datetime-local"
+              className="field-input"
+              defaultValue={isoToLocal(timer.running.startedAt)}
+              max={isoToLocal(new Date().toISOString())}
+              aria-label="Start time"
+              aria-describedby={startError ? "start-edit-err" : undefined}
+              aria-invalid={startError ? true : undefined}
+            />
+            <button
+              className="btn btn--primary btn--sm"
+              onClick={onCommitStart}
+            >
+              Set start
+            </button>
+            <button
+              className="btn btn--ghost btn--sm"
+              onClick={onCancelStartEdit}
+            >
+              Cancel
+            </button>
+            {startError && (
+              <p id="start-edit-err" className="now-start-error" role="alert">
+                {startError}
+              </p>
+            )}
+          </div>
+        )}
         {timer.running ? (
           <>
             <div className="now-task">

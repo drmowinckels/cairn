@@ -997,6 +997,40 @@ body {
   color: var(--ink-mute);
   margin: 0 1px;
 }
+.now-started {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: -6px 0 12px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--ink-mute);
+  font-size: var(--font-tiny);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.now-started:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.now-start-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.now-start-edit .field-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.now-start-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--font-tiny);
+}
 .now-task {
   margin-bottom: 12px;
 }
