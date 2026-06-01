@@ -2262,6 +2262,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn report_summary_counts_a_logged_entry_through_fetch_rows() {
+        // Drives `fetch_report_rows`' entry loop (incl. the per-project
+        // rounding-override read) with a real row in the current week.
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let start = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        let end = (Utc::now() - Duration::hours(1)).to_rfc3339();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, created_at, updated_at) \
+             VALUES ('e-rep', NULL, NULL, '', ?1, ?2, 'manual', ?1, ?1)",
+        )
+        .bind(&start)
+        .bind(&end)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let summary = report_summary(state, "week".into(), None).await.unwrap();
+        assert!(
+            summary.total_seconds >= 3595,
+            "the seeded ~1h entry is counted (got {})",
+            summary.total_seconds
+        );
+    }
+
+    #[tokio::test]
     async fn idle_seconds_is_none_before_the_idle_source_reports() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
