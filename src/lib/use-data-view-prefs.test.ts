@@ -32,8 +32,11 @@ describe("useDataViewPrefs", () => {
   });
 
   it("falls back to sections when storage throws on read", () => {
+    // Spy the instance, not Storage.prototype — happy-dom defines the
+    // methods as own-properties, so a prototype spy never hooks them and
+    // the catch path would go unexercised.
     const spy = vi
-      .spyOn(Storage.prototype, "getItem")
+      .spyOn(window.localStorage, "getItem")
       .mockImplementation(() => {
         throw new Error("denied");
       });
@@ -44,7 +47,7 @@ describe("useDataViewPrefs", () => {
 
   it("keeps in-memory state when storage throws on write", () => {
     const spy = vi
-      .spyOn(Storage.prototype, "setItem")
+      .spyOn(window.localStorage, "setItem")
       .mockImplementation(() => {
         throw new Error("denied");
       });
