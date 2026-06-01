@@ -94,6 +94,56 @@ describe("DataView", () => {
     );
   });
 
+  it("initialises and edits the estimate-hours field (#106)", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // acme-web carries estimateHours: 40 in the fixture.
+    const row = within(projects).getByText("acme-web").closest("li");
+    fireEvent.click(
+      within(row as HTMLElement).getByRole("button", { name: /^edit$/i }),
+    );
+    const est = within(projects).getByLabelText(
+      /estimate hours/i,
+    ) as HTMLInputElement;
+    expect(est.value).toBe("40");
+    fireEvent.change(est, { target: { value: "20" } });
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).queryByLabelText(/estimate hours/i)).toBeNull(),
+    );
+  });
+
+  it("saves a project with no estimate (empty → null) (#106)", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    // Cairn has estimateHours: null in the fixture → the field starts empty.
+    const row = within(projects).getByText("Cairn").closest("li");
+    fireEvent.click(
+      within(row as HTMLElement).getByRole("button", { name: /^edit$/i }),
+    );
+    const est = within(projects).getByLabelText(
+      /estimate hours/i,
+    ) as HTMLInputElement;
+    expect(est.value).toBe("");
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).queryByLabelText(/estimate hours/i)).toBeNull(),
+    );
+  });
+
+  it("ignores Edit-form submit when the name is blank (#106 guard)", () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    const nameInput = within(projects).getByLabelText(/^project name$/i);
+    fireEvent.change(nameInput, { target: { value: "   " } });
+    fireEvent.keyDown(nameInput, { key: "Enter" });
+    // The early return keeps the form open.
+    expect(within(projects).getByLabelText(/^project name$/i)).toBeTruthy();
+  });
+
   it("adds a project with the Enter key (and ignores other keys)", async () => {
     render(<DataView density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });

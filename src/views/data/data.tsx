@@ -157,7 +157,7 @@ interface BudgetBarProps {
   status: ProjectBudgetStatus;
 }
 
-function BudgetBar({ status }: BudgetBarProps) {
+export function BudgetBar({ status }: BudgetBarProps) {
   if (status.estimateHours === null) return null;
   const fraction = budgetFraction(status);
   const level = budgetLevel(status);

@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
 import { budgetFraction, budgetLevel, formatHours } from "./use-budget";
 import type { ProjectBudgetStatus } from "./types";
+
+const invokeMock = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args),
+}));
 
 function status(
   usedSeconds: number,
@@ -8,6 +14,53 @@ function status(
 ): ProjectBudgetStatus {
   return { projectId: "p1", usedSeconds, estimateHours };
 }
+
+describe("useBudget (hook)", () => {
+  type WithInternals = { __TAURI_INTERNALS__?: unknown };
+  beforeEach(() => {
+    (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
+    vi.resetModules();
+    invokeMock.mockReset();
+  });
+  afterEach(() => {
+    delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+  });
+
+  it("loads the budget status inside Tauri", async () => {
+    invokeMock.mockResolvedValue({
+      projectId: "p1",
+      usedSeconds: 3600,
+      estimateHours: 40,
+    });
+    const { useBudget } = await import("./use-budget");
+    const { result } = renderHook(() => useBudget("p1"));
+    await waitFor(() => expect(result.current.status?.usedSeconds).toBe(3600));
+  });
+
+  it("swallows an IPC rejection and leaves status null", async () => {
+    invokeMock.mockRejectedValue(new Error("db error"));
+    const { useBudget } = await import("./use-budget");
+    const { result } = renderHook(() => useBudget("p1"));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    expect(result.current.status).toBeNull();
+  });
+
+  it("skips the IPC when no project is selected", async () => {
+    const { useBudget } = await import("./use-budget");
+    const { result } = renderHook(() => useBudget(null));
+    await waitFor(() => expect(result.current.status).toBeNull());
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("skips the IPC outside Tauri", async () => {
+    delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    vi.resetModules();
+    const { useBudget } = await import("./use-budget");
+    const { result } = renderHook(() => useBudget("p1"));
+    await waitFor(() => expect(result.current.status).toBeNull());
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("budgetLevel", () => {
   it("returns none when no estimate", () => {

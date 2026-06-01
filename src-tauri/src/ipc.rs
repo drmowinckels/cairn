@@ -5537,4 +5537,76 @@ mod budget_tests {
         let status = budget_status_for(pool, "p5", now).await.unwrap();
         assert_eq!(status.used_seconds, 0);
     }
+
+    #[tokio::test]
+    async fn project_budget_status_command_returns_status() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        insert_project(&state.db.pool, "pc", Some(12.0)).await;
+        let status = project_budget_status(state.clone(), "pc".to_string())
+            .await
+            .unwrap();
+        assert_eq!(status.project_id, "pc");
+        assert_eq!(status.estimate_hours, Some(12.0));
+        assert_eq!(status.used_seconds, 0);
+    }
+
+    #[tokio::test]
+    async fn budget_status_errors_on_malformed_started_at() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "pb", Some(8.0)).await;
+        let now_s = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at) \
+             VALUES ('bad-start', 'pb', NULL, '', 'not-a-timestamp', NULL, 'manual', NULL, ?1, ?1)",
+        )
+        .bind(&now_s)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(budget_status_for(pool, "pb", Utc::now()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn budget_status_errors_on_malformed_ended_at() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "pe", Some(8.0)).await;
+        let start = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at) \
+             VALUES ('bad-end', 'pe', NULL, '', ?1, 'garbage-end', 'manual', NULL, ?1, ?1)",
+        )
+        .bind(&start)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(budget_status_for(pool, "pe", Utc::now()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn budget_status_errors_when_estimate_query_fails() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = app.state::<crate::AppState>().db.pool.clone();
+        // Closing the pool makes the first (projects) query fail.
+        pool.close().await;
+        assert!(budget_status_for(&pool, "whatever", Utc::now())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn budget_status_errors_when_entries_query_fails() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let pool = &app.state::<crate::AppState>().db.pool;
+        insert_project(pool, "pq", Some(8.0)).await;
+        // Drop the entries table: the projects query still succeeds, but the
+        // entries query then fails — exercising the second map_err arm.
+        sqlx::query("DROP TABLE entries")
+            .execute(pool)
+            .await
+            .unwrap();
+        assert!(budget_status_for(pool, "pq", Utc::now()).await.is_err());
+    }
 }
