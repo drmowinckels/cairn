@@ -58,6 +58,8 @@ export interface SaveProjectInput {
   clientId?: string | null;
   color: string;
   archived?: boolean;
+  /** Per-project rounding override (#107). Omit/`null` = inherit global. */
+  rounding?: Rounding | null;
 }
 
 export async function saveProject(project: SaveProjectInput): Promise<Project> {
