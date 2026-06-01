@@ -59,6 +59,8 @@ export interface SaveProjectInput {
   color: string;
   archived?: boolean;
   estimateHours?: number | null;
+  /** Per-project rounding override (#107). Omit/`null` = inherit global. */
+  rounding?: Rounding | null;
 }
 
 export async function saveProject(project: SaveProjectInput): Promise<Project> {

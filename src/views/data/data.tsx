@@ -13,7 +13,16 @@ import {
   useBudget,
 } from "../../lib/use-budget";
 import type { Client, Project, ProjectBudgetStatus } from "../../lib/types";
+import {
+  ROUND_MODES,
+  ROUNDING_INTERVALS,
+  roundingLabel,
+  type RoundMode,
+  type Rounding,
+} from "../../lib/rounding";
 import { DataStorageActions } from "./data-storage";
+import { useDataViewPrefs } from "../../lib/use-data-view-prefs";
+import { DataTree } from "./data-tree";
 
 const PROJECT_COLORS = [
   "#81b29a",
@@ -37,6 +46,7 @@ export function DataView({ density }: Props) {
   const clients = useClients();
   const cbEnabled = useColorblindEnabled();
   const [error, setError] = useState<string | null>(null);
+  const { mode, setMode } = useDataViewPrefs();
 
   const run = useCallback<Run>(async (fn) => {
     setError(null);
@@ -72,20 +82,49 @@ export function DataView({ density }: Props) {
           <span>{error}</span>
         </div>
       )}
-      <ClientsSection
-        clients={clients}
-        projects={projects.projects}
-        onDelete={deleteClient}
-        run={run}
-      />
-      <ProjectsSection
-        projects={projects}
-        clients={clients.clients}
-        clientName={clientName}
-        cbEnabled={cbEnabled}
-        run={run}
-      />
-      <TasksSection projects={projects.projects} run={run} />
+
+      <div className="data-view-header">
+        <div className="seg seg--sm" role="group" aria-label="Data view mode">
+          <button
+            type="button"
+            className={`seg-btn${mode === "sections" ? " is-on" : ""}`}
+            aria-pressed={mode === "sections"}
+            onClick={() => setMode("sections")}
+          >
+            Sections
+          </button>
+          <button
+            type="button"
+            className={`seg-btn${mode === "tree" ? " is-on" : ""}`}
+            aria-pressed={mode === "tree"}
+            onClick={() => setMode("tree")}
+          >
+            Tree
+          </button>
+        </div>
+      </div>
+
+      {mode === "tree" ? (
+        <DataTree projects={projects} clients={clients} run={run} />
+      ) : (
+        <>
+          <ClientsSection
+            clients={clients}
+            projects={projects.projects}
+            onDelete={deleteClient}
+            run={run}
+          />
+          <ProjectsSection
+            projects={projects}
+            clients={clients.clients}
+            clientName={clientName}
+            cbEnabled={cbEnabled}
+            run={run}
+          />
+          <TasksSection projects={projects.projects} run={run} />
+        </>
+      )}
+
       <section className="data-block" aria-label="Storage">
         <div className="sect-label">
           <span>Storage</span>
@@ -324,6 +363,7 @@ interface ProjectFormProps {
     color: string;
     clientId: string | null;
     estimateHours: number | null;
+    rounding: Rounding | null;
   }) => Promise<void>;
 }
 
@@ -339,6 +379,9 @@ function ProjectForm({
   const [estimateDraft, setEstimateDraft] = useState(
     initial.estimateHours !== null ? String(initial.estimateHours) : "",
   );
+  const [rounding, setRounding] = useState<Rounding | null>(
+    initial.rounding ?? null,
+  );
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -348,7 +391,7 @@ function ProjectForm({
       parsed !== null && !Number.isNaN(parsed) && parsed > 0 ? parsed : null;
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), color, clientId, estimateHours });
+      await onSubmit({ name: name.trim(), color, clientId, estimateHours, rounding });
     } finally {
       setBusy(false);
     }
@@ -412,6 +455,52 @@ function ProjectForm({
         aria-label="Estimate hours"
         disabled={busy}
       />
+      <div className="data-form-rounding">
+        <select
+          className="field-input"
+          value={rounding === null ? "inherit" : String(rounding.intervalMinutes)}
+          onChange={(e) => {
+            const v = e.target.value;
+            setRounding(
+              v === "inherit"
+                ? null
+                : {
+                    intervalMinutes: Number(v),
+                    mode: rounding?.mode ?? "nearest",
+                  },
+            );
+          }}
+          aria-label="Rounding override"
+          disabled={busy}
+        >
+          <option value="inherit">Rounding: inherit global</option>
+          {ROUNDING_INTERVALS.map((m) => (
+            <option key={m} value={m}>
+              {m === 0 ? "Off (no rounding)" : roundingLabel(m)}
+            </option>
+          ))}
+        </select>
+        {rounding !== null && rounding.intervalMinutes > 0 && (
+          <select
+            className="field-input"
+            value={rounding.mode}
+            onChange={(e) =>
+              setRounding({
+                intervalMinutes: rounding.intervalMinutes,
+                mode: e.target.value as RoundMode,
+              })
+            }
+            aria-label="Rounding direction"
+            disabled={busy}
+          >
+            {ROUND_MODES.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
       <div className="data-form-actions">
         <button
           type="button"
