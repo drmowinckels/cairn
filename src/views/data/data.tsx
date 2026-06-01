@@ -8,6 +8,8 @@ import { useClients } from "../../lib/use-clients";
 import { useTasks } from "../../lib/use-tasks";
 import type { Client, Project } from "../../lib/types";
 import { DataStorageActions } from "./data-storage";
+import { useDataViewPrefs } from "../../lib/use-data-view-prefs";
+import { DataTree } from "./data-tree";
 
 const PROJECT_COLORS = [
   "#81b29a",
@@ -31,6 +33,7 @@ export function DataView({ density }: Props) {
   const clients = useClients();
   const cbEnabled = useColorblindEnabled();
   const [error, setError] = useState<string | null>(null);
+  const { mode, setMode } = useDataViewPrefs();
 
   const run = useCallback<Run>(async (fn) => {
     setError(null);
@@ -66,20 +69,49 @@ export function DataView({ density }: Props) {
           <span>{error}</span>
         </div>
       )}
-      <ClientsSection
-        clients={clients}
-        projects={projects.projects}
-        onDelete={deleteClient}
-        run={run}
-      />
-      <ProjectsSection
-        projects={projects}
-        clients={clients.clients}
-        clientName={clientName}
-        cbEnabled={cbEnabled}
-        run={run}
-      />
-      <TasksSection projects={projects.projects} run={run} />
+
+      <div className="data-view-header">
+        <div className="seg seg--sm" role="group" aria-label="Data view mode">
+          <button
+            type="button"
+            className={`seg-btn${mode === "sections" ? " is-on" : ""}`}
+            aria-pressed={mode === "sections"}
+            onClick={() => setMode("sections")}
+          >
+            Sections
+          </button>
+          <button
+            type="button"
+            className={`seg-btn${mode === "tree" ? " is-on" : ""}`}
+            aria-pressed={mode === "tree"}
+            onClick={() => setMode("tree")}
+          >
+            Tree
+          </button>
+        </div>
+      </div>
+
+      {mode === "tree" ? (
+        <DataTree projects={projects} clients={clients} run={run} />
+      ) : (
+        <>
+          <ClientsSection
+            clients={clients}
+            projects={projects.projects}
+            onDelete={deleteClient}
+            run={run}
+          />
+          <ProjectsSection
+            projects={projects}
+            clients={clients.clients}
+            clientName={clientName}
+            cbEnabled={cbEnabled}
+            run={run}
+          />
+          <TasksSection projects={projects.projects} run={run} />
+        </>
+      )}
+
       <section className="data-block" aria-label="Storage">
         <div className="sect-label">
           <span>Storage</span>
