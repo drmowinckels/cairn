@@ -8,6 +8,7 @@ import type { UsePopoverSize, PopoverSize } from "../../lib/use-popover-size";
 import type { UseTrayDetail } from "../../lib/use-tray-detail";
 import type { UseRoundingPrefs } from "../../lib/use-rounding-prefs";
 import type { UseWorkingHours } from "../../lib/use-working-hours";
+import type { UseTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import {
   ROUNDING_INTERVALS,
@@ -87,6 +88,11 @@ interface Props {
    * render without it; when absent the reminder rows are hidden.
    */
   workingHours?: UseWorkingHours;
+  /**
+   * Task-switch prompt preference (issue #105). Optional so tests can render
+   * without it; when absent the switch rows are hidden.
+   */
+  taskSwitch?: UseTaskSwitchPrefs;
 }
 
 const POPOVER_SIZES: Array<{ value: PopoverSize; label: string }> = [
@@ -121,6 +127,7 @@ const DETECTION_OPTIONS: Array<{ value: DetectionPrompts; label: string }> = [
 
 const REMINDER_THROTTLES = [15, 30, 60, 120];
 const REMINDER_IDLE_MINUTES = [5, 10, 15, 30];
+const TASK_SWITCH_DWELLS = [30, 60, 120, 300];
 
 /** minutes-since-midnight → "HH:MM" for an `<input type="time">`. */
 export function minutesToHhMm(minutes: number): string {
@@ -172,6 +179,7 @@ export function SettingsView({
   trayDetail,
   rounding,
   workingHours,
+  taskSwitch,
 }: Props) {
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -475,6 +483,7 @@ export function SettingsView({
       )}
 
       {workingHours && <WorkingHoursSection workingHours={workingHours} />}
+      {taskSwitch && <TaskSwitchSection taskSwitch={taskSwitch} />}
 
       <section
         className="settings-block"
@@ -750,6 +759,83 @@ function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
               value={cfg.throttleMinutes}
               onChange={(e) =>
                 workingHours.setThrottleMinutes(Number(e.target.value))
+              }
+            >
+              {REMINDER_THROTTLES.map((m) => (
+                <option key={m} value={m}>
+                  {m} min
+                </option>
+              ))}
+            </select>
+          </SetRow>
+        </>
+      )}
+    </section>
+  );
+}
+
+interface TaskSwitchSectionProps {
+  taskSwitch: UseTaskSwitchPrefs;
+}
+
+/**
+ * The #105 task-switch prompt controls. Off by default. When on, Cairn
+ * watches for a different project's rule becoming the top match while a timer
+ * runs and — after the new rule stays the top match for the dwell window —
+ * offers to switch. Gated by the throttle so it never nags; it only offers.
+ */
+function TaskSwitchSection({ taskSwitch }: TaskSwitchSectionProps) {
+  const { prefs } = taskSwitch;
+  return (
+    <section className="settings-block" aria-label="Task-switch prompt">
+      <h3 className="settings-h">Task switching</h3>
+      <p className="settings-sub">
+        While you're tracking, Cairn can notice when your work looks like a
+        different project and offer to switch the timer. It waits until the new
+        task sticks, and never asks more often than the throttle.
+      </p>
+
+      <SetRow
+        label="Ask when I switch tasks"
+        hint="Only while a timer is running, after the new task holds for the dwell below."
+      >
+        <Toggle
+          on={prefs.enabled}
+          onChange={taskSwitch.setEnabled}
+          label="Ask when I switch tasks"
+        />
+      </SetRow>
+
+      {prefs.enabled && (
+        <>
+          <SetRow
+            label="Wait before asking"
+            hint="How long the new task must hold before Cairn asks."
+          >
+            <select
+              className="field-input"
+              aria-label="Wait before asking"
+              value={prefs.dwellSeconds}
+              onChange={(e) => taskSwitch.setDwellSeconds(Number(e.target.value))}
+            >
+              {TASK_SWITCH_DWELLS.map((s) => (
+                <option key={s} value={s}>
+                  {s < 60 ? `${s} sec` : `${s / 60} min`}
+                </option>
+              ))}
+            </select>
+          </SetRow>
+
+          <SetRow
+            label="Don't ask more than every"
+            hint="The throttle that keeps switch prompts from nagging."
+          >
+            <select
+              className="field-input"
+              aria-label="Switch prompt throttle"
+              value={prefs.throttleMinutes}
+              onChange={(e) =>
+                taskSwitch.setThrottleMinutes(Number(e.target.value))
               }
             >
               {REMINDER_THROTTLES.map((m) => (

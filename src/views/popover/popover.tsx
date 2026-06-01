@@ -12,6 +12,7 @@ import { usePopoverSize } from "../../lib/use-popover-size";
 import { useTrayDetail } from "../../lib/use-tray-detail";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { useWorkingHours } from "../../lib/use-working-hours";
+import { useTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
@@ -87,6 +88,7 @@ function PopoverShell({
   const trayDetail = useTrayDetail();
   const rounding = useRoundingPrefs();
   const workingHours = useWorkingHours();
+  const taskSwitch = useTaskSwitchPrefs();
 
   // Command-palette wiring (#32). The palette needs read access to the
   // live timer / projects / rules and a handful of actions; instantiate
@@ -280,6 +282,7 @@ function PopoverShell({
               announce={a11y.announce}
               addEntryRequest={addEntryRequest}
               workingHours={workingHours.workingHours}
+              taskSwitch={taskSwitch.prefs}
             />
           </ErrorBoundary>
         )}
@@ -315,6 +318,7 @@ function PopoverShell({
               trayDetail={trayDetail}
               rounding={rounding}
               workingHours={workingHours}
+              taskSwitch={taskSwitch}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}
