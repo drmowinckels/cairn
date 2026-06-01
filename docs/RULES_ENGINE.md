@@ -50,18 +50,18 @@ pub enum IdleState {
 
 ### Signals available in the rule builder
 
-| Signal | Source | Description |
-|---|---|---|
-| `app.name` | OS frontmost API | The application name |
-| `window.title` | OS frontmost API | The full window title string |
-| `ide.folder` | IDE detection by app + heuristics on window title (`"file.tsx — cairn"`) and process cwd | The project folder open in the active IDE |
-| `git.branch` | Watcher on `.git/HEAD` of currently-relevant repo | The current git branch |
-| `git.repo` | Same | The repo path/name |
-| `browser.domain` | Browser extension push (Safari/Firefox/Chrome) | Domain of the active tab |
-| `browser.tab` | Same | Tab title |
-| `browser.url` | Same | Full URL of the active tab |
-| `calendar.event` | OS calendar API | Match against title of an event currently active |
-| `idle` | OS idle API | Active / idle (with duration) |
+| Signal           | Source                                                                                   | Description                                      |
+| ---------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `app.name`       | OS frontmost API                                                                         | The application name                             |
+| `window.title`   | OS frontmost API                                                                         | The full window title string                     |
+| `ide.folder`     | IDE detection by app + heuristics on window title (`"file.tsx — cairn"`) and process cwd | The project folder open in the active IDE        |
+| `git.branch`     | Watcher on `.git/HEAD` of currently-relevant repo                                        | The current git branch                           |
+| `git.repo`       | Same                                                                                     | The repo path/name                               |
+| `browser.domain` | Browser extension push (Safari/Firefox/Chrome)                                           | Domain of the active tab                         |
+| `browser.tab`    | Same                                                                                     | Tab title                                        |
+| `browser.url`    | Same                                                                                     | Full URL of the active tab                       |
+| `calendar.event` | OS calendar API                                                                          | Match against title of an event currently active |
+| `idle`           | OS idle API                                                                              | Active / idle (with duration)                    |
 
 ## 2. Rule data model
 
@@ -157,13 +157,24 @@ Matches go through one more gate before action:
 
 If **multiple rules match** simultaneously, the highest-priority rule wins. (We don't merge actions. If you want a tag added on top of another rule's project, model it as a single rule with `Combinator::All`.)
 
+### Task-switch prompt (#105)
+
+While a timer is already running, the engine keeps matching the live signal. When a **suggestive** match resolves to a _different_ project than the running timer (and isn't the rule that started it), it looks like the user changed task. This is gated separately from the banner above so it never nags:
+
+- **Off by default.** Enabled per-user in Settings → Task switching.
+- **Dwell.** The different-project rule must stay the top match for a sustained window (default 60s, configurable) before Cairn asks — a momentary alt-tab doesn't fire it. A candidate that stops matching expires silently.
+- **Throttle.** Reuses the #99 `prompt_scheduler` throttle: never more than once per `throttleMinutes` (default 30).
+- **Offer only.** "Switch" stops the current timer and starts the matched project (`Action::start`); "Keep current" snoozes the rule for 5 min. Suggestion ≠ auto-log.
+
+Strict matches are excluded — those already auto-start (and thus auto-switch) via the rule above, so no prompt is needed. The decision logic is pure (`src/lib/task-switch.ts`); the clock/IO shell is `use-task-switch-prompt.ts`.
+
 ## 5. Confidence heuristics
 
-When a rule's `confidence: Strict` and it has fewer than 2 conditions OR all conditions are `Op::Contains`, surface a warning in the rule editor: *"This rule may auto-start aggressively. Consider switching to Suggestive."*
+When a rule's `confidence: Strict` and it has fewer than 2 conditions OR all conditions are `Op::Contains`, surface a warning in the rule editor: _"This rule may auto-start aggressively. Consider switching to Suggestive."_
 
 ## 6. Snooze
 
-A dismissed suggestion suppresses the *same rule* for `SNOOZE_DURATION` (default 5 min). The user can change this in Settings → Detection.
+A dismissed suggestion suppresses the _same rule_ for `SNOOZE_DURATION` (default 5 min). The user can change this in Settings → Detection.
 
 ## 7. Test bench
 
@@ -199,7 +210,7 @@ Rules in priority order:
 
 Evaluation: rule 1 matches first. Engine posts a suggestion. The banner reads:
 
-> Working on **Cairn** — *Rule preview UI*?
+> Working on **Cairn** — _Rule preview UI_?
 > because `feat/rules-ui` · folder `~/code/cairn`
 
 User presses `↵` → timer starts with project=Cairn, tags=[dev]. (Rule 2's tags would only be applied if the user wanted both rules merged — model that as one rule with All-combinator `ide.folder contains cairn` AND `git.branch starts-with feat/`.)

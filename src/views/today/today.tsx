@@ -25,6 +25,14 @@ import {
   type WorkingHours,
 } from "../../lib/use-working-hours";
 import { useWorkingHoursReminder } from "../../lib/use-working-hours-reminder";
+import {
+  isSwitchCandidate,
+  runningRefOf,
+  TASK_SWITCH_OFF,
+  type TaskSwitchPrefs,
+} from "../../lib/task-switch";
+import { useTaskSwitchPrompt } from "../../lib/use-task-switch-prompt";
+import { TaskSwitchBanner } from "./task-switch-banner";
 import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
@@ -49,6 +57,8 @@ interface Props {
   addEntryRequest?: number;
   /** Working-hours reminder config (#99). Defaults to off. */
   workingHours?: WorkingHours;
+  /** Task-switch prompt config (#105). Defaults to off. */
+  taskSwitch?: TaskSwitchPrefs;
 }
 
 export function TodayView({
@@ -59,6 +69,7 @@ export function TodayView({
   announce = true,
   addEntryRequest = 0,
   workingHours = WORKING_HOURS_OFF,
+  taskSwitch = TASK_SWITCH_OFF,
 }: Props) {
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
@@ -69,6 +80,18 @@ export function TodayView({
   const { suggestion, confirm, dismiss } = useSuggestion({
     currentRunningRuleId: timer.running?.ruleId ?? null,
   });
+
+  // #105 task-switch prompt: while tracking, watch for a *different* project's
+  // rule becoming the top match and — after a dwell — offer to switch. When
+  // enabled, the dwell-gated switch banner owns the "different project while
+  // tracking" case, so the generic suggestion banner yields to it.
+  const switchPrompt = useTaskSwitchPrompt({
+    prefs: taskSwitch,
+    running: timer.running,
+  });
+  const switchCandidate =
+    taskSwitch.enabled &&
+    isSwitchCandidate(suggestion, runningRefOf(timer.running));
 
   const runningProject = timer.running?.projectId ?? null;
   const runningTask = timer.running?.description ?? "";
@@ -318,7 +341,7 @@ export function TodayView({
 
   return (
     <div className="view view-today" data-density={density}>
-      {detectionPrompts !== "off" && suggestion && (
+      {detectionPrompts !== "off" && suggestion && !switchCandidate && (
         <section
           className={`suggest suggest--${detectionPrompts}`}
           aria-label="Auto-detected work"
@@ -386,6 +409,16 @@ export function TodayView({
             </button>
           </div>
         </section>
+      )}
+
+      {detectionPrompts !== "off" && (
+        <TaskSwitchBanner
+          match={switchPrompt.active}
+          style={detectionPrompts === "modal" ? "modal" : "subtle"}
+          announce={announce}
+          onConfirm={() => void switchPrompt.confirm()}
+          onDismiss={switchPrompt.dismiss}
+        />
       )}
 
       {/* Idle resolution now lives in the dedicated idle window (#93). */}
