@@ -8,14 +8,13 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn(),
 }));
 
-import {
-  SettingsView,
-  hhMmToMinutes,
-  minutesToHhMm,
-} from "./settings";
+import { SettingsView, hhMmToMinutes, minutesToHhMm } from "./settings";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
-import type { UseWorkingHours, WorkingHours } from "../../lib/use-working-hours";
+import type {
+  UseWorkingHours,
+  WorkingHours,
+} from "../../lib/use-working-hours";
 import { WORKING_HOURS_OFF } from "../../lib/use-working-hours";
 
 function stubA11y(): UseA11yPrefs {
@@ -98,7 +97,11 @@ describe("minutesToHhMm / hhMmToMinutes", () => {
 describe("WorkingHoursSection", () => {
   it("hides the section when no working-hours prop is given", () => {
     render(
-      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
     );
     expect(
       screen.queryByRole("switch", { name: /remind me to track time/i }),
@@ -115,7 +118,12 @@ describe("WorkingHoursSection", () => {
 
   it("reveals the detail controls when enabled", () => {
     renderWith(
-      stubWorkingHours({ ...WORKING_HOURS_OFF, enabled: true, startMinute: 540, endMinute: 1020 }),
+      stubWorkingHours({
+        ...WORKING_HOURS_OFF,
+        enabled: true,
+        startMinute: 540,
+        endMinute: 1020,
+      }),
     );
     expect(
       (screen.getByLabelText(/working hours start/i) as HTMLInputElement).value,
@@ -162,6 +170,20 @@ describe("WorkingHoursSection", () => {
       target: { value: "18:45" },
     });
     expect(setEndMinute).toHaveBeenCalledWith(18 * 60 + 45);
+  });
+
+  it("ignores an unparseable start-time edit", () => {
+    const setStartMinute = vi.fn();
+    renderWith(
+      stubWorkingHours(
+        { ...WORKING_HOURS_OFF, enabled: true },
+        { setStartMinute },
+      ),
+    );
+    fireEvent.change(screen.getByLabelText(/working hours start/i), {
+      target: { value: "" },
+    });
+    expect(setStartMinute).not.toHaveBeenCalled();
   });
 
   it("ignores an unparseable end-time edit", () => {

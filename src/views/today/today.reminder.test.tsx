@@ -7,7 +7,11 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({ suggestion: null, confirm: vi.fn(), dismiss: vi.fn() }),
+  useSuggestion: () => ({
+    suggestion: null,
+    confirm: vi.fn(),
+    dismiss: vi.fn(),
+  }),
 }));
 
 const reminder = {
@@ -66,8 +70,23 @@ describe("TodayView working-hours reminder (#99)", () => {
     fireEvent.click(screen.getByRole("button", { name: /start tracking/i }));
     expect(reminder.acknowledge).toHaveBeenCalledTimes(1);
     await waitFor(() =>
-      expect(startMock).toHaveBeenCalledWith({ projectId: null, description: "" }),
+      expect(startMock).toHaveBeenCalledWith({
+        projectId: null,
+        description: "",
+      }),
     );
+  });
+
+  it("logs and recovers when starting the timer fails", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    startMock.mockRejectedValueOnce(new Error("boom"));
+    renderToday();
+    fireEvent.click(screen.getByRole("button", { name: /start tracking/i }));
+    expect(reminder.acknowledge).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(err).toHaveBeenCalledWith("start failed", expect.any(Error)),
+    );
+    err.mockRestore();
   });
 
   it("dismisses the reminder", () => {
