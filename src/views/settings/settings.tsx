@@ -9,6 +9,7 @@ import type { UseTrayDetail } from "../../lib/use-tray-detail";
 import type { UseRoundingPrefs } from "../../lib/use-rounding-prefs";
 import type { UseWorkingHours } from "../../lib/use-working-hours";
 import type { UseTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
+import type { UseRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import {
   ROUNDING_INTERVALS,
@@ -93,6 +94,11 @@ interface Props {
    * without it; when absent the switch rows are hidden.
    */
   taskSwitch?: UseTaskSwitchPrefs;
+  /**
+   * Required-fields-on-stop preference (issue #108). Optional so tests can
+   * render without it; when absent the section is hidden.
+   */
+  requiredFields?: UseRequiredFieldsPrefs;
 }
 
 const POPOVER_SIZES: Array<{ value: PopoverSize; label: string }> = [
@@ -180,6 +186,7 @@ export function SettingsView({
   rounding,
   workingHours,
   taskSwitch,
+  requiredFields,
 }: Props) {
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -484,6 +491,7 @@ export function SettingsView({
 
       {workingHours && <WorkingHoursSection workingHours={workingHours} />}
       {taskSwitch && <TaskSwitchSection taskSwitch={taskSwitch} />}
+      {requiredFields && <RequiredFieldsSection requiredFields={requiredFields} />}
 
       <section
         className="settings-block"
@@ -847,6 +855,52 @@ function TaskSwitchSection({ taskSwitch }: TaskSwitchSectionProps) {
           </SetRow>
         </>
       )}
+    </section>
+  );
+}
+
+interface RequiredFieldsSectionProps {
+  requiredFields: UseRequiredFieldsPrefs;
+}
+
+/**
+ * The #108 required-fields-on-stop controls. Both off by default — Cairn
+ * must never block the user unasked. When enabled, stopping the timer while
+ * the required field is empty shows an inline (popover-blur-safe) error
+ * instead of proceeding.
+ */
+function RequiredFieldsSection({ requiredFields }: RequiredFieldsSectionProps) {
+  const { prefs } = requiredFields;
+  return (
+    <section className="settings-block" aria-label="Required fields">
+      <h3 className="settings-h">Data hygiene</h3>
+      <p className="settings-sub">
+        Require a project and/or description before stopping a timer, so
+        entries don't stay unattributed. Both default off — Cairn won't block
+        you unless you ask it to.
+      </p>
+
+      <SetRow
+        label="Require a project to stop"
+        hint="Stopping is blocked until a project is chosen."
+      >
+        <Toggle
+          on={prefs.requireProject}
+          onChange={requiredFields.setRequireProject}
+          label="Require a project to stop"
+        />
+      </SetRow>
+
+      <SetRow
+        label="Require a description to stop"
+        hint="Stopping is blocked until you fill in what you were working on."
+      >
+        <Toggle
+          on={prefs.requireDescription}
+          onChange={requiredFields.setRequireDescription}
+          label="Require a description to stop"
+        />
+      </SetRow>
     </section>
   );
 }
