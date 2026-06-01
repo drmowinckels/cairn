@@ -43,6 +43,12 @@ import {
   type ManualEntryDraft,
   type ManualEntrySubmit,
 } from "./manual-entry-modal";
+import {
+  canStop,
+  missingRequiredFields,
+  REQUIRED_FIELDS_OFF,
+  type RequiredFieldsPrefs,
+} from "../../lib/required-fields";
 
 interface Props {
   density: Density;
@@ -59,6 +65,8 @@ interface Props {
   workingHours?: WorkingHours;
   /** Task-switch prompt config (#105). Defaults to off. */
   taskSwitch?: TaskSwitchPrefs;
+  /** Required-fields-on-stop config (#108). Defaults to off. */
+  requiredFields?: RequiredFieldsPrefs;
 }
 
 export function TodayView({
@@ -70,6 +78,7 @@ export function TodayView({
   addEntryRequest = 0,
   workingHours = WORKING_HOURS_OFF,
   taskSwitch = TASK_SWITCH_OFF,
+  requiredFields = REQUIRED_FIELDS_OFF,
 }: Props) {
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
@@ -111,6 +120,7 @@ export function TodayView({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [idleProjectId, setIdleProjectId] = useState<string | null>(null);
   const [idlePickerOpen, setIdlePickerOpen] = useState(false);
+  const [stopBlocked, setStopBlocked] = useState(false);
 
   const onPickProject = useCallback(
     (id: string) => {
@@ -124,9 +134,19 @@ export function TodayView({
   );
 
   const onStop = useCallback(() => {
+    if (!timer.running) return;
     debouncedDesc.flush();
+    const entry = {
+      projectId: timer.running.projectId,
+      description: timer.running.description,
+    };
+    if (!canStop(entry, requiredFields)) {
+      setStopBlocked(true);
+      return;
+    }
+    setStopBlocked(false);
     timer.stop().catch((e) => console.error("stop failed", e));
-  }, [debouncedDesc, timer]);
+  }, [debouncedDesc, timer, requiredFields]);
 
   const onQuickStart = (projectId: string) => {
     timer
@@ -281,6 +301,26 @@ export function TodayView({
     },
     [today, timer],
   );
+
+  const missingFields = useMemo(() => {
+    if (!stopBlocked || !timer.running) {
+      return { project: false, description: false };
+    }
+    return missingRequiredFields(
+      { projectId: timer.running.projectId, description: timer.running.description },
+      requiredFields,
+    );
+  }, [stopBlocked, timer.running, requiredFields]);
+
+  useEffect(() => {
+    if (!stopBlocked || !timer.running) return;
+    if (canStop(
+      { projectId: timer.running.projectId, description: timer.running.description },
+      requiredFields,
+    )) {
+      setStopBlocked(false);
+    }
+  }, [stopBlocked, timer.running, requiredFields]);
 
   const recentEntries = useMemo<RecentEntry[]>(() => {
     const closed = todayEntries.filter((e) => e.endedAt !== null);
@@ -490,11 +530,30 @@ export function TodayView({
                 className="now-input"
                 defaultValue={runningTask}
                 aria-label="Task description"
+                aria-describedby={missingFields.description ? "stop-err-desc" : undefined}
+                aria-invalid={missingFields.description || undefined}
                 placeholder="What are you working on?"
                 onChange={(e) => debouncedDesc(e.currentTarget.value)}
                 onBlur={() => debouncedDesc.flush()}
               />
             </div>
+            {stopBlocked && (
+              <p
+                className="now-stop-error"
+                role="alert"
+                aria-live="assertive"
+                aria-atomic="true"
+              >
+                {missingFields.project && missingFields.description
+                  ? "Add a project and description to stop."
+                  : missingFields.project
+                    ? "Choose a project to stop."
+                    : "Add a description to stop."}
+              </p>
+            )}
+            <p id="stop-err-desc" hidden={!missingFields.description}>
+              A description is required before you can stop the timer.
+            </p>
             <div className="now-row">
               <div className="now-chips">
                 <ProjectPickerChip
@@ -504,6 +563,7 @@ export function TodayView({
                   setOpen={setPickerOpen}
                   onPick={onPickProject}
                   cbEnabled={cbEnabled}
+                  invalid={missingFields.project}
                 />
               </div>
               <button
@@ -644,6 +704,7 @@ interface ProjectPickerChipProps {
   setOpen: (v: boolean) => void;
   onPick: (id: string) => void;
   cbEnabled: boolean;
+  invalid?: boolean;
 }
 
 // Stub project picker — clicking the chip opens a basic combobox over
@@ -657,6 +718,7 @@ function ProjectPickerChip({
   setOpen,
   onPick,
   cbEnabled,
+  invalid = false,
 }: ProjectPickerChipProps) {
   const current = projectId ? projects.find((p) => p.id === projectId) : undefined;
   const ref = useRef<HTMLDivElement>(null);
@@ -683,6 +745,7 @@ function ProjectPickerChip({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-disabled={!hasProjects}
+        aria-invalid={invalid || undefined}
         aria-label={
           current ? `Project: ${current.name}. Change project` : "Choose a project"
         }
