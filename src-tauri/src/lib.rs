@@ -2,6 +2,7 @@ mod backup;
 mod db;
 mod ipc;
 mod popover;
+mod prompt_scheduler;
 mod rounding;
 mod rules;
 mod shutdown;
@@ -187,6 +188,7 @@ pub fn run() {
             ipc::resolve_idle,
             ipc::pending_idle,
             ipc::dismiss_idle,
+            ipc::idle_seconds,
             ipc::hide_popover,
             ipc::set_pinned,
             ipc::set_popover_size,

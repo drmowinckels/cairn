@@ -1802,6 +1802,19 @@ pub fn dismiss_idle(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     Ok(())
 }
 
+/// Seconds since the last user input, as last polled by the idle source, or
+/// `None` if the host can't report idle (permission denied / unsupported).
+///
+/// Read-only and ephemeral: the value is the idle-watch channel's current
+/// reading — nothing is persisted. The working-hours reminder (#99) polls
+/// this to decide, via [`crate::prompt_scheduler`], whether to offer to start
+/// tracking. Returning a bare count (not a window title or any content) keeps
+/// the privacy contract intact.
+#[tauri::command]
+pub fn idle_seconds(state: State<'_, AppState>) -> Option<u64> {
+    state.stream.subscribe_idle().borrow().seconds
+}
+
 /// Privacy-safe diagnostics for bug reports (About → Copy diagnostics).
 /// Deliberately carries no user content — only the app version, the
 /// platform, and table *sizes* (counts, never names/titles/URLs).
@@ -2064,6 +2077,15 @@ mod tests {
         assert_eq!(summary.by_day.len(), 7);
         assert!(summary.by_project.is_empty());
         assert_eq!(summary.by_source.manual, 0);
+    }
+
+    #[tokio::test]
+    async fn idle_seconds_is_none_before_the_idle_source_reports() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // The mock stream's idle watch starts at `IdleState::default()`
+        // (seconds = None) until the idle source posts its first reading.
+        assert_eq!(idle_seconds(state), None);
     }
 
     #[tokio::test]

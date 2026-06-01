@@ -454,6 +454,17 @@ export async function currentSnapshot(): Promise<SignalSnapshot | null> {
   return invoke<SignalSnapshot>("current_snapshot");
 }
 
+/**
+ * Seconds since the last user input, or `null` when the host can't report
+ * idle (permission denied / unsupported) or we're outside Tauri. Read-only
+ * and ephemeral — the working-hours reminder (#99) polls this. No content,
+ * just a count, so the privacy contract holds.
+ */
+export async function idleSeconds(): Promise<number | null> {
+  if (!inTauri) return null;
+  return invoke<number | null>("idle_seconds");
+}
+
 /** Payload of a `dry_run_rules` IPC result. Mirrors `rules::RuleMatch`. */
 export interface DryRunResult {
   ruleId: string;

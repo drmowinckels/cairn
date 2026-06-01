@@ -20,9 +20,15 @@ import {
   type TimelineSegment,
 } from "../../lib/timeline";
 import { inTauri, listTasks, saveTask, type BackendEntry } from "../../lib/ipc";
+import {
+  WORKING_HOURS_OFF,
+  type WorkingHours,
+} from "../../lib/use-working-hours";
+import { useWorkingHoursReminder } from "../../lib/use-working-hours-reminder";
 import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
+import { WorkingHoursReminder } from "./working-hours-reminder";
 import {
   isoToLocal,
   ManualEntryModal,
@@ -41,6 +47,8 @@ interface Props {
    * open the manual-entry modal in create mode (#21).
    */
   addEntryRequest?: number;
+  /** Working-hours reminder config (#99). Defaults to off. */
+  workingHours?: WorkingHours;
 }
 
 export function TodayView({
@@ -50,6 +58,7 @@ export function TodayView({
   detectionPrompts = "subtle",
   announce = true,
   addEntryRequest = 0,
+  workingHours = WORKING_HOURS_OFF,
 }: Props) {
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
@@ -109,6 +118,19 @@ export function TodayView({
       .then(() => today.refresh())
       .catch((e) => console.error("start failed", e));
   };
+
+  // #99 working-hours reminder: when idle during configured hours with no
+  // timer running, offer to start tracking. Only offers — the user's tap
+  // starts a blank timer they then fill in (suggestion ≠ auto-log).
+  const reminder = useWorkingHoursReminder({ workingHours });
+
+  const onReminderStart = useCallback(() => {
+    reminder.acknowledge();
+    timer
+      .start({ projectId: null, description: "" })
+      .then(() => today.refresh())
+      .catch((e) => console.error("start failed", e));
+  }, [reminder, timer, today]);
 
   const todayEntries = today.entries;
   const projectsById = useMemo(() => projectById(projects), [projects]);
@@ -367,6 +389,15 @@ export function TodayView({
       )}
 
       {/* Idle resolution now lives in the dedicated idle window (#93). */}
+
+      {reminder.active && !timer.running && !suggestion && (
+        <WorkingHoursReminder
+          style={detectionPrompts === "modal" ? "modal" : "subtle"}
+          announce={announce}
+          onStart={onReminderStart}
+          onDismiss={reminder.dismiss}
+        />
+      )}
 
       {timer.error && (
         <ErrorBanner

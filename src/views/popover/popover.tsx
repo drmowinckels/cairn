@@ -11,6 +11,7 @@ import { usePalette } from "../../lib/use-palette";
 import { usePopoverSize } from "../../lib/use-popover-size";
 import { useTrayDetail } from "../../lib/use-tray-detail";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
+import { useWorkingHours } from "../../lib/use-working-hours";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
@@ -83,6 +84,7 @@ function PopoverShell({
   const popoverSize = usePopoverSize();
   const trayDetail = useTrayDetail();
   const rounding = useRoundingPrefs();
+  const workingHours = useWorkingHours();
 
   // Command-palette wiring (#32). The palette needs read access to the
   // live timer / projects / rules and a handful of actions; instantiate
@@ -257,6 +259,7 @@ function PopoverShell({
               detectionPrompts={a11y.detectionPrompts}
               announce={a11y.announce}
               addEntryRequest={addEntryRequest}
+              workingHours={workingHours.workingHours}
             />
           </ErrorBoundary>
         )}
@@ -291,6 +294,7 @@ function PopoverShell({
               popoverSize={popoverSize}
               trayDetail={trayDetail}
               rounding={rounding}
+              workingHours={workingHours}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}
