@@ -1,7 +1,7 @@
 use tauri::{
     image::Image,
     menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     AppHandle, Emitter, Runtime,
 };
 
@@ -163,27 +163,13 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .icon(icon)
         .icon_as_template(true)
         .menu(&menu)
-        // macOS-only setting: the default is "left-click shows the
-        // menu", which would hide the popover behind a menu the
-        // user didn't ask for. Flip it so left-click toggles the
-        // popover (existing UX) and the menu surfaces on right-
-        // click. Matches Slack / Things conventions. On Linux and
-        // Windows this call is a no-op; right-click shows the menu
-        // by platform default. (Linux GTK-shell behaviour for tray
-        // menus depends on the StatusNotifier implementation —
-        // documented gap, tracked under Cairn's macOS-first scope.)
-        .show_menu_on_left_click(false)
+        // Left-click opens the menu (the "dropdown") directly — the user
+        // asked for the default click to surface it. The menu's "Open Cairn"
+        // item opens the full popover when wanted. macOS honours this flag;
+        // on Linux and Windows the platform default already shows the menu on
+        // click, so this is a no-op there.
+        .show_menu_on_left_click(true)
         .on_menu_event(|app, event| apply_action(app, dispatch_menu_id(event.id().as_ref())))
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                popover::toggle(tray.app_handle());
-            }
-        })
         .build(app)?;
 
     Ok(())
