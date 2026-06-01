@@ -7,6 +7,7 @@ import {
   vi,
 } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { BackendEntry } from "../../lib/ipc";
 
 vi.mock("../../lib/use-suggestion", () => ({
   useSuggestion: () => ({
@@ -33,7 +34,7 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
     vi.clearAllMocks();
   });
 
-  const baseRunning = {
+  const baseRunning: BackendEntry = {
     id: "e1",
     projectId: "p1",
     taskId: null,
@@ -45,7 +46,7 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
   };
 
   async function freshRender(
-    running: typeof baseRunning,
+    running: BackendEntry,
     requiredFields: { requireProject: boolean; requireDescription: boolean },
   ) {
     const invoke = vi.fn(async (cmd: string) => {
