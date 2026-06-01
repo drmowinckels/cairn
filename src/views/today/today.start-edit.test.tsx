@@ -42,7 +42,7 @@ describe("TodayView running-start edit (inside Tauri)", () => {
     vi.clearAllMocks();
   });
 
-  async function renderToday() {
+  async function renderToday(opts: { updateRejects?: boolean } = {}) {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return running;
       if (cmd === "list_today") return [running];
@@ -56,7 +56,10 @@ describe("TodayView running-start edit (inside Tauri)", () => {
             archived: false,
           },
         ];
-      if (cmd === "update_entry") return running;
+      if (cmd === "update_entry") {
+        if (opts.updateRejects) throw new Error("db locked");
+        return running;
+      }
       return null;
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
@@ -126,6 +129,23 @@ describe("TodayView running-start edit (inside Tauri)", () => {
       expect.stringMatching(/future/i),
     );
     expect(invoke).not.toHaveBeenCalledWith("update_entry", expect.anything());
+  });
+
+  it("swallows an update_entry rejection (still closes)", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await renderToday({ updateRejects: true });
+    fireEvent.click(screen.getByRole("button", { name: /edit start time/i }));
+    const input = screen.getByLabelText(/^start time$/i) as HTMLInputElement;
+    const earlier = new Date(Date.now() - 32 * 60_000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const local =
+      `${earlier.getFullYear()}-${pad(earlier.getMonth() + 1)}-${pad(earlier.getDate())}` +
+      `T${pad(earlier.getHours())}:${pad(earlier.getMinutes())}`;
+    fireEvent.change(input, { target: { value: local } });
+    fireEvent.click(screen.getByRole("button", { name: /set start/i }));
+    await waitFor(() => expect(err).toHaveBeenCalled());
+    expect(screen.queryByLabelText(/^start time$/i)).toBeNull();
+    err.mockRestore();
   });
 
   it("cancel closes the editor without updating", async () => {

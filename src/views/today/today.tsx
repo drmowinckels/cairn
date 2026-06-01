@@ -123,13 +123,13 @@ export function TodayView({
   const [idlePickerOpen, setIdlePickerOpen] = useState(false);
   const [stopBlocked, setStopBlocked] = useState(false);
   const [editingStart, setEditingStart] = useState(false);
+  const [startDraft, setStartDraft] = useState("");
   const [startError, setStartError] = useState<string | null>(null);
-  const startInputRef = useRef<HTMLInputElement>(null);
 
   // #: edit the running timer's start time ("forgot to start it"). Only the
   // start moves; project/description are untouched (update_entry is partial).
   const onCommitStart = useCallback(() => {
-    const result = validateStartEdit(startInputRef.current?.value ?? "", Date.now());
+    const result = validateStartEdit(startDraft, Date.now());
     if (!result.ok) {
       setStartError(startEditError(result.reason));
       return;
@@ -140,7 +140,7 @@ export function TodayView({
       .update({ startedAt: result.iso })
       .then(() => today.refresh())
       .catch((e) => console.error("update start failed", e));
-  }, [timer, today]);
+  }, [startDraft, timer, today]);
 
   const onCancelStartEdit = useCallback(() => {
     setEditingStart(false);
@@ -557,6 +557,7 @@ export function TodayView({
             className="now-started"
             onClick={() => {
               setStartError(null);
+              setStartDraft(isoToLocal(timer.running!.startedAt));
               setEditingStart(true);
             }}
             title="Edit start time"
@@ -569,10 +570,10 @@ export function TodayView({
         {timer.running && editingStart && (
           <div className="now-start-edit">
             <input
-              ref={startInputRef}
               type="datetime-local"
               className="field-input"
-              defaultValue={isoToLocal(timer.running.startedAt)}
+              value={startDraft}
+              onChange={(e) => setStartDraft(e.target.value)}
               max={isoToLocal(new Date().toISOString())}
               aria-label="Start time"
               aria-describedby={startError ? "start-edit-err" : undefined}
