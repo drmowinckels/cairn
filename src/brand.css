@@ -737,6 +737,50 @@ body {
   opacity: 0.8;
 }
 
+/* ─── ABOUT WINDOW ──────────────────────────────────────────────────── */
+.about-win {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 10px 14px 14px;
+  background: var(--surface);
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  font-size: var(--font-base);
+  overflow: hidden;
+}
+.about-win-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.about-win-title {
+  font-size: var(--font-tiny);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 600;
+}
+.about-win-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.about-win-close:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
 /* ─── ABOUT CARD ────────────────────────────────────────────────────── */
 .about-card {
   display: flex;
