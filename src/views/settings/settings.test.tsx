@@ -80,23 +80,21 @@ afterEach(() => {
 });
 
 describe("SettingsView (browser-dev mode)", () => {
-  it("renders the four privacy guarantees verbatim from PRIVACY.md", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+  it("points to the Data tab for the privacy guarantees (moved there)", () => {
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+    );
+    expect(screen.getByText(/local-first & open source/i)).toBeTruthy();
     expect(
-      screen.getByText(/Everything is stored locally/i),
+      screen.getByText(/full privacy guarantees and your storage controls/i),
     ).toBeTruthy();
+    // The verbatim guarantees now render in the Data tab, not Settings.
+    expect(screen.queryByText(/Everything is stored locally/i)).toBeNull();
     expect(
-      screen.getByText(/SQLite database under ~\/\.cairn\//i),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/No accounts\. No telemetry\. No background phone-home\./i),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/Window titles are read locally and never leave the device\./i),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/Source on GitHub, Apache 2\.0 licensed\./i),
-    ).toBeTruthy();
+      screen.queryByText(
+        /Window titles are read locally and never leave the device\./i,
+      ),
+    ).toBeNull();
   });
 
   it("renders the Source on GitHub · Apache-2.0 attribution with a real link", () => {

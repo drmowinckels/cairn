@@ -25,7 +25,6 @@ import type {
 } from "../../lib/types";
 import { AMBIGUITY_OPTIONS as AMBIGUITY_VALUES } from "../../lib/use-rules";
 import {
-  PRIVACY_GUARANTEES,
   PRIVACY_LICENSE_LABEL,
   PRIVACY_REPO_LABEL,
   PRIVACY_REPO_URL,
@@ -219,22 +218,12 @@ export function SettingsView({
       >
         <div className="privacy-head">
           <Icon name="shield" size={18} />
-          <h2 className="privacy-title">Your data stays here</h2>
+          <h2 className="privacy-title">Local-first &amp; open source</h2>
         </div>
-        <ul className="privacy-list">
-          {PRIVACY_GUARANTEES.map((g) => (
-            <li key={g.id}>
-              <Icon name="check" size={13} />
-              <span>
-                <strong>{g.lead}</strong> {g.rest}
-              </span>
-            </li>
-          ))}
-        </ul>
         <p className="privacy-hint">
-          Manage, back up, and delete your data in the <strong>Data</strong>{" "}
-          tab. Cairn never talks to a server — your data is a single file on
-          this machine.
+          Cairn never talks to a server — your data is a single file on this
+          machine. The full privacy guarantees and your storage controls (back
+          up, export, delete) live in the <strong>Data</strong> tab.
         </p>
         <p className="privacy-attrib">
           <a

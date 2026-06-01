@@ -38,6 +38,26 @@ describe("DataView", () => {
     expect(() => fireEvent.click(btn)).not.toThrow();
   });
 
+  it("shows the data-privacy guarantees in the Storage section", () => {
+    render(<DataView density="comfy" />);
+    const storage = screen.getByRole("region", {
+      name: /local data storage/i,
+    });
+    expect(within(storage).getByText(/your data stays here/i)).toBeTruthy();
+    expect(
+      within(storage).getByText(/Everything is stored locally/i),
+    ).toBeTruthy();
+    expect(
+      within(storage).getByText(
+        /Window titles are read locally and never leave the device\./i,
+      ),
+    ).toBeTruthy();
+    // The source/licence guarantee is NOT moved into Storage.
+    expect(
+      within(storage).queryByText(/Source on GitHub, Apache 2\.0 licensed\./i),
+    ).toBeNull();
+  });
+
   it("orders the sections Client → Project → Task (#103)", () => {
     render(<DataView density="comfy" />);
     const clients = screen.getByRole("region", { name: /^clients$/i });

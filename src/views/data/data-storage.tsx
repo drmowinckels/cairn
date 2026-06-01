@@ -1,7 +1,11 @@
 import { Icon } from "../../lib/icon";
 import { useBackup } from "../../lib/use-backup";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
-import { formatBytes } from "../../lib/privacy-copy";
+import { PRIVACY_GUARANTEES, formatBytes } from "../../lib/privacy-copy";
+
+// The data-locality guarantees live with the storage controls; the
+// "source / licence" guarantee stays in Settings (it isn't about storage).
+const DATA_GUARANTEES = PRIVACY_GUARANTEES.filter((g) => g.id !== "source");
 
 /**
  * Local data storage actions — export / restore / CSV / reveal / delete
@@ -15,6 +19,20 @@ export function DataStorageActions() {
 
   return (
     <section className="data-storage" aria-label="Local data storage">
+      <div className="privacy-head">
+        <Icon name="shield" size={18} />
+        <h2 className="privacy-title">Your data stays here</h2>
+      </div>
+      <ul className="privacy-list">
+        {DATA_GUARANTEES.map((g) => (
+          <li key={g.id}>
+            <Icon name="check" size={13} />
+            <span>
+              <strong>{g.lead}</strong> {g.rest}
+            </span>
+          </li>
+        ))}
+      </ul>
       <p className="settings-sub">
         Everything is a single SQLite file on this machine. Back it up or
         restore it by saving that file anywhere — including a folder synced by
