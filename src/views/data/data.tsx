@@ -7,6 +7,13 @@ import { useProjects } from "../../lib/use-projects";
 import { useClients } from "../../lib/use-clients";
 import { useTasks } from "../../lib/use-tasks";
 import type { Client, Project } from "../../lib/types";
+import {
+  ROUND_MODES,
+  ROUNDING_INTERVALS,
+  roundingLabel,
+  type RoundMode,
+  type Rounding,
+} from "../../lib/rounding";
 import { DataStorageActions } from "./data-storage";
 
 const PROJECT_COLORS = [
@@ -268,6 +275,7 @@ interface ProjectFormProps {
     name: string;
     color: string;
     clientId: string | null;
+    rounding: Rounding | null;
   }) => Promise<void>;
 }
 
@@ -280,13 +288,16 @@ function ProjectForm({
   const [name, setName] = useState(initial.name);
   const [color, setColor] = useState(initial.color);
   const [clientId, setClientId] = useState<string | null>(initial.clientId);
+  const [rounding, setRounding] = useState<Rounding | null>(
+    initial.rounding ?? null,
+  );
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     if (!name.trim()) return;
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), color, clientId });
+      await onSubmit({ name: name.trim(), color, clientId, rounding });
     } finally {
       setBusy(false);
     }
@@ -339,6 +350,52 @@ function ProjectForm({
           </option>
         ))}
       </select>
+      <div className="data-form-rounding">
+        <select
+          className="field-input"
+          value={rounding === null ? "inherit" : String(rounding.intervalMinutes)}
+          onChange={(e) => {
+            const v = e.target.value;
+            setRounding(
+              v === "inherit"
+                ? null
+                : {
+                    intervalMinutes: Number(v),
+                    mode: rounding?.mode ?? "nearest",
+                  },
+            );
+          }}
+          aria-label="Rounding override"
+          disabled={busy}
+        >
+          <option value="inherit">Rounding: inherit global</option>
+          {ROUNDING_INTERVALS.map((m) => (
+            <option key={m} value={m}>
+              {m === 0 ? "Off (no rounding)" : roundingLabel(m)}
+            </option>
+          ))}
+        </select>
+        {rounding !== null && rounding.intervalMinutes > 0 && (
+          <select
+            className="field-input"
+            value={rounding.mode}
+            onChange={(e) =>
+              setRounding({
+                intervalMinutes: rounding.intervalMinutes,
+                mode: e.target.value as RoundMode,
+              })
+            }
+            aria-label="Rounding direction"
+            disabled={busy}
+          >
+            {ROUND_MODES.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
       <div className="data-form-actions">
         <button
           type="button"

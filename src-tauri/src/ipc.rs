@@ -38,6 +38,10 @@ pub struct Project {
     pub client_id: Option<String>,
     pub color: String,
     pub archived: bool,
+    /// Per-project rounding override. `None` = inherit the global rounding
+    /// preference. `Some(Rounding { interval_minutes: 0, … })` explicitly
+    /// disables rounding for this project even when the global is active.
+    pub rounding: Option<Rounding>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -51,6 +55,9 @@ pub struct ProjectInput {
     pub color: String,
     #[serde(default)]
     pub archived: bool,
+    /// `None` = inherit global; `Some(…)` = project-level override.
+    #[serde(default)]
+    pub rounding: Option<Rounding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,7 +311,8 @@ pub async fn delete_client(state: State<'_, AppState>, id: String) -> Result<(),
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
     let rows = sqlx::query(
-        "SELECT id, name, client_id, color, archived FROM projects WHERE archived = 0 ORDER BY name",
+        "SELECT id, name, client_id, color, archived, rounding_interval_minutes, rounding_mode \
+         FROM projects WHERE archived = 0 ORDER BY name",
     )
     .fetch_all(&state.db.pool)
     .await
@@ -317,6 +325,7 @@ pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, S
             client_id: r.get("client_id"),
             color: r.get("color"),
             archived: r.get::<i64, _>("archived") != 0,
+            rounding: project_rounding_from_row(&r),
         })
         .collect())
 }
@@ -330,15 +339,20 @@ pub async fn save_project(
         .id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let now = Utc::now().to_rfc3339();
+    let (rounding_minutes, rounding_mode) = rounding_to_columns(project.rounding);
     sqlx::query(
         r#"
-        INSERT INTO projects (id, name, client_id, color, archived, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+        INSERT INTO projects (id, name, client_id, color, archived,
+                              rounding_interval_minutes, rounding_mode,
+                              created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             client_id = excluded.client_id,
             color = excluded.color,
             archived = excluded.archived,
+            rounding_interval_minutes = excluded.rounding_interval_minutes,
+            rounding_mode = excluded.rounding_mode,
             updated_at = excluded.updated_at
         "#,
     )
@@ -347,6 +361,8 @@ pub async fn save_project(
     .bind(&project.client_id)
     .bind(&project.color)
     .bind(project.archived as i64)
+    .bind(rounding_minutes)
+    .bind(rounding_mode)
     .bind(&now)
     .execute(&state.db.pool)
     .await
@@ -357,6 +373,7 @@ pub async fn save_project(
         client_id: project.client_id,
         color: project.color,
         archived: project.archived,
+        rounding: project.rounding,
     })
 }
 
@@ -589,11 +606,12 @@ pub struct ReportSummary {
 }
 
 /// One entry reduced to what the report needs: project, signal source,
-/// and a concrete [start, end] (open entries are resolved to `now`
-/// before they reach the pure aggregator).
+/// a concrete [start, end] (open entries are resolved to `now` before they
+/// reach the pure aggregator), and the project-level rounding override (if any).
 #[derive(Debug, Clone)]
 struct ReportRow {
     project_id: Option<String>,
+    project_rounding: Option<Rounding>,
     source: String,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
@@ -649,11 +667,13 @@ fn source_bucket<'a>(split: &'a mut ReportSourceSplit, source: &str) -> &'a mut 
     }
 }
 
-fn total_seconds(rows: &[ReportRow], rounding: Rounding) -> i64 {
+fn total_seconds(rows: &[ReportRow], global_rounding: Rounding) -> i64 {
     rows.iter()
-        .map(|r| (r.end - r.start).num_seconds())
+        .map(|r| {
+            let eff = crate::rounding::effective_rounding(r.project_rounding, global_rounding);
+            eff.round_secs((r.end - r.start).num_seconds())
+        })
         .filter(|s| *s > 0)
-        .map(|s| rounding.round_secs(s))
         .sum()
 }
 
@@ -661,11 +681,14 @@ fn total_seconds(rows: &[ReportRow], rounding: Rounding) -> i64 {
 /// entries pre-resolved to `now`), produce the total, per-project
 /// rollup, one per-day bucket for every calendar day in the window (in
 /// order, empty days included), and the rule/calendar/manual split.
+///
+/// Each entry is rounded by its project's effective rounding
+/// (`project_rounding` wins; falls back to `global_rounding`).
 fn aggregate_report(
     rows: &[ReportRow],
     start_day: NaiveDate,
     end_day: NaiveDate,
-    rounding: Rounding,
+    global_rounding: Rounding,
 ) -> (
     i64,
     Vec<ReportProjectSlice>,
@@ -679,7 +702,8 @@ fn aggregate_report(
     let mut total = 0i64;
 
     for r in rows {
-        let secs = rounding.round_secs((r.end - r.start).num_seconds());
+        let eff = crate::rounding::effective_rounding(r.project_rounding, global_rounding);
+        let secs = eff.round_secs((r.end - r.start).num_seconds());
         if secs <= 0 {
             continue;
         }
@@ -736,9 +760,15 @@ async fn fetch_report_rows(
     let end_utc = local_midnight_utc(end_day);
     let sqlrows = sqlx::query(
         r#"
-        SELECT project_id, source, started_at, ended_at
-          FROM entries
-         WHERE started_at >= ?1 AND started_at < ?2
+        SELECT e.project_id,
+               e.source,
+               e.started_at,
+               e.ended_at,
+               p.rounding_interval_minutes,
+               p.rounding_mode
+          FROM entries e
+          LEFT JOIN projects p ON p.id = e.project_id
+         WHERE e.started_at >= ?1 AND e.started_at < ?2
         "#,
     )
     .bind(start_utc.to_rfc3339())
@@ -756,6 +786,7 @@ async fn fetch_report_rows(
         };
         rows.push(ReportRow {
             project_id: row.get("project_id"),
+            project_rounding: project_rounding_from_row(&row),
             source: row.get("source"),
             start,
             end,
@@ -1950,6 +1981,48 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// Deserialise a project row's nullable rounding columns into `Option<Rounding>`.
+/// Returns `None` when either column is NULL (inherit global); returns `Some`
+/// only when both are present and the mode string is a recognised variant.
+fn project_rounding_from_row(row: &sqlx::sqlite::SqliteRow) -> Option<Rounding> {
+    use sqlx::Row;
+    let minutes: Option<i64> = row.get("rounding_interval_minutes");
+    let mode_str: Option<String> = row.get("rounding_mode");
+    match (minutes, mode_str) {
+        (Some(m), Some(s)) => {
+            let mode = match s.as_str() {
+                "up" => crate::rounding::RoundMode::Up,
+                "down" => crate::rounding::RoundMode::Down,
+                _ => crate::rounding::RoundMode::Nearest,
+            };
+            Some(Rounding {
+                interval_minutes: m.max(0) as u32,
+                mode,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Serialise `Option<Rounding>` into the two nullable DB columns.
+/// `None` produces `(None, None)` → NULLs in SQLite (inherit global).
+fn rounding_to_columns(r: Option<Rounding>) -> (Option<i64>, Option<String>) {
+    match r {
+        None => (None, None),
+        Some(rounding) => {
+            let mode = match rounding.mode {
+                crate::rounding::RoundMode::Up => "up",
+                crate::rounding::RoundMode::Down => "down",
+                crate::rounding::RoundMode::Nearest => "nearest",
+            };
+            (
+                Some(rounding.interval_minutes as i64),
+                Some(mode.to_string()),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod report_pure_tests {
     use super::*;
@@ -1961,9 +2034,23 @@ mod report_pure_tests {
             .unwrap();
         ReportRow {
             project_id: project.map(str::to_string),
+            project_rounding: None,
             source: source.to_string(),
             start: s,
             end: s + Duration::seconds(dur),
+        }
+    }
+
+    /// Like `row`, but with a per-project rounding override attached.
+    fn row_round(
+        project: Option<&str>,
+        rounding: Rounding,
+        ymdh: (i32, u32, u32, u32),
+        dur: i64,
+    ) -> ReportRow {
+        ReportRow {
+            project_rounding: Some(rounding),
+            ..row(project, "manual", ymdh, dur)
         }
     }
 
@@ -2053,12 +2140,14 @@ mod report_pure_tests {
         let rows = vec![
             ReportRow {
                 project_id: None,
+                project_rounding: None,
                 source: "manual".into(),
                 start: s,
                 end: s + Duration::seconds(60),
             },
             ReportRow {
                 project_id: None,
+                project_rounding: None,
                 source: "manual".into(),
                 start: s,
                 end: s - Duration::seconds(10),
@@ -2088,6 +2177,68 @@ mod report_pure_tests {
             .find(|s| s.project_id.as_deref() == Some("a"))
             .unwrap();
         assert_eq!(a.seconds, 45 * 60);
+    }
+
+    #[test]
+    fn aggregate_applies_per_project_override_over_global() {
+        let start_day = NaiveDate::from_ymd_opt(2026, 5, 25).unwrap();
+        let end_day = start_day + Duration::days(7);
+        let up5 = Rounding {
+            interval_minutes: 5,
+            mode: crate::rounding::RoundMode::Up,
+        };
+        let global30 = Rounding {
+            interval_minutes: 30,
+            mode: crate::rounding::RoundMode::Nearest,
+        };
+        let rows = vec![
+            // Project "a" overrides to 5-min-up: 6m → 10m.
+            row_round(Some("a"), up5, (2026, 5, 25, 9), 6 * 60),
+            // Project "b" inherits the global 30-min-nearest: 50m → 60m.
+            row(Some("b"), "manual", (2026, 5, 26, 9), 50 * 60),
+        ];
+        let (total, by_project, _, _) = aggregate_report(&rows, start_day, end_day, global30);
+        let a = by_project
+            .iter()
+            .find(|s| s.project_id.as_deref() == Some("a"))
+            .unwrap();
+        let b = by_project
+            .iter()
+            .find(|s| s.project_id.as_deref() == Some("b"))
+            .unwrap();
+        assert_eq!(a.seconds, 10 * 60, "5-min-up override wins for a");
+        assert_eq!(b.seconds, 60 * 60, "global 30-min-nearest applies to b");
+        assert_eq!(total, 70 * 60);
+    }
+
+    #[test]
+    fn total_seconds_uses_per_project_override() {
+        let down5 = Rounding {
+            interval_minutes: 5,
+            mode: crate::rounding::RoundMode::Down,
+        };
+        let rows = vec![row_round(Some("a"), down5, (2026, 5, 25, 9), 9 * 60)]; // 9m → 5m
+        assert_eq!(total_seconds(&rows, Rounding::off()), 5 * 60);
+    }
+
+    #[test]
+    fn rounding_columns_round_trip_through_helpers() {
+        // None → both NULL → None.
+        assert_eq!(rounding_to_columns(None), (None, None));
+        // Each mode serialises to its lowercase string and parses back.
+        for (mode, s) in [
+            (crate::rounding::RoundMode::Nearest, "nearest"),
+            (crate::rounding::RoundMode::Up, "up"),
+            (crate::rounding::RoundMode::Down, "down"),
+        ] {
+            let r = Rounding {
+                interval_minutes: 15,
+                mode,
+            };
+            let (m, ms) = rounding_to_columns(Some(r));
+            assert_eq!(m, Some(15));
+            assert_eq!(ms.as_deref(), Some(s));
+        }
     }
 }
 
@@ -2918,7 +3069,107 @@ mod tests {
             client_id: client_id.map(|s| s.into()),
             color: color.into(),
             archived: false,
+            rounding: None,
         }
+    }
+
+    #[tokio::test]
+    async fn save_project_round_trips_rounding_override() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let override_r = Rounding {
+            interval_minutes: 6,
+            mode: crate::rounding::RoundMode::Up,
+        };
+        let saved = save_project(
+            state.clone(),
+            ProjectInput {
+                rounding: Some(override_r),
+                ..project_input(None, "Rounded", "#abcdef", None)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved.rounding, Some(override_r));
+
+        // It survives a list round-trip (exercises project_rounding_from_row's
+        // both-present arm + the mode parse).
+        let listed = list_projects(state.clone()).await.unwrap();
+        let got = listed.iter().find(|p| p.id == saved.id).unwrap();
+        assert_eq!(got.rounding, Some(override_r));
+
+        // Clearing it back to None persists NULLs (inherit global).
+        let cleared = save_project(
+            state.clone(),
+            ProjectInput {
+                rounding: None,
+                ..project_input(Some(&saved.id), "Rounded", "#abcdef", None)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cleared.rounding, None);
+        let relisted = list_projects(state).await.unwrap();
+        let got2 = relisted.iter().find(|p| p.id == saved.id).unwrap();
+        assert_eq!(got2.rounding, None);
+    }
+
+    #[tokio::test]
+    async fn list_projects_tolerates_partial_or_unknown_rounding_columns() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let now = Utc::now().to_rfc3339();
+        // Unknown mode string → Nearest fallback; negative minutes clamped to 0.
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, \
+             rounding_interval_minutes, rounding_mode, created_at, updated_at) \
+             VALUES ('p-bad', 'Bad mode', NULL, '#111', 0, -3, 'bogus', ?1, ?1)",
+        )
+        .bind(&now)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        // Only one column populated → treated as inherit (None).
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, \
+             rounding_interval_minutes, rounding_mode, created_at, updated_at) \
+             VALUES ('p-partial', 'Half', NULL, '#222', 0, 10, NULL, ?1, ?1)",
+        )
+        .bind(&now)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        // A valid "down" override → exercises the down-mode parse arm.
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, \
+             rounding_interval_minutes, rounding_mode, created_at, updated_at) \
+             VALUES ('p-down', 'Down', NULL, '#333', 0, 5, 'down', ?1, ?1)",
+        )
+        .bind(&now)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        let listed = list_projects(state).await.unwrap();
+        let bad = listed.iter().find(|p| p.id == "p-bad").unwrap();
+        assert_eq!(
+            bad.rounding,
+            Some(Rounding {
+                interval_minutes: 0,
+                mode: crate::rounding::RoundMode::Nearest,
+            }),
+            "unknown mode → Nearest, negative interval → 0"
+        );
+        let partial = listed.iter().find(|p| p.id == "p-partial").unwrap();
+        assert_eq!(partial.rounding, None, "partial columns → inherit");
+        let down = listed.iter().find(|p| p.id == "p-down").unwrap();
+        assert_eq!(
+            down.rounding,
+            Some(Rounding {
+                interval_minutes: 5,
+                mode: crate::rounding::RoundMode::Down,
+            }),
+        );
     }
 
     #[tokio::test]

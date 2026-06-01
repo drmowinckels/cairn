@@ -5,9 +5,9 @@
 //! interval before it is summed into a report total or written to CSV. A
 //! disabled config (`interval_minutes == 0`) is the identity transform.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RoundMode {
     #[default]
@@ -16,12 +16,22 @@ pub enum RoundMode {
     Down,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rounding {
     /// Rounding interval in minutes. `0` disables rounding.
     pub interval_minutes: u32,
     pub mode: RoundMode,
+}
+
+/// Return the effective rounding for a given entry: the project-level override
+/// wins when present; falls back to the caller-supplied global otherwise.
+///
+/// This is the single source of truth for the inheritance rule — report
+/// aggregation, CSV export, and any future consumer all call this function
+/// rather than re-implementing the fallback logic.
+pub fn effective_rounding(project_override: Option<Rounding>, global: Rounding) -> Rounding {
+    project_override.unwrap_or(global)
 }
 
 impl Default for Rounding {
@@ -130,5 +140,25 @@ mod tests {
         let parsed: Rounding =
             serde_json::from_str(r#"{"intervalMinutes":15,"mode":"up"}"#).unwrap();
         assert_eq!(parsed, r(15, RoundMode::Up));
+    }
+
+    #[test]
+    fn effective_rounding_prefers_project_override() {
+        let global = r(15, RoundMode::Nearest);
+        let project = r(5, RoundMode::Up);
+        assert_eq!(effective_rounding(Some(project), global), project);
+    }
+
+    #[test]
+    fn effective_rounding_falls_back_to_global_when_none() {
+        let global = r(15, RoundMode::Down);
+        assert_eq!(effective_rounding(None, global), global);
+    }
+
+    #[test]
+    fn effective_rounding_off_project_overrides_active_global() {
+        let global = r(15, RoundMode::Nearest);
+        let disabled = Rounding::off();
+        assert_eq!(effective_rounding(Some(disabled), global), disabled);
     }
 }

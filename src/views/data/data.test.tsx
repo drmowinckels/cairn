@@ -94,6 +94,42 @@ describe("DataView", () => {
     );
   });
 
+  it("sets and clears a per-project rounding override through the Edit form (#107)", async () => {
+    render(<DataView density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(
+      within(projects).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    const override = within(projects).getByLabelText(
+      /rounding override/i,
+    ) as HTMLSelectElement;
+    // Defaults to inheriting the global; no direction control yet.
+    expect(override.value).toBe("inherit");
+    expect(within(projects).queryByLabelText(/rounding direction/i)).toBeNull();
+
+    // Pick an interval → the direction control appears, defaulting to nearest.
+    fireEvent.change(override, { target: { value: "15" } });
+    const direction = within(projects).getByLabelText(
+      /rounding direction/i,
+    ) as HTMLSelectElement;
+    expect(direction.value).toBe("nearest");
+    fireEvent.change(direction, { target: { value: "up" } });
+    expect(direction.value).toBe("up");
+
+    // "Off" keeps an explicit override but hides the direction control.
+    fireEvent.change(override, { target: { value: "0" } });
+    expect(within(projects).queryByLabelText(/rounding direction/i)).toBeNull();
+
+    // Back to inherit clears the override.
+    fireEvent.change(override, { target: { value: "inherit" } });
+    expect(override.value).toBe("inherit");
+
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(within(projects).queryByLabelText(/rounding override/i)).toBeNull(),
+    );
+  });
+
   it("adds a project with the Enter key (and ignores other keys)", async () => {
     render(<DataView density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });

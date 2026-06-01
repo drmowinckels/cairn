@@ -1,3 +1,5 @@
+import type { Rounding } from "./rounding";
+
 export type ClientId = string;
 export type ProjectId = string;
 export type TaskId = string;
@@ -15,6 +17,9 @@ export interface Project {
   clientId: ClientId | null;
   color: string;
   archived: boolean;
+  /** Per-project rounding override (#107). `null`/absent = inherit the global
+   *  rounding preference; a value (incl. `intervalMinutes: 0`) overrides it. */
+  rounding?: Rounding | null;
 }
 
 export interface Task {
