@@ -360,9 +360,9 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
 
   it("throttles snapshot-driven refetches to ≥ 2s apart", async () => {
     type SnapshotListener = (event: { payload: unknown }) => void;
-    let handler: SnapshotListener | null = null;
-    const listenFn = vi.fn(async (_event: string, cb: SnapshotListener) => {
-      handler = cb;
+    let snapshotHandler: SnapshotListener | null = null;
+    const listenFn = vi.fn(async (event: string, cb: SnapshotListener) => {
+      if (event === "signal:snapshot") snapshotHandler = cb;
       return () => {};
     });
     const fetchCurrent = vi.fn(async () => null);
@@ -374,14 +374,40 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
         fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
-    await waitFor(() => expect(handler).not.toBeNull());
+    await waitFor(() => expect(snapshotHandler).not.toBeNull());
     fetchCurrent.mockClear();
     act(() => {
-      handler!({ payload: {} });
-      handler!({ payload: {} });
-      handler!({ payload: {} });
+      snapshotHandler!({ payload: {} });
+      snapshotHandler!({ payload: {} });
+      snapshotHandler!({ payload: {} });
     });
     await waitFor(() => expect(fetchCurrent).toHaveBeenCalledTimes(1));
+  });
+
+  it("refreshes immediately on entry:changed (no throttle) (#tray-lag)", async () => {
+    type Listener = (event: { payload: unknown }) => void;
+    let entryHandler: Listener | null = null;
+    const listenFn = vi.fn(async (event: string, cb: Listener) => {
+      if (event === "entry:changed") entryHandler = cb;
+      return () => {};
+    });
+    const fetchCurrent = vi.fn(async () => null);
+    const { useTimer } = await import("./use-timer");
+    renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+      }),
+    );
+    await waitFor(() => expect(entryHandler).not.toBeNull());
+    fetchCurrent.mockClear();
+    // Two back-to-back events both refetch — no 2s throttle on this path.
+    act(() => {
+      entryHandler!({ payload: {} });
+      entryHandler!({ payload: {} });
+    });
+    await waitFor(() => expect(fetchCurrent).toHaveBeenCalledTimes(2));
   });
 
   it("setError stringifies non-Error rejections via String(e)", async () => {
@@ -506,7 +532,8 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     await waitFor(() => expect(listenFn).toHaveBeenCalled());
     unmount();
-    expect(unlistenSpy).toHaveBeenCalledTimes(1);
+    // Two subscriptions now (snapshot + entry:changed), each torn down.
+    expect(unlistenSpy).toHaveBeenCalledTimes(2);
   });
 
   it("unmounting before listen resolves still tears down the subscription", async () => {

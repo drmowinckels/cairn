@@ -11,7 +11,7 @@ This document is the contract. The UI commits to these statements; the implement
 3. **Window titles are read locally and never leave the device.** They're evaluated against rules in memory and discarded.
 4. **Source on GitHub, Apache 2.0 licensed.** Anyone can audit.
 
-These four sentences appear verbatim in `Settings → Privacy`. If you change behavior, change the sentence too.
+The first three sentences appear verbatim in the **Data tab → Storage** section, beside the storage controls they describe; the fourth (source / licence) appears in **Settings**. If you change behavior, change the sentence too.
 
 ## What is stored
 

@@ -8,12 +8,12 @@ describe("formatTrayTitle", () => {
   });
 
   it("shows the project name while tracking", () => {
-    expect(formatTrayTitle(true, "Cairn", true)).toBe("● Cairn");
+    expect(formatTrayTitle(true, "Cairn", true)).toBe("Cairn");
   });
 
   it("shows a generic label while tracking with no project", () => {
-    expect(formatTrayTitle(true, null, true)).toBe("● Tracking");
-    expect(formatTrayTitle(true, "   ", true)).toBe("● Tracking");
+    expect(formatTrayTitle(true, null, true)).toBe("Tracking");
+    expect(formatTrayTitle(true, "   ", true)).toBe("Tracking");
   });
 
   it("shows Idle when not tracking", () => {

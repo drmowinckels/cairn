@@ -100,7 +100,9 @@ describe("Popover shell", () => {
     // Data view: assert a section unique to it.
     expect(screen.getByRole("region", { name: /^clients$/i })).toBeTruthy();
     fireEvent.keyDown(window, { key: "5" });
-    expect(screen.getByRole("heading", { name: /your data stays here/i })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: /local-first & open source/i }),
+    ).toBeTruthy();
     fireEvent.keyDown(window, { key: "1" });
     // Today view doesn't have a heading-level title, so check the timeline label.
     expect(screen.getByText(/today's path/i)).toBeTruthy();

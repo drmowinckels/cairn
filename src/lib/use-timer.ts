@@ -12,6 +12,12 @@ import {
 } from "./ipc";
 import { SIGNAL_SNAPSHOT_EVENT } from "./use-snapshot";
 
+/** Backend pushes this the instant the running entry changes (start/stop),
+ *  so the timer — and the tray title/menu that read it — refresh at once
+ *  instead of waiting for the throttled snapshot tick. Mirror of
+ *  `ENTRY_CHANGED_EVENT` in src-tauri/src/ipc.rs. */
+export const ENTRY_CHANGED_EVENT = "entry:changed";
+
 export interface TimerState {
   running: BackendEntry | null;
   loading: boolean;
@@ -104,20 +110,28 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    let unlisten: UnlistenFn | null = null;
+    const unlisteners: UnlistenFn[] = [];
+    const arm = (un: UnlistenFn) => {
+      if (cancelled) un();
+      else unlisteners.push(un);
+    };
     let lastRefresh = 0;
+    // Snapshot stream fires ~2 Hz; throttle the running-entry refetch.
     void listenFn(SIGNAL_SNAPSHOT_EVENT, () => {
       const now = Date.now();
       if (now - lastRefresh < 2_000) return;
       lastRefresh = now;
       void refresh();
-    }).then((un) => {
-      if (cancelled) un();
-      else unlisten = un;
-    });
+    }).then(arm);
+    // A start/stop pushes this immediately — refresh without the throttle
+    // so the tray title/menu reflect the change at once, not up to 2s late.
+    void listenFn(ENTRY_CHANGED_EVENT, () => {
+      lastRefresh = Date.now();
+      void refresh();
+    }).then(arm);
     return () => {
       cancelled = true;
-      if (unlisten) unlisten();
+      for (const un of unlisteners) un();
     };
   }, [enabled, listenFn, refresh]);
 

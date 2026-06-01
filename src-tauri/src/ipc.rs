@@ -1,7 +1,7 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use crate::rounding::Rounding;
 use crate::signals::browser_extension::BrowserExtensionStatus;
@@ -1216,7 +1216,8 @@ pub async fn current_running(state: State<'_, AppState>) -> Result<Option<Entry>
 }
 
 #[tauri::command]
-pub async fn start_entry(
+pub async fn start_entry<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     input: StartEntryInput,
 ) -> Result<Entry, String> {
@@ -1253,6 +1254,7 @@ pub async fn start_entry(
     .map_err(err)?;
 
     tx.commit().await.map_err(err)?;
+    notify_entry_changed(&app);
 
     Ok(Entry {
         id,
@@ -1266,8 +1268,23 @@ pub async fn start_entry(
     })
 }
 
+/// Event pushed to the popover the instant the running entry changes
+/// (start/stop), so the menu-bar title and tray menu update immediately
+/// instead of waiting for the next throttled signal-snapshot refresh.
+pub const ENTRY_CHANGED_EVENT: &str = "entry:changed";
+
+fn notify_entry_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    // Best-effort: if the popover isn't listening the throttled snapshot
+    // refresh still catches up, so a failed emit is not worth surfacing.
+    let _ = app.emit_to(crate::popover::POPOVER_LABEL, ENTRY_CHANGED_EVENT, ());
+}
+
 #[tauri::command]
-pub async fn stop_entry(state: State<'_, AppState>, id: String) -> Result<Entry, String> {
+pub async fn stop_entry<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Entry, String> {
     let now = Utc::now();
     let now_str = now.to_rfc3339();
 
@@ -1284,6 +1301,7 @@ pub async fn stop_entry(state: State<'_, AppState>, id: String) -> Result<Entry,
     if affected == 0 {
         return Err(format!("no running entry with id {id}"));
     }
+    notify_entry_changed(&app);
 
     let row = sqlx::query(
         "SELECT id, project_id, task_id, description, started_at, ended_at, source, rule_id FROM entries WHERE id = ?1",
@@ -2148,9 +2166,13 @@ mod tests {
     async fn start_entry_creates_a_running_entry() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let entry = start_entry(state.clone(), start_input(Some("cairn"), "Rule preview UI"))
-            .await
-            .unwrap();
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "Rule preview UI"),
+        )
+        .await
+        .unwrap();
         assert!(entry.ended_at.is_none());
         assert_eq!(entry.description, "Rule preview UI");
         assert_eq!(entry.project_id.as_deref(), Some("cairn"));
@@ -2169,12 +2191,20 @@ mod tests {
     async fn start_entry_closes_the_previously_running_one() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let first = start_entry(state.clone(), start_input(Some("cairn"), "first"))
-            .await
-            .unwrap();
-        let second = start_entry(state.clone(), start_input(Some("acme"), "second"))
-            .await
-            .unwrap();
+        let first = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "first"),
+        )
+        .await
+        .unwrap();
+        let second = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("acme"), "second"),
+        )
+        .await
+        .unwrap();
         assert_ne!(first.id, second.id);
 
         // Only the second is still running.
@@ -2191,10 +2221,12 @@ mod tests {
     async fn stop_entry_marks_the_entry_ended() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let entry = start_entry(state.clone(), start_input(None, "x"))
+        let entry = start_entry(app.handle().clone(), state.clone(), start_input(None, "x"))
             .await
             .unwrap();
-        let stopped = stop_entry(state.clone(), entry.id.clone()).await.unwrap();
+        let stopped = stop_entry(app.handle().clone(), state.clone(), entry.id.clone())
+            .await
+            .unwrap();
         assert!(stopped.ended_at.is_some());
 
         let running = current_running(state).await.unwrap();
@@ -2205,7 +2237,7 @@ mod tests {
     async fn stop_entry_fails_for_unknown_id() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let result = stop_entry(state, "does-not-exist".into()).await;
+        let result = stop_entry(app.handle().clone(), state, "does-not-exist".into()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does-not-exist"));
     }
@@ -3561,9 +3593,13 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
 
-        let entry = start_entry(state.clone(), start_input(Some("cairn"), "Initial desc"))
-            .await
-            .unwrap();
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "Initial desc"),
+        )
+        .await
+        .unwrap();
         let task = save_task(state.clone(), task_input(None, "cairn", "Bugs"))
             .await
             .unwrap();
@@ -3592,9 +3628,13 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
 
-        let entry = start_entry(state.clone(), start_input(Some("cairn"), "x"))
-            .await
-            .unwrap();
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "x"),
+        )
+        .await
+        .unwrap();
         let task = save_task(state.clone(), task_input(None, "cairn", "Refactor"))
             .await
             .unwrap();
@@ -3641,9 +3681,13 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
 
-        let entry = start_entry(state.clone(), start_input(Some("cairn"), "x"))
-            .await
-            .unwrap();
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "x"),
+        )
+        .await
+        .unwrap();
         let task = save_task(state.clone(), task_input(None, "cairn", "Build"))
             .await
             .unwrap();
@@ -3674,9 +3718,13 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
 
-        let entry = start_entry(state.clone(), start_input(Some("cairn"), "x"))
-            .await
-            .unwrap();
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "x"),
+        )
+        .await
+        .unwrap();
         let started_at = "2026-05-23T08:00:00+00:00".to_string();
         let ended_at = "2026-05-23T09:30:00+00:00".to_string();
         let patched = update_entry(
@@ -3700,9 +3748,13 @@ mod tests {
     async fn delete_entry_removes_row() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let entry = start_entry(state.clone(), start_input(None, "doomed"))
-            .await
-            .unwrap();
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(None, "doomed"),
+        )
+        .await
+        .unwrap();
         delete_entry(state.clone(), entry.id.clone()).await.unwrap();
         let today = list_today(state).await.unwrap();
         assert!(today.iter().all(|e| e.id != entry.id));
@@ -3755,9 +3807,13 @@ mod tests {
     async fn create_entry_open_ended_replaces_running_timer() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let prior = start_entry(state.clone(), start_input(Some("cairn"), "prior"))
-            .await
-            .unwrap();
+        let prior = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "prior"),
+        )
+        .await
+        .unwrap();
 
         let started = (Utc::now() - Duration::minutes(5)).to_rfc3339();
         let open = create_entry(
