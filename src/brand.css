@@ -556,6 +556,127 @@ body {
   flex-direction: column;
   gap: 10px;
 }
+.data-view-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: -4px;
+}
+
+/* ─── DATA TREE VIEW ────────────────────────────────────────────────── */
+.tree-root {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tree-client {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-soft);
+}
+.tree-client-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 0.5px solid var(--hairline);
+  margin-bottom: 2px;
+}
+.tree-client-label .data-name {
+  font-size: var(--font-small);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.tree-client-count {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+}
+.tree-project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tree-project {
+  display: flex;
+  flex-direction: column;
+}
+.tree-project-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--font-small);
+}
+.tree-expand-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--ink-mute);
+  cursor: default;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 3px;
+}
+.tree-expand-btn:hover {
+  color: var(--ink);
+}
+.tree-expand-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.tree-project-children {
+  margin-top: 2px;
+  margin-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tree-task-list {
+  margin: 0;
+}
+.tree-task-row {
+  padding: 6px 8px;
+  font-size: var(--font-tiny);
+  background: var(--bg);
+}
+.tree-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tree-add-project,
+.tree-add-task {
+  margin-top: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tree-project-children {
+    animation: tree-reveal 120ms ease-out both;
+  }
+  @keyframes tree-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
 
 /* ─── ABOUT CARD ────────────────────────────────────────────────────── */
 .about-card {
