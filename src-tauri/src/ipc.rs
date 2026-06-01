@@ -1885,8 +1885,8 @@ pub fn set_tray_title(app: tauri::AppHandle, title: String) -> Result<(), String
 /// project list) and pushes a fresh model whenever it changes — the
 /// same flow `set_tray_title` uses. A no-op if the tray isn't present.
 #[tauri::command]
-pub fn update_tray_menu(
-    app: tauri::AppHandle,
+pub fn update_tray_menu<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     model: crate::tray::TrayMenuModel,
 ) -> Result<(), String> {
     crate::tray::update_menu(&app, &model);
@@ -4243,7 +4243,10 @@ mod tests {
                 name: "Cairn".into(),
             }],
         };
-        crate::tray::update_menu(&app.handle().clone(), &model);
+        // Exercise the IPC command wrapper itself (not just tray::update_menu),
+        // so the command path is covered.
+        let result = update_tray_menu(app.handle().clone(), model);
+        assert!(result.is_ok());
     }
 
     #[test]
