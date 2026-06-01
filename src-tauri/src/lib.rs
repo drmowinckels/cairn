@@ -449,5 +449,15 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = &event {
                 tauri::async_runtime::block_on(shutdown::drain_db_pool(app_handle));
             }
+            // macOS: clicking the dock icon when the window is hidden (the
+            // close button hides rather than quits) reshows it — the normal
+            // app-window expectation now that we ship OS decorations.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                if let Some(win) = app_handle.get_webview_window("popover") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
         });
 }
