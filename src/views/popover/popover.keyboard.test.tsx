@@ -107,15 +107,18 @@ describe("Popover · keyboard navigation (#27)", () => {
   it("Esc cascade: modal close eats the keystroke, suggestion survives", async () => {
     // Spec (#27): Escape should close any open modal first; only
     // when no modal is in the way does the suggestion get dismissed.
-    // Open the manual-entry modal via the header + button, then
-    // press Escape. The modal closes; the suggestion remains so the
-    // user gets a chance to confirm it next.
+    // Open the manual-entry modal via the command palette, then press
+    // Escape. The modal closes; the suggestion remains so the user gets
+    // a chance to confirm it next.
     const user = userEvent.setup();
     render(<Popover />);
 
-    await user.click(
-      screen.getByRole("button", { name: /add manual entry/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /^search$/i }));
+    const palette = await screen.findByRole("textbox", {
+      name: /command palette/i,
+    });
+    await user.type(palette, "add manual entry");
+    await user.click(await screen.findByText(/Add manual entry/i));
     const dialog = await screen.findByRole("dialog", { name: /new entry/i });
     expect(dialog).toBeTruthy();
     expect(dismissMock).not.toHaveBeenCalled();

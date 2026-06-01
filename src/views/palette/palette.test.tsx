@@ -48,6 +48,7 @@ function baseContext(overrides: Partial<PaletteContext> = {}): PaletteContext {
     switchProject: vi.fn(),
     toggleRule: vi.fn(),
     revealDataFolder: vi.fn(),
+    addEntry: vi.fn(),
     ...overrides,
   };
 }
@@ -61,6 +62,15 @@ afterEach(() => {
 });
 
 describe("buildCommands — surfaced commands", () => {
+  it("surfaces 'Add manual entry' and runs the addEntry action", () => {
+    const addEntry = vi.fn();
+    const cmds = buildCommands(baseContext({ addEntry }));
+    const cmd = cmds.find((c) => c.label === "Add manual entry");
+    expect(cmd).toBeTruthy();
+    cmd?.run();
+    expect(addEntry).toHaveBeenCalledTimes(1);
+  });
+
   it("includes 'Start timer for X' for every project when no timer is running", () => {
     const cmds = buildCommands(baseContext({ running: null }));
     const labels = cmds.map((c) => c.label);
