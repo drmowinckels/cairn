@@ -1507,6 +1507,58 @@ pub async fn update_entry(
     state: State<'_, AppState>,
     input: UpdateEntryInput,
 ) -> Result<Entry, String> {
+    // Parse and validate timestamps BEFORE opening the write
+    // transaction — a malformed or inverted value must be rejected
+    // up front so a bad edit can't leave a half-applied tx or persist
+    // a row that later poisons every reporting query (#139).
+    let started_at: Option<DateTime<Utc>> = match &input.started_at {
+        Some(s) => Some(
+            s.parse::<DateTime<Utc>>()
+                .map_err(|e| format!("invalid started_at: {e}"))?,
+        ),
+        None => None,
+    };
+    let ended_at: Option<Option<DateTime<Utc>>> = match &input.ended_at {
+        Some(Some(s)) => Some(Some(
+            s.parse::<DateTime<Utc>>()
+                .map_err(|e| format!("invalid ended_at: {e}"))?,
+        )),
+        Some(None) => Some(None),
+        None => None,
+    };
+
+    // Validate the effective range. When only one endpoint is edited
+    // we compare against the stored counterpart so moving one side
+    // past the other can't create an inverted row. A running entry
+    // (NULL ended_at) has no end to violate.
+    let setting_end = matches!(ended_at, Some(Some(_)));
+    if started_at.is_some() || setting_end {
+        let stored = sqlx::query("SELECT started_at, ended_at FROM entries WHERE id = ?1")
+            .bind(&input.id)
+            .fetch_one(&state.db.pool)
+            .await
+            .map_err(err)?;
+        let effective_start = match started_at {
+            Some(s) => s,
+            None => parse_ts(stored.get::<String, _>("started_at"))?,
+        };
+        let effective_end = match &ended_at {
+            Some(inner) => inner.as_ref().copied(),
+            None => stored
+                .get::<Option<String>, _>("ended_at")
+                .map(parse_ts)
+                .transpose()?,
+        };
+        if let Some(end) = effective_end {
+            if end <= effective_start {
+                return Err("ended_at must be strictly after started_at".into());
+            }
+        }
+    }
+
+    let started_str = started_at.map(|t| t.to_rfc3339());
+    let ended_str = ended_at.map(|inner| inner.map(|t| t.to_rfc3339()));
+
     let now = Utc::now().to_rfc3339();
     let mut tx = state.db.pool.begin().await.map_err(err)?;
 
@@ -1540,18 +1592,18 @@ pub async fn update_entry(
             .await
             .map_err(err)?;
     }
-    if let Some(started_at) = &input.started_at {
+    if let Some(started_str) = &started_str {
         sqlx::query("UPDATE entries SET started_at = ?1, updated_at = ?2 WHERE id = ?3")
-            .bind(started_at)
+            .bind(started_str)
             .bind(&now)
             .bind(&input.id)
             .execute(&mut *tx)
             .await
             .map_err(err)?;
     }
-    if let Some(ended_at) = &input.ended_at {
+    if let Some(ended_str) = &ended_str {
         sqlx::query("UPDATE entries SET ended_at = ?1, updated_at = ?2 WHERE id = ?3")
-            .bind(ended_at.as_deref())
+            .bind(ended_str.as_deref())
             .bind(&now)
             .bind(&input.id)
             .execute(&mut *tx)
@@ -4091,6 +4143,318 @@ mod tests {
         .unwrap();
         assert_eq!(patched.started_at.to_rfc3339(), started_at);
         assert_eq!(patched.ended_at.map(|t| t.to_rfc3339()), Some(ended_at));
+    }
+
+    // ---------------- update_entry timestamp validation (#139) ----------------
+
+    async fn seed_closed_entry(
+        _app: &tauri::App<tauri::test::MockRuntime>,
+        state: &State<'_, crate::AppState>,
+        started: &str,
+        ended: &str,
+    ) -> Entry {
+        create_entry(
+            state.clone(),
+            create_input_closed(Some("cairn"), "seed", started, ended),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn update_entry_rejects_malformed_started_at() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        let err = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: Some("not-a-timestamp".into()),
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("started_at"));
+    }
+
+    #[tokio::test]
+    async fn update_entry_rejects_malformed_ended_at() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        let err = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: None,
+                ended_at: Some(Some("garbage".into())),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("ended_at"));
+    }
+
+    #[tokio::test]
+    async fn update_entry_rejects_inverted_range_in_one_call() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        let err = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: Some("2026-05-23T10:00:00+00:00".into()),
+                ended_at: Some(Some("2026-05-23T09:30:00+00:00".into())),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("ended_at"));
+    }
+
+    #[tokio::test]
+    async fn update_entry_rejects_equal_range_in_one_call() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        let err = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: Some("2026-05-23T11:00:00+00:00".into()),
+                ended_at: Some(Some("2026-05-23T11:00:00+00:00".into())),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("ended_at"));
+    }
+
+    #[tokio::test]
+    async fn update_entry_rejects_started_past_stored_end() {
+        // Only started_at is supplied; it must be validated against
+        // the stored ended_at so editing one endpoint can't invert.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        let err = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: Some("2026-05-23T09:30:00+00:00".into()),
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("ended_at"));
+    }
+
+    #[tokio::test]
+    async fn update_entry_rejects_end_before_stored_start() {
+        // Only ended_at is supplied; it must be validated against the
+        // stored started_at.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        let err = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: None,
+                ended_at: Some(Some("2026-05-23T07:30:00+00:00".into())),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("ended_at"));
+    }
+
+    #[tokio::test]
+    async fn update_entry_normalizes_and_persists_valid_edit() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        // A non-Z offset must be normalized to the file's RFC3339 form
+        // on read-back, and the row must remain parseable by parse_ts.
+        let patched = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: Some("2026-05-23T10:00:00+02:00".into()),
+                ended_at: Some(Some("2026-05-23T13:00:00+02:00".into())),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            patched.started_at,
+            parse_ts("2026-05-23T08:00:00+00:00").unwrap()
+        );
+        assert_eq!(
+            patched.ended_at.unwrap(),
+            parse_ts("2026-05-23T11:00:00+00:00").unwrap()
+        );
+
+        // Re-read through update_entry's own select path (which runs
+        // parse_ts) to prove the persisted row stays parseable — the
+        // exact failure mode #139 describes for reporting queries.
+        let reread = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: Some("touch".into()),
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            reread.started_at,
+            parse_ts("2026-05-23T08:00:00+00:00").unwrap()
+        );
+        assert_eq!(
+            reread.ended_at.unwrap(),
+            parse_ts("2026-05-23T11:00:00+00:00").unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_entry_allows_moving_start_on_running_entry() {
+        // A running entry has NULL ended_at; editing only started_at
+        // has no end to violate and must succeed.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "running"),
+        )
+        .await
+        .unwrap();
+
+        let earlier = (Utc::now() - Duration::minutes(30)).to_rfc3339();
+        let patched = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: Some(earlier.clone()),
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(patched.ended_at.is_none());
+        assert_eq!(patched.started_at, parse_ts(&earlier).unwrap());
+    }
+
+    #[tokio::test]
+    async fn update_entry_allows_clearing_ended_at_to_running() {
+        // Setting ended_at to NULL (make running) skips the range
+        // check and persists a NULL end.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry = seed_closed_entry(
+            &app,
+            &state,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T09:00:00+00:00",
+        )
+        .await;
+
+        let patched = update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: None,
+                task_id: None,
+                description: None,
+                started_at: None,
+                ended_at: Some(None),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(patched.ended_at.is_none());
     }
 
     #[tokio::test]
