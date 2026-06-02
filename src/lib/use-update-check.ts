@@ -54,18 +54,16 @@ export function useUpdateCheck(enabled: boolean): UseUpdateCheck {
   }, [enabled]);
 
   const dismiss = useCallback(() => {
-    setAvailable((current) => {
-      if (current) {
-        setDismissed(current.version);
-        try {
-          window.localStorage?.setItem(DISMISS_KEY, current.version);
-        } catch {
-          /* private mode — dismissal just won't persist */
-        }
-      }
-      return current;
-    });
-  }, []);
+    if (!available) return;
+    // Bumping `dismissed` to the current version is enough to hide the
+    // banner (see `visible` below) — no need to clear `available`.
+    setDismissed(available.version);
+    try {
+      window.localStorage?.setItem(DISMISS_KEY, available.version);
+    } catch {
+      /* private mode — dismissal just won't persist */
+    }
+  }, [available]);
 
   const visible =
     available && available.version !== dismissed ? available : null;
