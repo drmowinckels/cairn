@@ -92,19 +92,26 @@
   box-sizing: border-box;
 }
 
+/* The decorated main window must paint an opaque root — WKWebView renders a
+   transparent root as blank on a non-transparent macOS window. The frameless
+   idle / about popups (tagged by main.tsx) stay transparent so their rounded
+   corners show over the desktop. */
 html,
 body {
   margin: 0;
   height: 100%;
+  background: var(--surface);
+}
+
+html[data-win="idle"],
+html[data-win="idle"] body,
+html[data-win="about"],
+html[data-win="about"] body {
+  background: transparent;
 }
 
 body {
   font-family: var(--sans);
-
-  /* Transparent so the still-frameless idle + about windows show their
-     rounded corners over the desktop. The main window now ships OS
-     decorations and fills opaquely via `.pop` (inset:0, no radius). */
-  background: transparent;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
