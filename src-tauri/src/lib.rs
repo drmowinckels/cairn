@@ -8,6 +8,7 @@ mod rules;
 mod shutdown;
 mod signals;
 mod tray;
+mod update;
 
 #[cfg(test)]
 mod test_support;
@@ -159,6 +160,12 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        // Opt-in update checker (#45). Registering the plugin is inert on
+        // its own — Cairn only performs a network check when the user has
+        // turned on "Check for updates" in Settings, and the frontend is
+        // what calls `update::check_for_update`. No check fires at launch
+        // otherwise. See docs/PRIVACY.md.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             ipc::list_clients,
             ipc::save_client,
@@ -230,6 +237,7 @@ pub fn run() {
             backup::suggested_csv_name,
             backup::list_data_files,
             backup::reveal_data_folder,
+            update::check_for_update,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

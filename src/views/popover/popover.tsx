@@ -3,6 +3,7 @@ import { ErrorBoundary } from "../../error-boundary";
 import { Icon } from "../../lib/icon";
 import { Kbd, LocalBadge } from "../../lib/components";
 import { CaptureBanner } from "../../lib/capture-banner";
+import { UpdateBanner } from "../../lib/update-banner";
 import { useA11yPrefs } from "../../lib/use-a11y-prefs";
 import { AnnouncerProvider, useAnnounce } from "../../lib/use-announce";
 import { useSignalCapture } from "../../lib/use-signal-capture";
@@ -14,6 +15,8 @@ import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { useWorkingHours } from "../../lib/use-working-hours";
 import { useTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
 import { useRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
+import { useUpdatePrefs } from "../../lib/use-update-prefs";
+import { useUpdateCheck } from "../../lib/use-update-check";
 import { useTimer } from "../../lib/use-timer";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
@@ -93,6 +96,8 @@ function PopoverShell({
   const workingHours = useWorkingHours();
   const taskSwitch = useTaskSwitchPrefs();
   const requiredFields = useRequiredFieldsPrefs();
+  const updatePrefs = useUpdatePrefs();
+  const update = useUpdateCheck(updatePrefs.enabled);
 
   // Command-palette wiring (#32). The palette needs read access to the
   // live timer / projects / rules and a handful of actions; instantiate
@@ -354,6 +359,7 @@ function PopoverShell({
               workingHours={workingHours}
               taskSwitch={taskSwitch}
               requiredFields={requiredFields}
+              updatePrefs={updatePrefs}
               onRerunOnboarding={async () => {
                 await onboarding.reset();
               }}
@@ -368,6 +374,8 @@ function PopoverShell({
           void capture.stop();
         }}
       />
+
+      <UpdateBanner update={update.available} onDismiss={update.dismiss} />
 
       <footer className="pop-foot">
         <span className="foot-left">

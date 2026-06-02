@@ -3313,6 +3313,31 @@ select.rule-conf {
   }
 }
 
+/* ─── UPDATE BANNER ─────────────────────────────────────────────────── */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--pad-x);
+  background: var(--teal-soft);
+  border-top: 0.5px solid var(--hairline);
+  font-size: var(--font-tiny);
+  color: var(--ink);
+}
+
+.update-text {
+  flex: 1;
+}
+
+.update-notes {
+  font-weight: 600;
+  color: var(--teal-ink);
+}
+
+.update-dismiss {
+  flex-shrink: 0;
+}
+
 /* ─── CAPTURE CONFIRMATION DIALOG ───────────────────────────────────── */
 .capture-confirm-backdrop {
   position: fixed;
