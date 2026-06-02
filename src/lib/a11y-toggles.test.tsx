@@ -22,10 +22,7 @@ let injected: HTMLStyleElement | null = null;
 
 function injectBrandCss() {
   if (injected) return;
-  const css = readFileSync(
-    resolve(__dirname, "..", "brand.css"),
-    "utf-8",
-  );
+  const css = readFileSync(resolve(__dirname, "..", "brand.css"), "utf-8");
   const style = document.createElement("style");
   style.dataset.testid = "brand-css";
   style.textContent = css;
@@ -92,17 +89,13 @@ describe("a11y toggles: data-attribute + CSS reaction", () => {
     const { result } = renderHook(() => useA11yPrefs());
     const root = document.documentElement;
 
-    const before = getComputedStyle(root)
-      .getPropertyValue("--hairline")
-      .trim();
+    const before = getComputedStyle(root).getPropertyValue("--hairline").trim();
 
     act(() => result.current.setHighContrast(true));
     expect(root.dataset.highContrast).toBe("on");
-    const after = getComputedStyle(root)
-      .getPropertyValue("--hairline")
-      .trim();
+    const after = getComputedStyle(root).getPropertyValue("--hairline").trim();
     expect(after).not.toBe(before);
-    expect(after).toBe("rgba(61, 64, 91, 0.5)");
+    expect(after).toBe("rgb(61 64 91 / 50%)");
   });
 
   it("high contrast off restores the default --hairline", () => {
@@ -112,7 +105,7 @@ describe("a11y toggles: data-attribute + CSS reaction", () => {
     act(() => result.current.setHighContrast(false));
     expect(root.dataset.highContrast).toBe("off");
     expect(getComputedStyle(root).getPropertyValue("--hairline").trim()).toBe(
-      "rgba(61, 64, 91, 0.12)",
+      "rgb(61 64 91 / 12%)",
     );
   });
 

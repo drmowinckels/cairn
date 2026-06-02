@@ -211,12 +211,7 @@ describe("MRU store", () => {
 });
 
 describe("applyMruOrder", () => {
-  const ITEMS = [
-    { id: "one" },
-    { id: "two" },
-    { id: "three" },
-    { id: "four" },
-  ];
+  const ITEMS = [{ id: "one" }, { id: "two" }, { id: "three" }, { id: "four" }];
 
   it("returns a copy of items when MRU is empty", () => {
     const out = applyMruOrder(ITEMS, (i) => i.id, []);
@@ -225,20 +220,12 @@ describe("applyMruOrder", () => {
   });
 
   it("pins MRU ids to the front in MRU order", () => {
-    const out = applyMruOrder(
-      ITEMS,
-      (i) => i.id,
-      ["three", "one"],
-    );
+    const out = applyMruOrder(ITEMS, (i) => i.id, ["three", "one"]);
     expect(out.map((x) => x.id)).toEqual(["three", "one", "two", "four"]);
   });
 
   it("ignores MRU ids that aren't in the items list", () => {
-    const out = applyMruOrder(
-      ITEMS,
-      (i) => i.id,
-      ["ghost", "two"],
-    );
+    const out = applyMruOrder(ITEMS, (i) => i.id, ["ghost", "two"]);
     expect(out.map((x) => x.id)).toEqual(["two", "one", "three", "four"]);
   });
 });

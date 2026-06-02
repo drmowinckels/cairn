@@ -22,7 +22,10 @@ describe("useToday", () => {
   it("returns [] and loading=false when disabled", () => {
     const fetcher = vi.fn();
     const { result } = renderHook(() =>
-      useToday({ enabled: false, fetcher: fetcher as unknown as typeof import("./ipc").listToday }),
+      useToday({
+        enabled: false,
+        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+      }),
     );
     expect(result.current.entries).toEqual([]);
     expect(result.current.loading).toBe(false);
@@ -32,7 +35,10 @@ describe("useToday", () => {
   it("fetches today's entries on mount", async () => {
     const fetcher = vi.fn(async () => [ENTRY]);
     const { result } = renderHook(() =>
-      useToday({ enabled: true, fetcher: fetcher as unknown as typeof import("./ipc").listToday }),
+      useToday({
+        enabled: true,
+        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+      }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.entries).toEqual([ENTRY]);
@@ -44,7 +50,10 @@ describe("useToday", () => {
       throw new Error("db gone");
     });
     const { result } = renderHook(() =>
-      useToday({ enabled: true, fetcher: fetcher as unknown as typeof import("./ipc").listToday }),
+      useToday({
+        enabled: true,
+        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+      }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toContain("db gone");
@@ -55,7 +64,10 @@ describe("useToday", () => {
       throw "string-rejection";
     });
     const { result } = renderHook(() =>
-      useToday({ enabled: true, fetcher: fetcher as unknown as typeof import("./ipc").listToday }),
+      useToday({
+        enabled: true,
+        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+      }),
     );
     await waitFor(() => expect(result.current.error).toBe("string-rejection"));
   });
@@ -63,7 +75,10 @@ describe("useToday", () => {
   it("refresh() refetches on demand", async () => {
     const fetcher = vi.fn<() => Promise<BackendEntry[]>>(async () => []);
     const { result } = renderHook(() =>
-      useToday({ enabled: true, fetcher: fetcher as unknown as typeof import("./ipc").listToday }),
+      useToday({
+        enabled: true,
+        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+      }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
     fetcher.mockResolvedValueOnce([ENTRY]);

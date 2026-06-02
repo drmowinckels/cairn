@@ -14,7 +14,8 @@ export const TIMELINE_DAY_SPAN_MIN =
  */
 export function startToPercent(minutes: number): number {
   if (!Number.isFinite(minutes)) return 0;
-  const raw = ((minutes - TIMELINE_DAY_START_MIN) / TIMELINE_DAY_SPAN_MIN) * 100;
+  const raw =
+    ((minutes - TIMELINE_DAY_START_MIN) / TIMELINE_DAY_SPAN_MIN) * 100;
   if (raw < 0) return 0;
   if (raw > 100) return 100;
   return raw;

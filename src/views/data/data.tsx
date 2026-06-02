@@ -202,7 +202,10 @@ export function BudgetBar({ status }: BudgetBarProps) {
   const level = budgetLevel(status);
   const usedH = formatHours(status.usedSeconds);
   const estH = `${status.estimateHours}h`;
-  const remainSecs = Math.max(0, status.estimateHours * 3600 - status.usedSeconds);
+  const remainSecs = Math.max(
+    0,
+    status.estimateHours * 3600 - status.usedSeconds,
+  );
   const remainH = formatHours(remainSecs);
   const pct = Math.round(fraction * 100);
 
@@ -211,7 +214,13 @@ export function BudgetBar({ status }: BudgetBarProps) {
       className={`budget-bar budget-bar--${level}`}
       aria-label={`Budget: ${usedH} used of ${estH}, ${remainH} remaining`}
     >
-      <div className="budget-bar-track" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div
+        className="budget-bar-track"
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
         <div className="budget-bar-fill" style={{ width: `${pct}%` }} />
       </div>
       <span className="budget-bar-text">
@@ -391,7 +400,13 @@ function ProjectForm({
       parsed !== null && !Number.isNaN(parsed) && parsed > 0 ? parsed : null;
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), color, clientId, estimateHours, rounding });
+      await onSubmit({
+        name: name.trim(),
+        color,
+        clientId,
+        estimateHours,
+        rounding,
+      });
     } finally {
       setBusy(false);
     }
@@ -458,7 +473,9 @@ function ProjectForm({
       <div className="data-form-rounding">
         <select
           className="field-input"
-          value={rounding === null ? "inherit" : String(rounding.intervalMinutes)}
+          value={
+            rounding === null ? "inherit" : String(rounding.intervalMinutes)
+          }
           onChange={(e) => {
             const v = e.target.value;
             setRounding(

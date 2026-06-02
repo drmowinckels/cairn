@@ -23,16 +23,39 @@ vi.mock("./ipc", async () => {
   // We can't reference `backendStore` inside the factory (vi.mock
   // hoists), so put the store inside the factory's closure and
   // re-expose for the test via the mocked module's helpers.
-  const store = new Map<string, { id: string; name: string; enabled: boolean; priority: number; body: unknown }>();
+  const store = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      enabled: boolean;
+      priority: number;
+      body: unknown;
+    }
+  >();
   return {
     inTauri: true,
     listRules: vi.fn(async () => Array.from(store.values())),
-    saveRule: vi.fn(async (input: { id: string | null; name: string; enabled: boolean; priority: number; body: unknown }) => {
-      const id = input.id ?? `id-${store.size + 1}`;
-      const row = { id, name: input.name, enabled: input.enabled, priority: input.priority, body: input.body };
-      store.set(id, row);
-      return row;
-    }),
+    saveRule: vi.fn(
+      async (input: {
+        id: string | null;
+        name: string;
+        enabled: boolean;
+        priority: number;
+        body: unknown;
+      }) => {
+        const id = input.id ?? `id-${store.size + 1}`;
+        const row = {
+          id,
+          name: input.name,
+          enabled: input.enabled,
+          priority: input.priority,
+          body: input.body,
+        };
+        store.set(id, row);
+        return row;
+      },
+    ),
     deleteRule: vi.fn(async (id: string) => {
       store.delete(id);
     }),
@@ -44,7 +67,15 @@ vi.mock("./ipc", async () => {
       });
     }),
     __reset: () => store.clear(),
-    __seed: (rules: Array<{ id: string; name: string; enabled: boolean; priority: number; body: unknown }>) => {
+    __seed: (
+      rules: Array<{
+        id: string;
+        name: string;
+        enabled: boolean;
+        priority: number;
+        body: unknown;
+      }>,
+    ) => {
       store.clear();
       for (const r of rules) store.set(r.id, r);
     },
@@ -55,7 +86,15 @@ import * as ipc from "./ipc";
 
 const ipcMock = ipc as typeof ipc & {
   __reset: () => void;
-  __seed: (rules: Array<{ id: string; name: string; enabled: boolean; priority: number; body: unknown }>) => void;
+  __seed: (
+    rules: Array<{
+      id: string;
+      name: string;
+      enabled: boolean;
+      priority: number;
+      body: unknown;
+    }>,
+  ) => void;
 };
 
 beforeEach(() => {
@@ -94,7 +133,13 @@ describe("serializeRule / deserializeRule", () => {
   });
 
   it("deserializeRule survives a missing body (rare but possible if migrating)", () => {
-    const backend = { id: "x", name: "x", enabled: true, priority: 0, body: null as unknown };
+    const backend = {
+      id: "x",
+      name: "x",
+      enabled: true,
+      priority: 0,
+      body: null as unknown,
+    };
     const r = deserializeRule(backend);
     expect(r.when).toEqual([]);
     expect(r.then).toEqual({ project: null });
@@ -286,11 +331,21 @@ describe("serializeRule / deserializeRule", () => {
 
 describe("moveByIndex", () => {
   it("moves an item forward through the list", () => {
-    expect(moveByIndex(["a", "b", "c", "d"], 0, 2)).toEqual(["b", "c", "a", "d"]);
+    expect(moveByIndex(["a", "b", "c", "d"], 0, 2)).toEqual([
+      "b",
+      "c",
+      "a",
+      "d",
+    ]);
   });
 
   it("moves an item backward through the list", () => {
-    expect(moveByIndex(["a", "b", "c", "d"], 3, 0)).toEqual(["d", "a", "b", "c"]);
+    expect(moveByIndex(["a", "b", "c", "d"], 3, 0)).toEqual([
+      "d",
+      "a",
+      "b",
+      "c",
+    ]);
   });
 
   it("returns the same array reference for from===to (callers use === to detect no-op)", () => {
@@ -309,7 +364,11 @@ describe("moveByIndex", () => {
 describe("withConditionAt / Added / Removed", () => {
   const base = [
     { signal: "ide.folder" as const, op: "contains" as const, value: "cairn" },
-    { signal: "git.branch" as const, op: "starts-with" as const, value: "feat/" },
+    {
+      signal: "git.branch" as const,
+      op: "starts-with" as const,
+      value: "feat/",
+    },
   ];
 
   it("withConditionAt patches a single field at the given index", () => {
@@ -350,7 +409,10 @@ describe("useRules hook", () => {
         name: "DB rule",
         enabled: true,
         priority: 5,
-        body: { when: [{ signal: "ide.folder", op: "equals", value: "x" }], then: { project: "p" } },
+        body: {
+          when: [{ signal: "ide.folder", op: "equals", value: "x" }],
+          then: { project: "p" },
+        },
       },
     ]);
     const { result } = renderHook(() => useRules());
@@ -474,8 +536,20 @@ describe("useRules hook", () => {
 
   it("remove() drops the rule and calls deleteRule IPC", async () => {
     ipcMock.__seed([
-      { id: "r1", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
-      { id: "r2", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+      {
+        id: "r1",
+        name: "A",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+      {
+        id: "r2",
+        name: "B",
+        enabled: true,
+        priority: 20,
+        body: { when: [], then: { project: null } },
+      },
     ]);
     const { result } = renderHook(() => useRules());
     await waitFor(() => expect(result.current.rules).toHaveLength(2));
@@ -517,14 +591,10 @@ describe("useRules hook", () => {
 
     // Suggestive: never warns, even with the spec's danger shape.
     expect(
-      shouldWarnConfidence(
-        base({ confidence: "suggestive", when: [ide] }),
-      ),
+      shouldWarnConfidence(base({ confidence: "suggestive", when: [ide] })),
     ).toBe(false);
     expect(
-      shouldWarnConfidence(
-        base({ confidence: undefined, when: [ide] }),
-      ),
+      shouldWarnConfidence(base({ confidence: undefined, when: [ide] })),
     ).toBe(false);
 
     // Strict + 0 or 1 conditions: warns.
@@ -543,9 +613,7 @@ describe("useRules hook", () => {
     // Strict + 2+ mixed ops: no warn (a contains-mixed-with-equals
     // rule is specific enough to escape the heuristic).
     expect(
-      shouldWarnConfidence(
-        base({ confidence: "strict", when: [ide, branch] }),
-      ),
+      shouldWarnConfidence(base({ confidence: "strict", when: [ide, branch] })),
     ).toBe(false);
 
     // Dismissed: silenced regardless of shape.
@@ -562,9 +630,27 @@ describe("useRules hook", () => {
 
   it("move() reorders rules locally + persists via reorderRules IPC with new ids", async () => {
     ipcMock.__seed([
-      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
-      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
-      { id: "c", name: "C", enabled: true, priority: 30, body: { when: [], then: { project: null } } },
+      {
+        id: "a",
+        name: "A",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+      {
+        id: "b",
+        name: "B",
+        enabled: true,
+        priority: 20,
+        body: { when: [], then: { project: null } },
+      },
+      {
+        id: "c",
+        name: "C",
+        enabled: true,
+        priority: 30,
+        body: { when: [], then: { project: null } },
+      },
     ]);
     const { result } = renderHook(() => useRules());
     await waitFor(() => expect(result.current.rules).toHaveLength(3));
@@ -576,17 +662,25 @@ describe("useRules hook", () => {
     // Priorities dense + unique 10, 20, 30 (the contract for the backend).
     expect(result.current.rules.map((r) => r.priority)).toEqual([10, 20, 30]);
     // The IPC was called with the new id order — not the old one.
-    expect(ipc.reorderRules).toHaveBeenCalledExactlyOnceWith([
-      "b",
-      "c",
-      "a",
-    ]);
+    expect(ipc.reorderRules).toHaveBeenCalledExactlyOnceWith(["b", "c", "a"]);
   });
 
   it("move() is a no-op when from === to (skips the IPC call entirely)", async () => {
     ipcMock.__seed([
-      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
-      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+      {
+        id: "a",
+        name: "A",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+      {
+        id: "b",
+        name: "B",
+        enabled: true,
+        priority: 20,
+        body: { when: [], then: { project: null } },
+      },
     ]);
     const { result } = renderHook(() => useRules());
     await waitFor(() => expect(result.current.rules).toHaveLength(2));
@@ -598,8 +692,20 @@ describe("useRules hook", () => {
 
   it("move() with out-of-range indices is a no-op (no IPC, no state change)", async () => {
     ipcMock.__seed([
-      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
-      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+      {
+        id: "a",
+        name: "A",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+      {
+        id: "b",
+        name: "B",
+        enabled: true,
+        priority: 20,
+        body: { when: [], then: { project: null } },
+      },
     ]);
     const { result } = renderHook(() => useRules());
     await waitFor(() => expect(result.current.rules).toHaveLength(2));
@@ -617,8 +723,20 @@ describe("useRules hook", () => {
     // would visually snap rules back to a stale position the
     // user has already moved past.
     ipcMock.__seed([
-      { id: "a", name: "A", enabled: true, priority: 10, body: { when: [], then: { project: null } } },
-      { id: "b", name: "B", enabled: true, priority: 20, body: { when: [], then: { project: null } } },
+      {
+        id: "a",
+        name: "A",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+      {
+        id: "b",
+        name: "B",
+        enabled: true,
+        priority: 20,
+        body: { when: [], then: { project: null } },
+      },
     ]);
     const { result } = renderHook(() => useRules());
     await waitFor(() => expect(result.current.rules).toHaveLength(2));

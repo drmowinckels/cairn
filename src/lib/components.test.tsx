@@ -20,7 +20,9 @@ describe("ProjectChip", () => {
   });
 
   it("returns null for an unknown project id", () => {
-    const { container } = render(<ProjectChip id={"does-not-exist" as never} />);
+    const { container } = render(
+      <ProjectChip id={"does-not-exist" as never} />,
+    );
     expect(container.firstChild).toBeNull();
   });
 
@@ -33,6 +35,27 @@ describe("ProjectChip", () => {
     expect(btn.getAttribute("tabindex")).toBe("0");
     fireEvent.click(btn);
     expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it("activates on Enter and Space when interactive", () => {
+    const onClick = vi.fn();
+    const { getByRole } = render(
+      <ProjectChip id="cairn" interactive onClick={onClick} />,
+    );
+    const btn = getByRole("button");
+    fireEvent.keyDown(btn, { key: "Enter" });
+    fireEvent.keyDown(btn, { key: " " });
+    expect(onClick).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(btn, { key: "a" });
+    expect(onClick).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores key presses when not interactive", () => {
+    const onClick = vi.fn();
+    const { container } = render(<ProjectChip id="cairn" onClick={onClick} />);
+    const chip = container.querySelector(".proj-chip") as HTMLElement;
+    fireEvent.keyDown(chip, { key: "Enter" });
+    expect(onClick).not.toHaveBeenCalled();
   });
 });
 
@@ -57,9 +80,9 @@ describe("LocalBadge", () => {
   it("defaults to 'local only' with a tooltip", () => {
     const { getByText, container } = render(<LocalBadge />);
     expect(getByText("local only")).toBeTruthy();
-    expect(container.querySelector(".local-badge")?.getAttribute("title")).toContain(
-      "stays on your machine",
-    );
+    expect(
+      container.querySelector(".local-badge")?.getAttribute("title"),
+    ).toContain("stays on your machine");
   });
 
   it("shrinks to 'local' in compact mode", () => {

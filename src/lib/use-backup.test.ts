@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 const invokeMock = vi.fn();
@@ -222,7 +215,8 @@ describe("useBackup (inside Tauri)", () => {
         );
         return null;
       }
-      if (cmd === "data_paths") return { dataDir: "/d", dbPath: "/d/x", pendingImport: null };
+      if (cmd === "data_paths")
+        return { dataDir: "/d", dbPath: "/d/x", pendingImport: null };
       if (cmd === "list_data_files") return [];
       if (cmd === "delete_everything") {
         order.push("delete_everything");
@@ -338,9 +332,7 @@ describe("useBackup (inside Tauri)", () => {
     });
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
-    await waitFor(() =>
-      expect(result.current.pendingImport).toBe("/staged"),
-    );
+    await waitFor(() => expect(result.current.pendingImport).toBe("/staged"));
 
     await act(async () => {
       await result.current.cancelImport();
@@ -456,9 +448,7 @@ describe("useBackup (inside Tauri)", () => {
       if (cmd === "data_paths") return PATHS;
       if (cmd === "list_data_files") {
         call += 1;
-        return call === 1
-          ? []
-          : [{ name: "cairn.sqlite", sizeBytes: 1024 }];
+        return call === 1 ? [] : [{ name: "cairn.sqlite", sizeBytes: 1024 }];
       }
       return undefined;
     });

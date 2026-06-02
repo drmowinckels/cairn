@@ -9,7 +9,11 @@ import {
 } from "react";
 import { Icon, type IconName } from "../../lib/icon";
 import { rank } from "../../lib/fuzzy";
-import { applyMruOrder, createMruStore, type MruStore } from "../../lib/use-palette";
+import {
+  applyMruOrder,
+  createMruStore,
+  type MruStore,
+} from "../../lib/use-palette";
 import type { Project, Rule, View } from "../../lib/types";
 import type { SettingsSectionId } from "../settings/settings";
 
@@ -115,7 +119,11 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
     });
   }
 
-  const SECTIONS: Array<{ id: SettingsSection; label: string; icon: IconName }> = [
+  const SECTIONS: Array<{
+    id: SettingsSection;
+    label: string;
+    icon: IconName;
+  }> = [
     { id: "privacy", label: "Privacy", icon: "shield" },
     { id: "exclusions", label: "Never track these", icon: "lock" },
     { id: "accessibility", label: "Accessibility", icon: "type" },
@@ -137,9 +145,7 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
   for (const r of ctx.rules) {
     out.push({
       id: `toggle-rule:${r.id}`,
-      label: r.enabled
-        ? `Disable rule: ${r.name}`
-        : `Enable rule: ${r.name}`,
+      label: r.enabled ? `Disable rule: ${r.name}` : `Enable rule: ${r.name}`,
       group: "Rules",
       icon: "sparkle",
       run: () => ctx.toggleRule(r.id, !r.enabled),
@@ -294,6 +300,10 @@ export function CommandPalette({ open, onClose, context, mruStore }: Props) {
         if (e.target === overlayRef.current) onClose();
       }}
     >
+      {/* Focus-trapped modal: onKeyDown handles Escape/Tab/arrow nav. The
+          dialog role is non-interactive but key handling here is the
+          standard modal pattern, not a clickable control. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
         ref={dialogRef}
         className="modal palette"
@@ -337,7 +347,13 @@ export function CommandPalette({ open, onClose, context, mruStore }: Props) {
             role="listbox"
             aria-label="Commands"
           >
-            {renderGroupedItems(visible, highlightIndex, listId, execute, setHighlightIndex)}
+            {renderGroupedItems(
+              visible,
+              highlightIndex,
+              listId,
+              execute,
+              setHighlightIndex,
+            )}
           </ul>
         )}
       </div>
@@ -370,6 +386,10 @@ function renderGroupedItems(
     }
     const active = i === highlight;
     nodes.push(
+      // Listbox option: keyboard activation is centralized on the input
+      // (aria-activedescendant + Enter in handleKeyDown); the onClick is a
+      // pointer affordance, so a per-option key handler is not needed.
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events
       <li
         key={cmd.id}
         id={`${listId}-${i}`}

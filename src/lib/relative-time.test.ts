@@ -12,7 +12,9 @@ describe("formatRelativeTime", () => {
   });
 
   it("returns 'just now' for very recent or future times", () => {
-    expect(formatRelativeTime(NOW.toISOString(), { now: NOW })).toBe("just now");
+    expect(formatRelativeTime(NOW.toISOString(), { now: NOW })).toBe(
+      "just now",
+    );
     expect(formatRelativeTime(ago(10_000), { now: NOW })).toBe("just now");
     expect(
       formatRelativeTime(new Date(NOW.getTime() + 60_000).toISOString(), {

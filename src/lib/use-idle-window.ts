@@ -100,10 +100,11 @@ export function useIdleWindow(opts: UseIdleWindowOpts = {}): UseIdleWindow {
         } else {
           // The timer was stopped during idle — nothing to attribute the
           // away time to. Surface rather than silently swallow the click.
-          console.warn(
-            "useIdleWindow: no running entry; idle choice dropped",
-            { choice, since: current.since, until: current.until },
-          );
+          console.warn("useIdleWindow: no running entry; idle choice dropped", {
+            choice,
+            since: current.since,
+            until: current.until,
+          });
         }
       } catch (e) {
         console.error("resolve_idle failed", e);

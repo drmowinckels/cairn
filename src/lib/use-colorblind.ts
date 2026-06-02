@@ -18,7 +18,10 @@ export function useColorblindEnabled(): boolean {
     const read = () => setEnabled(root.dataset.colorblind === "on");
     read();
     const mo = new MutationObserver(read);
-    mo.observe(root, { attributes: true, attributeFilter: ["data-colorblind"] });
+    mo.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-colorblind"],
+    });
     return () => mo.disconnect();
   }, []);
 

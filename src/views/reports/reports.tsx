@@ -213,10 +213,7 @@ export function ReportsView({ density }: Props) {
                 className={`bar-col${d.isToday ? " is-today" : ""}${d.isFuture ? " is-future" : ""}`}
                 aria-label={`${d.weekday}: ${hours.toFixed(1)} hours${d.isToday ? " (today)" : ""}`}
               >
-                <div
-                  className="bar-stack"
-                  style={{ height: `${heightPct}%` }}
-                >
+                <div className="bar-stack" style={{ height: `${heightPct}%` }}>
                   {d.segments.map((s) => (
                     <div
                       key={s.projectId ?? "_none"}
@@ -286,17 +283,23 @@ export function ReportsView({ density }: Props) {
         >
           <span
             className="hon-seg hon-rule"
-            style={{ width: `${percentOf(data?.bySource.rule ?? 0, honestyTotal)}%` }}
+            style={{
+              width: `${percentOf(data?.bySource.rule ?? 0, honestyTotal)}%`,
+            }}
             data-testid="hon-rule"
           />
           <span
             className="hon-seg hon-cal"
-            style={{ width: `${percentOf(data?.bySource.calendar ?? 0, honestyTotal)}%` }}
+            style={{
+              width: `${percentOf(data?.bySource.calendar ?? 0, honestyTotal)}%`,
+            }}
             data-testid="hon-cal"
           />
           <span
             className="hon-seg hon-manual"
-            style={{ width: `${percentOf(data?.bySource.manual ?? 0, honestyTotal)}%` }}
+            style={{
+              width: `${percentOf(data?.bySource.manual ?? 0, honestyTotal)}%`,
+            }}
             data-testid="hon-manual"
           />
         </div>
@@ -312,7 +315,8 @@ export function ReportsView({ density }: Props) {
             <span className="hon-key hon-cal" aria-hidden="true" />
             <span>From calendar</span>
             <Mono>
-              {percentOf(data?.bySource.calendar ?? 0, honestyTotal).toFixed(0)}%
+              {percentOf(data?.bySource.calendar ?? 0, honestyTotal).toFixed(0)}
+              %
             </Mono>
           </li>
           <li>

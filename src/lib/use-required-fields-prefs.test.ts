@@ -19,18 +19,22 @@ describe("useRequiredFieldsPrefs", () => {
     const { result } = renderHook(() => useRequiredFieldsPrefs());
     act(() => result.current.setRequireProject(true));
     expect(result.current.prefs.requireProject).toBe(true);
-    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
-      requireProject: true,
-    });
+    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toMatchObject(
+      {
+        requireProject: true,
+      },
+    );
   });
 
   it("persists requireDescription to localStorage", () => {
     const { result } = renderHook(() => useRequiredFieldsPrefs());
     act(() => result.current.setRequireDescription(true));
     expect(result.current.prefs.requireDescription).toBe(true);
-    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
-      requireDescription: true,
-    });
+    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toMatchObject(
+      {
+        requireDescription: true,
+      },
+    );
   });
 
   it("reads a persisted preference on mount", () => {

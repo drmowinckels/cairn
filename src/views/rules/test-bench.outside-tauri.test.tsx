@@ -23,12 +23,10 @@ describe("RuleTestBench (outside Tauri)", () => {
   it("shows 'preview unavailable outside the app' instead of 'no rule matches'", async () => {
     const { container } = render(<RuleTestBench />);
     await waitFor(() => {
-      expect(
-        container.querySelector(".bench-result--none"),
-      ).toBeTruthy();
+      expect(container.querySelector(".bench-result--none")).toBeTruthy();
     });
-    expect(
-      container.querySelector(".bench-result--none")?.textContent,
-    ).toMatch(/preview unavailable outside the app/i);
+    expect(container.querySelector(".bench-result--none")?.textContent).toMatch(
+      /preview unavailable outside the app/i,
+    );
   });
 });

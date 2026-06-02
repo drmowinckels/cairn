@@ -83,12 +83,18 @@ function SignalRow({ signal: s, onClick }: RowProps) {
 
 function SignalIcon({ kind }: { kind: SignalKind }) {
   const name: IconName =
-    kind === "ide.folder" ? "folder"
-    : kind === "git.branch" ? "branch"
-    : kind === "browser.domain" ? "globe"
-    : kind === "browser.tab" ? "globe"
-    : kind === "window.title" ? "type"
-    : kind === "calendar.event" ? "calendar"
-    : "info";
+    kind === "ide.folder"
+      ? "folder"
+      : kind === "git.branch"
+        ? "branch"
+        : kind === "browser.domain"
+          ? "globe"
+          : kind === "browser.tab"
+            ? "globe"
+            : kind === "window.title"
+              ? "type"
+              : kind === "calendar.event"
+                ? "calendar"
+                : "info";
   return <Icon name={name} size={12} className="sig-ic" />;
 }

@@ -82,14 +82,17 @@ export function GitRootsManager({ onClose, onSaved }: Props) {
   return (
     <div
       className="modal-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Configure git discovery roots"
-      onClick={(e) => {
+      role="presentation"
+      onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-card git-roots-mgr">
+      <div
+        className="modal-card git-roots-mgr"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Configure git discovery roots"
+      >
         <header className="modal-head">
           <h2>Git discovery roots</h2>
           <button
@@ -103,10 +106,9 @@ export function GitRootsManager({ onClose, onSaved }: Props) {
         </header>
 
         <p className="modal-sub">
-          Folders Cairn scans for git repositories to watch for branch
-          changes. Use <code>~</code> for your home folder. Changes apply
-          immediately; newly added folders are fully resolved after the next
-          launch.
+          Folders Cairn scans for git repositories to watch for branch changes.
+          Use <code>~</code> for your home folder. Changes apply immediately;
+          newly added folders are fully resolved after the next launch.
         </p>
 
         {error && (

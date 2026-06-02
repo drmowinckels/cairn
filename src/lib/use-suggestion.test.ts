@@ -126,7 +126,8 @@ describe("useSuggestion (suggestive path)", () => {
 
   it("dismiss() clears the suggestion and calls snoozeRule IPC with the default duration", async () => {
     const { listen, harness } = makeListenHarness();
-    const { useSuggestion, DEFAULT_SNOOZE_SECONDS } = await import("./use-suggestion");
+    const { useSuggestion, DEFAULT_SNOOZE_SECONDS } =
+      await import("./use-suggestion");
 
     const { result } = renderHook(() =>
       useSuggestion(defaultOpts({ listen: listen as never })),
@@ -562,9 +563,7 @@ describe("useSuggestion (ambiguity dispatch, #16)", () => {
     startEntryMock.mockRejectedValueOnce(new Error("DB locked"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { useSuggestion } = await import("./use-suggestion");
-    renderHook(() =>
-      useSuggestion(defaultOpts({ listen: listen as never })),
-    );
+    renderHook(() => useSuggestion(defaultOpts({ listen: listen as never })));
     await waitFor(() => expect(harness.handler).not.toBeNull());
     act(() => {
       harness.emit({

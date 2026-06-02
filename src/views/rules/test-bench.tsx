@@ -19,11 +19,12 @@ import { useDebouncedCallback } from "../../lib/use-debounced-callback";
  */
 const MAX_BENCH_FIELD = 2 * 1024;
 
-const DEFAULTS: { ideFolder: string; gitBranch: string; windowTitle: string } = {
-  ideFolder: "~/code/cairn",
-  gitBranch: "feat/rules-ui",
-  windowTitle: "rules.tsx — cairn",
-};
+const DEFAULTS: { ideFolder: string; gitBranch: string; windowTitle: string } =
+  {
+    ideFolder: "~/code/cairn",
+    gitBranch: "feat/rules-ui",
+    windowTitle: "rules.tsx — cairn",
+  };
 
 /** Quiet time before a keystroke fires a dry-run IPC. Short enough
  *  that the bench feels live, long enough that a 12-char paste
@@ -168,9 +169,7 @@ function BenchResult({
           <Icon name="arrow-right" size={12} />
         </span>
         <span>
-          {inTauri
-            ? "no rule matches"
-            : "preview unavailable outside the app"}
+          {inTauri ? "no rule matches" : "preview unavailable outside the app"}
         </span>
       </div>
     );

@@ -176,7 +176,9 @@ describe("DataView", () => {
 
     fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
     await waitFor(() =>
-      expect(within(projects).queryByLabelText(/rounding override/i)).toBeNull(),
+      expect(
+        within(projects).queryByLabelText(/rounding override/i),
+      ).toBeNull(),
     );
   });
 
@@ -413,7 +415,9 @@ describe("DataView (inside Tauri)", () => {
     const { DataView: Fresh } = await import("./data");
     render(<Fresh density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
-    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    fireEvent.click(
+      await within(projects).findByRole("button", { name: /^edit$/i }),
+    );
     expect(within(projects).getByLabelText(/estimate hours/i)).toBeTruthy();
   });
 
@@ -422,7 +426,9 @@ describe("DataView (inside Tauri)", () => {
     const { DataView: Fresh } = await import("./data");
     render(<Fresh density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
-    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    fireEvent.click(
+      await within(projects).findByRole("button", { name: /^edit$/i }),
+    );
     fireEvent.change(within(projects).getByLabelText(/estimate hours/i), {
       target: { value: "40" },
     });
@@ -442,7 +448,9 @@ describe("DataView (inside Tauri)", () => {
     const { DataView: Fresh } = await import("./data");
     render(<Fresh density="comfy" />);
     const projects = screen.getByRole("region", { name: /^projects$/i });
-    fireEvent.click(await within(projects).findByRole("button", { name: /^edit$/i }));
+    fireEvent.click(
+      await within(projects).findByRole("button", { name: /^edit$/i }),
+    );
     fireEvent.change(within(projects).getByLabelText(/estimate hours/i), {
       target: { value: "" },
     });
@@ -461,16 +469,33 @@ describe("DataView (inside Tauri)", () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "list_projects")
         return Promise.resolve([
-          { id: "p1", name: "Cairn", clientId: "c1", color: "#81b29a", archived: false, estimateHours: 10 },
+          {
+            id: "p1",
+            name: "Cairn",
+            clientId: "c1",
+            color: "#81b29a",
+            archived: false,
+            estimateHours: 10,
+          },
         ]);
       if (cmd === "list_clients")
-        return Promise.resolve([{ id: "c1", name: "ACME", color: null, archived: false }]);
+        return Promise.resolve([
+          { id: "c1", name: "ACME", color: null, archived: false },
+        ]);
       if (cmd === "list_tasks") return Promise.resolve([]);
       if (cmd === "data_paths")
-        return Promise.resolve({ dataDir: "/d", dbPath: "/d/x", pendingImport: null });
+        return Promise.resolve({
+          dataDir: "/d",
+          dbPath: "/d/x",
+          pendingImport: null,
+        });
       if (cmd === "list_data_files") return Promise.resolve([]);
       if (cmd === "project_budget_status")
-        return Promise.resolve({ projectId: "p1", usedSeconds: 18000, estimateHours: 10 });
+        return Promise.resolve({
+          projectId: "p1",
+          usedSeconds: 18000,
+          estimateHours: 10,
+        });
       return Promise.resolve(null);
     });
     const { DataView: Fresh } = await import("./data");

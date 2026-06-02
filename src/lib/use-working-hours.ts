@@ -40,10 +40,22 @@ function read(): WorkingHours {
     const parsed = JSON.parse(raw) as Partial<WorkingHours>;
     return {
       enabled: parsed.enabled === true,
-      startMinute: clampMinuteOfDay(parsed.startMinute, WORKING_HOURS_OFF.startMinute),
-      endMinute: clampMinuteOfDay(parsed.endMinute, WORKING_HOURS_OFF.endMinute),
-      throttleMinutes: clampPositive(parsed.throttleMinutes, WORKING_HOURS_OFF.throttleMinutes),
-      idleMinutes: clampPositive(parsed.idleMinutes, WORKING_HOURS_OFF.idleMinutes),
+      startMinute: clampMinuteOfDay(
+        parsed.startMinute,
+        WORKING_HOURS_OFF.startMinute,
+      ),
+      endMinute: clampMinuteOfDay(
+        parsed.endMinute,
+        WORKING_HOURS_OFF.endMinute,
+      ),
+      throttleMinutes: clampPositive(
+        parsed.throttleMinutes,
+        WORKING_HOURS_OFF.throttleMinutes,
+      ),
+      idleMinutes: clampPositive(
+        parsed.idleMinutes,
+        WORKING_HOURS_OFF.idleMinutes,
+      ),
     };
   } catch {
     return WORKING_HOURS_OFF;
@@ -85,15 +97,18 @@ export function useWorkingHours(): UseWorkingHours {
     [update],
   );
   const setEndMinute = useCallback(
-    (minute: number) => update({ endMinute: clampMinuteOfDay(minute, MINUTES_PER_DAY) }),
+    (minute: number) =>
+      update({ endMinute: clampMinuteOfDay(minute, MINUTES_PER_DAY) }),
     [update],
   );
   const setThrottleMinutes = useCallback(
-    (minutes: number) => update({ throttleMinutes: Math.max(1, Math.floor(minutes)) }),
+    (minutes: number) =>
+      update({ throttleMinutes: Math.max(1, Math.floor(minutes)) }),
     [update],
   );
   const setIdleMinutes = useCallback(
-    (minutes: number) => update({ idleMinutes: Math.max(1, Math.floor(minutes)) }),
+    (minutes: number) =>
+      update({ idleMinutes: Math.max(1, Math.floor(minutes)) }),
     [update],
   );
 

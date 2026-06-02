@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { BackendEntry } from "../../lib/ipc";
 
@@ -53,7 +46,15 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
       if (cmd === "current_running") return running;
       if (cmd === "list_today") return [running];
       if (cmd === "list_projects")
-        return [{ id: "p1", name: "Cairn", clientId: null, color: "#abc", archived: false }];
+        return [
+          {
+            id: "p1",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
+        ];
       if (cmd === "stop_entry")
         return { ...running, endedAt: new Date().toISOString() };
       return null;
@@ -69,7 +70,9 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
       />,
     );
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /stop timer/i })).not.toBeNull(),
+      expect(
+        screen.queryByRole("button", { name: /stop timer/i }),
+      ).not.toBeNull(),
     );
     return { ...utils, invoke };
   }
@@ -117,7 +120,9 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
         { requireProject: true, requireDescription: false },
       );
       fireEvent.click(screen.getByRole("button", { name: /stop timer/i }));
-      const chip = await screen.findByRole("button", { name: /choose a project/i });
+      const chip = await screen.findByRole("button", {
+        name: /choose a project/i,
+      });
       expect(chip.getAttribute("aria-invalid")).toBe("true");
     });
   });

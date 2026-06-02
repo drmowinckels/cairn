@@ -11,10 +11,7 @@ vi.mock("./ipc", () => ({
   setPopoverSize: (...args: unknown[]) => setPopoverSize(...args),
 }));
 
-import {
-  usePopoverSize,
-  POPOVER_DIMENSIONS,
-} from "./use-popover-size";
+import { usePopoverSize, POPOVER_DIMENSIONS } from "./use-popover-size";
 
 beforeEach(() => {
   setPopoverSize.mockClear();

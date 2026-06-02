@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -82,7 +75,9 @@ describe("TodayView (idle — no running entry)", () => {
   it("idle state offers a project picker so a timer can be started with a project", () => {
     renderToday({ hideSuggestion: true });
     // The idle row renders the same project-picker chip used while running.
-    expect(screen.getByRole("button", { name: /choose a project/i })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /choose a project/i }),
+    ).toBeTruthy();
   });
 
   it("renders the auto-detect suggestion banner when the hook surfaces a suggestion", () => {
@@ -93,7 +88,9 @@ describe("TodayView (idle — no running entry)", () => {
 
   it("dismissing the banner calls the hook's dismiss() (which handles snooze)", () => {
     renderToday();
-    fireEvent.click(screen.getByRole("button", { name: /dismiss suggestion/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /dismiss suggestion/i }),
+    );
     expect(dismissMock).toHaveBeenCalledTimes(1);
   });
 
@@ -196,7 +193,10 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     delete (globalThis as WithInternals).__TAURI_INTERNALS__;
   });
 
-  async function freshRender(source: string, opts: { endedAt?: string | null } = {}) {
+  async function freshRender(
+    source: string,
+    opts: { endedAt?: string | null } = {},
+  ) {
     const running = {
       id: "e1",
       projectId: "cairn",
@@ -222,8 +222,20 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_today") return [closed, running];
       if (cmd === "list_projects")
         return [
-          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
-          { id: "ops", name: "Operations", clientId: null, color: "#9a9bb0", archived: false },
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
+          {
+            id: "ops",
+            name: "Operations",
+            clientId: null,
+            color: "#9a9bb0",
+            archived: false,
+          },
         ];
       if (cmd === "stop_entry")
         return { ...running, endedAt: new Date().toISOString() };
@@ -237,7 +249,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     return { ...utils, invoke };
@@ -292,7 +303,9 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     // identifies which segment is which.
     await freshRender("manual");
     await waitFor(() => {
-      expect(document.querySelectorAll(".legend-item").length).toBeGreaterThan(0);
+      expect(document.querySelectorAll(".legend-item").length).toBeGreaterThan(
+        0,
+      );
     });
     const items = document.querySelectorAll(".legend-item");
     for (const item of Array.from(items)) {
@@ -400,7 +413,15 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         if (cmd === "current_running") return running;
         if (cmd === "list_today") return [running];
         if (cmd === "list_projects")
-          return [{ id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false }];
+          return [
+            {
+              id: "cairn",
+              name: "Cairn",
+              clientId: null,
+              color: "#abc",
+              archived: false,
+            },
+          ];
         if (cmd === "update_entry") {
           if (updateShouldFail) throw new Error("update boom");
           return running;
@@ -414,10 +435,11 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="default"
           onOpenRule={vi.fn()}
-
         />,
       );
-      const input = (await screen.findByLabelText(/task description/i)) as HTMLInputElement;
+      const input = (await screen.findByLabelText(
+        /task description/i,
+      )) as HTMLInputElement;
       updateShouldFail = true;
       fireEvent.change(input, { target: { value: "trigger failure" } });
       await vi.advanceTimersByTimeAsync(450);
@@ -451,8 +473,20 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         if (cmd === "list_today") return [running];
         if (cmd === "list_projects")
           return [
-            { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
-            { id: "ops", name: "Operations", clientId: null, color: "#def", archived: false },
+            {
+              id: "cairn",
+              name: "Cairn",
+              clientId: null,
+              color: "#abc",
+              archived: false,
+            },
+            {
+              id: "ops",
+              name: "Operations",
+              clientId: null,
+              color: "#def",
+              archived: false,
+            },
           ];
         if (cmd === "update_entry") throw new Error("pick boom");
         return null;
@@ -464,7 +498,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="default"
           onOpenRule={vi.fn()}
-
         />,
       );
       const chip = await screen.findByRole("button", {
@@ -492,7 +525,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         if (cmd === "list_today") return [];
         if (cmd === "list_projects")
           return [
-            { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+            {
+              id: "cairn",
+              name: "Cairn",
+              clientId: null,
+              color: "#abc",
+              archived: false,
+            },
           ];
         if (cmd === "start_entry") throw new Error("start boom");
         return null;
@@ -504,7 +543,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="projects-first"
           onOpenRule={vi.fn()}
-
         />,
       );
       await waitFor(() =>
@@ -521,10 +559,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         expect(calls.length).toBeGreaterThanOrEqual(1);
       });
       await waitFor(() =>
-        expect(errSpy).toHaveBeenCalledWith(
-          "start failed",
-          expect.any(Error),
-        ),
+        expect(errSpy).toHaveBeenCalledWith("start failed", expect.any(Error)),
       );
     } finally {
       errSpy.mockRestore();
@@ -537,7 +572,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_today") return [];
       if (cmd === "list_projects")
         return [
-          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
         ];
       if (cmd === "start_entry")
         return {
@@ -559,11 +600,12 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("current_running"));
-    const startBtn = await screen.findByRole("button", { name: /start timer/i });
+    const startBtn = await screen.findByRole("button", {
+      name: /start timer/i,
+    });
     fireEvent.click(startBtn);
     await waitFor(() => {
       const calls = invoke.mock.calls.filter(([c]) => c === "start_entry");
@@ -587,7 +629,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_today") return [running];
       if (cmd === "list_projects")
         return [
-          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
         ];
       return null;
     });
@@ -598,7 +646,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     expect(
@@ -624,7 +671,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_today") return [orphan];
       if (cmd === "list_projects")
         return [
-          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
         ];
       return null;
     });
@@ -635,7 +688,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     await waitFor(() =>
@@ -667,7 +719,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_today") return [ruleEntry, calEntry];
       if (cmd === "list_projects")
         return [
-          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
         ];
       return null;
     });
@@ -678,7 +736,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     await waitFor(() =>
@@ -703,7 +760,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_today") return [running];
       if (cmd === "list_projects")
         return [
-          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
         ];
       return null;
     });
@@ -714,7 +777,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
         announce={false}
       />,
     );
@@ -752,13 +814,14 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     await waitFor(() =>
       expect(document.querySelectorAll(".entries .entry").length).toBe(1),
     );
-    const dot = document.querySelector(".entries .entry .proj-dot") as HTMLElement;
+    const dot = document.querySelector(
+      ".entries .entry .proj-dot",
+    ) as HTMLElement;
     expect(dot.getAttribute("style") ?? "").not.toContain("var(--ink-mute)");
   });
 
@@ -778,7 +841,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_today") return [orphan];
       if (cmd === "list_projects")
         return [
-          { id: "cairn", name: "Cairn", clientId: null, color: "#abc", archived: false },
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
         ];
       return null;
     });
@@ -789,7 +858,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     await waitFor(() =>
@@ -840,10 +908,11 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="default"
           onOpenRule={vi.fn()}
-
         />,
       );
-      const chip = await screen.findByRole("button", { name: /choose a project/i });
+      const chip = await screen.findByRole("button", {
+        name: /choose a project/i,
+      });
       expect(chip.getAttribute("aria-disabled")).toBe("true");
       fireEvent.click(chip);
       expect(screen.queryByRole("listbox")).toBeNull();
@@ -870,7 +939,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           density="comfy"
           layoutVariant="projects-first"
           onOpenRule={vi.fn()}
-
         />,
       );
       await waitFor(() =>
@@ -889,7 +957,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
         detectionPrompts="modal"
       />,
     );
@@ -905,7 +972,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     const body = document.querySelector(".suggest-body");
@@ -933,7 +999,6 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-
       />,
     );
     const banner = await screen.findByText(/couldn't reach the local timer/i);

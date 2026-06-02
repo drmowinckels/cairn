@@ -11,7 +11,12 @@ interface ProjectChipProps {
   onClick?: () => void;
 }
 
-export function ProjectChip({ id, size = "sm", interactive, onClick }: ProjectChipProps) {
+export function ProjectChip({
+  id,
+  size = "sm",
+  interactive,
+  onClick,
+}: ProjectChipProps) {
   const project = PROJECT_BY_ID[id];
   const cb = useColorblindEnabled();
   if (!project) return null;
@@ -20,12 +25,26 @@ export function ProjectChip({ id, size = "sm", interactive, onClick }: ProjectCh
     <span
       className={`proj-chip proj-chip--${size}${interactive ? " is-interactive" : ""}`}
       onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
     >
       <span
         className="proj-dot"
-        style={{ width: dotSize, height: dotSize, background: cbColor(project.color, cb) }}
+        style={{
+          width: dotSize,
+          height: dotSize,
+          background: cbColor(project.color, cb),
+        }}
       />
       <span className="proj-chip-name">{project.name}</span>
     </span>
@@ -81,7 +100,9 @@ interface ErrorBannerProps {
 export function ErrorBanner({ message, onRetry }: ErrorBannerProps) {
   return (
     <div className="err-banner" role="alert">
-      <span className="err-mark" aria-hidden="true">!</span>
+      <span className="err-mark" aria-hidden="true">
+        !
+      </span>
       <span className="err-msg">{message}</span>
       {onRetry && (
         <button type="button" className="link-btn" onClick={onRetry}>
@@ -92,12 +113,14 @@ export function ErrorBanner({ message, onRetry }: ErrorBannerProps) {
   );
 }
 
-export function Skeleton({ width = "100%", height = 16 }: { width?: number | string; height?: number | string }) {
+export function Skeleton({
+  width = "100%",
+  height = 16,
+}: {
+  width?: number | string;
+  height?: number | string;
+}) {
   return (
-    <span
-      className="skeleton"
-      aria-hidden="true"
-      style={{ width, height }}
-    />
+    <span className="skeleton" aria-hidden="true" style={{ width, height }} />
   );
 }

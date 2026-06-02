@@ -48,7 +48,10 @@ export function fixtureReportSummary(range: ReportRange): ReportSummary {
   const bySource: ReportSourceSplit = {
     rule: Math.round(totalSeconds * 0.55),
     calendar: Math.round(totalSeconds * 0.25),
-    manual: totalSeconds - Math.round(totalSeconds * 0.55) - Math.round(totalSeconds * 0.25),
+    manual:
+      totalSeconds -
+      Math.round(totalSeconds * 0.55) -
+      Math.round(totalSeconds * 0.25),
   };
 
   // Day / Month flatten the same data so the picker has something

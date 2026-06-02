@@ -103,8 +103,7 @@ export interface UseRulesOpts {
 }
 
 export function useRules(opts: UseRulesOpts = {}): UseRules {
-  const defaultAmbiguity: AmbiguityBehavior =
-    opts.defaultAmbiguity ?? "prompt";
+  const defaultAmbiguity: AmbiguityBehavior = opts.defaultAmbiguity ?? "prompt";
   const [rules, setRules] = useState<Rule[]>(inTauri ? [] : FIXTURE_RULES);
   const [loading, setLoading] = useState(inTauri);
   const [error, setError] = useState<string | null>(null);
@@ -257,7 +256,17 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
   }, [refresh]);
 
   return useMemo(
-    () => ({ rules, loading, error, refresh, add, update, remove, duplicate, move }),
+    () => ({
+      rules,
+      loading,
+      error,
+      refresh,
+      add,
+      update,
+      remove,
+      duplicate,
+      move,
+    }),
     [rules, loading, error, refresh, add, update, remove, duplicate, move],
   );
 }

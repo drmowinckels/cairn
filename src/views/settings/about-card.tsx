@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { diagnostics, type Diagnostics } from "../../lib/ipc";
-import { PRIVACY_LICENSE_LABEL, PRIVACY_REPO_URL } from "../../lib/privacy-copy";
+import {
+  PRIVACY_LICENSE_LABEL,
+  PRIVACY_REPO_URL,
+} from "../../lib/privacy-copy";
 
 const AUTHOR = "Athanasia Monika Mowinckel";
 const AUTHOR_URL = "https://github.com/drmowinckels";
@@ -86,11 +89,17 @@ export function AboutCard() {
         · {PRIVACY_LICENSE_LABEL}
       </p>
       <div className="about-actions">
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => void copy()}>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={() => void copy()}
+        >
           <Icon name={copyState === "copied" ? "check" : "folder"} size={12} />{" "}
           {copyLabel}
         </button>
-        <span className="about-hint">For bug reports — version + platform + counts, no personal data.</span>
+        <span className="about-hint">
+          For bug reports — version + platform + counts, no personal data.
+        </span>
       </div>
     </div>
   );

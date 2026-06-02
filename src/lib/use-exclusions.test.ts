@@ -58,7 +58,9 @@ describe("useExclusions (inside Tauri)", () => {
 
   it("add() saves with the inferred kind then refreshes", async () => {
     invokeMock.mockImplementation(async (cmd: string) =>
-      cmd === "list_exclusions" ? ROWS : { id: "new", kind: "domain", value: "x.com" },
+      cmd === "list_exclusions"
+        ? ROWS
+        : { id: "new", kind: "domain", value: "x.com" },
     );
     const { useExclusions } = await import("./use-exclusions");
     const { result } = renderHook(() => useExclusions());

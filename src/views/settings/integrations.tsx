@@ -50,7 +50,8 @@ export function CalendarStatusLine({ onManage }: CalendarStatusLineProps) {
     .map((s) => s.lastSyncedAt)
     .filter((s): s is string => s != null)
     .sort();
-  const lastSync = syncedTimes.length > 0 ? syncedTimes[syncedTimes.length - 1] : undefined;
+  const lastSync =
+    syncedTimes.length > 0 ? syncedTimes[syncedTimes.length - 1] : undefined;
 
   const status =
     enabled.length === 0
@@ -158,11 +159,7 @@ export function AutostartStatusLine() {
   const { enabled, busy, error, ready, toggle } = useAutostart();
   const copy = useMemo(() => autostartCopy(detectPlatform()), []);
 
-  const status = error
-    ? `Toggle failed: ${error}`
-    : enabled
-      ? "On"
-      : "Off";
+  const status = error ? `Toggle failed: ${error}` : enabled ? "On" : "Off";
 
   return (
     <li className="intg-row" data-integration="autostart">

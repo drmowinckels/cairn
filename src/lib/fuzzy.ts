@@ -62,7 +62,14 @@ export function scoreFuzzy(query: string, candidate: string): number | null {
 }
 
 function isSeparator(ch: string): boolean {
-  return ch === " " || ch === "-" || ch === "_" || ch === "." || ch === "/" || ch === ":";
+  return (
+    ch === " " ||
+    ch === "-" ||
+    ch === "_" ||
+    ch === "." ||
+    ch === "/" ||
+    ch === ":"
+  );
 }
 
 /**
@@ -70,7 +77,11 @@ function isSeparator(ch: string): boolean {
  * not a subsequence match are dropped. Ties on score are broken by
  * ascending key length, then by original index (stable).
  */
-export function rank<T>(query: string, items: T[], keyOf: (item: T) => string): T[] {
+export function rank<T>(
+  query: string,
+  items: T[],
+  keyOf: (item: T) => string,
+): T[] {
   const trimmed = query.trim();
   if (trimmed === "") return items.slice();
   const scored: Array<Ranked<T> & { idx: number; keyLen: number }> = [];

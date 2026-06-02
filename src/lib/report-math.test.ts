@@ -15,7 +15,9 @@ import {
 } from "./report-math";
 import type { ReportSummary } from "./ipc";
 
-const summaryStub = (overrides: Partial<ReportSummary> = {}): ReportSummary => ({
+const summaryStub = (
+  overrides: Partial<ReportSummary> = {},
+): ReportSummary => ({
   totalSeconds: 0,
   prevTotalSeconds: 0,
   byDay: [],

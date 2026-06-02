@@ -46,8 +46,14 @@ export const SCHEDULE_OFF: PromptSchedule = {
 function normalize(cfg: PromptSchedule): PromptSchedule {
   return {
     enabled: cfg.enabled,
-    startMinute: Math.min(Math.max(0, Math.floor(cfg.startMinute)), MINUTES_PER_DAY),
-    endMinute: Math.min(Math.max(0, Math.floor(cfg.endMinute)), MINUTES_PER_DAY),
+    startMinute: Math.min(
+      Math.max(0, Math.floor(cfg.startMinute)),
+      MINUTES_PER_DAY,
+    ),
+    endMinute: Math.min(
+      Math.max(0, Math.floor(cfg.endMinute)),
+      MINUTES_PER_DAY,
+    ),
     throttleMinutes: Math.max(1, Math.floor(cfg.throttleMinutes)),
   };
 }

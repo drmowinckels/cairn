@@ -59,9 +59,7 @@ describe("LiveSignalsCard", () => {
 
   it("invokes onSignalClick with the row's signal + value on click", () => {
     const onSignalClick = vi.fn();
-    render(
-      <LiveSignalsCard signals={SAMPLE} onSignalClick={onSignalClick} />,
-    );
+    render(<LiveSignalsCard signals={SAMPLE} onSignalClick={onSignalClick} />);
     const firstButton = screen.getAllByRole("button")[0];
     fireEvent.click(firstButton);
     expect(onSignalClick).toHaveBeenCalledExactlyOnceWith(

@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
@@ -71,7 +77,9 @@ describe("buildGroups", () => {
 
   it("sets client to null for the clientless group even when clients are present", () => {
     const groups = buildGroups(PROJECTS, CLIENTS);
-    const noClientGroup = groups.find((g) => g.clientId === null) as ClientGroup;
+    const noClientGroup = groups.find(
+      (g) => g.clientId === null,
+    ) as ClientGroup;
     expect(noClientGroup.client).toBeNull();
   });
 });
@@ -81,7 +89,9 @@ describe("buildGroups", () => {
 function makeProjects(overrides: Partial<UseProjects> = {}): UseProjects {
   let projects = [...PROJECTS];
   return {
-    get projects() { return projects; },
+    get projects() {
+      return projects;
+    },
     refresh: vi.fn().mockResolvedValue(undefined),
     create: vi.fn().mockImplementation(async (input) => {
       const p: Project = {
@@ -114,43 +124,79 @@ function makeClients(overrides: Partial<UseClients> = {}): UseClients {
   };
 }
 
-const noopRun = vi.fn().mockImplementation(async (fn: () => Promise<unknown>) => {
-  await fn();
-});
+const noopRun = vi
+  .fn()
+  .mockImplementation(async (fn: () => Promise<unknown>) => {
+    await fn();
+  });
 
 describe("DataTree", () => {
   it("renders client group labels", () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
     expect(screen.getByText("ACME Co.")).toBeTruthy();
     expect(screen.getByText("Open source")).toBeTruthy();
     expect(screen.getByText("Internal")).toBeTruthy();
   });
 
   it("renders a 'No client' group for clientless projects", () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
     expect(screen.getByText("No client")).toBeTruthy();
   });
 
   it("shows project names inside their client group", () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
     expect(screen.getByText("acme-web")).toBeTruthy();
     expect(screen.getByText("Cairn")).toBeTruthy();
   });
 
   it("shows an empty state when there are no projects", () => {
-    const empty = makeProjects({ projects: [] } as unknown as Partial<UseProjects>);
+    const empty = makeProjects({
+      projects: [],
+    } as unknown as Partial<UseProjects>);
     render(<DataTree projects={empty} clients={makeClients()} run={noopRun} />);
     expect(screen.getByText(/no projects yet/i)).toBeTruthy();
   });
 
   it("uses role=tree on the root list", () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
     expect(screen.getByRole("tree")).toBeTruthy();
   });
 
   it("expands a project node to show tasks on click", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    const expandBtn = screen.getAllByRole("button", { name: /expand acme-web/i })[0];
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    const expandBtn = screen.getAllByRole("button", {
+      name: /expand acme-web/i,
+    })[0];
     fireEvent.click(expandBtn);
     await waitFor(() =>
       expect(screen.getByLabelText(/new task for acme-web/i)).toBeTruthy(),
@@ -158,27 +204,55 @@ describe("DataTree", () => {
   });
 
   it("shows tasks from the fixture under the expanded project", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    const expandBtn = screen.getAllByRole("button", { name: /expand acme-web/i })[0];
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    const expandBtn = screen.getAllByRole("button", {
+      name: /expand acme-web/i,
+    })[0];
     fireEvent.click(expandBtn);
     await waitFor(() => expect(screen.getByText("Design")).toBeTruthy());
     expect(screen.getByText("Implementation")).toBeTruthy();
   });
 
   it("collapses an expanded project on second click", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    const expandBtn = screen.getAllByRole("button", { name: /expand acme-web/i })[0];
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    const expandBtn = screen.getAllByRole("button", {
+      name: /expand acme-web/i,
+    })[0];
     fireEvent.click(expandBtn);
-    await waitFor(() => expect(screen.getByLabelText(/new task for acme-web/i)).toBeTruthy());
-    fireEvent.click(screen.getAllByRole("button", { name: /collapse acme-web/i })[0]);
+    await waitFor(() =>
+      expect(screen.getByLabelText(/new task for acme-web/i)).toBeTruthy(),
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /collapse acme-web/i })[0],
+    );
     await waitFor(() =>
       expect(screen.queryByLabelText(/new task for acme-web/i)).toBeNull(),
     );
   });
 
   it("adds a task to a project inside the tree", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     const input = await screen.findByLabelText(/new task for acme-web/i);
     fireEvent.change(input, { target: { value: "New task" } });
     fireEvent.click(screen.getAllByRole("button", { name: /^add$/i })[0]);
@@ -186,8 +260,16 @@ describe("DataTree", () => {
   });
 
   it("adds a task via Enter key", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     const input = await screen.findByLabelText(/new task for acme-web/i);
     fireEvent.change(input, { target: { value: "Keyboard task" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -195,8 +277,16 @@ describe("DataTree", () => {
   });
 
   it("ignores non-Enter keys in the task input", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     const input = await screen.findByLabelText(/new task for acme-web/i);
     fireEvent.change(input, { target: { value: "No add" } });
     fireEvent.keyDown(input, { key: "a" });
@@ -204,8 +294,16 @@ describe("DataTree", () => {
   });
 
   it("does not add a task on empty input", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     const addBtn = await screen.findAllByRole("button", { name: /^add$/i });
     expect(addBtn[0]).toHaveProperty("disabled", true);
   });
@@ -215,10 +313,19 @@ describe("DataTree", () => {
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);
     const acmeInput = screen.getByLabelText(/new project under acme co/i);
     fireEvent.change(acmeInput, { target: { value: "New ACME Project" } });
-    fireEvent.click(within(acmeInput.closest(".tree-client")!).getByRole("button", { name: /^add$/i }));
-    await waitFor(() => expect(p.create).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "New ACME Project", clientId: "c-acme" }),
-    ));
+    fireEvent.click(
+      within(acmeInput.closest(".tree-client")!).getByRole("button", {
+        name: /^add$/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(p.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "New ACME Project",
+          clientId: "c-acme",
+        }),
+      ),
+    );
   });
 
   it("adds a project via Enter key in group input", async () => {
@@ -227,9 +334,11 @@ describe("DataTree", () => {
     const acmeInput = screen.getByLabelText(/new project under acme co/i);
     fireEvent.change(acmeInput, { target: { value: "Enter project" } });
     fireEvent.keyDown(acmeInput, { key: "Enter" });
-    await waitFor(() => expect(p.create).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Enter project" }),
-    ));
+    await waitFor(() =>
+      expect(p.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Enter project" }),
+      ),
+    );
   });
 
   it("ignores non-Enter keys in project group input", async () => {
@@ -242,9 +351,18 @@ describe("DataTree", () => {
   });
 
   it("project add button is disabled when input is empty", () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
     const acmeInput = screen.getByLabelText(/new project under acme co/i);
-    const addBtn = within(acmeInput.closest(".tree-client")!).getByRole("button", { name: /^add$/i });
+    const addBtn = within(acmeInput.closest(".tree-client")!).getByRole(
+      "button",
+      { name: /^add$/i },
+    );
     expect(addBtn).toHaveProperty("disabled", true);
   });
 
@@ -253,21 +371,45 @@ describe("DataTree", () => {
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);
     const noClientInput = screen.getByLabelText(/new project under no client/i);
     fireEvent.change(noClientInput, { target: { value: "Free agent" } });
-    fireEvent.click(within(noClientInput.closest(".tree-client")!).getByRole("button", { name: /^add$/i }));
-    await waitFor(() => expect(p.create).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Free agent", clientId: null }),
-    ));
+    fireEvent.click(
+      within(noClientInput.closest(".tree-client")!).getByRole("button", {
+        name: /^add$/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(p.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Free agent", clientId: null }),
+      ),
+    );
   });
 
   it("shows project count in the client group header", () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    const acmeLabel = screen.getByText("ACME Co.").closest(".tree-client-label")!;
-    expect(within(acmeLabel as HTMLElement).getByText(/1 project/)).toBeTruthy();
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    const acmeLabel = screen
+      .getByText("ACME Co.")
+      .closest(".tree-client-label")!;
+    expect(
+      within(acmeLabel as HTMLElement).getByText(/1 project/),
+    ).toBeTruthy();
   });
 
   it("shows 'projects' (plural) when count > 1", () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    const osLabel = screen.getByText("No client").closest(".tree-client-label")!;
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    const osLabel = screen
+      .getByText("No client")
+      .closest(".tree-client-label")!;
     expect(within(osLabel as HTMLElement).getByText(/2 projects/)).toBeTruthy();
   });
 
@@ -286,26 +428,50 @@ describe("DataTree", () => {
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);
     fireEvent.click(screen.getByRole("button", { name: /delete acme-web/i }));
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
-    expect(screen.getByRole("button", { name: /delete acme-web/i })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /delete acme-web/i }),
+    ).toBeTruthy();
     expect(p.remove).not.toHaveBeenCalled();
   });
 
   it("deletes a task after inline confirmation", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
-    const deleteDesignBtn = await screen.findByRole("button", { name: /delete design/i });
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
+    const deleteDesignBtn = await screen.findByRole("button", {
+      name: /delete design/i,
+    });
     fireEvent.click(deleteDesignBtn);
     expect(screen.getByText("Delete?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /delete design/i })).toBeNull(),
+      expect(
+        screen.queryByRole("button", { name: /delete design/i }),
+      ).toBeNull(),
     );
   });
 
   it("cancel on task delete keeps it visible", async () => {
-    render(<DataTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
-    const deleteDesignBtn = await screen.findByRole("button", { name: /delete design/i });
+    render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
+    const deleteDesignBtn = await screen.findByRole("button", {
+      name: /delete design/i,
+    });
     fireEvent.click(deleteDesignBtn);
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     expect(screen.getByRole("button", { name: /delete design/i })).toBeTruthy();
@@ -322,7 +488,9 @@ describe("DataTree", () => {
         estimateHours: null,
       },
     ];
-    const p = makeProjects({ projects: projectsWithNoTasks } as unknown as Partial<UseProjects>);
+    const p = makeProjects({
+      projects: projectsWithNoTasks,
+    } as unknown as Partial<UseProjects>);
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);
     fireEvent.click(screen.getByRole("button", { name: /expand empty/i }));
     await waitFor(() => expect(screen.getByText(/no tasks/i)).toBeTruthy());
@@ -342,8 +510,12 @@ describe("DataTree", () => {
         estimateHours: null,
       },
     ];
-    const p = makeProjects({ projects: projectsUnderOtherClient } as unknown as Partial<UseProjects>);
-    const c = makeClients({ clients: clientsOnly } as unknown as Partial<UseClients>);
+    const p = makeProjects({
+      projects: projectsUnderOtherClient,
+    } as unknown as Partial<UseProjects>);
+    const c = makeClients({
+      clients: clientsOnly,
+    } as unknown as Partial<UseClients>);
     render(<DataTree projects={p} clients={c} run={noopRun} />);
     // The group for c-other is rendered (no named client), projects visible
     expect(screen.getByText("Alpha")).toBeTruthy();
@@ -358,7 +530,9 @@ describe("DataTree", () => {
   it("does not add task on empty draft (guards the early-return branch)", async () => {
     const p = makeProjects();
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     const input = await screen.findByLabelText(/new task for acme-web/i);
     // Draft is empty; Add button is disabled but we fire keyDown to exercise the guard
     fireEvent.keyDown(input, { key: "Enter" });
@@ -377,7 +551,9 @@ describe("DataTree", () => {
   it("does not add duplicate local task (already-exists branch)", async () => {
     const p = makeProjects();
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     const input = await screen.findByLabelText(/new task for acme-web/i);
     // Add the task twice — second add should not duplicate it
     fireEvent.change(input, { target: { value: "Unique task" } });
@@ -446,9 +622,13 @@ describe("DataView — view mode toggle", () => {
 
   it("Storage section is always visible in both modes", () => {
     render(<DataView density="comfy" />);
-    expect(screen.getByRole("region", { name: /local data storage/i })).toBeTruthy();
+    expect(
+      screen.getByRole("region", { name: /local data storage/i }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^tree$/i }));
-    expect(screen.getByRole("region", { name: /local data storage/i })).toBeTruthy();
+    expect(
+      screen.getByRole("region", { name: /local data storage/i }),
+    ).toBeTruthy();
   });
 });
 
@@ -467,16 +647,32 @@ describe("DataTree (inside Tauri)", () => {
 
   it("loads tasks via listTasks IPC when expanded inside Tauri", async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === "list_tasks") return Promise.resolve([
-        { id: "t1", projectId: "acme", name: "Backend task", archived: false },
-      ]);
+      if (cmd === "list_tasks")
+        return Promise.resolve([
+          {
+            id: "t1",
+            projectId: "acme",
+            name: "Backend task",
+            archived: false,
+          },
+        ]);
       return Promise.resolve([]);
     });
     const { DataTree: FreshTree } = await import("./data-tree");
-    render(<FreshTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    render(
+      <FreshTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     await waitFor(() => expect(screen.getByText("Backend task")).toBeTruthy());
-    expect(invokeMock).toHaveBeenCalledWith("list_tasks", { projectId: "acme" });
+    expect(invokeMock).toHaveBeenCalledWith("list_tasks", {
+      projectId: "acme",
+    });
   });
 
   it("falls back to empty list when listTasks IPC throws", async () => {
@@ -485,21 +681,42 @@ describe("DataTree (inside Tauri)", () => {
       return Promise.resolve([]);
     });
     const { DataTree: FreshTree } = await import("./data-tree");
-    render(<FreshTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    render(
+      <FreshTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     await waitFor(() => expect(screen.getByText(/no tasks/i)).toBeTruthy());
   });
 
   it("saves a task via saveTask IPC when added inside Tauri", async () => {
-    const savedTask = { id: "t-new", projectId: "acme", name: "IPC task", archived: false };
+    const savedTask = {
+      id: "t-new",
+      projectId: "acme",
+      name: "IPC task",
+      archived: false,
+    };
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "list_tasks") return Promise.resolve([]);
       if (cmd === "save_task") return Promise.resolve(savedTask);
       return Promise.resolve([]);
     });
     const { DataTree: FreshTree } = await import("./data-tree");
-    render(<FreshTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
+    render(
+      <FreshTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
     const input = await screen.findByLabelText(/new task for acme-web/i);
     fireEvent.change(input, { target: { value: "IPC task" } });
     fireEvent.click(screen.getAllByRole("button", { name: /^add$/i })[0]);
@@ -510,23 +727,40 @@ describe("DataTree (inside Tauri)", () => {
   });
 
   it("deletes a task via deleteTask IPC when confirmed inside Tauri", async () => {
-    const existingTask = { id: "t-del", projectId: "acme", name: "Deletable", archived: false };
+    const existingTask = {
+      id: "t-del",
+      projectId: "acme",
+      name: "Deletable",
+      archived: false,
+    };
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "list_tasks") return Promise.resolve([existingTask]);
       if (cmd === "delete_task") return Promise.resolve(null);
       return Promise.resolve([]);
     });
     const { DataTree: FreshTree } = await import("./data-tree");
-    render(<FreshTree projects={makeProjects()} clients={makeClients()} run={noopRun} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /expand acme-web/i })[0]);
-    const deleteBtn = await screen.findByRole("button", { name: /delete deletable/i });
+    render(
+      <FreshTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /expand acme-web/i })[0],
+    );
+    const deleteBtn = await screen.findByRole("button", {
+      name: /delete deletable/i,
+    });
     fireEvent.click(deleteBtn);
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith("delete_task", { id: "t-del" }),
     );
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /delete deletable/i })).toBeNull(),
+      expect(
+        screen.queryByRole("button", { name: /delete deletable/i }),
+      ).toBeNull(),
     );
   });
 });

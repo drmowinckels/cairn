@@ -10,6 +10,15 @@ publish = false
 name = "cairn-browser-host"
 path = "src/main.rs"
 
+# Mirror CI's `clippy -- -D warnings` so local `cargo clippy`/`cargo build`
+# enforce the same gate. Item-level `#[allow(...)]` still overrides where a
+# lint is deliberately suppressed.
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = "deny"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

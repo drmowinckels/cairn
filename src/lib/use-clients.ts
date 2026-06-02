@@ -44,18 +44,21 @@ export function useClients(): UseClients {
     void refresh();
   }, [refresh]);
 
-  const create = useCallback(async (input: SaveClientInput): Promise<Client> => {
-    if (!inTauri) {
-      const local = localClient(input);
-      setClients((prev) =>
-        prev.some((c) => c.id === local.id) ? prev : [...prev, local],
-      );
-      return local;
-    }
-    const saved = await saveClient(input);
-    setClients((prev) => [...prev.filter((c) => c.id !== saved.id), saved]);
-    return saved;
-  }, []);
+  const create = useCallback(
+    async (input: SaveClientInput): Promise<Client> => {
+      if (!inTauri) {
+        const local = localClient(input);
+        setClients((prev) =>
+          prev.some((c) => c.id === local.id) ? prev : [...prev, local],
+        );
+        return local;
+      }
+      const saved = await saveClient(input);
+      setClients((prev) => [...prev.filter((c) => c.id !== saved.id), saved]);
+      return saved;
+    },
+    [],
+  );
 
   const update = useCallback(
     async (input: SaveClientInput & { id: string }): Promise<Client> => {

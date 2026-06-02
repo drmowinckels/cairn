@@ -28,19 +28,33 @@ describe("IdleWindow", () => {
   it("renders the four resolution choices", () => {
     render(<IdleWindow />);
     expect(screen.getByRole("dialog", { name: /you were away/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /keep in this session/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /discard, keep tracking/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /discard, start new session/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /discard and stop/i })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /keep in this session/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /discard, keep tracking/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /discard, start new session/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /discard and stop/i }),
+    ).toBeTruthy();
   });
 
   it("maps each button to its idle choice", () => {
     render(<IdleWindow />);
-    fireEvent.click(screen.getByRole("button", { name: /discard, keep tracking/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /discard, keep tracking/i }),
+    );
     expect(resolve).toHaveBeenCalledWith("discard-continue");
-    fireEvent.click(screen.getByRole("button", { name: /discard, start new session/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /discard, start new session/i }),
+    );
     expect(resolve).toHaveBeenCalledWith("new-session");
-    fireEvent.click(screen.getByRole("button", { name: /keep in this session/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /keep in this session/i }),
+    );
     expect(resolve).toHaveBeenCalledWith("keep");
     fireEvent.click(screen.getByRole("button", { name: /discard and stop/i }));
     expect(resolve).toHaveBeenCalledWith("discard");
@@ -58,8 +72,11 @@ describe("IdleWindow", () => {
     prompt = null;
     render(<IdleWindow />);
     expect(
-      (screen.getByRole("button", { name: /keep in this session/i }) as HTMLButtonElement)
-        .disabled,
+      (
+        screen.getByRole("button", {
+          name: /keep in this session/i,
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
   });
 });

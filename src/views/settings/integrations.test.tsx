@@ -21,9 +21,8 @@ const setGitDiscoveryRoots = vi.fn();
 const browserExtensionStatus = vi.fn();
 
 vi.mock("../../lib/ipc", async () => {
-  const actual = await vi.importActual<typeof import("../../lib/ipc")>(
-    "../../lib/ipc",
-  );
+  const actual =
+    await vi.importActual<typeof import("../../lib/ipc")>("../../lib/ipc");
   return {
     ...actual,
     inTauri: true,
@@ -102,9 +101,7 @@ describe("CalendarStatusLine", () => {
       </ul>,
     );
 
-    await waitFor(() =>
-      expect(screen.getByText(/2 sources/)).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText(/2 sources/)).toBeTruthy());
     expect(screen.getByText(/last sync 5m ago/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Manage…/ })).toBeTruthy();
   });
@@ -116,7 +113,9 @@ describe("CalendarStatusLine", () => {
         <CalendarStatusLine onManage={() => {}} />
       </ul>,
     );
-    await waitFor(() => expect(screen.getByText("No sources yet")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("No sources yet")).toBeTruthy(),
+    );
   });
 
   it("matches snapshot for a single source", async () => {
@@ -141,8 +140,9 @@ describe("CalendarStatusLine", () => {
       </ul>,
     );
     await waitFor(() => screen.getByText(/1 source ·/));
-    expect(container.querySelector('[data-integration="calendar"]'))
-      .toMatchSnapshot();
+    expect(
+      container.querySelector('[data-integration="calendar"]'),
+    ).toMatchSnapshot();
   });
 });
 
@@ -160,7 +160,9 @@ describe("GitStatusLine", () => {
     await waitFor(() =>
       expect(screen.getByText("Watching 4 repos under ~/code")).toBeTruthy(),
     );
-    expect(screen.getByRole("button", { name: /Configure roots…/ })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Configure roots…/ }),
+    ).toBeTruthy();
   });
 
   it("singularizes the repo count", async () => {
@@ -216,8 +218,9 @@ describe("GitStatusLine", () => {
       </ul>,
     );
     await waitFor(() => screen.getByText("Watching 3 repos under ~/code"));
-    expect(container.querySelector('[data-integration="git"]'))
-      .toMatchSnapshot();
+    expect(
+      container.querySelector('[data-integration="git"]'),
+    ).toMatchSnapshot();
   });
 
   it("opens the configurator, adds a root, saves, and refreshes the status", async () => {
@@ -237,9 +240,7 @@ describe("GitStatusLine", () => {
         <GitStatusLine />
       </ul>,
     );
-    await waitFor(() =>
-      screen.getByText("Watching 2 repos under ~/code"),
-    );
+    await waitFor(() => screen.getByText("Watching 2 repos under ~/code"));
 
     fireEvent.click(screen.getByRole("button", { name: /Configure roots…/ }));
     // The modal loads the current roots.
@@ -287,9 +288,7 @@ describe("GitStatusLine", () => {
     await screen.findByText("~/work");
     fireEvent.click(screen.getByRole("button", { name: /reset to defaults/i }));
 
-    await waitFor(() =>
-      expect(setGitDiscoveryRoots).toHaveBeenCalledWith([]),
-    );
+    await waitFor(() => expect(setGitDiscoveryRoots).toHaveBeenCalledWith([]));
     // The reloaded defaults render in the list.
     await waitFor(() => expect(screen.getByText("~/code")).toBeTruthy());
   });
@@ -336,7 +335,9 @@ describe("GitStatusLine", () => {
       await screen.findByRole("button", { name: /Configure roots…/ }),
     );
     await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toMatch(/cannot read roots/i),
+      expect(screen.getByRole("alert").textContent).toMatch(
+        /cannot read roots/i,
+      ),
     );
   });
 
@@ -383,9 +384,7 @@ describe("BrowserStatusLine", () => {
         <BrowserStatusLine installHref="https://example.com/install" />
       </ul>,
     );
-    await waitFor(() =>
-      expect(screen.getByText("Not installed")).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("Not installed")).toBeTruthy());
     expect(screen.getByRole("button", { name: /Install…/ })).toBeTruthy();
   });
 
@@ -432,8 +431,9 @@ describe("BrowserStatusLine", () => {
       </ul>,
     );
     await waitFor(() => screen.getByText("Not installed"));
-    expect(container.querySelector('[data-integration="browser"]'))
-      .toMatchSnapshot();
+    expect(
+      container.querySelector('[data-integration="browser"]'),
+    ).toMatchSnapshot();
   });
 });
 
@@ -483,9 +483,7 @@ describe("AutostartStatusLine", () => {
         <AutostartStatusLine />
       </ul>,
     );
-    await waitFor(() =>
-      expect(screen.getByText(/Toggle failed/)).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText(/Toggle failed/)).toBeTruthy());
     expect(screen.getByText(/registry denied/)).toBeTruthy();
   });
 });

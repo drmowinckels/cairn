@@ -16,7 +16,12 @@ interface Props {
  * the user then fills in; it never auto-logs. Mirrors the detection
  * suggestion banner's styling so it inherits the reduced-motion handling.
  */
-export function WorkingHoursReminder({ style, announce, onStart, onDismiss }: Props) {
+export function WorkingHoursReminder({
+  style,
+  announce,
+  onStart,
+  onDismiss,
+}: Props) {
   return (
     <section
       className={`suggest suggest--${style}`}

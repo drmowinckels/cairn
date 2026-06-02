@@ -12,7 +12,10 @@ import { SettingsView } from "./settings";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type { UseRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
-import { REQUIRED_FIELDS_OFF, type RequiredFieldsPrefs } from "../../lib/required-fields";
+import {
+  REQUIRED_FIELDS_OFF,
+  type RequiredFieldsPrefs,
+} from "../../lib/required-fields";
 
 function stubA11y(): UseA11yPrefs {
   return {
@@ -99,53 +102,79 @@ describe("RequiredFieldsSection", () => {
 
   it("toggles are off by default (both prefs default false)", () => {
     renderWith(stubRequired(REQUIRED_FIELDS_OFF));
-    const projectToggle = screen.getByRole("switch", { name: /require a project to stop/i });
-    const descToggle = screen.getByRole("switch", { name: /require a description to stop/i });
+    const projectToggle = screen.getByRole("switch", {
+      name: /require a project to stop/i,
+    });
+    const descToggle = screen.getByRole("switch", {
+      name: /require a description to stop/i,
+    });
     expect(projectToggle.getAttribute("aria-checked")).toBe("false");
     expect(descToggle.getAttribute("aria-checked")).toBe("false");
   });
 
   it("reflects requireProject: true in the toggle", () => {
-    renderWith(stubRequired({ requireProject: true, requireDescription: false }));
-    const toggle = screen.getByRole("switch", { name: /require a project to stop/i });
+    renderWith(
+      stubRequired({ requireProject: true, requireDescription: false }),
+    );
+    const toggle = screen.getByRole("switch", {
+      name: /require a project to stop/i,
+    });
     expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
   it("reflects requireDescription: true in the toggle", () => {
-    renderWith(stubRequired({ requireProject: false, requireDescription: true }));
-    const toggle = screen.getByRole("switch", { name: /require a description to stop/i });
+    renderWith(
+      stubRequired({ requireProject: false, requireDescription: true }),
+    );
+    const toggle = screen.getByRole("switch", {
+      name: /require a description to stop/i,
+    });
     expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
   it("clicking the project toggle calls setRequireProject(true) when currently off", () => {
     const setRequireProject = vi.fn();
     renderWith(stubRequired(REQUIRED_FIELDS_OFF, { setRequireProject }));
-    fireEvent.click(screen.getByRole("switch", { name: /require a project to stop/i }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: /require a project to stop/i }),
+    );
     expect(setRequireProject).toHaveBeenCalledWith(true);
   });
 
   it("clicking the description toggle calls setRequireDescription(true) when currently off", () => {
     const setRequireDescription = vi.fn();
     renderWith(stubRequired(REQUIRED_FIELDS_OFF, { setRequireDescription }));
-    fireEvent.click(screen.getByRole("switch", { name: /require a description to stop/i }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: /require a description to stop/i }),
+    );
     expect(setRequireDescription).toHaveBeenCalledWith(true);
   });
 
   it("clicking the project toggle calls setRequireProject(false) when currently on", () => {
     const setRequireProject = vi.fn();
     renderWith(
-      stubRequired({ requireProject: true, requireDescription: false }, { setRequireProject }),
+      stubRequired(
+        { requireProject: true, requireDescription: false },
+        { setRequireProject },
+      ),
     );
-    fireEvent.click(screen.getByRole("switch", { name: /require a project to stop/i }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: /require a project to stop/i }),
+    );
     expect(setRequireProject).toHaveBeenCalledWith(false);
   });
 
   it("clicking the description toggle calls setRequireDescription(false) when currently on", () => {
     const setRequireDescription = vi.fn();
     renderWith(
-      stubRequired({ requireProject: false, requireDescription: true }, { setRequireDescription }),
+      stubRequired(
+        { requireProject: false, requireDescription: true },
+        { setRequireDescription },
+      ),
     );
-    fireEvent.click(screen.getByRole("switch", { name: /require a description to stop/i }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: /require a description to stop/i }),
+    );
     expect(setRequireDescription).toHaveBeenCalledWith(false);
   });
 });

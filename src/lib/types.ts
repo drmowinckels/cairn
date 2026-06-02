@@ -36,10 +36,7 @@ export interface Task {
   archived: boolean;
 }
 
-export type EntrySource =
-  | "manual"
-  | "calendar"
-  | `rule:${string}`;
+export type EntrySource = "manual" | "calendar" | `rule:${string}`;
 
 /** Test-fixture entry shape — uses minutes-of-day for start/end to keep
  *  the demo timeline cheap to author. Real DB entries flow through
