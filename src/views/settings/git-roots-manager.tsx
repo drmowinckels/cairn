@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../../lib/icon";
+import { useFocusTrap } from "../../lib/use-focus-trap";
 import {
   getGitDiscoveryRoots,
   setGitDiscoveryRoots,
@@ -17,6 +18,13 @@ export function GitRootsManager({ onClose, onSaved }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const trap = useFocusTrap(onClose);
+
+  // Move focus into the dialog on open so keyboard users land inside the
+  // trap rather than wherever the trigger left them.
+  useEffect(() => {
+    trap.ref.current?.focus();
+  }, [trap.ref]);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,11 +95,18 @@ export function GitRootsManager({ onClose, onSaved }: Props) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
+      {/* Focus-trapped modal: onKeyDown handles Escape/Tab. The dialog
+          role is non-interactive but key handling here is the standard
+          modal pattern, not a clickable control. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
+        ref={trap.ref}
         className="modal-card git-roots-mgr"
         role="dialog"
         aria-modal="true"
         aria-label="Configure git discovery roots"
+        tabIndex={-1}
+        onKeyDown={trap.onKeyDown}
       >
         <header className="modal-head">
           <h2>Git discovery roots</h2>
