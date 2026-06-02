@@ -597,3 +597,34 @@ describe("SettingsView — Run onboarding again (#31)", () => {
     expect(btn.hasAttribute("disabled")).toBe(true);
   });
 });
+
+describe("SettingsView · Updates section (#45)", () => {
+  it("is hidden when no updatePrefs is provided", () => {
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
+    expect(
+      screen.queryByRole("switch", { name: /check for updates/i }),
+    ).toBeNull();
+  });
+
+  it("renders an off toggle and wires setEnabled", () => {
+    const setEnabled = vi.fn();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        updatePrefs={{ enabled: false, setEnabled }}
+      />,
+    );
+    const toggle = screen.getByRole("switch", { name: /check for updates/i });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    expect(setEnabled).toHaveBeenCalledWith(true);
+  });
+});

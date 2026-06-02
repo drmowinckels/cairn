@@ -711,3 +711,21 @@ export async function browserExtensionStatus(): Promise<BrowserExtensionStatus |
   if (!inTauri) return null;
   return invoke<BrowserExtensionStatus>("browser_extension_status");
 }
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+  releaseUrl: string;
+}
+
+/**
+ * Opt-in update check (#45). Performs a single HTTPS GET of the release
+ * manifest via tauri-plugin-updater and returns the newer version's info,
+ * or null when up to date / outside Tauri. Callers must only invoke this
+ * when the user has enabled "Check for updates" (see useUpdatePrefs).
+ */
+export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  if (!inTauri) return null;
+  return invoke<UpdateInfo | null>("check_for_update");
+}

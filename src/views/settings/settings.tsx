@@ -10,6 +10,7 @@ import type { UseRoundingPrefs } from "../../lib/use-rounding-prefs";
 import type { UseWorkingHours } from "../../lib/use-working-hours";
 import type { UseTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
 import type { UseRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
+import type { UseUpdatePrefs } from "../../lib/use-update-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import {
   ROUNDING_INTERVALS,
@@ -47,6 +48,7 @@ export type SettingsSectionId =
   | "shortcuts"
   | "integrations"
   | "calendar"
+  | "updates"
   | "about";
 
 interface Props {
@@ -99,6 +101,11 @@ interface Props {
    * render without it; when absent the section is hidden.
    */
   requiredFields?: UseRequiredFieldsPrefs;
+  /**
+   * Opt-in update-checker preference (issue #45). Optional so tests can
+   * render without it; when absent the Updates section is hidden.
+   */
+  updatePrefs?: UseUpdatePrefs;
 }
 
 const POPOVER_SIZES: Array<{ value: PopoverSize; label: string }> = [
@@ -187,6 +194,7 @@ export function SettingsView({
   workingHours,
   taskSwitch,
   requiredFields,
+  updatePrefs,
 }: Props) {
   const [confirmCapture, setConfirmCapture] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -537,6 +545,26 @@ export function SettingsView({
           Run onboarding again
         </button>
       </section>
+
+      {updatePrefs && (
+        <section
+          className="settings-block"
+          aria-label="Updates"
+          data-section="updates"
+        >
+          <h3 className="settings-h">Updates</h3>
+          <SetRow
+            label="Check for updates"
+            hint="Off by default. When on, Cairn asks GitHub once on launch (and daily while open) whether a newer version exists, and shows a banner if so. No analytics, no identifier — it's the only network request Cairn makes besides your calendar sources."
+          >
+            <Toggle
+              on={updatePrefs.enabled}
+              onChange={updatePrefs.setEnabled}
+              label="Check for updates"
+            />
+          </SetRow>
+        </section>
+      )}
 
       <section
         className="settings-block"
