@@ -39,14 +39,17 @@ export function CalendarManager({ onClose }: Props) {
   return (
     <div
       className="modal-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Manage calendar sources"
-      onClick={(e) => {
+      role="presentation"
+      onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-card cal-mgr">
+      <div
+        className="modal-card cal-mgr"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Manage calendar sources"
+      >
         <header className="modal-head">
           <h2>Calendar sources</h2>
           <button

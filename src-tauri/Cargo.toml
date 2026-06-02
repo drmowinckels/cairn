@@ -12,6 +12,15 @@ default-run = "cairn"
 name = "cairn_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Mirror CI's `clippy -- -D warnings` so local `cargo clippy`/`cargo build`
+# enforce the same gate. Item-level `#[allow(...)]` still overrides where a
+# lint is deliberately suppressed.
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = "deny"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

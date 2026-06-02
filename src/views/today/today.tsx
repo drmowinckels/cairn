@@ -815,6 +815,11 @@ function ProjectPickerChip({
 
   return (
     <div className="now-picker" ref={ref}>
+      {/* This button is a listbox trigger (aria-haspopup="listbox") and
+          carries the required-fields validation state via aria-invalid so
+          AT announces the blocked project picker; asserted in
+          today.required-fields.test. */}
+      {/* eslint-disable-next-line jsx-a11y/role-supports-aria-props */}
       <button
         type="button"
         className="proj-chip is-interactive"

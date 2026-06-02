@@ -294,6 +294,10 @@ export function CommandPalette({ open, onClose, context, mruStore }: Props) {
         if (e.target === overlayRef.current) onClose();
       }}
     >
+      {/* Focus-trapped modal: onKeyDown handles Escape/Tab/arrow nav. The
+          dialog role is non-interactive but key handling here is the
+          standard modal pattern, not a clickable control. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
         ref={dialogRef}
         className="modal palette"
@@ -370,6 +374,10 @@ function renderGroupedItems(
     }
     const active = i === highlight;
     nodes.push(
+      // Listbox option: keyboard activation is centralized on the input
+      // (aria-activedescendant + Enter in handleKeyDown); the onClick is a
+      // pointer affordance, so a per-option key handler is not needed.
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events
       <li
         key={cmd.id}
         id={`${listId}-${i}`}

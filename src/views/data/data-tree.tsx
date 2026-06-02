@@ -111,6 +111,9 @@ function TasksForProject({ project, run }: TasksForProjectProps) {
       {tasks.length === 0 ? (
         <Empty title="No tasks" body="Add tasks below." tone="soft" />
       ) : (
+        // role="list" is redundant per ARIA but restores list semantics
+        // that Safari/VoiceOver drop when `list-style: none` is set.
+        // eslint-disable-next-line jsx-a11y/no-redundant-roles
         <ul className="data-list tree-task-list" role="list">
           {tasks.map((t) => (
             <li key={t.id} className="data-row tree-task-row">
@@ -196,6 +199,9 @@ function ProjectNode({ project, run, onDelete }: ProjectNodeProps) {
   return (
     <li
       className="tree-project"
+      // Disclosure tree (expand/collapse), not a selection tree — ARIA says
+      // aria-selected is omitted on treeitems when selection is unsupported.
+      // eslint-disable-next-line jsx-a11y/role-has-required-aria-props
       role="treeitem"
       aria-expanded={expanded}
     >
@@ -289,6 +295,9 @@ function ClientGroupNode({ group, projects, run }: ClientGroupNodeProps) {
   return (
     <li
       className="tree-client"
+      // Disclosure tree (expand/collapse), not a selection tree — ARIA says
+      // aria-selected is omitted on treeitems when selection is unsupported.
+      // eslint-disable-next-line jsx-a11y/role-has-required-aria-props
       role="treeitem"
       aria-label={groupLabel}
     >

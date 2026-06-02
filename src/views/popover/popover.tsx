@@ -253,7 +253,7 @@ function PopoverShell({
         </div>
       </header>
 
-      <nav className="pop-nav" role="tablist" aria-label="Cairn views">
+      <div className="pop-nav" role="tablist" aria-label="Cairn views">
         <NavTab view="today" current={view} onSelect={setView} icon="today" label="Today" />
         <NavTab view="reports" current={view} onSelect={setView} icon="reports" label="Reports" />
         <NavTab view="rules" current={view} onSelect={setView} icon="rules" label="Rules" />
@@ -261,7 +261,7 @@ function PopoverShell({
         <NavTab view="settings" current={view} onSelect={setView} icon="settings" label="Settings" />
         <span className="nav-spacer" />
         <span className="nav-meta">⌃⌥T</span>
-      </nav>
+      </div>
 
       <div className="pop-body" role="tabpanel" tabIndex={0}>
         {view === "today" && (

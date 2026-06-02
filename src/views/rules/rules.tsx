@@ -214,6 +214,9 @@ export function RulesView({
           }
         />
       ) : (
+        // role="list" is redundant per ARIA but restores list semantics
+        // that Safari/VoiceOver drop when `list-style: none` is set.
+        // eslint-disable-next-line jsx-a11y/no-redundant-roles
         <ul className="rule-list" role="list">
           {rules.map((r, idx) => (
             <RuleRow

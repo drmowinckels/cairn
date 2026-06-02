@@ -102,7 +102,7 @@ describe("a11y toggles: data-attribute + CSS reaction", () => {
       .getPropertyValue("--hairline")
       .trim();
     expect(after).not.toBe(before);
-    expect(after).toBe("rgba(61, 64, 91, 0.5)");
+    expect(after).toBe("rgb(61 64 91 / 50%)");
   });
 
   it("high contrast off restores the default --hairline", () => {
@@ -112,7 +112,7 @@ describe("a11y toggles: data-attribute + CSS reaction", () => {
     act(() => result.current.setHighContrast(false));
     expect(root.dataset.highContrast).toBe("off");
     expect(getComputedStyle(root).getPropertyValue("--hairline").trim()).toBe(
-      "rgba(61, 64, 91, 0.12)",
+      "rgb(61 64 91 / 12%)",
     );
   });
 

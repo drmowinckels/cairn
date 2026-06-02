@@ -60,6 +60,9 @@ export function useReportSummary(
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
+    // Depend on rounding's primitive fields, not the object identity, so a
+    // re-created `rounding` with unchanged values doesn't refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, fetchFn, range, rounding.intervalMinutes, rounding.mode]);
 
   useEffect(() => {

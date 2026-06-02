@@ -20,6 +20,16 @@ export function ProjectChip({ id, size = "sm", interactive, onClick }: ProjectCh
     <span
       className={`proj-chip proj-chip--${size}${interactive ? " is-interactive" : ""}`}
       onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
     >
