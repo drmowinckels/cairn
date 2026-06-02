@@ -4,6 +4,18 @@ All notable changes to Cairn are documented here. The release pipeline
 (`.github/workflows/release.yml`) auto-extracts the topmost `##` section
 as the GitHub Release body, so keep the most recent version at the top.
 
+## Unreleased
+
+### Updates
+
+- `[privacy]` Opt-in update checker (#45). Off by default; when enabled in
+  Settings → Updates, Cairn asks GitHub once on launch (and daily while
+  open) whether a newer version exists and shows a dismissible banner if
+  so. No telemetry, no identifier, no custom User-Agent — a single HTTPS
+  GET of the signed release manifest via `tauri-plugin-updater`. This is
+  the only outbound network Cairn core makes besides user-configured
+  calendar fetches.
+
 ## Beta v0.1.0
 
 First public beta. Local-first time tracking with passive auto-detection.
