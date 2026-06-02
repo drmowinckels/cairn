@@ -3,13 +3,18 @@
 //! This is the *only* outbound network Cairn core makes besides the
 //! user-configured calendar fetches (see `docs/PRIVACY.md`). It is inert
 //! unless the user turns on "Check for updates" in Settings: the frontend
-//! is the sole caller of [`check_for_update`], and it only calls it when
-//! the opt-in toggle is on. No telemetry, no identifier, no custom
+//! is the sole caller of the `check_for_update` command (in `lib.rs`,
+//! where the Tauri-runtime shim lives), and it only calls it when the
+//! opt-in toggle is on. No telemetry, no identifier, no custom
 //! User-Agent — `tauri-plugin-updater` performs a single HTTPS GET of the
 //! release manifest and compares versions.
+//!
+//! This module holds the pure, unit-testable core: the UI payload type
+//! and its mapping from manifest fields. The command itself is a thin
+//! wrapper around `app.updater().check()` and lives in `lib.rs` with the
+//! rest of the Tauri-only wiring that has no mockable surface.
 
 use serde::Serialize;
-use tauri_plugin_updater::UpdaterExt;
 
 const RELEASES_TAG_BASE: &str = "https://github.com/drmowinckels/cairn/releases/tag";
 
@@ -17,7 +22,7 @@ const RELEASES_TAG_BASE: &str = "https://github.com/drmowinckels/cairn/releases/
 /// `camelCase` TS interface in `src/lib/ipc.ts`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateInfo {
+pub(crate) struct UpdateInfo {
     /// The newer version offered by the release manifest.
     pub version: String,
     /// The version currently running.
@@ -37,7 +42,11 @@ fn release_url(version: &str) -> String {
 /// Assemble the UI payload from manifest fields. Pure core, extracted so
 /// the mapping (including the release-URL derivation) is testable without
 /// the network or a Tauri runtime.
-fn build_update_info(version: &str, current_version: &str, notes: Option<String>) -> UpdateInfo {
+pub(crate) fn build_update_info(
+    version: &str,
+    current_version: &str,
+    notes: Option<String>,
+) -> UpdateInfo {
     UpdateInfo {
         version: version.to_string(),
         current_version: current_version.to_string(),
@@ -45,29 +54,6 @@ fn build_update_info(version: &str, current_version: &str, notes: Option<String>
         // an empty body.
         notes: notes.filter(|n| !n.trim().is_empty()),
         release_url: release_url(version),
-    }
-}
-
-/// Perform a single update check. Returns `Some(UpdateInfo)` when a newer
-/// version is available, `None` when up to date.
-///
-/// The error string is deliberately generic: the frontend treats any
-/// failure as "no update" and stays silent, and we never surface the
-/// endpoint or transport details into the UI.
-#[tauri::command]
-pub async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    let updater = app
-        .updater()
-        .map_err(|_| "update checker unavailable".to_string())?;
-
-    match updater.check().await {
-        Ok(Some(update)) => Ok(Some(build_update_info(
-            &update.version,
-            &update.current_version,
-            update.body.clone(),
-        ))),
-        Ok(None) => Ok(None),
-        Err(_) => Err("update check failed".to_string()),
     }
 }
 

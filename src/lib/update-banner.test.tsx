@@ -42,6 +42,24 @@ describe("UpdateBanner", () => {
     expect(openUrl).toHaveBeenCalledWith(UPDATE.releaseUrl);
   });
 
+  it("falls back to window.open when the opener plugin rejects", async () => {
+    openUrl.mockRejectedValueOnce(new Error("no opener"));
+    const winOpen = vi
+      .spyOn(window, "open")
+      .mockReturnValue(null as unknown as Window);
+    const { getByText } = render(
+      <UpdateBanner update={UPDATE} onDismiss={vi.fn()} />,
+    );
+    fireEvent.click(getByText("Release notes"));
+    await Promise.resolve();
+    expect(winOpen).toHaveBeenCalledWith(
+      UPDATE.releaseUrl,
+      "_blank",
+      "noopener",
+    );
+    winOpen.mockRestore();
+  });
+
   it("calls onDismiss from the × button", () => {
     const onDismiss = vi.fn();
     const { getByLabelText } = render(
