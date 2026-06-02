@@ -36,6 +36,27 @@ describe("ProjectChip", () => {
     fireEvent.click(btn);
     expect(onClick).toHaveBeenCalledOnce();
   });
+
+  it("activates on Enter and Space when interactive", () => {
+    const onClick = vi.fn();
+    const { getByRole } = render(
+      <ProjectChip id="cairn" interactive onClick={onClick} />,
+    );
+    const btn = getByRole("button");
+    fireEvent.keyDown(btn, { key: "Enter" });
+    fireEvent.keyDown(btn, { key: " " });
+    expect(onClick).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(btn, { key: "a" });
+    expect(onClick).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores key presses when not interactive", () => {
+    const onClick = vi.fn();
+    const { container } = render(<ProjectChip id="cairn" onClick={onClick} />);
+    const chip = container.querySelector(".proj-chip") as HTMLElement;
+    fireEvent.keyDown(chip, { key: "Enter" });
+    expect(onClick).not.toHaveBeenCalled();
+  });
 });
 
 describe("Tag", () => {
