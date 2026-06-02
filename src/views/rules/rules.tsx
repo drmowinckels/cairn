@@ -459,7 +459,7 @@ function RuleRow({
             )}
             <Icon name="arrow-right" size={11} className="rule-arrow" />
             {project ? (
-              <ProjectChip id={project.id} />
+              <ProjectChip project={project} />
             ) : (
               <span className="rule-tags-only">+ tags</span>
             )}

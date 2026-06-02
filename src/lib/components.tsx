@@ -1,23 +1,21 @@
 import type { ReactNode } from "react";
-import { PROJECT_BY_ID } from "../test-fixtures/data";
 import { cbColor } from "./colorblind";
 import { useColorblindEnabled } from "./use-colorblind";
-import type { ProjectId } from "./types";
+import type { Project } from "./types";
 
 interface ProjectChipProps {
-  id: ProjectId;
+  project: Pick<Project, "name" | "color"> | null | undefined;
   size?: "sm" | "lg";
   interactive?: boolean;
   onClick?: () => void;
 }
 
 export function ProjectChip({
-  id,
+  project,
   size = "sm",
   interactive,
   onClick,
 }: ProjectChipProps) {
-  const project = PROJECT_BY_ID[id];
   const cb = useColorblindEnabled();
   if (!project) return null;
   const dotSize = size === "lg" ? 8 : 6;

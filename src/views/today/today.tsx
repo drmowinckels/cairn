@@ -445,7 +445,8 @@ export function TodayView({
           <div className="suggest-body">
             {suggestion.project ? (
               <>
-                Working on <ProjectChip id={suggestion.project} />
+                Working on{" "}
+                <ProjectChip project={projectsById[suggestion.project]} />
               </>
             ) : (
               <>Detected</>
@@ -494,6 +495,7 @@ export function TodayView({
       {detectionPrompts !== "off" && (
         <TaskSwitchBanner
           match={switchPrompt.active}
+          projectsById={projectsById}
           style={detectionPrompts === "modal" ? "modal" : "subtle"}
           announce={announce}
           onConfirm={() => void switchPrompt.confirm()}
