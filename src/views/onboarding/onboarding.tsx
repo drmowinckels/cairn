@@ -56,7 +56,13 @@ export type OnboardingStep =
   | "browser"
   | "done";
 
-const ORDER: OnboardingStep[] = ["welcome", "permissions", "projects", "browser", "done"];
+const ORDER: OnboardingStep[] = [
+  "welcome",
+  "permissions",
+  "projects",
+  "browser",
+  "done",
+];
 
 export function nextStep(step: OnboardingStep): OnboardingStep {
   const idx = ORDER.indexOf(step);
@@ -77,7 +83,9 @@ export interface SeedProject {
   selected: boolean;
 }
 
-export const SEED_PROJECT_PRESETS: ReadonlyArray<Omit<SeedProject, "selected">> = [
+export const SEED_PROJECT_PRESETS: ReadonlyArray<
+  Omit<SeedProject, "selected">
+> = [
   { id: "seed-personal", name: "Personal", color: "#81b29a" },
   { id: "seed-work", name: "Work", color: "#f2cc8f" },
   { id: "seed-os", name: "Open source", color: "#e07a5f" },
@@ -105,10 +113,7 @@ interface Props {
    * `saveProject` IPC. Production callers omit this and let the view
    * call into `lib/ipc.ts`.
    */
-  saveSeedProject?: (input: {
-    name: string;
-    color: string;
-  }) => Promise<void>;
+  saveSeedProject?: (input: { name: string; color: string }) => Promise<void>;
 }
 
 export function OnboardingView({ onComplete, saveSeedProject }: Props) {
@@ -433,8 +438,8 @@ function ProjectsStep({ seeds, onChange }: ProjectsStepProps) {
   return (
     <>
       <p className="onboarding-lede">
-        Pick a few projects to start with. Rename or deselect anything you
-        don't need — you can edit or add more from the Today view later.
+        Pick a few projects to start with. Rename or deselect anything you don't
+        need — you can edit or add more from the Today view later.
       </p>
       <ul className="onboarding-seeds">
         {seeds.map((seed, idx) => (
@@ -476,9 +481,9 @@ function BrowserStep() {
   return (
     <>
       <p className="onboarding-lede">
-        Cairn can detect browser activity through a small open-source
-        extension. It pushes the active tab's URL to a local socket — Cairn
-        never scrapes your browser history. Installation is optional.
+        Cairn can detect browser activity through a small open-source extension.
+        It pushes the active tab's URL to a local socket — Cairn never scrapes
+        your browser history. Installation is optional.
       </p>
       <ul className="onboarding-perms">
         <li className="onboarding-perm">

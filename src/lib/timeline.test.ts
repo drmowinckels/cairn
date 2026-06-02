@@ -12,8 +12,22 @@ import type { BackendEntry } from "./ipc";
 import type { Project } from "./types";
 
 const PROJECTS: Project[] = [
-  { id: "p1", name: "Cairn", clientId: null, color: "#abc", archived: false, estimateHours: null },
-  { id: "p2", name: "Ops", clientId: null, color: "#def", archived: false, estimateHours: null },
+  {
+    id: "p1",
+    name: "Cairn",
+    clientId: null,
+    color: "#abc",
+    archived: false,
+    estimateHours: null,
+  },
+  {
+    id: "p2",
+    name: "Ops",
+    clientId: null,
+    color: "#def",
+    archived: false,
+    estimateHours: null,
+  },
 ];
 
 describe("startToPercent", () => {
@@ -57,7 +71,12 @@ describe("minutesOfDay", () => {
   });
 });
 
-function entry(id: string, projectId: string | null, start: string, end: string | null): BackendEntry {
+function entry(
+  id: string,
+  projectId: string | null,
+  start: string,
+  end: string | null,
+): BackendEntry {
   return {
     id,
     projectId,
@@ -106,7 +125,11 @@ describe("legendFromSegments", () => {
     );
     const legend = legendFromSegments(segments, PROJECTS);
     expect(legend.map((l) => l.projectId)).toEqual(["p1", "p2"]);
-    expect(legend[0]).toEqual({ projectId: "p1", color: "#abc", name: "Cairn" });
+    expect(legend[0]).toEqual({
+      projectId: "p1",
+      color: "#abc",
+      name: "Cairn",
+    });
   });
 
   it("skips segments without a project (uncategorized)", () => {

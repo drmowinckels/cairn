@@ -66,7 +66,9 @@ export function Popover({
   );
 }
 
-interface ShellProps extends Required<Pick<Props, "initialView" | "density" | "layoutVariant" | "ruleComplexity">> {
+interface ShellProps extends Required<
+  Pick<Props, "initialView" | "density" | "layoutVariant" | "ruleComplexity">
+> {
   a11y: ReturnType<typeof useA11yPrefs>;
 }
 
@@ -117,7 +119,11 @@ function PopoverShell({
     const projectName = running?.projectId
       ? (paletteProjects.find((p) => p.id === running.projectId)?.name ?? null)
       : null;
-    const title = formatTrayTitle(trayDetail.enabled, projectName, Boolean(running));
+    const title = formatTrayTitle(
+      trayDetail.enabled,
+      projectName,
+      Boolean(running),
+    );
     // `running` gets a fresh object every ~2s snapshot refresh even when
     // unchanged; only push when the computed title actually changed.
     if (title === lastTrayTitleRef.current) return;
@@ -139,7 +145,11 @@ function PopoverShell({
       elapsedMs: elapsedMinutes * 60_000,
       projects: paletteProjects,
     });
-    pushTrayMenuIfChanged(model, lastTrayMenuRef, (m) => void updateTrayMenu(m));
+    pushTrayMenuIfChanged(
+      model,
+      lastTrayMenuRef,
+      (m) => void updateTrayMenu(m),
+    );
   }, [running, paletteProjects, elapsedMinutes]);
 
   const openSettingsSection = (section: SettingsSectionId) => {
@@ -167,7 +177,8 @@ function PopoverShell({
         await paletteTimer.stop();
       },
       switchProject: (projectId) => paletteTimer.update({ projectId }),
-      toggleRule: (ruleId, next) => paletteRules.update(ruleId, { enabled: next }),
+      toggleRule: (ruleId, next) =>
+        paletteRules.update(ruleId, { enabled: next }),
       revealDataFolder: () => revealDataFolder(),
       addEntry: () => {
         setView("today");
@@ -254,11 +265,41 @@ function PopoverShell({
       </header>
 
       <div className="pop-nav" role="tablist" aria-label="Cairn views">
-        <NavTab view="today" current={view} onSelect={setView} icon="today" label="Today" />
-        <NavTab view="reports" current={view} onSelect={setView} icon="reports" label="Reports" />
-        <NavTab view="rules" current={view} onSelect={setView} icon="rules" label="Rules" />
-        <NavTab view="data" current={view} onSelect={setView} icon="folder" label="Data" />
-        <NavTab view="settings" current={view} onSelect={setView} icon="settings" label="Settings" />
+        <NavTab
+          view="today"
+          current={view}
+          onSelect={setView}
+          icon="today"
+          label="Today"
+        />
+        <NavTab
+          view="reports"
+          current={view}
+          onSelect={setView}
+          icon="reports"
+          label="Reports"
+        />
+        <NavTab
+          view="rules"
+          current={view}
+          onSelect={setView}
+          icon="rules"
+          label="Rules"
+        />
+        <NavTab
+          view="data"
+          current={view}
+          onSelect={setView}
+          icon="folder"
+          label="Data"
+        />
+        <NavTab
+          view="settings"
+          current={view}
+          onSelect={setView}
+          icon="settings"
+          label="Settings"
+        />
         <span className="nav-spacer" />
         <span className="nav-meta">⌃⌥T</span>
       </div>

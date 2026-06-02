@@ -19,23 +19,17 @@ function event(overrides: Partial<UpcomingEvent> = {}): UpcomingEvent {
 
 describe("UpcomingList", () => {
   it("renders the not-connected empty state when no calendars are connected", () => {
-    render(
-      <UpcomingList events={[]} calendarsConnected={false} />,
-    );
+    render(<UpcomingList events={[]} calendarsConnected={false} />);
     expect(screen.getByText(/no calendar connected/i)).toBeTruthy();
   });
 
   it("renders the soft empty state when calendars are connected but no events", () => {
-    render(
-      <UpcomingList events={[]} calendarsConnected />,
-    );
+    render(<UpcomingList events={[]} calendarsConnected />);
     expect(screen.getByText(/nothing scheduled/i)).toBeTruthy();
   });
 
   it("each row is a focusable button labelled with summary + time", () => {
-    render(
-      <UpcomingList events={[event({})]} calendarsConnected />,
-    );
+    render(<UpcomingList events={[event({})]} calendarsConnected />);
     const btn = screen.getByRole("button", {
       name: /start timer for design review/i,
     });
@@ -60,20 +54,14 @@ describe("UpcomingList", () => {
 
   it("all-day events show 'all day' instead of a clock time", () => {
     render(
-      <UpcomingList
-        events={[event({ allDay: true })]}
-        calendarsConnected
-      />,
+      <UpcomingList events={[event({ allDay: true })]} calendarsConnected />,
     );
     expect(screen.getByText(/all day/i)).toBeTruthy();
   });
 
   it("renders summary as '(no title)' fallback when empty", () => {
     render(
-      <UpcomingList
-        events={[event({ summary: "" })]}
-        calendarsConnected
-      />,
+      <UpcomingList events={[event({ summary: "" })]} calendarsConnected />,
     );
     expect(screen.getByText(/no title/i)).toBeTruthy();
   });

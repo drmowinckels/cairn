@@ -25,8 +25,11 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function setup(over: Partial<Parameters<typeof useWorkingHoursReminder>[0]> = {}) {
-  const fetchIdleSeconds = over.fetchIdleSeconds ?? vi.fn().mockResolvedValue(600);
+function setup(
+  over: Partial<Parameters<typeof useWorkingHoursReminder>[0]> = {},
+) {
+  const fetchIdleSeconds =
+    over.fetchIdleSeconds ?? vi.fn().mockResolvedValue(600);
   const fetchRunning = over.fetchRunning ?? vi.fn().mockResolvedValue(null);
   const hook = renderHook(() =>
     useWorkingHoursReminder({
@@ -58,19 +61,25 @@ describe("useWorkingHoursReminder", () => {
   });
 
   it("stays inactive when a timer is already running", async () => {
-    const { result } = setup({ fetchRunning: vi.fn().mockResolvedValue({ id: "e1" }) });
+    const { result } = setup({
+      fetchRunning: vi.fn().mockResolvedValue({ id: "e1" }),
+    });
     await act(async () => {});
     await waitFor(() => expect(result.current.active).toBe(false));
   });
 
   it("stays inactive when idle is below the threshold", async () => {
-    const { result } = setup({ fetchIdleSeconds: vi.fn().mockResolvedValue(60) });
+    const { result } = setup({
+      fetchIdleSeconds: vi.fn().mockResolvedValue(60),
+    });
     await act(async () => {});
     await waitFor(() => expect(result.current.active).toBe(false));
   });
 
   it("stays inactive when idle can't be reported", async () => {
-    const { result } = setup({ fetchIdleSeconds: vi.fn().mockResolvedValue(null) });
+    const { result } = setup({
+      fetchIdleSeconds: vi.fn().mockResolvedValue(null),
+    });
     await act(async () => {});
     await waitFor(() => expect(result.current.active).toBe(false));
   });

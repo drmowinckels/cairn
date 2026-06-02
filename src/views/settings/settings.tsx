@@ -221,11 +221,7 @@ export function SettingsView({
     void capture.stop();
   };
   return (
-    <div
-      className="view view-settings"
-      data-density={density}
-      ref={rootRef}
-    >
+    <div className="view view-settings" data-density={density} ref={rootRef}>
       <section
         className="privacy-card"
         aria-label="Privacy"
@@ -241,11 +237,7 @@ export function SettingsView({
           up, export, delete) live in the <strong>Data</strong> tab.
         </p>
         <p className="privacy-attrib">
-          <a
-            href={PRIVACY_REPO_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
+          <a href={PRIVACY_REPO_URL} target="_blank" rel="noreferrer noopener">
             {PRIVACY_REPO_LABEL}
           </a>{" "}
           · {PRIVACY_LICENSE_LABEL}
@@ -335,7 +327,10 @@ export function SettingsView({
           </SetRow>
         )}
 
-        <SetRow label="High contrast" hint="Stronger borders and text contrast.">
+        <SetRow
+          label="High contrast"
+          hint="Stronger borders and text contrast."
+        >
           <Toggle
             on={a11y.highContrast}
             onChange={a11y.setHighContrast}
@@ -491,7 +486,9 @@ export function SettingsView({
 
       {workingHours && <WorkingHoursSection workingHours={workingHours} />}
       {taskSwitch && <TaskSwitchSection taskSwitch={taskSwitch} />}
-      {requiredFields && <RequiredFieldsSection requiredFields={requiredFields} />}
+      {requiredFields && (
+        <RequiredFieldsSection requiredFields={requiredFields} />
+      )}
 
       <section
         className="settings-block"
@@ -600,13 +597,12 @@ export function SettingsView({
             <p className="capture-confirm-warn" role="note">
               This writes every window title, app name, browser domain, and
               calendar event Cairn sees to a file on disk. Use it only for
-              troubleshooting and stop it when you're done — Cairn deletes
-              the file when you turn this off.
+              troubleshooting and stop it when you're done — Cairn deletes the
+              file when you turn this off.
             </p>
             <p className="capture-confirm-body">
               Capture stops automatically when you quit Cairn. The toggle is
-              never persisted: the next launch always starts with capture
-              off.
+              never persisted: the next launch always starts with capture off.
             </p>
             <div className="capture-confirm-actions">
               <button
@@ -695,9 +691,9 @@ function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
     <section className="settings-block" aria-label="Working-hours reminder">
       <h3 className="settings-h">Reminders</h3>
       <p className="settings-sub">
-        When you're idle during your working hours with no timer running,
-        Cairn can offer to start tracking. It only suggests — nothing is
-        logged until you tap.
+        When you're idle during your working hours with no timer running, Cairn
+        can offer to start tracking. It only suggests — nothing is logged until
+        you tap.
       </p>
 
       <SetRow
@@ -713,7 +709,10 @@ function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
 
       {cfg.enabled && (
         <>
-          <SetRow label="Working hours start" hint="When the reminder window opens.">
+          <SetRow
+            label="Working hours start"
+            hint="When the reminder window opens."
+          >
             <input
               type="time"
               className="field-input"
@@ -726,7 +725,10 @@ function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
             />
           </SetRow>
 
-          <SetRow label="Working hours end" hint="When the reminder window closes.">
+          <SetRow
+            label="Working hours end"
+            hint="When the reminder window closes."
+          >
             <input
               type="time"
               className="field-input"
@@ -747,7 +749,9 @@ function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
               className="field-input"
               aria-label="Idle before reminding"
               value={cfg.idleMinutes}
-              onChange={(e) => workingHours.setIdleMinutes(Number(e.target.value))}
+              onChange={(e) =>
+                workingHours.setIdleMinutes(Number(e.target.value))
+              }
             >
               {REMINDER_IDLE_MINUTES.map((m) => (
                 <option key={m} value={m}>
@@ -824,7 +828,9 @@ function TaskSwitchSection({ taskSwitch }: TaskSwitchSectionProps) {
               className="field-input"
               aria-label="Wait before asking"
               value={prefs.dwellSeconds}
-              onChange={(e) => taskSwitch.setDwellSeconds(Number(e.target.value))}
+              onChange={(e) =>
+                taskSwitch.setDwellSeconds(Number(e.target.value))
+              }
             >
               {TASK_SWITCH_DWELLS.map((s) => (
                 <option key={s} value={s}>
@@ -875,9 +881,9 @@ function RequiredFieldsSection({ requiredFields }: RequiredFieldsSectionProps) {
     <section className="settings-block" aria-label="Required fields">
       <h3 className="settings-h">Data hygiene</h3>
       <p className="settings-sub">
-        Require a project and/or description before stopping a timer, so
-        entries don't stay unattributed. Both default off — Cairn won't block
-        you unless you ask it to.
+        Require a project and/or description before stopping a timer, so entries
+        don't stay unattributed. Both default off — Cairn won't block you unless
+        you ask it to.
       </p>
 
       <SetRow

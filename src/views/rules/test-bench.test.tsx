@@ -147,13 +147,11 @@ describe("RuleTestBench", () => {
     vi.mocked(ipc.dryRunRules).mockResolvedValue(null);
     const { container } = render(<RuleTestBench />);
     await waitFor(() => {
-      expect(
-        container.querySelector(".bench-result--none"),
-      ).toBeTruthy();
+      expect(container.querySelector(".bench-result--none")).toBeTruthy();
     });
-    expect(
-      container.querySelector(".bench-result--none")?.textContent,
-    ).toMatch(/no rule matches/i);
+    expect(container.querySelector(".bench-result--none")?.textContent).toMatch(
+      /no rule matches/i,
+    );
   });
 
   it("renders the match row with rule name, project chip + tags", async () => {
@@ -251,9 +249,7 @@ describe("RuleTestBench", () => {
     );
     const { container } = render(<RuleTestBench />);
     await waitFor(() => {
-      expect(
-        container.querySelector(".bench-result--err"),
-      ).toBeTruthy();
+      expect(container.querySelector(".bench-result--err")).toBeTruthy();
     });
     const errRow = container.querySelector(".bench-result--err")!;
     expect(errRow.getAttribute("role")).toBe("alert");

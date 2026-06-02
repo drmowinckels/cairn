@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { CalendarSource } from "./ipc";
 
@@ -151,7 +144,9 @@ describe("useCalendars (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("update_calendar_source", {
       input: { id: URL_SOURCE.id, label: "Work (renamed)" },
     });
-    await waitFor(() => expect(result.current.sources[0].label).toBe("Work (renamed)"));
+    await waitFor(() =>
+      expect(result.current.sources[0].label).toBe("Work (renamed)"),
+    );
   });
 
   it("remove calls remove_calendar_source and refreshes the list", async () => {
@@ -193,9 +188,11 @@ describe("useCalendars (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("refresh_calendar_source", {
       id: URL_SOURCE.id,
     });
-    await waitFor(() => expect(result.current.sources[0].lastSyncedAt).toBe(
-      "2026-05-23T10:00:00Z",
-    ));
+    await waitFor(() =>
+      expect(result.current.sources[0].lastSyncedAt).toBe(
+        "2026-05-23T10:00:00Z",
+      ),
+    );
   });
 
   it("refresh clears a stale error after the next successful list", async () => {
@@ -204,7 +201,9 @@ describe("useCalendars (inside Tauri)", () => {
       .mockResolvedValueOnce([URL_SOURCE]);
     const { useCalendars } = await import("./use-calendars");
     const { result } = renderHook(() => useCalendars());
-    await waitFor(() => expect(result.current.error).toContain("temporary glitch"));
+    await waitFor(() =>
+      expect(result.current.error).toContain("temporary glitch"),
+    );
     await act(async () => {
       await result.current.refresh();
     });

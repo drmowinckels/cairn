@@ -1,17 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import {
-  buildCommands,
-  CommandPalette,
-  type PaletteContext,
-} from "./palette";
+import { buildCommands, CommandPalette, type PaletteContext } from "./palette";
 import type { Project, Rule } from "../../lib/types";
 import { createMruStore } from "../../lib/use-palette";
 
 const PROJECTS: Project[] = [
-  { id: "alpha", name: "Alpha", clientId: null, color: "#aaa", archived: false, estimateHours: null },
-  { id: "beta", name: "Beta", clientId: null, color: "#bbb", archived: false, estimateHours: null },
-  { id: "gamma", name: "Gamma", clientId: null, color: "#ccc", archived: false, estimateHours: null },
+  {
+    id: "alpha",
+    name: "Alpha",
+    clientId: null,
+    color: "#aaa",
+    archived: false,
+    estimateHours: null,
+  },
+  {
+    id: "beta",
+    name: "Beta",
+    clientId: null,
+    color: "#bbb",
+    archived: false,
+    estimateHours: null,
+  },
+  {
+    id: "gamma",
+    name: "Gamma",
+    clientId: null,
+    color: "#ccc",
+    archived: false,
+    estimateHours: null,
+  },
 ];
 
 const RULES: Rule[] = [
@@ -222,9 +239,7 @@ describe("CommandPalette — rendering & accessibility", () => {
   });
 
   it("renders as a modal dialog with aria-modal and a listbox", () => {
-    render(
-      <CommandPalette open onClose={vi.fn()} context={baseContext()} />,
-    );
+    render(<CommandPalette open onClose={vi.fn()} context={baseContext()} />);
     const dialog = screen.getByRole("dialog");
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     expect(screen.getByRole("listbox")).toBeTruthy();
@@ -291,7 +306,9 @@ describe("CommandPalette — keyboard", () => {
     const dialog = screen.getByRole("dialog");
     fireEvent.keyDown(dialog, { key: "End" });
     const options = screen.getAllByRole("option");
-    expect(options[options.length - 1].getAttribute("aria-selected")).toBe("true");
+    expect(options[options.length - 1].getAttribute("aria-selected")).toBe(
+      "true",
+    );
     fireEvent.keyDown(dialog, { key: "Home" });
     expect(options[0].getAttribute("aria-selected")).toBe("true");
   });
@@ -338,9 +355,7 @@ describe("CommandPalette — keyboard", () => {
 
   it("Enter on an empty list is a no-op (no close)", () => {
     const onClose = vi.fn();
-    render(
-      <CommandPalette open onClose={onClose} context={baseContext()} />,
-    );
+    render(<CommandPalette open onClose={onClose} context={baseContext()} />);
     const input = screen.getByLabelText(/command palette/i);
     fireEvent.change(input, { target: { value: "zzz-no-such-cmd" } });
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
@@ -481,10 +496,10 @@ describe("CommandPalette — focus trap + return", () => {
     rerender(
       <CommandPalette open={false} onClose={vi.fn()} context={baseContext()} />,
     );
-    rerender(
-      <CommandPalette open onClose={vi.fn()} context={baseContext()} />,
-    );
-    const input2 = screen.getByLabelText(/command palette/i) as HTMLInputElement;
+    rerender(<CommandPalette open onClose={vi.fn()} context={baseContext()} />);
+    const input2 = screen.getByLabelText(
+      /command palette/i,
+    ) as HTMLInputElement;
     expect(input2.value).toBe("");
   });
 
@@ -492,7 +507,8 @@ describe("CommandPalette — focus trap + return", () => {
     render(<CommandPalette open onClose={vi.fn()} context={baseContext()} />);
     const dialog = screen.getByRole("dialog");
     act(() => {
-      for (let i = 0; i < 10; i++) fireEvent.keyDown(dialog, { key: "ArrowDown" });
+      for (let i = 0; i < 10; i++)
+        fireEvent.keyDown(dialog, { key: "ArrowDown" });
     });
     const input = screen.getByLabelText(/command palette/i);
     // Narrow the list to one item.

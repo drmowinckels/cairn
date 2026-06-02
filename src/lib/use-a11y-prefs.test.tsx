@@ -29,7 +29,9 @@ describe("useA11yPrefs", () => {
     expect(document.documentElement.dataset.highContrast).toBe("on");
     expect(document.documentElement.dataset.detectionPrompts).toBe("off");
 
-    const stored = JSON.parse(localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}");
+    const stored = JSON.parse(
+      localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}",
+    );
     expect(stored.textScale).toBe("xl");
     expect(stored.highContrast).toBe(true);
     expect(stored.detectionPrompts).toBe("off");
@@ -38,7 +40,11 @@ describe("useA11yPrefs", () => {
   it("restores stored prefs on remount", () => {
     localStorage.setItem(
       "cairn:a11y-prefs:v1",
-      JSON.stringify({ textScale: "lg", colorblindSafe: true, detectionPrompts: "modal" }),
+      JSON.stringify({
+        textScale: "lg",
+        colorblindSafe: true,
+        detectionPrompts: "modal",
+      }),
     );
     const { result } = renderHook(() => useA11yPrefs());
     expect(result.current.textScale).toBe("lg");
@@ -71,7 +77,9 @@ describe("useA11yPrefs", () => {
   it("setAnnounce persists the change to localStorage", () => {
     const { result } = renderHook(() => useA11yPrefs());
     act(() => result.current.setAnnounce(false));
-    const stored = JSON.parse(localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}");
+    const stored = JSON.parse(
+      localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}",
+    );
     expect(stored.announce).toBe(false);
     expect(result.current.announce).toBe(false);
   });
@@ -137,12 +145,17 @@ describe("useA11yPrefs", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
     act(() => result.current.setTheme("light"));
     expect(document.documentElement.dataset.theme).toBe("light");
-    const stored = JSON.parse(localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}");
+    const stored = JSON.parse(
+      localStorage.getItem("cairn:a11y-prefs:v1") ?? "{}",
+    );
     expect(stored.theme).toBe("light");
   });
 
   it("restores an explicit theme from localStorage on remount", () => {
-    localStorage.setItem("cairn:a11y-prefs:v1", JSON.stringify({ theme: "dark" }));
+    localStorage.setItem(
+      "cairn:a11y-prefs:v1",
+      JSON.stringify({ theme: "dark" }),
+    );
     const { result } = renderHook(() => useA11yPrefs());
     expect(result.current.theme).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
@@ -166,7 +179,11 @@ describe("useA11yPrefs", () => {
       window.matchMedia = vi.fn().mockImplementation((q: string) =>
         q.includes("dark")
           ? mq
-          : { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() },
+          : {
+              matches: false,
+              addEventListener: vi.fn(),
+              removeEventListener: vi.fn(),
+            },
       ) as unknown as typeof window.matchMedia;
 
       const { result } = renderHook(() => useA11yPrefs());

@@ -20,7 +20,9 @@ describe("ProjectChip", () => {
   });
 
   it("returns null for an unknown project id", () => {
-    const { container } = render(<ProjectChip id={"does-not-exist" as never} />);
+    const { container } = render(
+      <ProjectChip id={"does-not-exist" as never} />,
+    );
     expect(container.firstChild).toBeNull();
   });
 
@@ -57,9 +59,9 @@ describe("LocalBadge", () => {
   it("defaults to 'local only' with a tooltip", () => {
     const { getByText, container } = render(<LocalBadge />);
     expect(getByText("local only")).toBeTruthy();
-    expect(container.querySelector(".local-badge")?.getAttribute("title")).toContain(
-      "stays on your machine",
-    );
+    expect(
+      container.querySelector(".local-badge")?.getAttribute("title"),
+    ).toContain("stays on your machine");
   });
 
   it("shrinks to 'local' in compact mode", () => {

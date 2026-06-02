@@ -22,10 +22,7 @@ let injected: HTMLStyleElement | null = null;
 
 function injectBrandCss() {
   if (injected) return;
-  const css = readFileSync(
-    resolve(__dirname, "..", "brand.css"),
-    "utf-8",
-  );
+  const css = readFileSync(resolve(__dirname, "..", "brand.css"), "utf-8");
   const style = document.createElement("style");
   style.dataset.testid = "brand-css";
   style.textContent = css;
@@ -92,15 +89,11 @@ describe("a11y toggles: data-attribute + CSS reaction", () => {
     const { result } = renderHook(() => useA11yPrefs());
     const root = document.documentElement;
 
-    const before = getComputedStyle(root)
-      .getPropertyValue("--hairline")
-      .trim();
+    const before = getComputedStyle(root).getPropertyValue("--hairline").trim();
 
     act(() => result.current.setHighContrast(true));
     expect(root.dataset.highContrast).toBe("on");
-    const after = getComputedStyle(root)
-      .getPropertyValue("--hairline")
-      .trim();
+    const after = getComputedStyle(root).getPropertyValue("--hairline").trim();
     expect(after).not.toBe(before);
     expect(after).toBe("rgb(61 64 91 / 50%)");
   });

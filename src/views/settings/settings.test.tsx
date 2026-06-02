@@ -57,7 +57,9 @@ function stubA11y(overrides: Partial<UseA11yPrefs> = {}): UseA11yPrefs {
   };
 }
 
-function stubCapture(overrides: Partial<UseSignalCapture> = {}): UseSignalCapture {
+function stubCapture(
+  overrides: Partial<UseSignalCapture> = {},
+): UseSignalCapture {
   return {
     status: { active: false, path: null, bytesWritten: 0 },
     error: null,
@@ -82,7 +84,11 @@ afterEach(() => {
 describe("SettingsView (browser-dev mode)", () => {
   it("points to the Data tab for the privacy guarantees (moved there)", () => {
     render(
-      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
     );
     expect(screen.getByText(/local-first & open source/i)).toBeTruthy();
     expect(
@@ -98,7 +104,13 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("renders the Source on GitHub · Apache-2.0 attribution with a real link", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
     const link = screen.getByRole("link", { name: /source on github/i });
     expect(link.getAttribute("href")).toBe(
       "https://github.com/drmowinckels/cairn",
@@ -108,17 +120,23 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("renders an exclusion list (or its empty hint) with at least one signal", () => {
     const { container } = render(
-      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
     );
     // Either there's an exclusion list section, OR the empty hint is shown.
-    expect(
-      container.querySelector(".excl-list, .settings-block"),
-    ).toBeTruthy();
+    expect(container.querySelector(".excl-list, .settings-block")).toBeTruthy();
   });
 
   it("hides the rounding control when no rounding prefs are provided", () => {
     render(
-      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
     );
     expect(screen.queryByLabelText(/rounding interval/i)).toBeNull();
   });
@@ -168,7 +186,9 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("clicking an accessibility toggle calls the matching a11y setter", () => {
     const a11y = stubA11y({ highContrast: false });
-    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
+    render(
+      <SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />,
+    );
     const sw = screen.getByRole("switch", { name: /high contrast/i });
     fireEvent.click(sw);
     expect(a11y.setHighContrast).toHaveBeenCalledWith(true);
@@ -176,7 +196,9 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("renders the Theme control with the current pref checked", () => {
     const a11y = stubA11y({ theme: "dark" });
-    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
+    render(
+      <SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />,
+    );
     const group = screen.getByRole("radiogroup", { name: /^theme$/i });
     expect(group).toBeTruthy();
     const dark = screen.getByRole("radio", { name: /^dark$/i });
@@ -185,14 +207,26 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("selecting a theme calls setTheme with the chosen pref", () => {
     const a11y = stubA11y({ theme: "system" });
-    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
+    render(
+      <SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />,
+    );
     fireEvent.click(screen.getByRole("radio", { name: /^dark$/i }));
     expect(a11y.setTheme).toHaveBeenCalledWith("dark");
   });
 
   it("adding an exclusion infers the kind and calls save_exclusion", () => {
-    invokeMock.mockResolvedValue({ id: "n", kind: "domain", value: "mail.proton.me" });
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    invokeMock.mockResolvedValue({
+      id: "n",
+      kind: "domain",
+      value: "mail.proton.me",
+    });
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
     const input = screen.getByLabelText(/add exclusion/i);
     fireEvent.change(input, { target: { value: "mail.proton.me" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -203,16 +237,28 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("the incognito pause toggle persists its state to localStorage", () => {
     window.localStorage.removeItem("cairn:pause-on-incognito:v1");
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
     const cb = screen.getByRole("checkbox", { name: /private\/incognito/i });
     expect((cb as HTMLInputElement).checked).toBe(true);
     fireEvent.click(cb);
-    expect(window.localStorage.getItem("cairn:pause-on-incognito:v1")).toBe("false");
+    expect(window.localStorage.getItem("cairn:pause-on-incognito:v1")).toBe(
+      "false",
+    );
   });
 
   it("renders the text-scale segmented control with the active option highlighted", () => {
     render(
-      <SettingsView density="comfy" a11y={stubA11y({ textScale: "lg" })} capture={stubCapture()} />,
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y({ textScale: "lg" })}
+        capture={stubCapture()}
+      />,
     );
     const group = screen.getByRole("radiogroup", { name: /text size/i });
     const active = Array.from(
@@ -222,8 +268,16 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("hides the popover-size control when no popoverSize prop is given", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
-    expect(screen.queryByRole("radiogroup", { name: /popover size/i })).toBeNull();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
+    expect(
+      screen.queryByRole("radiogroup", { name: /popover size/i }),
+    ).toBeNull();
   });
 
   it("renders the popover-size control and drives setSize", () => {
@@ -245,7 +299,13 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("hides the tray-detail toggle when no trayDetail prop is given", () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
     expect(
       screen.queryByRole("switch", { name: /show project in menu bar/i }),
     ).toBeNull();
@@ -261,7 +321,9 @@ describe("SettingsView (browser-dev mode)", () => {
         trayDetail={{ enabled: false, setEnabled }}
       />,
     );
-    const sw = screen.getByRole("switch", { name: /show project in menu bar/i });
+    const sw = screen.getByRole("switch", {
+      name: /show project in menu bar/i,
+    });
     fireEvent.click(sw);
     expect(setEnabled).toHaveBeenCalledWith(true);
   });
@@ -285,7 +347,9 @@ describe("SettingsView (browser-dev mode)", () => {
 
   it("clicking an ambiguity option calls setAmbiguityDefault with the new value", () => {
     const a11y = stubA11y({ ambiguityDefault: "prompt" });
-    render(<SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />);
+    render(
+      <SettingsView density="comfy" a11y={a11y} capture={stubCapture()} />,
+    );
     const group = screen.getByRole("radiogroup", {
       name: /default ambiguity behaviour/i,
     });
@@ -298,7 +362,13 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 
   it("does not call IPC in browser-dev mode", async () => {
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />);
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
     await waitFor(() => {});
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -306,7 +376,11 @@ describe("SettingsView (browser-dev mode)", () => {
   describe("Shortcuts card (issue #33)", () => {
     it("renders one row per binding listed in SHORTCUTS", () => {
       render(
-        <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+        <SettingsView
+          density="comfy"
+          a11y={stubA11y()}
+          capture={stubCapture()}
+        />,
       );
       const heading = screen.getByRole("heading", { name: /^shortcuts$/i });
       const section = heading.closest("section")!;
@@ -327,7 +401,11 @@ describe("SettingsView (browser-dev mode)", () => {
 
     it("renders each binding's keys as <Kbd> chips, verbatim", () => {
       render(
-        <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+        <SettingsView
+          density="comfy"
+          a11y={stubA11y()}
+          capture={stubCapture()}
+        />,
       );
       const togglePopover = document.querySelector(
         'li[data-shortcut-id="toggle-popover"]',
@@ -361,7 +439,11 @@ describe("SettingsView (browser-dev mode)", () => {
       // reset, so the no-op button was removed rather than left as a
       // control that does nothing.
       render(
-        <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+        <SettingsView
+          density="comfy"
+          a11y={stubA11y()}
+          capture={stubCapture()}
+        />,
       );
       expect(
         screen.queryByRole("button", { name: /reset to defaults/i }),
@@ -373,7 +455,11 @@ describe("SettingsView (browser-dev mode)", () => {
 describe("SettingsView · About / Capture raw signals", () => {
   it("renders the About section as the last block with version + diagnostics toggle", () => {
     render(
-      <SettingsView density="comfy" a11y={stubA11y()} capture={stubCapture()} />,
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
     );
     const about = screen.getByRole("region", { name: /about/i });
     expect(about).toBeTruthy();
@@ -387,7 +473,9 @@ describe("SettingsView · About / Capture raw signals", () => {
 
   it("opens the confirmation dialog instead of starting capture immediately", async () => {
     const capture = stubCapture();
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={capture} />,
+    );
     fireEvent.click(
       screen.getByRole("switch", { name: /capture raw signals/i }),
     );
@@ -402,7 +490,9 @@ describe("SettingsView · About / Capture raw signals", () => {
 
   it("invokes capture.start() only after the confirmation button is pressed", async () => {
     const capture = stubCapture();
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={capture} />,
+    );
     fireEvent.click(
       screen.getByRole("switch", { name: /capture raw signals/i }),
     );
@@ -421,7 +511,9 @@ describe("SettingsView · About / Capture raw signals", () => {
 
   it("cancelling the dialog does not start capture", async () => {
     const capture = stubCapture();
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={capture} />,
+    );
     fireEvent.click(
       screen.getByRole("switch", { name: /capture raw signals/i }),
     );
@@ -440,7 +532,9 @@ describe("SettingsView · About / Capture raw signals", () => {
         bytesWritten: 1,
       },
     });
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={capture} />,
+    );
     expect(screen.queryByTestId("capture-confirm")).toBeNull();
     fireEvent.click(
       screen.getByRole("switch", { name: /capture raw signals/i }),
@@ -456,7 +550,9 @@ describe("SettingsView · About / Capture raw signals", () => {
         bytesWritten: 256,
       },
     });
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={capture} />,
+    );
     expect(screen.getByTestId("capture-path").textContent).toContain(
       "/tmp/cairn/debug-signals.ndjson",
     );
@@ -464,7 +560,9 @@ describe("SettingsView · About / Capture raw signals", () => {
 
   it("renders an error banner when capture.error is set", () => {
     const capture = stubCapture({ error: "boom" });
-    render(<SettingsView density="comfy" a11y={stubA11y()} capture={capture} />);
+    render(
+      <SettingsView density="comfy" a11y={stubA11y()} capture={capture} />,
+    );
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("boom");
   });

@@ -103,7 +103,10 @@ export function DataStorageActions() {
           className={`privacy-banner privacy-banner--${backup.status.kind}`}
           role={backup.status.kind === "error" ? "alert" : "status"}
         >
-          <Icon name={backup.status.kind === "error" ? "x" : "check"} size={13} />
+          <Icon
+            name={backup.status.kind === "error" ? "x" : "check"}
+            size={13}
+          />
           <span>{backup.status.message}</span>
         </div>
       )}

@@ -59,7 +59,8 @@ describe("useTasks (inside Tauri)", () => {
     vi.resetModules();
   });
   afterEach(() => {
-    if (original === undefined) delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    if (original === undefined)
+      delete (globalThis as WithInternals).__TAURI_INTERNALS__;
     else (globalThis as WithInternals).__TAURI_INTERNALS__ = original;
   });
 
@@ -67,13 +68,20 @@ describe("useTasks (inside Tauri)", () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "list_tasks") return Promise.resolve([]);
       if (cmd === "save_task")
-        return Promise.resolve({ id: "t9", projectId: "p1", name: "Build", archived: false });
+        return Promise.resolve({
+          id: "t9",
+          projectId: "p1",
+          name: "Build",
+          archived: false,
+        });
       return Promise.resolve(null);
     });
     const { useTasks } = await import("./use-tasks");
     const { result } = renderHook(() => useTasks("p1"));
     await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith("list_tasks", { projectId: "p1" }),
+      expect(invokeMock).toHaveBeenCalledWith("list_tasks", {
+        projectId: "p1",
+      }),
     );
     await act(async () => {
       await result.current.create("Build");

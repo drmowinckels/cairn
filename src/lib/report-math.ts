@@ -16,10 +16,7 @@ export type Delta =
   | { kind: "none" }
   | { kind: "up" | "down" | "flat"; deltaSeconds: number; percent: number };
 
-export function computeDelta(
-  current: number,
-  previous: number,
-): Delta {
+export function computeDelta(current: number, previous: number): Delta {
   if (previous <= 0 && current <= 0) return { kind: "none" };
   if (previous <= 0) {
     return { kind: "up", deltaSeconds: current, percent: 100 };
@@ -77,8 +74,18 @@ export function weekdayLabel(isoDate: string): string {
 }
 
 const MONTH_LABELS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
 
 export function dayMonthLabel(isoDate: string): string {

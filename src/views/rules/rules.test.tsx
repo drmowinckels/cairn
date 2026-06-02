@@ -106,7 +106,9 @@ describe("RulesView", () => {
       ),
     ).toBeTruthy();
     // Project select inside the Then block.
-    expect(container.querySelector('select[aria-label="Project"]')).toBeTruthy();
+    expect(
+      container.querySelector('select[aria-label="Project"]'),
+    ).toBeTruthy();
   });
 
   it("toggling the enabled checkbox flips the rule's class without bubbling to expand", () => {
@@ -127,9 +129,8 @@ describe("RulesView", () => {
 
   it("editing the name input commits via debounce; blur flushes immediately", async () => {
     const { container } = renderRules({ openRuleId: "r1" });
-    const nameInput = container.querySelector<HTMLInputElement>(
-      ".rule-name-input",
-    );
+    const nameInput =
+      container.querySelector<HTMLInputElement>(".rule-name-input");
     expect(nameInput).toBeTruthy();
     // Local state updates synchronously so typing is snappy.
     fireEvent.change(nameInput!, { target: { value: "Renamed in test" } });
@@ -151,9 +152,8 @@ describe("RulesView", () => {
     // header stays at the previous committed value until quiet
     // time elapses (or blur flushes).
     const { container } = renderRules({ openRuleId: "r1" });
-    const nameInput = container.querySelector<HTMLInputElement>(
-      ".rule-name-input",
-    );
+    const nameInput =
+      container.querySelector<HTMLInputElement>(".rule-name-input");
     const header = () =>
       container.querySelector(".rule.is-open .rule-name")?.textContent;
     const originalName = header();
@@ -171,7 +171,10 @@ describe("RulesView", () => {
   });
 
   it("clicking the AND / OR join label toggles a condition's `any` flag", () => {
-    const { container } = renderRules({ openRuleId: "r3", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r3",
+      complexity: "heavy",
+    });
     // r3 has 3 conditions with `any: true` ⇒ join shows OR.
     const firstJoin = container.querySelector(".cond-join") as HTMLElement;
     expect(firstJoin.textContent).toBe("OR");
@@ -183,7 +186,10 @@ describe("RulesView", () => {
   });
 
   it("'add condition' appends a condition (medium / heavy only)", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "medium",
+    });
     const before = container.querySelectorAll(".cond").length;
     const addBtn = container.querySelector(".add-cond") as HTMLElement;
     expect(addBtn).toBeTruthy();
@@ -193,23 +199,30 @@ describe("RulesView", () => {
   });
 
   it("'add condition' is hidden in light complexity (single-condition rules only)", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "light" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "light",
+    });
     expect(container.querySelector(".add-cond")).toBeNull();
   });
 
   it("clicking the × on a condition removes it (when >1 conditions remain)", () => {
-    const { container } = renderRules({ openRuleId: "r3", complexity: "medium" });
+    const { container } = renderRules({
+      openRuleId: "r3",
+      complexity: "medium",
+    });
     const before = container.querySelectorAll(".cond").length;
-    const removeBtn = container.querySelector(
-      ".cond-x",
-    ) as HTMLElement;
+    const removeBtn = container.querySelector(".cond-x") as HTMLElement;
     expect(removeBtn).toBeTruthy();
     fireEvent.click(removeBtn);
     expect(container.querySelectorAll(".cond").length).toBe(before - 1);
   });
 
   it("the × is hidden when the rule has exactly one condition (can't drop to zero)", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "medium",
+    });
     // r1 has a single condition; removing it would leave the rule
     // with no `when` array — refuse at the UI level so the user
     // doesn't accidentally create an always-match rule.
@@ -239,8 +252,8 @@ describe("RulesView", () => {
     expect(container.querySelectorAll(".rule").length).toBe(before + 1);
     // The new rule's name is the original + " (copy)".
     expect(
-      Array.from(container.querySelectorAll(".rule-name")).some(
-        (n) => n.textContent?.endsWith("(copy)"),
+      Array.from(container.querySelectorAll(".rule-name")).some((n) =>
+        n.textContent?.endsWith("(copy)"),
       ),
     ).toBe(true);
   });
@@ -259,10 +272,12 @@ describe("RulesView", () => {
   });
 
   it("changing the signal select normalises the op for calendar.event", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
-    const signalSel = container.querySelector<HTMLSelectElement>(
-      ".cond-sig-sel",
-    );
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "medium",
+    });
+    const signalSel =
+      container.querySelector<HTMLSelectElement>(".cond-sig-sel");
     expect(signalSel).toBeTruthy();
     fireEvent.change(signalSel!, { target: { value: "calendar.event" } });
     // The op select must have switched to "is-active" (the only
@@ -275,7 +290,10 @@ describe("RulesView", () => {
   // ---- #14: Confidence heuristic warning --------------------------
 
   it("editor exposes a confidence select at complexity=heavy", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     const sel = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Confidence"]',
     );
@@ -285,12 +303,18 @@ describe("RulesView", () => {
   });
 
   it("does not show the confidence warning for a default (suggestive) rule", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     expect(container.querySelector(".rule-meta-warn")).toBeNull();
   });
 
   it("shows the warning after switching a 1-condition rule to strict", async () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     // r1 in the fixture has a single condition with op=contains, which
     // is the heuristic's full danger shape.
     const sel = container.querySelector<HTMLSelectElement>(
@@ -306,7 +330,10 @@ describe("RulesView", () => {
   });
 
   it("clicking Dismiss removes the warning + persists the per-rule flag", async () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     const sel = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Confidence"]',
     );
@@ -327,7 +354,10 @@ describe("RulesView", () => {
   });
 
   it("re-arms the warning only on suggestive → strict transitions (not on every change)", async () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     const sel = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Confidence"]',
     );
@@ -353,7 +383,10 @@ describe("RulesView", () => {
     // Keyboard cycling can fire onChange with the same value. A
     // re-arm on every change would clobber the user's prior dismiss
     // and resurface the warning they explicitly silenced.
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     const sel = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Confidence"]',
     );
@@ -379,7 +412,10 @@ describe("RulesView", () => {
     // persistent `role=note` + aria-describedby on the select so
     // screen-reader users hear the advisory as part of the control's
     // description, not as an interrupt.
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     const sel = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Confidence"]',
     );
@@ -403,7 +439,10 @@ describe("RulesView", () => {
     // rule body — otherwise garbage would round-trip through the
     // SQLite-stored JSON. Pin the negative path so a regression on
     // the guard surfaces in CI.
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
     const sel = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Confidence"]',
     );
@@ -433,9 +472,9 @@ describe("RulesView", () => {
     discloses[0].focus();
     fireEvent.keyDown(discloses[0], { key: "ArrowDown", altKey: true });
     await waitFor(() => {
-      const newFirst = container
-        .querySelector<HTMLElement>(".rule:nth-child(1) .rule-name")
-        ?.textContent;
+      const newFirst = container.querySelector<HTMLElement>(
+        ".rule:nth-child(1) .rule-name",
+      )?.textContent;
       // The original first rule is no longer at the top.
       expect(newFirst).not.toBe(firstName);
     });
@@ -470,9 +509,9 @@ describe("RulesView", () => {
       discloses[0].querySelector(".rule-name")?.textContent;
     discloses[0].focus();
     fireEvent.keyDown(discloses[0], { key: "ArrowUp", altKey: true });
-    const firstNameAfter = container
-      .querySelector(".rule:first-child .rule-name")
-      ?.textContent;
+    const firstNameAfter = container.querySelector(
+      ".rule:first-child .rule-name",
+    )?.textContent;
     expect(firstNameAfter).toBe(firstNameBefore);
   });
 
@@ -503,17 +542,15 @@ describe("RulesView", () => {
       discloses[0].querySelector(".rule-name")?.textContent;
     discloses[0].focus();
     fireEvent.keyDown(discloses[0], { key: "ArrowDown" });
-    const firstNameAfter = container
-      .querySelector(".rule:first-child .rule-name")
-      ?.textContent;
+    const firstNameAfter = container.querySelector(
+      ".rule:first-child .rule-name",
+    )?.textContent;
     expect(firstNameAfter).toBe(firstNameBefore);
   });
 
   it("dropping rule 1 onto rule 2 reorders via the drag handler", async () => {
     const { container } = renderRules({ complexity: "medium" });
-    const rules = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule"),
-    );
+    const rules = Array.from(container.querySelectorAll<HTMLElement>(".rule"));
     expect(rules.length).toBeGreaterThan(1);
     const firstName = rules[0].querySelector(".rule-name")?.textContent;
     // `draggable` lives on the .rule-head (the visible drag grip);
@@ -526,21 +563,17 @@ describe("RulesView", () => {
     fireEvent.dragOver(rules[1]);
     fireEvent.drop(rules[1]);
     await waitFor(() => {
-      const newFirst = container
-        .querySelector(".rule:first-child .rule-name")
-        ?.textContent;
+      const newFirst = container.querySelector(
+        ".rule:first-child .rule-name",
+      )?.textContent;
       expect(newFirst).not.toBe(firstName);
     });
   });
 
   it("dropping a rule onto itself is a no-op (from === target)", () => {
     const { container } = renderRules({ complexity: "medium" });
-    const rules = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule"),
-    );
-    const firstNameBefore = rules[0]
-      .querySelector(".rule-name")
-      ?.textContent;
+    const rules = Array.from(container.querySelectorAll<HTMLElement>(".rule"));
+    const firstNameBefore = rules[0].querySelector(".rule-name")?.textContent;
     const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
     fireEvent.dragStart(firstHead);
     fireEvent.dragOver(rules[0]);
@@ -557,12 +590,8 @@ describe("RulesView", () => {
     // ref must reset. Otherwise a subsequent drop on an unrelated
     // element would fire with a stale `from`.
     const { container } = renderRules({ complexity: "medium" });
-    const rules = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule"),
-    );
-    const firstNameBefore = rules[0]
-      .querySelector(".rule-name")
-      ?.textContent;
+    const rules = Array.from(container.querySelectorAll<HTMLElement>(".rule"));
+    const firstNameBefore = rules[0].querySelector(".rule-name")?.textContent;
     const firstHead = rules[0].querySelector(".rule-head") as HTMLElement;
     fireEvent.dragStart(firstHead);
     fireEvent.dragEnd(firstHead); // user aborted the drag
@@ -601,9 +630,7 @@ describe("RulesView", () => {
     // - dragLeave while set → set false
     // - dragLeave while NOT set → no-op (the if-guard's false arm)
     const { container } = renderRules({ complexity: "medium" });
-    const rules = Array.from(
-      container.querySelectorAll<HTMLElement>(".rule"),
-    );
+    const rules = Array.from(container.querySelectorAll<HTMLElement>(".rule"));
     expect(rules[1].getAttribute("data-drag-over")).toBeNull();
     fireEvent.dragOver(rules[1]);
     expect(rules[1].getAttribute("data-drag-over")).toBe("true");
@@ -636,10 +663,12 @@ describe("RulesView", () => {
   });
 
   it("expanded editor inputs aren't draggable (text selection isn't hijacked)", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
-    const nameInput = container.querySelector<HTMLInputElement>(
-      ".rule-name-input",
-    );
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "medium",
+    });
+    const nameInput =
+      container.querySelector<HTMLInputElement>(".rule-name-input");
     expect(nameInput).toBeTruthy();
     // `draggable` lives only on the rule-head, not the <li> or the
     // body. Inputs inside a draggable ancestor have their text
@@ -656,10 +685,12 @@ describe("RulesView", () => {
   // ---- #16: Ambiguity per-rule selector ----------------------------
 
   it("editor exposes an Ambiguity-behaviour select at complexity=heavy", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
-    const sel = container.querySelector<HTMLSelectElement>(
-      "select#rule-amb-r1",
-    );
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
+    const sel =
+      container.querySelector<HTMLSelectElement>("select#rule-amb-r1");
     expect(sel).toBeTruthy();
     // Default for fixture rules (no field set) is "prompt".
     expect(sel!.value).toBe("prompt");
@@ -668,10 +699,12 @@ describe("RulesView", () => {
   });
 
   it("changing the ambiguity select persists the new value", async () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
-    const sel = container.querySelector<HTMLSelectElement>(
-      "select#rule-amb-r1",
-    );
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
+    const sel =
+      container.querySelector<HTMLSelectElement>("select#rule-amb-r1");
     fireEvent.change(sel!, { target: { value: "log-to-uncategorized" } });
     await waitFor(() => {
       expect(sel!.value).toBe("log-to-uncategorized");
@@ -684,10 +717,12 @@ describe("RulesView", () => {
   });
 
   it("drops an ambiguity value that isn't in AMBIGUITY_OPTIONS (forged event guard)", () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "heavy" });
-    const sel = container.querySelector<HTMLSelectElement>(
-      "select#rule-amb-r1",
-    );
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "heavy",
+    });
+    const sel =
+      container.querySelector<HTMLSelectElement>("select#rule-amb-r1");
     fireEvent.change(sel!, {
       target: { value: "definitely-not-an-ambiguity-value" },
     });
@@ -712,7 +747,10 @@ describe("RulesView", () => {
   // ---- #12: Live signals card integration -------------------------
 
   it("clicking a Live-signals row adds a condition to the open rule (#12)", async () => {
-    const { container } = renderRules({ openRuleId: "r1", complexity: "medium" });
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "medium",
+    });
     const conditionsBefore = container.querySelectorAll(".cond").length;
     // The card renders signal rows as buttons when an onSignalClick
     // handler is wired in. Click the first one.
@@ -722,7 +760,9 @@ describe("RulesView", () => {
     expect(sigButtons.length).toBeGreaterThan(0);
     fireEvent.click(sigButtons[0]);
     await waitFor(() => {
-      expect(container.querySelectorAll(".cond").length).toBe(conditionsBefore + 1);
+      expect(container.querySelectorAll(".cond").length).toBe(
+        conditionsBefore + 1,
+      );
     });
   });
 
@@ -764,7 +804,8 @@ describe("RulesView", () => {
     const openRule = container.querySelector(".rule.is-open")!;
     const conditions = openRule.querySelectorAll(".cond");
     expect(conditions.length).toBe(1);
-    const signalSel = openRule.querySelector<HTMLSelectElement>(".cond-sig-sel");
+    const signalSel =
+      openRule.querySelector<HTMLSelectElement>(".cond-sig-sel");
     const valInput = openRule.querySelector<HTMLInputElement>(".cond-val");
     expect(signalSel?.value).toBe("ide.folder");
     expect(valInput?.value).toBe("~/code/cairn");

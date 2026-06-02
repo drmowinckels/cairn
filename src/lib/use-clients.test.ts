@@ -66,7 +66,8 @@ describe("useClients (inside Tauri)", () => {
     vi.resetModules();
   });
   afterEach(() => {
-    if (original === undefined) delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    if (original === undefined)
+      delete (globalThis as WithInternals).__TAURI_INTERNALS__;
     else (globalThis as WithInternals).__TAURI_INTERNALS__ = original;
   });
 
@@ -74,12 +75,19 @@ describe("useClients (inside Tauri)", () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "list_clients") return Promise.resolve([]);
       if (cmd === "save_client")
-        return Promise.resolve({ id: "c9", name: "Acme", color: null, archived: false });
+        return Promise.resolve({
+          id: "c9",
+          name: "Acme",
+          color: null,
+          archived: false,
+        });
       return Promise.resolve(null);
     });
     const { useClients } = await import("./use-clients");
     const { result } = renderHook(() => useClients());
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("list_clients"));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("list_clients"),
+    );
     await act(async () => {
       await result.current.create({ name: "Acme" });
     });

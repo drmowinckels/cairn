@@ -25,7 +25,10 @@ export class ErrorBoundary extends Component<Props, State> {
         <pre className="error-boundary-message">{this.state.error.message}</pre>
         <div className="error-boundary-actions">
           <button onClick={this.reset}>Try again</button>
-          <button className="secondary" onClick={() => window.location.reload()}>
+          <button
+            className="secondary"
+            onClick={() => window.location.reload()}
+          >
             Reload window
           </button>
         </div>

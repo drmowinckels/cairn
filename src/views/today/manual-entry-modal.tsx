@@ -411,7 +411,11 @@ export function ManualEntryModal({
           </div>
 
           {onCreateProject && creatingProject && (
-            <div className="create-project" role="group" aria-label="New project">
+            <div
+              className="create-project"
+              role="group"
+              aria-label="New project"
+            >
               <input
                 ref={newProjectNameRef}
                 type="text"
@@ -670,7 +674,11 @@ export function validateDraft(
   runningRange: { startedAt: string; id: string } | null,
 ): Validation {
   if (!draft.startedLocal) {
-    return { ok: false, startError: "Start time is required.", overlapWarning: null };
+    return {
+      ok: false,
+      startError: "Start time is required.",
+      overlapWarning: null,
+    };
   }
   // `<input type="datetime-local">` can only yield "" (caught above) or
   // a well-formed local timestamp. Date.parse(localToIso(...)) never

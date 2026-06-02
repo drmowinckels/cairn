@@ -3,9 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const diagnostics = vi.fn();
 vi.mock("../../lib/ipc", async () => {
-  const actual = await vi.importActual<typeof import("../../lib/ipc")>(
-    "../../lib/ipc",
-  );
+  const actual =
+    await vi.importActual<typeof import("../../lib/ipc")>("../../lib/ipc");
   return { ...actual, diagnostics: (...a: unknown[]) => diagnostics(...a) };
 });
 

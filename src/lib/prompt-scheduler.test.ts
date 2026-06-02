@@ -125,9 +125,9 @@ describe("decidePrompt", () => {
     expect(
       decidePrompt(on({ startMinute: 5_000, endMinute: 9_000 }), base),
     ).toBe("outside-window");
-    expect(
-      decidePrompt(on({ startMinute: -100, endMinute: -10 }), base),
-    ).toBe("outside-window");
+    expect(decidePrompt(on({ startMinute: -100, endMinute: -10 }), base)).toBe(
+      "outside-window",
+    );
   });
 });
 

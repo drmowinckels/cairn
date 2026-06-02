@@ -52,7 +52,12 @@ export function IdleWindow() {
   }, [dismiss]);
 
   return (
-    <div className="idle-win" role="dialog" aria-modal="true" aria-labelledby="idle-win-h">
+    <div
+      className="idle-win"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="idle-win-h"
+    >
       <header className="idle-win-head">
         <Icon name="moon" size={16} />
         <h1 id="idle-win-h" className="idle-win-title">

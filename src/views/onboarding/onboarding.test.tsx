@@ -60,15 +60,13 @@ describe("OnboardingView", () => {
     expect(
       screen.getByRole("dialog", { name: /welcome to cairn/i }),
     ).toBeTruthy();
+    expect(screen.getByText(/Everything is stored locally/i)).toBeTruthy();
     expect(
-      screen.getByText(/Everything is stored locally/i),
+      screen.getByText(
+        /No accounts\. No telemetry\. No background phone-home\./i,
+      ),
     ).toBeTruthy();
-    expect(
-      screen.getByText(/No accounts\. No telemetry\. No background phone-home\./i),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/Window titles are read locally/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/Window titles are read locally/i)).toBeTruthy();
     expect(
       screen.getAllByText(/Source on GitHub/i).length,
     ).toBeGreaterThanOrEqual(1);
@@ -101,7 +99,9 @@ describe("OnboardingView", () => {
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     expect(screen.getByRole("heading", { name: /permissions/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    expect(screen.getByRole("heading", { name: /welcome to cairn/i })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: /welcome to cairn/i }),
+    ).toBeTruthy();
   });
 
   it("Back is disabled on the first step", () => {

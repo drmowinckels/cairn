@@ -14,9 +14,13 @@ describe("fixtureReportSummary", () => {
     const sorted = [...summary.byProject].sort((a, b) => b.seconds - a.seconds);
     expect(summary.byProject).toEqual(sorted);
     expect(
-      summary.bySource.rule + summary.bySource.calendar + summary.bySource.manual,
+      summary.bySource.rule +
+        summary.bySource.calendar +
+        summary.bySource.manual,
     ).toBe(summary.totalSeconds);
-    expect(summary.prevTotalSeconds).toBe(Math.round(summary.totalSeconds * 0.85));
+    expect(summary.prevTotalSeconds).toBe(
+      Math.round(summary.totalSeconds * 0.85),
+    );
   });
 
   it("day range returns a single bucket sized to today's seconds", async () => {

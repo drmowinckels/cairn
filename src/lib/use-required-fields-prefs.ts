@@ -1,5 +1,8 @@
 import { useCallback, useState } from "react";
-import { REQUIRED_FIELDS_OFF, type RequiredFieldsPrefs } from "./required-fields";
+import {
+  REQUIRED_FIELDS_OFF,
+  type RequiredFieldsPrefs,
+} from "./required-fields";
 
 const STORAGE_KEY = "cairn:required-fields:v1";
 

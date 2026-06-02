@@ -209,13 +209,12 @@ function ProjectNode({ project, run, onDelete }: ProjectNodeProps) {
         <button
           type="button"
           className="tree-expand-btn"
-          aria-label={expanded ? `Collapse ${project.name}` : `Expand ${project.name}`}
+          aria-label={
+            expanded ? `Collapse ${project.name}` : `Expand ${project.name}`
+          }
           onClick={() => setExpanded((v) => !v)}
         >
-          <Icon
-            name={expanded ? "chevron-down" : "chevron-right"}
-            size={12}
-          />
+          <Icon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
         </button>
         <span
           className="proj-dot"
@@ -280,9 +279,7 @@ function ClientGroupNode({ group, projects, run }: ClientGroupNodeProps) {
     setDraft("");
     const color =
       PROJECT_COLORS[projects.projects.length % PROJECT_COLORS.length];
-    await run(() =>
-      projects.create({ name, color, clientId: group.clientId }),
-    );
+    await run(() => projects.create({ name, color, clientId: group.clientId }));
   };
 
   const deleteProject = useCallback(

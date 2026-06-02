@@ -99,9 +99,7 @@ describe("Popover · keyboard navigation (#27)", () => {
     render(<Popover />);
     await user.keyboard("3");
     // Rules view renders its own H2 heading.
-    expect(
-      screen.getByRole("heading", { name: /^rules$/i }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /^rules$/i })).toBeTruthy();
   });
 
   it("Esc cascade: modal close eats the keystroke, suggestion survives", async () => {

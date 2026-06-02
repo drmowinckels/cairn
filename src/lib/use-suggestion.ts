@@ -98,8 +98,13 @@ export interface UseSuggestionState {
  * preview) so the test fixtures don't need to mock Tauri to render
  * the rest of the Today view.
  */
-export function useSuggestion(opts: UseSuggestionOpts = {}): UseSuggestionState {
-  const snoozeSeconds = Math.max(1, opts.snoozeSeconds ?? DEFAULT_SNOOZE_SECONDS);
+export function useSuggestion(
+  opts: UseSuggestionOpts = {},
+): UseSuggestionState {
+  const snoozeSeconds = Math.max(
+    1,
+    opts.snoozeSeconds ?? DEFAULT_SNOOZE_SECONDS,
+  );
   const start = opts.startEntry ?? startEntry;
   const snooze = opts.snoozeRule ?? snoozeRule;
   const snoozeAllFn = opts.snoozeAll ?? snoozeAll;

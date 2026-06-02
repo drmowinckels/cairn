@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 const invokeMock = vi.fn();
@@ -104,7 +97,10 @@ describe("useTimer (inside Tauri)", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      await result.current.start({ projectId: "p1", description: "Rule preview UI" });
+      await result.current.start({
+        projectId: "p1",
+        description: "Rule preview UI",
+      });
     });
 
     expect(result.current.running?.id).toBe("e1");
@@ -128,7 +124,10 @@ describe("useTimer (inside Tauri)", () => {
 
   it("stop() calls stop_entry with the running id and clears state", async () => {
     invokeMock.mockResolvedValueOnce(ENTRY);
-    invokeMock.mockResolvedValueOnce({ ...ENTRY, endedAt: "2026-05-23T11:00:00Z" });
+    invokeMock.mockResolvedValueOnce({
+      ...ENTRY,
+      endedAt: "2026-05-23T11:00:00Z",
+    });
     const { useTimer } = await import("./use-timer");
     const { result } = renderHook(() => useTimer());
     await waitFor(() => expect(result.current.running).not.toBeNull());
@@ -154,10 +153,11 @@ describe("useTimer (inside Tauri)", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
         stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
         tickMs: 60_000,
       }),
@@ -187,10 +187,11 @@ describe("useTimer (inside Tauri)", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
         stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
         tickMs: 60_000,
       }),
@@ -220,10 +221,11 @@ describe("useTimer (inside Tauri)", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
         stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
         tickMs: 60_000,
       }),
@@ -265,10 +267,11 @@ describe("useTimer elapsed + tick", () => {
       const { result } = renderHook(() =>
         useTimer({
           enabled: true,
-          listen: vi.fn(async () => () => {}) as unknown as typeof import(
-            "@tauri-apps/api/event"
-          ).listen,
-          fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+          listen: vi.fn(
+            async () => () => {},
+          ) as unknown as typeof import("@tauri-apps/api/event").listen,
+          fetchCurrent:
+            fetchCurrent as unknown as typeof import("./ipc").currentRunning,
           tickMs: 60_000,
         }),
       );
@@ -291,10 +294,11 @@ describe("useTimer elapsed + tick", () => {
       const { result } = renderHook(() =>
         useTimer({
           enabled: true,
-          listen: vi.fn(async () => () => {}) as unknown as typeof import(
-            "@tauri-apps/api/event"
-          ).listen,
-          fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+          listen: vi.fn(
+            async () => () => {},
+          ) as unknown as typeof import("@tauri-apps/api/event").listen,
+          fetchCurrent:
+            fetchCurrent as unknown as typeof import("./ipc").currentRunning,
           tickMs: 1000,
         }),
       );
@@ -320,10 +324,11 @@ describe("useTimer elapsed + tick", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -345,8 +350,10 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     renderHook(() =>
       useTimer({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
     await waitFor(() => expect(handler).not.toBeNull());
@@ -370,8 +377,10 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     renderHook(() =>
       useTimer({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
     await waitFor(() => expect(snapshotHandler).not.toBeNull());
@@ -396,8 +405,10 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     renderHook(() =>
       useTimer({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
     await waitFor(() => expect(entryHandler).not.toBeNull());
@@ -418,10 +429,11 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
     await waitFor(() => expect(result.current.error).toBe("string-rejection"));
@@ -434,10 +446,11 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
         updateEntry: updateFn as unknown as typeof import("./ipc").updateEntry,
       }),
     );
@@ -456,10 +469,11 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
         updateEntry: updateFn as unknown as typeof import("./ipc").updateEntry,
       }),
     );
@@ -479,10 +493,11 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
         stopEntry: stopFn as unknown as typeof import("./ipc").stopEntry,
         onStopped,
       }),
@@ -501,10 +516,11 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     const { result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: vi.fn(async () => () => {}) as unknown as typeof import(
-          "@tauri-apps/api/event"
-        ).listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
         startEntry: startFn as unknown as typeof import("./ipc").startEntry,
       }),
     );
@@ -525,8 +541,10 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     const { unmount, result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -550,8 +568,10 @@ describe("useTimer snapshot subscription + update + onStopped", () => {
     const { unmount, result } = renderHook(() =>
       useTimer({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
       }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));

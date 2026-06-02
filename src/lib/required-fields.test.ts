@@ -15,14 +15,18 @@ const bare = { projectId: null, description: "" };
 describe("missingRequiredFields", () => {
   describe("both prefs off (default)", () => {
     it("returns no missing fields when project is null", () => {
-      expect(missingRequiredFields(withoutProject, REQUIRED_FIELDS_OFF)).toEqual({
+      expect(
+        missingRequiredFields(withoutProject, REQUIRED_FIELDS_OFF),
+      ).toEqual({
         project: false,
         description: false,
       });
     });
 
     it("returns no missing fields when description is empty", () => {
-      expect(missingRequiredFields(withoutDescription, REQUIRED_FIELDS_OFF)).toEqual({
+      expect(
+        missingRequiredFields(withoutDescription, REQUIRED_FIELDS_OFF),
+      ).toEqual({
         project: false,
         description: false,
       });
@@ -104,14 +108,18 @@ describe("missingRequiredFields", () => {
     });
 
     it("flags only project when only description is filled", () => {
-      expect(missingRequiredFields({ projectId: null, description: "work" }, prefs)).toEqual({
+      expect(
+        missingRequiredFields({ projectId: null, description: "work" }, prefs),
+      ).toEqual({
         project: true,
         description: false,
       });
     });
 
     it("flags only description when only project is filled", () => {
-      expect(missingRequiredFields({ projectId: "p1", description: "" }, prefs)).toEqual({
+      expect(
+        missingRequiredFields({ projectId: "p1", description: "" }, prefs),
+      ).toEqual({
         project: false,
         description: true,
       });
@@ -129,21 +137,29 @@ describe("missingRequiredFields", () => {
     const prefs = { requireProject: true, requireDescription: true };
 
     it("returns no missing fields when isIdleResolution is true, even with bare entry", () => {
-      expect(missingRequiredFields(bare, prefs, { isIdleResolution: true })).toEqual({
+      expect(
+        missingRequiredFields(bare, prefs, { isIdleResolution: true }),
+      ).toEqual({
         project: false,
         description: false,
       });
     });
 
     it("returns no missing fields when isIdleResolution is true and project missing", () => {
-      expect(missingRequiredFields(withoutProject, prefs, { isIdleResolution: true })).toEqual({
+      expect(
+        missingRequiredFields(withoutProject, prefs, {
+          isIdleResolution: true,
+        }),
+      ).toEqual({
         project: false,
         description: false,
       });
     });
 
     it("applies normally when isIdleResolution is false", () => {
-      expect(missingRequiredFields(bare, prefs, { isIdleResolution: false })).toEqual({
+      expect(
+        missingRequiredFields(bare, prefs, { isIdleResolution: false }),
+      ).toEqual({
         project: true,
         description: true,
       });
@@ -198,7 +214,9 @@ describe("canStop", () => {
     });
 
     it("returns false when only description is set", () => {
-      expect(canStop({ projectId: null, description: "work" }, prefs)).toBe(false);
+      expect(canStop({ projectId: null, description: "work" }, prefs)).toBe(
+        false,
+      );
     });
 
     it("returns true when both are filled", () => {

@@ -126,7 +126,10 @@ describe("ipc helpers (inside Tauri)", () => {
   });
 
   it("setGitDiscoveryRoots forwards roots and returns the updated status", async () => {
-    invokeMock.mockResolvedValue({ discoveryRoots: ["~/code"], watchedCount: 3 });
+    invokeMock.mockResolvedValue({
+      discoveryRoots: ["~/code"],
+      watchedCount: 3,
+    });
     const { setGitDiscoveryRoots } = await import("./ipc");
     const status = await setGitDiscoveryRoots(["~/code"]);
     expect(invokeMock).toHaveBeenCalledWith("set_git_discovery_roots", {

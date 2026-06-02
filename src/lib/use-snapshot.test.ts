@@ -107,8 +107,10 @@ describe("useSnapshot hook", () => {
     const { result } = renderHook(() =>
       useSnapshot({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
       }),
     );
     await waitFor(() => expect(result.current?.ideFolder).toBe("~/seed"));
@@ -127,8 +129,10 @@ describe("useSnapshot hook", () => {
     const { result } = renderHook(() =>
       useSnapshot({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
       }),
     );
     // Wait for the listener registration to finish before firing.
@@ -153,8 +157,10 @@ describe("useSnapshot hook", () => {
     renderHook(() =>
       useSnapshot({
         enabled: false,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
       }),
     );
     expect(listenFn).not.toHaveBeenCalled();
@@ -179,8 +185,10 @@ describe("useSnapshot hook", () => {
     const { unmount } = renderHook(() =>
       useSnapshot({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
       }),
     );
     // Listen is still pending — unmount before it resolves.
@@ -200,8 +208,10 @@ describe("useSnapshot hook", () => {
     const { unmount } = renderHook(() =>
       useSnapshot({
         enabled: true,
-        listen: listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
-        fetchCurrent: fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
+        listen:
+          listenFn as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentSnapshot,
       }),
     );
     // Wait until the .then chain assigning `unlisten` has run.

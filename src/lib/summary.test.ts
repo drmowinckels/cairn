@@ -3,12 +3,33 @@ import { buildWeekSummary } from "./summary";
 import type { Project, WeekDay } from "./types";
 
 const projects: Record<string, Project> = {
-  acme:  { id: "acme",  name: "acme-web", clientId: null, color: "#000", archived: false, estimateHours: null },
-  cairn: { id: "cairn", name: "Cairn",    clientId: null, color: "#111", archived: false, estimateHours: null },
+  acme: {
+    id: "acme",
+    name: "acme-web",
+    clientId: null,
+    color: "#000",
+    archived: false,
+    estimateHours: null,
+  },
+  cairn: {
+    id: "cairn",
+    name: "Cairn",
+    clientId: null,
+    color: "#111",
+    archived: false,
+    estimateHours: null,
+  },
 };
 
 const week: WeekDay[] = [
-  { day: "Mon", hours: 4, segments: [["acme", 3], ["cairn", 1]] },
+  {
+    day: "Mon",
+    hours: 4,
+    segments: [
+      ["acme", 3],
+      ["cairn", 1],
+    ],
+  },
   { day: "Tue", hours: 2, segments: [["cairn", 2]] },
   { day: "Wed", hours: 0, segments: [] },
 ];

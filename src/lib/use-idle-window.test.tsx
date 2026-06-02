@@ -40,10 +40,12 @@ describe("useIdleWindow", () => {
 
   it("updates the prompt from a live idle-resume event", async () => {
     let emit: ((e: { payload: IdleResumeEvent }) => void) | undefined;
-    const listen = vi.fn(async (_name: string, cb: (e: { payload: IdleResumeEvent }) => void) => {
-      emit = cb;
-      return () => {};
-    });
+    const listen = vi.fn(
+      async (_name: string, cb: (e: { payload: IdleResumeEvent }) => void) => {
+        emit = cb;
+        return () => {};
+      },
+    );
     const { result } = renderHook(() =>
       useIdleWindow({
         enabled: true,
@@ -129,7 +131,11 @@ describe("useIdleWindow", () => {
   it("is inert when disabled (outside Tauri)", async () => {
     const pending = vi.fn();
     renderHook(() =>
-      useIdleWindow({ enabled: false, listen: noopListen(), pendingIdle: pending as never }),
+      useIdleWindow({
+        enabled: false,
+        listen: noopListen(),
+        pendingIdle: pending as never,
+      }),
     );
     expect(pending).not.toHaveBeenCalled();
   });

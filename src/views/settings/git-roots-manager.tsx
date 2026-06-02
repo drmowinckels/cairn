@@ -106,10 +106,9 @@ export function GitRootsManager({ onClose, onSaved }: Props) {
         </header>
 
         <p className="modal-sub">
-          Folders Cairn scans for git repositories to watch for branch
-          changes. Use <code>~</code> for your home folder. Changes apply
-          immediately; newly added folders are fully resolved after the next
-          launch.
+          Folders Cairn scans for git repositories to watch for branch changes.
+          Use <code>~</code> for your home folder. Changes apply immediately;
+          newly added folders are fully resolved after the next launch.
         </p>
 
         {error && (

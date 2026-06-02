@@ -73,7 +73,9 @@ describe("DataStorageActions", () => {
       return null;
     });
     await renderStorage();
-    const btn = await screen.findByRole("button", { name: /view what's stored/i });
+    const btn = await screen.findByRole("button", {
+      name: /view what's stored/i,
+    });
     await act(async () => {
       fireEvent.click(btn);
     });

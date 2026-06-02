@@ -178,7 +178,9 @@ describe("useToggleTimerShortcut", () => {
     });
 
     const fetchCurrent = vi.fn().mockResolvedValue(null);
-    const fetchToday = vi.fn().mockResolvedValue([{ ...ENTRY, projectId: "p7" }]);
+    const fetchToday = vi
+      .fn()
+      .mockResolvedValue([{ ...ENTRY, projectId: "p7" }]);
     const startFn = vi.fn().mockResolvedValue(ENTRY);
     const announce = vi.fn();
     const toast = vi.fn();
@@ -200,7 +202,9 @@ describe("useToggleTimerShortcut", () => {
       cb!();
     });
     await waitFor(() => expect(startFn).toHaveBeenCalled());
-    await waitFor(() => expect(announce).toHaveBeenCalledWith("Timer started: Cairn dev"));
+    await waitFor(() =>
+      expect(announce).toHaveBeenCalledWith("Timer started: Cairn dev"),
+    );
     expect(toast).toHaveBeenCalledWith("Timer started: Cairn dev");
   });
 

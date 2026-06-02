@@ -41,7 +41,11 @@ import { useSignalCapture } from "./use-signal-capture";
 
 const ipcMock = ipc as typeof ipc & {
   __reset: () => void;
-  __setState: (s: { active: boolean; path: string | null; bytes: number }) => void;
+  __setState: (s: {
+    active: boolean;
+    path: string | null;
+    bytes: number;
+  }) => void;
 };
 
 beforeEach(() => {
@@ -81,9 +85,9 @@ describe("useSignalCapture", () => {
   });
 
   it("captures errors from start() instead of crashing", async () => {
-    (ipc.startSignalCapture as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("nope"),
-    );
+    (
+      ipc.startSignalCapture as unknown as ReturnType<typeof vi.fn>
+    ).mockRejectedValueOnce(new Error("nope"));
     const { result } = renderHook(() => useSignalCapture());
     await waitFor(() => expect(result.current.status.active).toBe(false));
 
@@ -117,9 +121,9 @@ describe("useSignalCapture", () => {
     });
     expect(result.current.status.active).toBe(true);
 
-    (ipc.signalCaptureStatus as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("blip"),
-    );
+    (
+      ipc.signalCaptureStatus as unknown as ReturnType<typeof vi.fn>
+    ).mockRejectedValueOnce(new Error("blip"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1100);
     });

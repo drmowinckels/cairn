@@ -74,7 +74,10 @@ export async function deleteProject(id: string): Promise<void> {
 export async function projectBudgetStatus(
   projectId: string,
 ): Promise<import("./types").ProjectBudgetStatus> {
-  return invoke<import("./types").ProjectBudgetStatus>("project_budget_status", { projectId });
+  return invoke<import("./types").ProjectBudgetStatus>(
+    "project_budget_status",
+    { projectId },
+  );
 }
 
 export async function listTasks(projectId?: string | null): Promise<Task[]> {
@@ -225,7 +228,9 @@ export interface UpdateEntryInput {
   endedAt?: string | null;
 }
 
-export async function updateEntry(input: UpdateEntryInput): Promise<BackendEntry> {
+export async function updateEntry(
+  input: UpdateEntryInput,
+): Promise<BackendEntry> {
   return invoke<BackendEntry>("update_entry", { input });
 }
 
@@ -240,7 +245,9 @@ export interface CreateEntryInput {
   source?: string;
 }
 
-export async function createEntry(input: CreateEntryInput): Promise<BackendEntry> {
+export async function createEntry(
+  input: CreateEntryInput,
+): Promise<BackendEntry> {
   return invoke<BackendEntry>("create_entry", { input });
 }
 
@@ -253,7 +260,9 @@ export async function currentRunning(): Promise<BackendEntry | null> {
   return invoke<BackendEntry | null>("current_running");
 }
 
-export async function startEntry(input: StartEntryInput): Promise<BackendEntry> {
+export async function startEntry(
+  input: StartEntryInput,
+): Promise<BackendEntry> {
   return invoke<BackendEntry>("start_entry", { input });
 }
 
@@ -271,7 +280,10 @@ export async function setPinned(pinned: boolean): Promise<void> {
   await invoke("set_pinned", { pinned });
 }
 
-export async function setPopoverSize(width: number, height: number): Promise<void> {
+export async function setPopoverSize(
+  width: number,
+  height: number,
+): Promise<void> {
   if (!inTauri) return;
   await invoke("set_popover_size", { width, height });
 }
@@ -529,7 +541,9 @@ export interface ResolveIdleInput {
   choice: IdleChoice;
 }
 
-export async function resolveIdle(input: ResolveIdleInput): Promise<BackendEntry | null> {
+export async function resolveIdle(
+  input: ResolveIdleInput,
+): Promise<BackendEntry | null> {
   return invoke<BackendEntry | null>("resolve_idle", { input });
 }
 
@@ -548,7 +562,10 @@ export interface SnoozeSnapshot {
   global: string | null;
 }
 
-export async function snoozeRule(ruleId: string, durationSeconds: number): Promise<void> {
+export async function snoozeRule(
+  ruleId: string,
+  durationSeconds: number,
+): Promise<void> {
   await invoke("snooze_rule", {
     input: { ruleId, durationSeconds },
   });

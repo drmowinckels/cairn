@@ -85,7 +85,8 @@ export function usePalette(opts: UsePaletteOpts = {}): UsePalette {
       onOpen?.();
     };
     target.addEventListener("keydown", handler as EventListener);
-    return () => target.removeEventListener("keydown", handler as EventListener);
+    return () =>
+      target.removeEventListener("keydown", handler as EventListener);
   }, [open, opener, opts.target, onOpen]);
 
   return useMemo(

@@ -16,8 +16,22 @@ import {
 import type { Project, Task } from "../../lib/types";
 
 const PROJECTS: Project[] = [
-  { id: "p1", name: "Alpha", clientId: null, color: "#aaa", archived: false, estimateHours: null },
-  { id: "p2", name: "Beta", clientId: null, color: "#bbb", archived: false, estimateHours: null },
+  {
+    id: "p1",
+    name: "Alpha",
+    clientId: null,
+    color: "#aaa",
+    archived: false,
+    estimateHours: null,
+  },
+  {
+    id: "p2",
+    name: "Beta",
+    clientId: null,
+    color: "#bbb",
+    archived: false,
+    estimateHours: null,
+  },
 ];
 
 const TASKS_P1: Task[] = [
@@ -333,9 +347,7 @@ describe("ManualEntryModal — validation", () => {
   });
 
   it("surfaces a submit error if onSubmit rejects, keeping the modal open", async () => {
-    const onSubmit = vi
-      .fn()
-      .mockRejectedValue(new Error("ipc unavailable"));
+    const onSubmit = vi.fn().mockRejectedValue(new Error("ipc unavailable"));
     const onClose = vi.fn();
     render(
       <ManualEntryModal
@@ -450,10 +462,7 @@ describe("ManualEntryModal — edit mode + delete", () => {
 
 describe("validateDraft (pure)", () => {
   it("rejects empty start", () => {
-    const v = validateDraft(
-      { ...BASE_DRAFT, startedLocal: "" },
-      null,
-    );
+    const v = validateDraft({ ...BASE_DRAFT, startedLocal: "" }, null);
     expect(v.ok).toBe(false);
   });
   it("rejects equal start/end", () => {
@@ -488,14 +497,20 @@ describe("validateDraft (pure)", () => {
         startedLocal: toLocal(tenMinAgo),
         endedLocal: toLocal(fiveMinAhead),
       },
-      { id: "running", startedAt: new Date(now.getTime() - 30 * 60_000).toISOString() },
+      {
+        id: "running",
+        startedAt: new Date(now.getTime() - 30 * 60_000).toISOString(),
+      },
     );
     expect(v.overlapWarning).toMatch(/overlaps/i);
   });
   it("does not flag overlap for an open-ended draft (it supersedes the timer)", () => {
     const v = validateDraft(
       { ...BASE_DRAFT, endedLocal: "" },
-      { id: "running", startedAt: new Date(Date.now() - 30 * 60_000).toISOString() },
+      {
+        id: "running",
+        startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      },
     );
     expect(v.overlapWarning).toBeNull();
   });
@@ -749,7 +764,9 @@ describe("ManualEntryModal — inline create project", () => {
     const nameInput = screen.getByLabelText(/new project name/i);
     fireEvent.change(nameInput, { target: { value: "   " } });
     fireEvent.keyDown(nameInput, { key: "Enter" });
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/name/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/name/i),
+    );
     expect(onCreateProject).not.toHaveBeenCalled();
   });
 
@@ -861,7 +878,9 @@ describe("ManualEntryModal — inline create project", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /new project/i }));
     expect(screen.getByLabelText(/new project name/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /cancel new project/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /cancel new project/i }),
+    );
     expect(screen.queryByLabelText(/new project name/i)).toBeNull();
     expect(onCreateProject).not.toHaveBeenCalled();
   });
@@ -1027,7 +1046,9 @@ describe("ManualEntryModal — task picker (#21)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /add task/i }));
     await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toMatch(/task write failed/i),
+      expect(screen.getByRole("alert").textContent).toMatch(
+        /task write failed/i,
+      ),
     );
     // Sub-form stays open for a retry.
     expect(screen.getByLabelText(/new task name/i)).toBeTruthy();

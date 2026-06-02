@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 const invokeMock = vi.fn();
@@ -39,15 +32,18 @@ describe("useProjects (outside Tauri)", () => {
     const before = result.current.projects.length;
     let made: { id: string; name: string } | undefined;
     await act(async () => {
-      made = await result.current.create({ name: "Side Quest", color: "#81b29a" });
+      made = await result.current.create({
+        name: "Side Quest",
+        color: "#81b29a",
+      });
     });
     expect(made?.id).toBe("local-side-quest");
     expect(made?.name).toBe("Side Quest");
     expect(invokeMock).not.toHaveBeenCalled();
     expect(result.current.projects).toHaveLength(before + 1);
-    expect(result.current.projects.some((p) => p.id === "local-side-quest")).toBe(
-      true,
-    );
+    expect(
+      result.current.projects.some((p) => p.id === "local-side-quest"),
+    ).toBe(true);
   });
 
   it("update() replaces a project in place", async () => {
@@ -98,7 +94,13 @@ describe("useProjects (inside Tauri)", () => {
 
   it("starts empty, then replaces with backend projects", async () => {
     invokeMock.mockResolvedValue([
-      { id: "p1", name: "Cairn", clientId: null, color: "#e07a5f", archived: false },
+      {
+        id: "p1",
+        name: "Cairn",
+        clientId: null,
+        color: "#e07a5f",
+        archived: false,
+      },
     ]);
     const { useProjects } = await import("./use-projects");
     const { result } = renderHook(() => useProjects());

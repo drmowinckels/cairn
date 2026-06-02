@@ -183,7 +183,8 @@ export function RulesView({
           <h2 className="view-title">Rules</h2>
           <p className="view-sub">
             Tried in order from top. First match wins.
-            {complexity !== "light" && " Each rule may combine multiple signals."}
+            {complexity !== "light" &&
+              " Each rule may combine multiple signals."}
           </p>
         </div>
         <button
@@ -308,7 +309,8 @@ function RuleRow({
   projectById,
 }: RuleRowProps) {
   const project = rule.then.project ? projectById.get(rule.then.project) : null;
-  const stopBubble = (e: React.MouseEvent | React.KeyboardEvent) => e.stopPropagation();
+  const stopBubble = (e: React.MouseEvent | React.KeyboardEvent) =>
+    e.stopPropagation();
 
   const setCondition = (idx: number, patch: Partial<RuleCondition>) =>
     onUpdate({ when: withConditionAt(rule.when, idx, patch) });
@@ -339,14 +341,14 @@ function RuleRow({
     // pick a sensible default so the value field doesn't carry
     // over an unsupported op (e.g. "contains" on calendar.event).
     const currentOp = rule.when[idx]?.op;
-    const op = signal === "calendar.event" || currentOp === "is-active"
-      ? defaultOpForSignal(signal)
-      : currentOp ?? defaultOpForSignal(signal);
+    const op =
+      signal === "calendar.event" || currentOp === "is-active"
+        ? defaultOpForSignal(signal)
+        : (currentOp ?? defaultOpForSignal(signal));
     setCondition(idx, { signal, op });
   };
 
-  const addCondition = () =>
-    onUpdate({ when: withConditionAdded(rule.when) });
+  const addCondition = () => onUpdate({ when: withConditionAdded(rule.when) });
 
   const removeCondition = (idx: number) =>
     onUpdate({ when: withConditionRemoved(rule.when, idx) });
@@ -509,9 +511,7 @@ function RuleRow({
                       setCondition(i, { any: !c.any });
                     }}
                     aria-label={
-                      c.any
-                        ? "OR — switch to AND"
-                        : "AND — switch to OR"
+                      c.any ? "OR — switch to AND" : "AND — switch to OR"
                     }
                     title="Click to switch between AND / OR"
                   >
@@ -753,18 +753,26 @@ function RuleConditionPill({ cond }: { cond: RuleCondition }) {
 
 function SignalIcon({ kind, small }: { kind: SignalKind; small?: boolean }) {
   const name: IconName =
-    kind === "ide.folder" ? "folder"
-    : kind === "git.branch" ? "branch"
-    : kind === "browser.domain" ? "globe"
-    : kind === "browser.tab" ? "globe"
-    : kind === "window.title" ? "type"
-    : kind === "calendar.event" ? "calendar"
-    : "info";
+    kind === "ide.folder"
+      ? "folder"
+      : kind === "git.branch"
+        ? "branch"
+        : kind === "browser.domain"
+          ? "globe"
+          : kind === "browser.tab"
+            ? "globe"
+            : kind === "window.title"
+              ? "type"
+              : kind === "calendar.event"
+                ? "calendar"
+                : "info";
   return <Icon name={name} size={small ? 11 : 12} className="sig-ic" />;
 }
 
-interface DebouncedTextInputProps
-  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "defaultValue"> {
+interface DebouncedTextInputProps extends Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "value" | "onChange" | "defaultValue"
+> {
   value: string;
   onCommit: (next: string) => void;
 }

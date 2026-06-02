@@ -34,7 +34,12 @@ import {
 } from "../../lib/task-switch";
 import { useTaskSwitchPrompt } from "../../lib/use-task-switch-prompt";
 import { TaskSwitchBanner } from "./task-switch-banner";
-import type { Density, DetectionPrompts, LayoutVariant, Project } from "../../lib/types";
+import type {
+  Density,
+  DetectionPrompts,
+  LayoutVariant,
+  Project,
+} from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
 import { WorkingHoursReminder } from "./working-hours-reminder";
@@ -337,17 +342,25 @@ export function TodayView({
       return { project: false, description: false };
     }
     return missingRequiredFields(
-      { projectId: timer.running.projectId, description: timer.running.description },
+      {
+        projectId: timer.running.projectId,
+        description: timer.running.description,
+      },
       requiredFields,
     );
   }, [stopBlocked, timer.running, requiredFields]);
 
   useEffect(() => {
     if (!stopBlocked || !timer.running) return;
-    if (canStop(
-      { projectId: timer.running.projectId, description: timer.running.description },
-      requiredFields,
-    )) {
+    if (
+      canStop(
+        {
+          projectId: timer.running.projectId,
+          description: timer.running.description,
+        },
+        requiredFields,
+      )
+    ) {
       setStopBlocked(false);
     }
   }, [stopBlocked, timer.running, requiredFields]);
@@ -459,10 +472,7 @@ export function TodayView({
             </button>
           </div>
           <div className="suggest-actions">
-            <button
-              className="btn btn--primary"
-              onClick={() => void confirm()}
-            >
+            <button className="btn btn--primary" onClick={() => void confirm()}>
               <Icon name="check" size={13} /> Confirm
             </button>
             <button
@@ -509,7 +519,11 @@ export function TodayView({
         />
       )}
 
-      <section className="now" aria-label="Current timer" aria-busy={timer.loading}>
+      <section
+        className="now"
+        aria-label="Current timer"
+        aria-busy={timer.loading}
+      >
         <div className="now-meta">
           <span className="now-label">
             {timer.loading
@@ -606,7 +620,9 @@ export function TodayView({
                 className="now-input"
                 defaultValue={runningTask}
                 aria-label="Task description"
-                aria-describedby={missingFields.description ? "stop-err-desc" : undefined}
+                aria-describedby={
+                  missingFields.description ? "stop-err-desc" : undefined
+                }
                 aria-invalid={missingFields.description || undefined}
                 placeholder="What are you working on?"
                 onChange={(e) => debouncedDesc(e.currentTarget.value)}
@@ -698,7 +714,11 @@ export function TodayView({
                 >
                   <span
                     className="proj-dot"
-                    style={{ background: cbColor(p.color, cbEnabled), width: 8, height: 8 }}
+                    style={{
+                      background: cbColor(p.color, cbEnabled),
+                      width: 8,
+                      height: 8,
+                    }}
                   />
                   <span className="quick-name">{p.name}</span>
                 </button>
@@ -796,7 +816,9 @@ function ProjectPickerChip({
   cbEnabled,
   invalid = false,
 }: ProjectPickerChipProps) {
-  const current = projectId ? projects.find((p) => p.id === projectId) : undefined;
+  const current = projectId
+    ? projects.find((p) => p.id === projectId)
+    : undefined;
   const ref = useRef<HTMLDivElement>(null);
   const hasProjects = projects.length > 0;
 
@@ -828,14 +850,18 @@ function ProjectPickerChip({
         aria-disabled={!hasProjects}
         aria-invalid={invalid || undefined}
         aria-label={
-          current ? `Project: ${current.name}. Change project` : "Choose a project"
+          current
+            ? `Project: ${current.name}. Change project`
+            : "Choose a project"
         }
         onClick={() => hasProjects && setOpen(!open)}
       >
         <span
           className="proj-dot"
           style={{
-            background: current ? cbColor(current.color, cbEnabled) : "var(--ink-mute)",
+            background: current
+              ? cbColor(current.color, cbEnabled)
+              : "var(--ink-mute)",
           }}
         />
         <span className="proj-chip-name">{current?.name ?? "No project"}</span>
@@ -870,7 +896,12 @@ interface TimelineSectionProps {
   cbEnabled: boolean;
 }
 
-function TimelineSection({ entries, projects, announce, cbEnabled }: TimelineSectionProps) {
+function TimelineSection({
+  entries,
+  projects,
+  announce,
+  cbEnabled,
+}: TimelineSectionProps) {
   const [nowMin, setNowMin] = useState(() => minutesNow());
   useEffect(() => {
     const id = window.setInterval(() => setNowMin(minutesNow()), 60_000);
@@ -888,10 +919,7 @@ function TimelineSection({ entries, projects, announce, cbEnabled }: TimelineSec
 
   const totalLoggedMin = useMemo(
     () =>
-      segments.reduce(
-        (acc, s) => acc + Math.max(0, s.endMin - s.startMin),
-        0,
-      ),
+      segments.reduce((acc, s) => acc + Math.max(0, s.endMin - s.startMin), 0),
     [segments],
   );
 
@@ -921,7 +949,10 @@ function TimelineSection({ entries, projects, announce, cbEnabled }: TimelineSec
           <ul className="legend">
             {legend.map((l) => (
               <li key={l.projectId} className="legend-item">
-                <span className="proj-dot" style={{ background: cbColor(l.color, cbEnabled) }} />
+                <span
+                  className="proj-dot"
+                  style={{ background: cbColor(l.color, cbEnabled) }}
+                />
                 {l.name}
               </li>
             ))}
@@ -940,7 +971,13 @@ interface DayTimelineProps {
   cbEnabled: boolean;
 }
 
-function DayTimeline({ segments, projects, nowMin, announce, cbEnabled }: DayTimelineProps) {
+function DayTimeline({
+  segments,
+  projects,
+  nowMin,
+  announce,
+  cbEnabled,
+}: DayTimelineProps) {
   const byId = useMemo(() => projectById(projects), [projects]);
   const nowPct = startToPercent(nowMin);
 
