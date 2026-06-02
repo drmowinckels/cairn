@@ -9,10 +9,11 @@
 //! User-Agent: cairn/0.x
 //! ```
 //!
-//! Never sends cookies, never follows redirects across hosts, never
-//! retries with backoff (the polling loop already retries on the next
-//! tick). The returned 304-or-payload + cache headers are persisted by
-//! the registry.
+//! Never sends cookies, never follows redirects across hosts (same-host
+//! redirects are followed up to a small cap; see
+//! [`host_pinned_redirect_policy`]), never retries with backoff (the
+//! polling loop already retries on the next tick). The returned
+//! 304-or-payload + cache headers are persisted by the registry.
 
 use std::time::Duration;
 
@@ -22,6 +23,88 @@ use reqwest::header::{
 };
 use reqwest::redirect::Policy;
 use reqwest::StatusCode;
+
+/// Total redirects we will follow before giving up, matching the
+/// historical `Policy::limited(5)` cap.
+const MAX_REDIRECTS: usize = 5;
+
+/// What the redirect policy should do for a single redirect hop.
+#[derive(Debug, PartialEq, Eq)]
+enum RedirectDecision {
+    /// Same host, still under the cap — follow it.
+    Follow,
+    /// Destination host differs from the previous hop — refuse.
+    StopCrossHost,
+    /// Same host but the cap is exhausted — refuse.
+    StopTooMany,
+}
+
+/// Pure decision for a single redirect hop.
+///
+/// `prev_host` is the host we are being redirected *from*, `next_host`
+/// the host we are being redirected *to*, and `already_followed` the
+/// number of redirects already followed on this request. Hosts are
+/// compared case-insensitively; a missing host on either side counts
+/// as a host change and is refused.
+fn redirect_decision(
+    prev_host: Option<&str>,
+    next_host: Option<&str>,
+    already_followed: usize,
+) -> RedirectDecision {
+    let same_host = match (prev_host, next_host) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        _ => false,
+    };
+    if !same_host {
+        RedirectDecision::StopCrossHost
+    } else if already_followed >= MAX_REDIRECTS {
+        RedirectDecision::StopTooMany
+    } else {
+        RedirectDecision::Follow
+    }
+}
+
+/// URL-free marker error for a refused cross-host redirect.
+#[derive(Debug)]
+struct CrossHostRedirect;
+
+impl std::fmt::Display for CrossHostRedirect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cross-host redirect refused")
+    }
+}
+
+impl std::error::Error for CrossHostRedirect {}
+
+/// URL-free marker error for exceeding the redirect cap.
+#[derive(Debug)]
+struct TooManyRedirects;
+
+impl std::fmt::Display for TooManyRedirects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("too many redirects")
+    }
+}
+
+impl std::error::Error for TooManyRedirects {}
+
+/// Redirect policy that follows redirects only while the host is
+/// unchanged, capping the total at [`MAX_REDIRECTS`]. A cross-host
+/// redirect is refused via `attempt.error(..)`, which surfaces through
+/// [`classify`] as a redirect error and never carries the URL into a
+/// user-visible string.
+fn host_pinned_redirect_policy() -> Policy {
+    Policy::custom(|attempt| {
+        let prev_host = attempt.previous().last().and_then(|u| u.host_str());
+        let next_host = attempt.url().host_str();
+        let already_followed = attempt.previous().len().saturating_sub(1);
+        match redirect_decision(prev_host, next_host, already_followed) {
+            RedirectDecision::Follow => attempt.follow(),
+            RedirectDecision::StopCrossHost => attempt.error(CrossHostRedirect),
+            RedirectDecision::StopTooMany => attempt.error(TooManyRedirects),
+        }
+    })
+}
 
 /// Categorize a reqwest error into a short, URL-free reason string.
 /// This is critical: `reqwest::Error`'s `Display` impl appends
@@ -73,7 +156,7 @@ impl Fetcher {
     pub fn new() -> Result<Self> {
         let client = reqwest::Client::builder()
             .user_agent(concat!("cairn/", env!("CARGO_PKG_VERSION")))
-            .redirect(Policy::limited(5))
+            .redirect(host_pinned_redirect_policy())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()
@@ -151,6 +234,73 @@ impl Fetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_same_host_under_cap_follows() {
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), 0),
+            RedirectDecision::Follow
+        );
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), MAX_REDIRECTS - 1),
+            RedirectDecision::Follow
+        );
+    }
+
+    #[test]
+    fn redirect_same_host_is_case_insensitive() {
+        assert_eq!(
+            redirect_decision(Some("Example.COM"), Some("example.com"), 0),
+            RedirectDecision::Follow
+        );
+    }
+
+    #[test]
+    fn redirect_cross_host_stops() {
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("evil.test"), 0),
+            RedirectDecision::StopCrossHost
+        );
+    }
+
+    #[test]
+    fn redirect_missing_host_stops_cross_host() {
+        assert_eq!(
+            redirect_decision(None, Some("example.com"), 0),
+            RedirectDecision::StopCrossHost
+        );
+        assert_eq!(
+            redirect_decision(Some("example.com"), None, 0),
+            RedirectDecision::StopCrossHost
+        );
+        assert_eq!(
+            redirect_decision(None, None, 0),
+            RedirectDecision::StopCrossHost
+        );
+    }
+
+    #[test]
+    fn redirect_same_host_over_cap_stops() {
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), MAX_REDIRECTS),
+            RedirectDecision::StopTooMany
+        );
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), MAX_REDIRECTS + 1),
+            RedirectDecision::StopTooMany
+        );
+    }
+
+    #[test]
+    fn marker_errors_are_url_free() {
+        assert_eq!(CrossHostRedirect.to_string(), "cross-host redirect refused");
+        assert_eq!(TooManyRedirects.to_string(), "too many redirects");
+    }
+
+    #[test]
+    fn host_pinned_policy_constructs() {
+        let _ = host_pinned_redirect_policy();
+    }
 
     #[test]
     fn normalize_webcal() {
