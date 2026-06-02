@@ -147,6 +147,19 @@ describe("ipc helpers (inside Tauri)", () => {
       height: 900,
     });
   });
+
+  it("checkForUpdate invokes the command and returns the update info", async () => {
+    const info = {
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      notes: null,
+      releaseUrl: "https://github.com/drmowinckels/cairn/releases/tag/v0.2.0",
+    };
+    invokeMock.mockResolvedValue(info);
+    const { checkForUpdate } = await import("./ipc");
+    expect(await checkForUpdate()).toEqual(info);
+    expect(invokeMock).toHaveBeenCalledWith("check_for_update");
+  });
 });
 
 describe("ipc helpers (outside Tauri)", () => {
@@ -191,6 +204,12 @@ describe("ipc helpers (outside Tauri)", () => {
   it("idleSeconds short-circuits to null without the backend", async () => {
     const { idleSeconds } = await import("./ipc");
     expect(await idleSeconds()).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("checkForUpdate short-circuits to null without the backend", async () => {
+    const { checkForUpdate } = await import("./ipc");
+    expect(await checkForUpdate()).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
