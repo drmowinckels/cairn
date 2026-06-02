@@ -1,12 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Icon } from "../../lib/icon";
+import { useFocusTrap } from "../../lib/use-focus-trap";
 import {
   PRIVACY_GUARANTEES,
   PRIVACY_LICENSE_LABEL,
@@ -124,7 +118,6 @@ export function OnboardingView({ onComplete, saveSeedProject }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const dialogRef = useRef<HTMLDivElement | null>(null);
   const titleId = useId();
 
   const advance = useCallback(() => {
@@ -180,40 +173,16 @@ export function OnboardingView({ onComplete, saveSeedProject }: Props) {
     }
   }, [onComplete]);
 
+  const trap = useFocusTrap(() => void skip());
+
   // Focus the dialog itself on mount + on every step transition so
   // screen-reader users get an updated context announcement.
   useEffect(() => {
-    const node = dialogRef.current;
+    const node = trap.ref.current;
     if (!node) return;
     const id = window.requestAnimationFrame(() => node.focus());
     return () => window.cancelAnimationFrame(id);
-  }, [step]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        void skip();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const root = dialogRef.current;
-      if (!root) return;
-      const focusables = focusableElements(root);
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    },
-    [skip],
-  );
+  }, [step, trap.ref]);
 
   const meta = useMemo(
     () => ONBOARDING_STEPS.find((s) => s.step === step) ?? ONBOARDING_STEPS[0],
@@ -233,13 +202,13 @@ export function OnboardingView({ onComplete, saveSeedProject }: Props) {
           modal pattern, not a clickable control. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
-        ref={dialogRef}
+        ref={trap.ref}
         className="onboarding"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        onKeyDown={handleKeyDown}
+        onKeyDown={trap.onKeyDown}
       >
         <header className="onboarding-head">
           <span className="onboarding-step">
@@ -509,13 +478,5 @@ function BrowserStep() {
         you'll lose only browser-domain signals.
       </p>
     </>
-  );
-}
-
-function focusableElements(root: HTMLElement): HTMLElement[] {
-  const selector =
-    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(
-    (el) => !el.hasAttribute("aria-hidden") && el.offsetParent !== null,
   );
 }
