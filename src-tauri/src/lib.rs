@@ -272,8 +272,15 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let data_dir = app.path().app_data_dir().expect("app_data_dir resolves");
-            std::fs::create_dir_all(&data_dir).ok();
+            let data_dir = app.path().app_data_dir().map_err(|e| {
+                format!("could not resolve the app data directory; Cairn cannot start: {e}")
+            })?;
+            std::fs::create_dir_all(&data_dir).map_err(|e| {
+                format!(
+                    "could not create the app data directory {}; Cairn cannot start: {e}",
+                    data_dir.display()
+                )
+            })?;
 
             if let Err(e) = backup::apply_pending_import(&data_dir) {
                 log::warn!("backup: could not apply pending import: {e}");
