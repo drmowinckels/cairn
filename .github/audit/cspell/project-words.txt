@@ -181,3 +181,4 @@ unparseable
 unlisteners
 treeitems
 noninteractive
+minisign

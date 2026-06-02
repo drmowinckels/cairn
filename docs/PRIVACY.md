@@ -72,6 +72,16 @@ Cairn ingests calendars by fetching ICS subscription URLs the user has explicitl
 - The socket has restrictive permissions (`0600` on Unix).
 - **Never** scrape browser history databases or sqlite files. That breaks the trust model.
 
+## Update checks
+
+Cairn can check whether a newer version exists. This is the one outbound request core makes besides user-configured calendar fetches, and it is **off by default**.
+
+- **Opt-in, visible.** Disabled until the user turns on Settings → Updates → "Check for updates". The toggle copy states exactly what the check does.
+- **What it sends.** A single HTTPS `GET` of the public release manifest (`https://github.com/drmowinckels/cairn/releases/latest/download/latest.json`) — on launch and once every 24h while the app stays open. No telemetry, no UUID, no custom User-Agent, no query string.
+- **What it does.** Compares the manifest version to the running version and, if newer, shows a dismissible banner in the popover footer linking to the release notes. Cairn never downloads or installs anything on its own.
+- **Signed.** The manifest is verified against a bundled public key (`tauri-plugin-updater`), so a tampered manifest is rejected.
+- **GitHub sees a request.** As with any GitHub download, GitHub logs the fetch (IP, timestamp). That is inherent to the user opting in; turning the toggle off stops all checks.
+
 ## Export, restore & delete
 
 - **Export backup**: writes a consistent SQLite snapshot (`VACUUM INTO`) to any path the user picks via the system save dialog. The user can drop the resulting `.sqlite` file into iCloud Drive, Google Drive, Syncthing, or any other folder the OS is already syncing — Cairn never talks to those services itself.
