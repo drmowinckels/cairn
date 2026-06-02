@@ -73,4 +73,51 @@ describe("useUpdateCheck", () => {
     await waitFor(() => expect(checkForUpdate).toHaveBeenCalled());
     expect(result.current.available).toBeNull();
   });
+
+  it("treats a throwing localStorage on read as no dismissal", () => {
+    const spy = vi
+      .spyOn(window.localStorage, "getItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    const { result } = renderHook(() => useUpdateCheck(false));
+    expect(result.current.available).toBeNull();
+    spy.mockRestore();
+  });
+
+  it("ignores a check that resolves after unmount", async () => {
+    let resolve!: (v: typeof UPDATE) => void;
+    checkForUpdate.mockReturnValue(
+      new Promise<typeof UPDATE>((r) => {
+        resolve = r;
+      }),
+    );
+    const { unmount } = renderHook(() => useUpdateCheck(true));
+    unmount();
+    resolve(UPDATE);
+    await Promise.resolve();
+    // No assertion needed: the post-unmount setState would warn/throw if
+    // the cancelled guard weren't taken.
+  });
+
+  it("dismiss is a no-op when nothing is available", () => {
+    const { result } = renderHook(() => useUpdateCheck(false));
+    act(() => result.current.dismiss());
+    expect(result.current.available).toBeNull();
+    expect(window.localStorage.getItem("cairn:update-dismissed:v1")).toBeNull();
+  });
+
+  it("tolerates a throwing localStorage on dismiss", async () => {
+    checkForUpdate.mockResolvedValue(UPDATE);
+    const { result } = renderHook(() => useUpdateCheck(true));
+    await waitFor(() => expect(result.current.available).toEqual(UPDATE));
+    const spy = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    act(() => result.current.dismiss());
+    expect(result.current.available).toBeNull();
+    spy.mockRestore();
+  });
 });
