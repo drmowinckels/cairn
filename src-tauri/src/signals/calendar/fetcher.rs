@@ -297,9 +297,129 @@ mod tests {
         assert_eq!(TooManyRedirects.to_string(), "too many redirects");
     }
 
+    /// 127.0.0.1 and localhost resolve to the same address but are
+    /// distinct as `Url::host_str` — the literal the cross-host
+    /// integration test relies on to provoke `StopCrossHost` without a
+    /// second listening socket.
     #[test]
-    fn host_pinned_policy_constructs() {
-        let _ = host_pinned_redirect_policy();
+    fn loopback_literal_and_localhost_differ_as_host_str() {
+        let a = reqwest::Url::parse("http://127.0.0.1:8080/x").expect("parse loopback url");
+        let b = reqwest::Url::parse("http://localhost:8080/x").expect("parse localhost url");
+        assert_eq!(a.host_str(), Some("127.0.0.1"));
+        assert_eq!(b.host_str(), Some("localhost"));
+        assert_ne!(a.host_str(), b.host_str());
+    }
+
+    const ICS_BODY: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n";
+
+    #[tokio::test]
+    async fn fetch_follows_same_host_redirect_within_cap() {
+        let mut server = mockito::Server::new_async().await;
+        let redirect = server
+            .mock("GET", "/start.ics")
+            .with_status(302)
+            .with_header("Location", "/final.ics")
+            .create_async()
+            .await;
+        let target = server
+            .mock("GET", "/final.ics")
+            .with_status(200)
+            .with_body(ICS_BODY)
+            .create_async()
+            .await;
+
+        let fetcher = Fetcher::new().expect("build fetcher");
+        let url = format!("{}/start.ics", server.url());
+        let outcome = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect("same-host redirect within cap must succeed");
+
+        match outcome {
+            FetchOutcome::Changed(ok) => assert_eq!(ok.body, ICS_BODY),
+            FetchOutcome::Unchanged => panic!("expected changed body, got 304"),
+        }
+        redirect.assert_async().await;
+        target.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn fetch_refuses_cross_host_redirect() {
+        let mut server = mockito::Server::new_async().await;
+        // mockito binds to 127.0.0.1; redirecting to localhost on the
+        // same port keeps the request routable yet trips the host_str
+        // mismatch, so the closure's `StopCrossHost` arm fires without
+        // needing a second listener.
+        let port = server
+            .host_with_port()
+            .rsplit(':')
+            .next()
+            .expect("server host_with_port has a port")
+            .to_string();
+        const SECRET: &str = "CROSS-HOST-TOKEN-DO-NOT-LEAK";
+        let cross_host = format!("http://localhost:{port}/{SECRET}/evil.ics");
+        let start = server
+            .mock("GET", "/start.ics")
+            .with_status(302)
+            .with_header("Location", &cross_host)
+            .create_async()
+            .await;
+
+        let fetcher = Fetcher::new().expect("build fetcher");
+        let url = format!("{}/start.ics", server.url());
+        let err = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect_err("cross-host redirect must be refused");
+
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("too many redirects"),
+            "cross-host refusal must classify as a redirect error: {chain}",
+        );
+        assert!(
+            !chain.contains(SECRET),
+            "redirect error leaked the destination secret: {chain}",
+        );
+        assert!(
+            !chain.contains("localhost"),
+            "redirect error leaked the destination host: {chain}",
+        );
+        start.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn fetch_refuses_when_redirect_cap_exceeded() {
+        let mut server = mockito::Server::new_async().await;
+        // A chain of MAX_REDIRECTS + 1 same-host hops: each points to
+        // the next, so the closure follows up to the cap and then trips
+        // the `StopTooMany` arm.
+        let hops = MAX_REDIRECTS + 1;
+        let mut mocks = Vec::new();
+        for i in 0..hops {
+            let next = format!("/hop{}.ics", i + 1);
+            mocks.push(
+                server
+                    .mock("GET", format!("/hop{i}.ics").as_str())
+                    .with_status(302)
+                    .with_header("Location", &next)
+                    .create_async()
+                    .await,
+            );
+        }
+
+        let fetcher = Fetcher::new().expect("build fetcher");
+        let url = format!("{}/hop0.ics", server.url());
+        let err = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect_err("exceeding the redirect cap must error");
+
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("too many redirects"),
+            "over-cap refusal must classify as a redirect error: {chain}",
+        );
     }
 
     #[test]
