@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -8,6 +7,7 @@ import {
   type FormEvent,
 } from "react";
 import { Icon } from "../../lib/icon";
+import { useFocusTrap } from "../../lib/use-focus-trap";
 import type { SaveProjectInput } from "../../lib/ipc";
 import type { Project, Task } from "../../lib/types";
 
@@ -99,7 +99,7 @@ export function ManualEntryModal({
   const projectFieldId = useId();
   const taskFieldId = useId();
   const overlayRef = useRef<HTMLDivElement | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const trap = useFocusTrap(onClose);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
@@ -183,32 +183,6 @@ export function ManualEntryModal({
   const validation = useMemo(
     () => validateDraft(draft, runningRange),
     [draft, runningRange],
-  );
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const root = dialogRef.current;
-      if (!root) return;
-      const focusables = focusableElements(root);
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    },
-    [onClose],
   );
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -337,12 +311,12 @@ export function ManualEntryModal({
           modal pattern, not a clickable control. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
-        ref={dialogRef}
+        ref={trap.ref}
         className="modal entry-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        onKeyDown={handleKeyDown}
+        onKeyDown={trap.onKeyDown}
       >
         <header className="modal-head">
           <h2 id={titleId} className="modal-title">
@@ -738,13 +712,5 @@ export function isoToLocal(iso: string): string {
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
     `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
-function focusableElements(root: HTMLElement): HTMLElement[] {
-  const selector =
-    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(
-    (el) => !el.hasAttribute("aria-hidden") && el.offsetParent !== null,
   );
 }

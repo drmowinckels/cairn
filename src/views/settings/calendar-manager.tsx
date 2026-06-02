@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { formatRelativeTime } from "../../lib/relative-time";
+import { useFocusTrap } from "../../lib/use-focus-trap";
 import { guessCalendarKind, useCalendars } from "../../lib/use-calendars";
 
 interface Props {
@@ -13,6 +14,13 @@ export function CalendarManager({ onClose }: Props) {
   const [raw, setRaw] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const trap = useFocusTrap(onClose);
+
+  // Move focus into the dialog on open so keyboard users land inside the
+  // trap rather than wherever the trigger left them.
+  useEffect(() => {
+    trap.ref.current?.focus();
+  }, [trap.ref]);
 
   const onAdd = async () => {
     setError(null);
@@ -44,11 +52,18 @@ export function CalendarManager({ onClose }: Props) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
+      {/* Focus-trapped modal: onKeyDown handles Escape/Tab. The dialog
+          role is non-interactive but key handling here is the standard
+          modal pattern, not a clickable control. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
+        ref={trap.ref}
         className="modal-card cal-mgr"
         role="dialog"
         aria-modal="true"
         aria-label="Manage calendar sources"
+        tabIndex={-1}
+        onKeyDown={trap.onKeyDown}
       >
         <header className="modal-head">
           <h2>Calendar sources</h2>
