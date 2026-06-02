@@ -35,6 +35,30 @@ Gatekeeper will warn end users, so they're required for a real release.
 Windows (#43) and Linux signing secrets are tracked in their own issues;
 the beta ships an unsigned Windows installer for now.
 
+### Updater signing key (#45)
+
+The opt-in update checker verifies the release manifest against a public
+key bundled in `tauri.conf.json` (`plugins.updater.pubkey`). The matching
+**private key** signs the updater artifacts and must live in CI:
+
+| Secret                               | What it is                                                        | Required for            |
+| ------------------------------------ | ----------------------------------------------------------------- | ----------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Contents of the minisign private key from `tauri signer generate` | Signed update artifacts |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The password set when generating the key (empty string if none)   | Signed update artifacts |
+
+Generate the pair once with `npm run tauri signer generate -- -w cairn-updater.key`
+(keep the `.key` private — **never commit it**; the `.pub` value is what
+goes in `tauri.conf.json`). The current pair's public key is already in
+the config.
+
+> **Not wired into the pipeline yet.** Generating the signed `latest.json`
+>
+> - artifacts in `release.yml` (and setting `bundle.createUpdaterArtifacts`)
+>   lands with the packaging epics (#43 / #44). Until then the checker is
+>   live in-app but has no published manifest to find, so it simply reports
+>   "up to date". Add the two secrets above before enabling artifact
+>   signing.
+
 ### Getting the Developer ID Application certificate
 
 1. In the [Apple Developer](https://developer.apple.com/account/resources/certificates)
