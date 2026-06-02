@@ -19,8 +19,37 @@ use std::sync::{Arc, RwLock};
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_updater::UpdaterExt;
 
 pub use db::Db;
+
+use update::{build_update_info, UpdateInfo};
+
+/// Opt-in update check (#45). Thin shim around `app.updater().check()` —
+/// the testable mapping lives in `update::build_update_info`. Returns the
+/// newer version's info, or `None` when up to date. The error string is
+/// deliberately generic: the frontend treats any failure as "no update"
+/// and never surfaces the endpoint or transport details.
+///
+/// Lives here, in the coverage-ignored Tauri-wiring file, because
+/// `updater().check()` needs the real updater runtime + network and has
+/// no mockable surface to unit-test against.
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+    let updater = app
+        .updater()
+        .map_err(|_| "update checker unavailable".to_string())?;
+
+    match updater.check().await {
+        Ok(Some(update)) => Ok(Some(build_update_info(
+            &update.version,
+            &update.current_version,
+            update.body.clone(),
+        ))),
+        Ok(None) => Ok(None),
+        Err(_) => Err("update check failed".to_string()),
+    }
+}
 
 use rules::{Rule as EngineRule, Snoozer};
 use signals::browser_extension::BrowserExtensionState;
@@ -237,7 +266,7 @@ pub fn run() {
             backup::suggested_csv_name,
             backup::list_data_files,
             backup::reveal_data_folder,
-            update::check_for_update,
+            check_for_update,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
