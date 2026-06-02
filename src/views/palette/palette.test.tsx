@@ -132,10 +132,20 @@ describe("buildCommands — surfaced commands", () => {
       "Calendar",
       "Shortcuts",
       "Integrations",
+      "Updates",
       "About",
     ]) {
       expect(labels).toContain(`Open settings: ${s}`);
     }
+  });
+
+  it("the Updates command opens the updates settings section", () => {
+    const openSettingsSection = vi.fn();
+    const cmds = buildCommands(baseContext({ openSettingsSection }));
+    const updates = cmds.find((c) => c.label === "Open settings: Updates");
+    expect(updates).toBeTruthy();
+    updates?.run();
+    expect(openSettingsSection).toHaveBeenCalledWith("updates");
   });
 
   it("includes 'Disable rule' for enabled rules and 'Enable rule' for disabled rules", () => {
