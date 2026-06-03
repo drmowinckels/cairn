@@ -20,6 +20,7 @@
   --accent: var(--burnt-peach);
   --accent-ink: #a84128;
   --accent-soft: rgb(224 122 95 / 14%);
+  --danger: #8a3a23;
   --teal: var(--muted-teal);
   --teal-ink: #406a55;
   --teal-soft: rgb(129 178 154 / 18%);
@@ -66,6 +67,7 @@
   --hairline-strong: rgb(244 241 222 / 20%);
   --accent-ink: #efad9c;
   --accent-soft: rgb(224 122 95 / 22%);
+  --danger: #f5b4a0;
   --teal-ink: #b8d5c4;
   --teal-soft: rgb(129 178 154 / 22%);
   --apricot-soft: rgb(242 204 143 / 22%);
@@ -83,7 +85,7 @@
   --row-h: 38px;
   --font-base: 14.5px;
   --font-small: 13px;
-  --font-tiny: 11.5px;
+  --font-tiny: 12px;
   --font-display: 34px;
   --line-base: 1.5;
 }
@@ -1076,9 +1078,9 @@ body {
 }
 
 .btn--stop {
-  background: var(--accent);
+  background: #a84128;
   color: #fff;
-  border-color: var(--accent);
+  border-color: #a84128;
   font-weight: 500;
 }
 
@@ -2860,6 +2862,7 @@ select.rule-conf {
 
 .excl-add input:focus {
   outline: 0;
+  border-bottom: 1px solid var(--accent);
 }
 
 .settings-check {
@@ -3098,7 +3101,7 @@ select.rule-conf {
 }
 
 .cal-err {
-  color: var(--accent);
+  color: var(--danger);
 }
 
 .cal-row-actions {
@@ -3138,7 +3141,7 @@ select.rule-conf {
 }
 
 .cal-add-err {
-  color: var(--accent);
+  color: var(--danger);
   font-size: var(--font-tiny);
   margin-top: 8px;
 }
@@ -3474,7 +3477,7 @@ select.rule-conf {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--accent);
+  background: #a84128;
   color: #fff;
   font-weight: 700;
   font-size: 12px;
