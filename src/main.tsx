@@ -1,6 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+// Self-hosted fonts (#146): vendored woff2 bundled by Vite, no Google
+// Fonts CDN request at runtime. Newsreader uses its optical-size axis
+// (normal + italic); Geist and Geist Mono are weight-axis variable.
+import "@fontsource-variable/newsreader/opsz.css";
+import "@fontsource-variable/newsreader/opsz-italic.css";
+import "@fontsource-variable/geist/index.css";
+import "@fontsource-variable/geist-mono/index.css";
 import "./brand.css";
 
 // Tag the document with which window this is so the CSS can pick an opaque

@@ -12,72 +12,74 @@ This is the implementer's reference. Every screen, component, token, and interac
 
 ### 1.1 Color (brand)
 
-| Token | Hex | Use |
-|---|---|---|
-| `--eggshell` | `#f4f1de` | Soft light surface |
-| `--burnt-peach` | `#e07a5f` | Accent: running timer, primary action, rule highlights |
-| `--twilight-indigo` | `#3d405b` | Ink / primary text in light mode |
-| `--muted-teal` | `#81b29a` | "Local only" / privacy / positive states |
-| `--apricot-cream` | `#f2cc8f` | Auto-detect suggestion banner |
+| Token               | Hex       | Use                                                    |
+| ------------------- | --------- | ------------------------------------------------------ |
+| `--eggshell`        | `#f4f1de` | Soft light surface                                     |
+| `--burnt-peach`     | `#e07a5f` | Accent: running timer, primary action, rule highlights |
+| `--twilight-indigo` | `#3d405b` | Ink / primary text in light mode                       |
+| `--muted-teal`      | `#81b29a` | "Local only" / privacy / positive states               |
+| `--apricot-cream`   | `#f2cc8f` | Auto-detect suggestion banner                          |
 
 ### 1.2 Color (semantic — light theme)
 
-| Token | Value |
-|---|---|
-| `--bg` | `#ece8d3` (desktop background) |
-| `--bg-soft` | `#f4f1de` (nested surfaces) |
-| `--surface` | `#fbf9ee` (the popover) |
-| `--surface-2` | `#f4f1de` (kbd, segmented controls) |
-| `--ink` | `#3d405b` |
-| `--ink-soft` | `rgba(61, 64, 91, .66)` |
-| `--ink-mute` | `rgba(61, 64, 91, .42)` |
-| `--ink-faint` | `rgba(61, 64, 91, .18)` |
-| `--hairline` | `rgba(61, 64, 91, .12)` |
-| `--hairline-strong` | `rgba(61, 64, 91, .22)` |
-| `--accent` | `#e07a5f` |
-| `--accent-soft` | `rgba(224, 122, 95, .14)` |
-| `--teal-soft` | `rgba(129, 178, 154, .18)` |
-| `--apricot-soft` | `rgba(242, 204, 143, .35)` |
-| `--indigo-soft` | `rgba(61, 64, 91, .08)` |
+| Token               | Value                               |
+| ------------------- | ----------------------------------- |
+| `--bg`              | `#ece8d3` (desktop background)      |
+| `--bg-soft`         | `#f4f1de` (nested surfaces)         |
+| `--surface`         | `#fbf9ee` (the popover)             |
+| `--surface-2`       | `#f4f1de` (kbd, segmented controls) |
+| `--ink`             | `#3d405b`                           |
+| `--ink-soft`        | `rgba(61, 64, 91, .66)`             |
+| `--ink-mute`        | `rgba(61, 64, 91, .42)`             |
+| `--ink-faint`       | `rgba(61, 64, 91, .18)`             |
+| `--hairline`        | `rgba(61, 64, 91, .12)`             |
+| `--hairline-strong` | `rgba(61, 64, 91, .22)`             |
+| `--accent`          | `#e07a5f`                           |
+| `--accent-soft`     | `rgba(224, 122, 95, .14)`           |
+| `--teal-soft`       | `rgba(129, 178, 154, .18)`          |
+| `--apricot-soft`    | `rgba(242, 204, 143, .35)`          |
+| `--indigo-soft`     | `rgba(61, 64, 91, .08)`             |
 
 ### 1.3 Color (semantic — dark theme)
 
-| Token | Value |
-|---|---|
-| `--bg` | `#1b1d29` |
-| `--bg-soft` | `#232636` |
-| `--surface` | `#262a3c` |
-| `--surface-2` | `#2e3245` |
-| `--ink` | `#f4f1de` |
-| `--ink-soft` | `rgba(244, 241, 222, .72)` |
-| `--ink-mute` | `rgba(244, 241, 222, .46)` |
-| `--ink-faint` | `rgba(244, 241, 222, .18)` |
-| `--hairline` | `rgba(244, 241, 222, .10)` |
+| Token               | Value                      |
+| ------------------- | -------------------------- |
+| `--bg`              | `#1b1d29`                  |
+| `--bg-soft`         | `#232636`                  |
+| `--surface`         | `#262a3c`                  |
+| `--surface-2`       | `#2e3245`                  |
+| `--ink`             | `#f4f1de`                  |
+| `--ink-soft`        | `rgba(244, 241, 222, .72)` |
+| `--ink-mute`        | `rgba(244, 241, 222, .46)` |
+| `--ink-faint`       | `rgba(244, 241, 222, .18)` |
+| `--hairline`        | `rgba(244, 241, 222, .10)` |
 | `--hairline-strong` | `rgba(244, 241, 222, .20)` |
 
 Light/dark are toggled with `data-theme="light|dark"` on the document. Default = follow system (`prefers-color-scheme`).
 
 ### 1.4 Type system
 
-- **Serif** — `Newsreader` (Google Fonts, 6..72 optical size, weights 400/500/600). Use for: app name, view titles, running timer numeric, suggestion-banner body, idle modal body, settings section titles, privacy card title.
-- **Sans** — `Geist` (Google Fonts, 300–700). Default UI font.
-- **Mono** — `Geist Mono` (Google Fonts, 400–600). Use for: timestamps, durations, tags, kbd, code snippets in rules, signal values.
+Fonts are **self-hosted** — vendored as woff2 via `@fontsource` and bundled by Vite, with no Google Fonts CDN request at runtime (#146). Each family is OFL-1.1; see `NOTICE`.
+
+- **Serif** — `Newsreader Variable` (6..72 optical size, weights 400/500/600). Use for: app name, view titles, running timer numeric, suggestion-banner body, idle modal body, settings section titles, privacy card title.
+- **Sans** — `Geist Variable` (300–700). Default UI font.
+- **Mono** — `Geist Mono Variable` (400–600). Use for: timestamps, durations, tags, kbd, code snippets in rules, signal values.
 
 ### 1.5 Density scale
 
 The popover has a `data-density` attribute (`compact` or `comfy`). Comfy is the default.
 
-| Variable | Comfy | Compact |
-|---|---|---|
-| `--pad-x` | 24px | 18px |
-| `--pad-y` | 22px | 16px |
-| `--gap` | 22px | 16px |
-| `--font-base` | 16px | 14.5px |
-| `--font-small` | 14px | 13px |
-| `--font-tiny` | 12.5px | 11.5px |
-| `--font-display` | 42px | 34px |
-| `--line-base` | 1.55 | 1.5 |
-| popover width | 500px | 420px |
+| Variable         | Comfy  | Compact |
+| ---------------- | ------ | ------- |
+| `--pad-x`        | 24px   | 18px    |
+| `--pad-y`        | 22px   | 16px    |
+| `--gap`          | 22px   | 16px    |
+| `--font-base`    | 16px   | 14.5px  |
+| `--font-small`   | 14px   | 13px    |
+| `--font-tiny`    | 12.5px | 11.5px  |
+| `--font-display` | 42px   | 34px    |
+| `--line-base`    | 1.55   | 1.5     |
+| popover width    | 500px  | 420px   |
 
 ### 1.6 Radii, shadows, hairlines
 
@@ -239,20 +241,20 @@ All buttons: focus-visible outline `2px solid var(--accent)`, offset 1px.
 
 ## 5. Interactions
 
-| Action | Trigger | Result |
-|---|---|---|
-| Show / hide popover | Tray click; `⌃⌥T` | Anchored under tray icon; fade-in 80ms |
-| Switch view | Click tab or press `1`–`4` | Body re-renders; tab indicator slides |
-| Start timer | Click project chip in quick-start or `⌃⌥␣` | Running timer card appears |
-| Stop timer | Stop button or `⌃⌥␣` | Entry committed to today's timeline |
-| Confirm suggestion | `↵` or click ✓ Confirm | Timer auto-starts with rule's project + tags |
-| Change suggestion | Click "Change…" | Opens project picker (`⌘K` command palette) |
-| Dismiss suggestion | × or `Esc` | Banner hides; next match won't re-trigger within 5 min |
-| Idle: keep / discard / move | Click button | Entry trimmed accordingly; resumes timer |
-| Toggle rule on/off | Click switch | Rule enters/leaves the matching pool immediately |
-| Reorder rules | Drag handle | Persisted; matching order updates |
-| Open rule detail from suggestion | Click "view rule" link | Switches to Rules tab, expands matching rule |
-| Reduce motion | OS setting or accessibility toggle | Disables tray pulse + running-timer stripe shift |
+| Action                           | Trigger                                    | Result                                                 |
+| -------------------------------- | ------------------------------------------ | ------------------------------------------------------ |
+| Show / hide popover              | Tray click; `⌃⌥T`                          | Anchored under tray icon; fade-in 80ms                 |
+| Switch view                      | Click tab or press `1`–`4`                 | Body re-renders; tab indicator slides                  |
+| Start timer                      | Click project chip in quick-start or `⌃⌥␣` | Running timer card appears                             |
+| Stop timer                       | Stop button or `⌃⌥␣`                       | Entry committed to today's timeline                    |
+| Confirm suggestion               | `↵` or click ✓ Confirm                     | Timer auto-starts with rule's project + tags           |
+| Change suggestion                | Click "Change…"                            | Opens project picker (`⌘K` command palette)            |
+| Dismiss suggestion               | × or `Esc`                                 | Banner hides; next match won't re-trigger within 5 min |
+| Idle: keep / discard / move      | Click button                               | Entry trimmed accordingly; resumes timer               |
+| Toggle rule on/off               | Click switch                               | Rule enters/leaves the matching pool immediately       |
+| Reorder rules                    | Drag handle                                | Persisted; matching order updates                      |
+| Open rule detail from suggestion | Click "view rule" link                     | Switches to Rules tab, expands matching rule           |
+| Reduce motion                    | OS setting or accessibility toggle         | Disables tray pulse + running-timer stripe shift       |
 
 ---
 
