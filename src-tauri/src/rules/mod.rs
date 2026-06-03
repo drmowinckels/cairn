@@ -170,6 +170,28 @@ pub struct RuleAction {
     pub description_template: Option<String>,
 }
 
+/// One signal value that genuinely contributed to a `RuleMatch` —
+/// the data behind the suggestion banner's "why" line (issue #143).
+///
+/// `value` is the **live snapshot value** (e.g. the actual git branch
+/// `feat/rules-ui`), never the rule's condition pattern. It is taken
+/// from the snapshot the matcher evaluated, which has already been
+/// run through `ExclusionMatcher::redact_snapshot` at the collector —
+/// so an excluded app / window-title / domain is already `None` and
+/// can never surface here. Render-only: the frontend shows these as
+/// mono chips and discards them; they are never persisted (consistent
+/// with the "window titles matched in memory and discarded" rule in
+/// `docs/PRIVACY.md`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchedSignal {
+    /// The signal kind, in the same kebab/dotted wire form the TS
+    /// `SignalKind` union uses (`git.branch`, `ide.folder`, …).
+    pub signal: String,
+    /// The live snapshot value that satisfied a matched condition.
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleMatch {
@@ -189,6 +211,14 @@ pub struct RuleMatch {
     /// resolved against the matching snapshot). Empty string when
     /// the rule has no `description_template`.
     pub description: String,
+    /// The live signal values that contributed to this match, for the
+    /// suggestion banner's "why" evidence line (#143). One entry per
+    /// signal kind a matched condition referenced, de-duplicated and
+    /// ordered by the rule's condition order. Empty when no scalar
+    /// signal contributed (e.g. a calendar-only rule with no title
+    /// op). See `MatchedSignal`.
+    #[serde(default)]
+    pub matched_signals: Vec<MatchedSignal>,
 }
 
 pub fn evaluate<'a, I>(rules: I, snapshot: &SignalSnapshot) -> Option<RuleMatch>
@@ -311,6 +341,7 @@ where
                 project: rule.then.project.clone(),
                 tags,
                 description,
+                matched_signals: collect_matched_signals(rule, snapshot),
             });
         }
     }
@@ -344,6 +375,64 @@ fn first_matching_calendar_event<'a>(
             scalar_op_matches(op, &ev.title, value)
         })
     })
+}
+
+/// Collect the live snapshot values that contributed to a match, for
+/// the suggestion banner's "why" evidence line (#143).
+///
+/// For each condition on the rule that actually matched the snapshot,
+/// emit the **live snapshot value** (never the rule's pattern). The
+/// snapshot has already been redacted at the collector
+/// (`ExclusionMatcher::redact_snapshot`), so an excluded app /
+/// window-title / domain is `None` here and contributes nothing —
+/// it can never reach the chips. De-duplicated by signal kind,
+/// preserving the rule's condition order so the line reads
+/// consistently across publishes.
+///
+/// Calendar conditions emit the first active event whose title
+/// satisfies the condition (or any active event for `IsActive`),
+/// matching the enrichment path the description template uses.
+fn collect_matched_signals(rule: &Rule, snap: &SignalSnapshot) -> Vec<MatchedSignal> {
+    let mut out: Vec<MatchedSignal> = Vec::new();
+    let mut push = |signal: &str, value: Option<&str>| {
+        let Some(value) = value else { return };
+        if value.is_empty() {
+            return;
+        }
+        if out.iter().any(|m| m.signal == signal) {
+            return;
+        }
+        out.push(MatchedSignal {
+            signal: signal.to_string(),
+            value: value.to_string(),
+        });
+    };
+
+    for cond in &rule.when {
+        if !condition_matches(cond, snap) {
+            continue;
+        }
+        match cond {
+            Condition::IdeFolder { .. } => push("ide.folder", snap.ide_folder.as_deref()),
+            Condition::GitBranch { .. } => push("git.branch", snap.git_branch.as_deref()),
+            Condition::WindowTitle { .. } => push("window.title", snap.window_title.as_deref()),
+            Condition::AppName { .. } => push("app.name", snap.app_name.as_deref()),
+            Condition::BrowserDomain { .. } => {
+                push("browser.domain", snap.browser_domain.as_deref())
+            }
+            Condition::CalendarEvent { op, value, .. } => {
+                let title = snap
+                    .calendar
+                    .iter()
+                    .find(|ev| {
+                        matches!(op, Op::IsActive) || scalar_op_matches(op, &ev.title, value)
+                    })
+                    .map(|ev| ev.title.as_str());
+                push("calendar.event", title);
+            }
+        }
+    }
+    out
 }
 
 /// Substitute supported placeholders in a description template.
@@ -1531,5 +1620,300 @@ mod tests {
         // mentions Alice; the rule should still fire.
         s.calendar = vec![event("OOO: vacation"), event("1:1 Alice")];
         assert!(evaluate(std::iter::once(&rule), &s).is_some());
+    }
+
+    // ---- #143: matched-signal evidence line --------------------------
+
+    #[test]
+    fn matched_signals_carry_live_snapshot_values_not_rule_patterns() {
+        // The "why" line shows the *live* signal values, never the
+        // rule's condition pattern. A rule matching `git.branch
+        // starts-with feat/` must surface the actual branch
+        // `feat/rules-ui`, and an `ide.folder contains cairn` must
+        // surface `~/code/cairn`.
+        let rule = rule_with(
+            "r",
+            "cairn",
+            vec![
+                Condition::IdeFolder {
+                    op: Op::Contains,
+                    value: "cairn".into(),
+                    any: false,
+                },
+                Condition::GitBranch {
+                    op: Op::StartsWith,
+                    value: "feat/".into(),
+                    any: false,
+                },
+            ],
+        );
+        let m = evaluate(std::iter::once(&rule), &snap()).expect("match");
+        assert_eq!(
+            m.matched_signals,
+            vec![
+                MatchedSignal {
+                    signal: "ide.folder".into(),
+                    value: "~/code/cairn".into(),
+                },
+                MatchedSignal {
+                    signal: "git.branch".into(),
+                    value: "feat/rules-ui".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn matched_signals_only_include_conditions_that_actually_matched() {
+        // An `any`-group rule fires on one alternative; only the
+        // alternative that actually matched contributes a chip, not
+        // the unsatisfied sibling. Here git matches, browser does not.
+        let rule = rule_with(
+            "r",
+            "acme",
+            vec![
+                Condition::GitBranch {
+                    op: Op::StartsWith,
+                    value: "feat/".into(),
+                    any: true,
+                },
+                Condition::BrowserDomain {
+                    op: Op::Equals,
+                    value: "acme.atlassian.net".into(),
+                    any: true,
+                },
+            ],
+        );
+        let mut s = snap();
+        s.browser_domain = None;
+        let m = evaluate(std::iter::once(&rule), &s).expect("match");
+        assert_eq!(
+            m.matched_signals,
+            vec![MatchedSignal {
+                signal: "git.branch".into(),
+                value: "feat/rules-ui".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn matched_signals_never_surface_redacted_excluded_value() {
+        // The snapshot reaches the matcher *after* the collector has
+        // redacted excluded signals (ExclusionMatcher::redact_snapshot
+        // clears the field to None). Simulate that here: a rule with a
+        // `window.title is-active` `any` alternative alongside an
+        // `app.name` anchor, but the window title has been redacted to
+        // None. The rule still fires via the app anchor + git alt, and
+        // the redacted window title must NOT appear in the chips.
+        let rule = rule_with(
+            "r",
+            "cairn",
+            vec![
+                Condition::AppName {
+                    op: Op::Equals,
+                    value: "Zed".into(),
+                    any: false,
+                },
+                Condition::WindowTitle {
+                    op: Op::IsActive,
+                    value: String::new(),
+                    any: true,
+                },
+                Condition::GitBranch {
+                    op: Op::StartsWith,
+                    value: "feat/".into(),
+                    any: true,
+                },
+            ],
+        );
+        let mut s = snap();
+        s.window_title = None; // redacted by the collector
+        let m = evaluate(std::iter::once(&rule), &s).expect("match via app + git");
+        assert!(
+            m.matched_signals
+                .iter()
+                .all(|ms| ms.signal != "window.title"),
+            "a redacted (None) window title must never reach the evidence chips"
+        );
+        // The live anchor + alt values are present.
+        assert!(m.matched_signals.iter().any(|ms| ms.signal == "app.name"));
+        assert!(m.matched_signals.iter().any(|ms| ms.signal == "git.branch"));
+    }
+
+    #[test]
+    fn matched_signals_surface_window_title_and_browser_domain() {
+        // Cover the window.title + browser.domain collection arms with
+        // live (non-redacted) values present in the snapshot.
+        let rule = rule_with(
+            "r",
+            "acme",
+            vec![
+                Condition::WindowTitle {
+                    op: Op::Contains,
+                    value: "cairn".into(),
+                    any: false,
+                },
+                Condition::BrowserDomain {
+                    op: Op::Equals,
+                    value: "github.com".into(),
+                    any: false,
+                },
+            ],
+        );
+        let mut s = snap();
+        s.window_title = Some("rules.rs — cairn".into());
+        s.browser_domain = Some("github.com".into());
+        let m = evaluate(std::iter::once(&rule), &s).expect("match");
+        assert_eq!(
+            m.matched_signals,
+            vec![
+                MatchedSignal {
+                    signal: "window.title".into(),
+                    value: "rules.rs — cairn".into(),
+                },
+                MatchedSignal {
+                    signal: "browser.domain".into(),
+                    value: "github.com".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn matched_signals_dedupe_repeated_signal_kind() {
+        // Two conditions on the same signal kind (git.branch) both
+        // match; the chip list carries the signal once, not twice.
+        let rule = rule_with(
+            "r",
+            "cairn",
+            vec![
+                Condition::GitBranch {
+                    op: Op::StartsWith,
+                    value: "feat/".into(),
+                    any: false,
+                },
+                Condition::GitBranch {
+                    op: Op::Contains,
+                    value: "rules".into(),
+                    any: false,
+                },
+            ],
+        );
+        let m = evaluate(std::iter::once(&rule), &snap()).expect("match");
+        assert_eq!(
+            m.matched_signals,
+            vec![MatchedSignal {
+                signal: "git.branch".into(),
+                value: "feat/rules-ui".into(),
+            }],
+            "the same signal kind contributes a single chip"
+        );
+    }
+
+    #[test]
+    fn matched_signals_surface_calendar_event_title() {
+        let rule = Rule {
+            id: "r-cal".into(),
+            name: "Meetings".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
+            when: vec![Condition::CalendarEvent {
+                op: Op::Contains,
+                value: "Alice".into(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("mgmt".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: None,
+            },
+        };
+        let mut s = snap();
+        s.calendar = vec![event("OOO: vacation"), event("1:1 Alice")];
+        let m = evaluate(std::iter::once(&rule), &s).expect("match");
+        assert_eq!(
+            m.matched_signals,
+            vec![MatchedSignal {
+                signal: "calendar.event".into(),
+                value: "1:1 Alice".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn matched_signals_skip_empty_value() {
+        // A matched calendar.event whose title is empty contributes no
+        // chip — the `is_empty` guard in the collector drops it rather
+        // than rendering an empty mono chip.
+        let rule = Rule {
+            id: "r-cal".into(),
+            name: "Meetings".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
+            when: vec![Condition::CalendarEvent {
+                op: Op::IsActive,
+                value: String::new(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("meetings".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: None,
+            },
+        };
+        let mut s = snap();
+        s.calendar = vec![CalendarEvent {
+            title: String::new(),
+            source_label: "Work".into(),
+            attendees: vec![],
+            all_day: false,
+        }];
+        let m = evaluate(std::iter::once(&rule), &s).expect("rule fires (event active)");
+        assert!(
+            m.matched_signals.is_empty(),
+            "an empty event title must not produce a chip"
+        );
+    }
+
+    #[test]
+    fn matched_signals_empty_when_only_calendar_is_active_with_no_event() {
+        // `is-active` with no active event can't fire the rule, so we
+        // never reach collection — but guard the empty case directly:
+        // a scalar condition whose snapshot value is None contributes
+        // nothing.
+        let rule = rule_with(
+            "r",
+            "cairn",
+            vec![Condition::IdeFolder {
+                op: Op::Contains,
+                value: "cairn".into(),
+                any: false,
+            }],
+        );
+        let mut s = snap();
+        s.ide_folder = Some("~/code/cairn".into());
+        // Sanity: the one matched signal is present.
+        let m = evaluate(std::iter::once(&rule), &s).expect("match");
+        assert_eq!(m.matched_signals.len(), 1);
+        assert_eq!(m.matched_signals[0].signal, "ide.folder");
+    }
+
+    #[test]
+    fn matched_signal_serialises_camel_case_signal_and_value() {
+        // Pins the wire shape the TS `MatchedSignal` type relies on:
+        // `{ "signal": "...", "value": "..." }`.
+        let ms = MatchedSignal {
+            signal: "git.branch".into(),
+            value: "feat/rules-ui".into(),
+        };
+        let v = serde_json::to_value(&ms).unwrap();
+        assert_eq!(v["signal"], "git.branch");
+        assert_eq!(v["value"], "feat/rules-ui");
     }
 }

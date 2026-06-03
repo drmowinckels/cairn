@@ -41,6 +41,7 @@ import type {
   Project,
 } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
+import { SuggestWhy } from "./suggest-why";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
 import { WorkingHoursReminder } from "./working-hours-reminder";
 import {
@@ -461,6 +462,7 @@ export function TodayView({
             )}
           </div>
           <div className="suggest-why">
+            <SuggestWhy signals={suggestion.matchedSignals ?? []} />
             <button
               className="suggest-link"
               onClick={() => {
