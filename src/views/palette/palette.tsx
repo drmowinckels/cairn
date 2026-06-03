@@ -169,11 +169,25 @@ interface Props {
   open: boolean;
   onClose: () => void;
   context: PaletteContext;
+  /**
+   * Called when a dispatched command's promise rejects. The palette
+   * closes before the action runs, so a failed `start_entry` /
+   * `stop_entry` / `switch` / `toggle` has nowhere to surface inside
+   * the palette itself — the owner routes this to a visible banner /
+   * announcement. Optional so isolated tests can omit it.
+   */
+  onActionError?: (message: string) => void;
   /** Override for tests. Defaults to `createMruStore()`. */
   mruStore?: MruStore;
 }
 
-export function CommandPalette({ open, onClose, context, mruStore }: Props) {
+export function CommandPalette({
+  open,
+  onClose,
+  context,
+  onActionError,
+  mruStore,
+}: Props) {
   const titleId = useId();
   const listId = useId();
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -222,10 +236,19 @@ export function CommandPalette({ open, onClose, context, mruStore }: Props) {
       // a `setView` inside `run()` would otherwise race with our
       // own focus-return rAF.
       window.requestAnimationFrame(() => {
-        void cmd.run();
+        // `run()` may be sync (void) or async; normalise to a promise
+        // so a rejected timer/rule action surfaces instead of being
+        // swallowed. The palette is gone by now, so route the message
+        // to the owner.
+        Promise.resolve()
+          .then(() => cmd.run())
+          .catch((e: unknown) => {
+            const message = e instanceof Error ? e.message : String(e);
+            onActionError?.(`Couldn't run "${cmd.label}" — ${message}`);
+          });
       });
     },
-    [onClose, store],
+    [onActionError, onClose, store],
   );
 
   const handleKeyDown = useCallback(

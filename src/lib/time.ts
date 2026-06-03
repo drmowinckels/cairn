@@ -1,5 +1,32 @@
+import type { BackendEntry } from "./ipc";
+
 export const minutesOf = (hours: number, minutes = 0): number =>
   hours * 60 + minutes;
+
+/**
+ * Sum the tracked minutes across a day's entries. Closed entries
+ * count `endedAt − startedAt`; the open (running) entry counts up to
+ * `now` so the footer total grows in real time. Unlike the timeline's
+ * `entriesToSegments`, this is not clamped to the visible 08:00–19:00
+ * band — it's the true total the footer reports. Spans that can't be
+ * parsed or that go backwards (clock skew, a bad row) contribute
+ * zero, so one bad entry can't drag the total below the others.
+ */
+export const totalTrackedMinutes = (
+  entries: BackendEntry[],
+  now: number = Date.now(),
+): number => {
+  if (!Array.isArray(entries)) return 0;
+  let ms = 0;
+  for (const e of entries) {
+    const start = Date.parse(e.startedAt);
+    if (Number.isNaN(start)) continue;
+    const end = e.endedAt === null ? now : Date.parse(e.endedAt);
+    if (Number.isNaN(end)) continue;
+    ms += Math.max(0, end - start);
+  }
+  return Math.floor(ms / 60_000);
+};
 
 export const fmtHm = (totalMinutes: number): string => {
   const h = Math.floor(totalMinutes / 60);

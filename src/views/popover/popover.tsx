@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBoundary } from "../../error-boundary";
 import { Icon } from "../../lib/icon";
-import { Kbd, LocalBadge } from "../../lib/components";
+import { ErrorBanner, Kbd, LocalBadge } from "../../lib/components";
 import { CaptureBanner } from "../../lib/capture-banner";
 import { UpdateBanner } from "../../lib/update-banner";
 import { useA11yPrefs } from "../../lib/use-a11y-prefs";
@@ -18,8 +18,10 @@ import { useRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
 import { useUpdatePrefs } from "../../lib/use-update-prefs";
 import { useUpdateCheck } from "../../lib/use-update-check";
 import { useTimer } from "../../lib/use-timer";
+import { useToday } from "../../lib/use-today";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
+import { fmtHm, totalTrackedMinutes } from "../../lib/time";
 import { revealDataFolder, setTrayTitle, updateTrayMenu } from "../../lib/ipc";
 import { formatTrayTitle } from "../../lib/tray-title";
 import { buildTrayMenuModel, pushTrayMenuIfChanged } from "../../lib/tray-menu";
@@ -109,10 +111,19 @@ function PopoverShell({
   const paletteTimer = useTimer();
   const { projects: paletteProjects } = useProjects();
   const paletteRules = useRules({ defaultAmbiguity: a11y.ambiguityDefault });
+  const today = useToday();
+  const [paletteError, setPaletteError] = useState<string | null>(null);
 
   useToggleTimerShortcut({ announce });
   usePaletteShortcut({ onOpen: palette.requestOpen });
   useTrayListeners({ announce });
+
+  // Clear any stale palette-action error when the palette reopens —
+  // the user is starting a fresh attempt.
+  const paletteOpen = palette.open;
+  useEffect(() => {
+    if (paletteOpen) setPaletteError(null);
+  }, [paletteOpen]);
 
   // Mirror the tracked project into the menu-bar tray title when the
   // user enables it (#: tray current-project info). The popover webview
@@ -161,6 +172,43 @@ function PopoverShell({
     setView("settings");
     setSettingsSection(section);
   };
+
+  // The palette closes before its action runs, so a rejected
+  // start/stop/switch/toggle has nowhere to surface inside the
+  // palette itself. Route the failure to the popover chrome: a
+  // banner plus an announcement for AT users — matching how the
+  // Today view reports timer errors.
+  const handlePaletteError = useCallback(
+    (message: string) => {
+      setPaletteError(message);
+      announce(message);
+    },
+    [announce],
+  );
+
+  // `paletteTimer` / `paletteRules` are owned solely by the popover
+  // chrome (the views hold their own hook instances), so their error
+  // state only ever reflects a palette-initiated action. `start` and
+  // `update` reject (caught in the palette's dispatch), but `stop` and
+  // `toggleRule` swallow the rejection and surface it as hook `error`
+  // instead — mirror those into the chrome banner too, on the
+  // null→message transition so a reopen doesn't re-raise a stale one.
+  const lastTimerErrorRef = useRef<string | null>(null);
+  const lastRulesErrorRef = useRef<string | null>(null);
+  const timerError = paletteTimer.error;
+  const rulesError = paletteRules.error;
+  useEffect(() => {
+    if (timerError && timerError !== lastTimerErrorRef.current) {
+      handlePaletteError(timerError);
+    }
+    lastTimerErrorRef.current = timerError;
+  }, [timerError, handlePaletteError]);
+  useEffect(() => {
+    if (rulesError && rulesError !== lastRulesErrorRef.current) {
+      handlePaletteError(rulesError);
+    }
+    lastRulesErrorRef.current = rulesError;
+  }, [rulesError, handlePaletteError]);
 
   const paletteContext: PaletteContext = useMemo(
     () => ({
@@ -218,6 +266,17 @@ function PopoverShell({
     setOpenRuleId(id);
     setView("rules");
   };
+
+  // Live footer chrome (#142). Derived inline rather than memoized:
+  // `today.entries` is small, and PopoverShell already re-renders on
+  // the per-second timer tick, so the running entry's contribution to
+  // the total advances without an extra interval. Until today's
+  // entries have loaded we omit the total entirely rather than flash a
+  // misleading "0m".
+  const activeRuleCount = paletteRules.rules.filter((r) => r.enabled).length;
+  const todayTotalLabel = today.loading
+    ? null
+    : fmtHm(totalTrackedMinutes(today.entries));
 
   if (onboarding.status === "needs-onboarding") {
     return (
@@ -377,11 +436,18 @@ function PopoverShell({
 
       <UpdateBanner update={update.available} onDismiss={update.dismiss} />
 
+      {paletteError && <ErrorBanner message={paletteError} />}
+
       <footer className="pop-foot">
         <span className="foot-left">
-          <Icon name="check" size={11} /> 4h 12m today
-          <span className="foot-sep" />
-          <Icon name="sparkle" size={11} /> 3 rules active
+          {todayTotalLabel !== null && (
+            <>
+              <Icon name="check" size={11} /> {todayTotalLabel} today
+              <span className="foot-sep" />
+            </>
+          )}
+          <Icon name="sparkle" size={11} /> {activeRuleCount}{" "}
+          {activeRuleCount === 1 ? "rule" : "rules"} active
         </span>
         <span className="foot-right">
           <span>
@@ -396,6 +462,7 @@ function PopoverShell({
         open={palette.open}
         onClose={palette.close}
         context={paletteContext}
+        onActionError={handlePaletteError}
       />
     </div>
   );
