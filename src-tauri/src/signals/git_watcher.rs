@@ -312,6 +312,11 @@ async fn run(
     // non-matching raw form and the event would be dropped
     // silently.
     let mut watched: std::collections::HashMap<PathBuf, PathBuf> = Default::default();
+    // Count the repos we actually started watching. The `watched`
+    // map is dual-keyed (raw + canonical) only when canonicalize
+    // rewrites the path, so its length over-counts on macOS and
+    // exactly equals the repo count elsewhere — never divide it.
+    let mut watched_count = 0usize;
     for repo in &repos {
         let git_dir = repo.join(".git");
         // Tolerate `.git` being a file (worktree case) — in that
@@ -327,20 +332,11 @@ async fn run(
             log::warn!("git_watcher: watch {} failed: {e}", git_dir.display());
             continue;
         }
-        // Insert raw form first; canonical may equal raw on
-        // systems without symlink rewriting.
-        watched.insert(git_dir.clone(), repo.clone());
-        if let Ok(canonical) = git_dir.canonicalize() {
-            if canonical != git_dir {
-                watched.insert(canonical, repo.clone());
-            }
-        }
+        watched_count += 1;
+        index_watched_dir(&mut watched, &git_dir, repo);
     }
 
-    log::info!(
-        "git_watcher: actively watching {} .git dirs",
-        watched.len() / 2
-    );
+    log::info!("git_watcher: actively watching {watched_count} .git dirs");
 
     // Debounce: HEAD changes often come as a burst (rename + write
     // + close on git checkout). Coalesce events within DEBOUNCE
@@ -414,6 +410,26 @@ async fn run(
     }
 
     Ok(())
+}
+
+/// Index one watched `.git` directory under both its raw and
+/// canonical forms so the event-path lookup matches whichever
+/// variant `notify` hands us (macOS sends `/private/tmp/...` for
+/// paths we passed in as `/tmp/...`). The canonical alias is only
+/// inserted when it actually differs from the raw form, so on
+/// platforms where `canonicalize` is a no-op (Linux/Windows) a
+/// repo contributes a single entry — which is why the watched-repo
+/// count must be tracked separately, not derived from the map's
+/// length.
+fn index_watched_dir(
+    watched: &mut std::collections::HashMap<PathBuf, PathBuf>,
+    git_dir: &Path,
+    repo: &Path,
+) {
+    watched.insert(git_dir.to_path_buf(), repo.to_path_buf());
+    if let Some(canonical) = git_dir.canonicalize().ok().filter(|c| c != git_dir) {
+        watched.insert(canonical, repo.to_path_buf());
+    }
 }
 
 /// True iff a notify event is the kind we care about for HEAD
@@ -623,6 +639,92 @@ mod tests {
         let roots = vec![PathBuf::from("/nope")];
         let status = build_status(&roots, &[]);
         assert_eq!(status.watched_count, 0);
+    }
+
+    // -- watched-dir indexing + count --
+
+    fn count_watched(repos: &[PathBuf]) -> (usize, std::collections::HashMap<PathBuf, PathBuf>) {
+        let mut watched: std::collections::HashMap<PathBuf, PathBuf> = Default::default();
+        let mut watched_count = 0usize;
+        for repo in repos {
+            let git_dir = repo.join(".git");
+            if !git_dir.is_dir() {
+                continue;
+            }
+            watched_count += 1;
+            index_watched_dir(&mut watched, &git_dir, repo);
+        }
+        (watched_count, watched)
+    }
+
+    #[test]
+    fn index_watched_dir_never_exceeds_raw_plus_canonical_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = mk_repo(tmp.path(), "solo");
+        let git_dir = repo.join(".git");
+        let mut watched = std::collections::HashMap::new();
+        index_watched_dir(&mut watched, &git_dir, &repo);
+        // The raw event path is always indexed. On platforms where the
+        // tempdir lives behind a symlink (e.g. macOS `/var`→`/private/var`)
+        // canonicalize rewrites it and a second key is added; where it is a
+        // no-op the two forms coincide. Either way, a single repo inserts at
+        // most the raw + canonical pair — never more.
+        assert_eq!(watched.get(&git_dir), Some(&repo));
+        let len = watched.len();
+        assert!(
+            len == 1 || len == 2,
+            "a single repo inserts only its raw and/or canonical keys, got {len}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn index_watched_dir_adds_canonical_alias_through_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = mk_repo(tmp.path(), "real");
+        let git_dir = repo.join(".git");
+        // A symlinked view of the same .git: `canonicalize` resolves
+        // the link, so the canonical form differs from the raw form
+        // and a second alias key is inserted.
+        let link = tmp.path().join("alias-git");
+        std::os::unix::fs::symlink(&git_dir, &link).expect("unix tmpdir supports symlinks");
+        let mut watched = std::collections::HashMap::new();
+        index_watched_dir(&mut watched, &link, &repo);
+        assert_eq!(watched.len(), 2, "raw link + canonical target");
+        assert_eq!(watched.get(&link), Some(&repo));
+        assert_eq!(watched.get(&git_dir.canonicalize().unwrap()), Some(&repo));
+    }
+
+    #[test]
+    fn watched_count_matches_repo_count_not_map_length() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = mk_repo(tmp.path(), "a");
+        let b = mk_repo(tmp.path(), "b");
+        let c = mk_repo(tmp.path(), "c");
+        let (count, map) = count_watched(&[a, b, c]);
+        // Three repos must report three, regardless of how many
+        // dual-key aliases the map happens to hold on this platform.
+        assert_eq!(count, 3);
+        // The old `map.len() / 2` heuristic would have under-counted
+        // (e.g. reported 1 from 3 keys) on no-symlink platforms.
+        assert!(map.len() >= 3, "at least one key per repo");
+    }
+
+    #[test]
+    fn watched_count_is_zero_for_no_repos() {
+        let (count, map) = count_watched(&[]);
+        assert_eq!(count, 0);
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn watched_count_skips_dirs_without_a_git_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = mk_repo(tmp.path(), "real");
+        let bare = tmp.path().join("not-a-repo");
+        fs::create_dir_all(&bare).unwrap();
+        let (count, _) = count_watched(&[real, bare]);
+        assert_eq!(count, 1);
     }
 
     #[test]

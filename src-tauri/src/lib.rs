@@ -51,6 +51,16 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, S
     }
 }
 
+/// Open the SQLite database for the `.setup()` hook, mapping any
+/// failure (locked/corrupt DB, unwritable path, disk full) to a
+/// user-actionable message. Extracted from the Tauri `.setup()`
+/// closure so the error branch is reachable from `--lib` tests.
+async fn open_db_for_setup(path: &std::path::Path) -> Result<Db, String> {
+    db::Db::open(path)
+        .await
+        .map_err(|e| format!("could not open the database; Cairn cannot start: {e}"))
+}
+
 use rules::{Rule as EngineRule, Snoozer};
 use signals::browser_extension::BrowserExtensionState;
 use signals::calendar::CalendarRegistry;
@@ -125,6 +135,19 @@ pub struct AppState {
     /// `signals::browser`; the IPC handler `browser_extension_status`
     /// reads from it for Settings → Integrations.
     pub browser_extension: Arc<BrowserExtensionState>,
+}
+
+/// Ensure the app data directory exists, mapping any I/O failure to a
+/// startup-fatal message. Extracted from the Tauri `.setup()` closure
+/// (which has no mockable surface) so the success and failure arms can
+/// be unit-tested directly.
+fn ensure_data_dir(data_dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| {
+        format!(
+            "could not create the app data directory {}; Cairn cannot start: {e}",
+            data_dir.display()
+        )
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -272,8 +295,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let data_dir = app.path().app_data_dir().expect("app_data_dir resolves");
-            std::fs::create_dir_all(&data_dir).ok();
+            let data_dir = app.path().app_data_dir().map_err(|e| {
+                format!("could not resolve the app data directory; Cairn cannot start: {e}")
+            })?;
+            ensure_data_dir(&data_dir)?;
 
             if let Err(e) = backup::apply_pending_import(&data_dir) {
                 log::warn!("backup: could not apply pending import: {e}");
@@ -291,10 +316,13 @@ pub fn run() {
             }
 
             let db = tauri::async_runtime::block_on(async {
-                db::Db::open(&backup::db_path(&data_dir)).await
-            })
-            .expect("open SQLite database");
+                open_db_for_setup(&backup::db_path(&data_dir)).await
+            })?;
 
+            // `CalendarRegistry::new` only fails if `reqwest::Client`
+            // construction fails (TLS backend init) — there's no
+            // mockable surface to trigger that from a `--lib` test, so
+            // it stays an `expect` until a testable seam exists. See #160.
             let calendar =
                 Arc::new(CalendarRegistry::new(db.pool.clone()).expect("init calendar registry"));
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
@@ -497,4 +525,55 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_data_dir, open_db_for_setup};
+
+    #[test]
+    fn ensure_data_dir_creates_missing_nested_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = tmp.path().join("a").join("b").join("cairn");
+        assert!(!nested.exists());
+        ensure_data_dir(&nested).expect("creating a fresh nested dir succeeds");
+        assert!(nested.is_dir());
+    }
+
+    #[test]
+    fn ensure_data_dir_is_idempotent_for_existing_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        ensure_data_dir(tmp.path()).expect("an already-existing dir is fine");
+        assert!(tmp.path().is_dir());
+    }
+
+    #[test]
+    fn ensure_data_dir_errors_when_path_is_a_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("not-a-dir");
+        std::fs::write(&file, b"x").unwrap();
+        let err = ensure_data_dir(&file).expect_err("create_dir_all over a file must fail");
+        assert!(
+            err.contains("could not create the app data directory")
+                && err.contains("Cairn cannot start"),
+            "error must carry the startup-fatal message, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_db_for_setup_errors_when_path_is_unopenable() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A regular file used as a parent directory: sqlite's
+        // `create_if_missing` can't create the DB file under it, so
+        // `Db::open` fails and we get the startup-fatal message.
+        let not_a_dir = tmp.path().join("blocker");
+        std::fs::write(&not_a_dir, b"x").unwrap();
+        let db_path = not_a_dir.join("cairn.db");
+        let result = open_db_for_setup(&db_path).await;
+        let err = result.err().unwrap_or_default();
+        assert!(
+            err.contains("could not open the database") && err.contains("Cairn cannot start"),
+            "opening a db under a file-as-parent must fail with the startup-fatal message, got: {err:?}"
+        );
+    }
 }

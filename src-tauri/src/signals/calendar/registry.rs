@@ -220,7 +220,13 @@ impl CalendarRegistry {
     }
 
     pub async fn sync_status(&self) -> Vec<SyncStatus> {
-        let sources = store::list(&self.pool).await.unwrap_or_default();
+        let sources = match store::list(&self.pool).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("calendar: list sources for sync_status failed: {e}");
+                return Vec::new();
+            }
+        };
         let st = self.state.read().await;
         sources
             .into_iter()
@@ -547,6 +553,32 @@ mod tests {
         .await;
         let out = reg.upcoming_events_at(now, 5).await;
         assert!(out.is_empty(), "disabled source should not contribute");
+    }
+
+    #[tokio::test]
+    async fn sync_status_lists_sources() {
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        let src = reg
+            .add_source(CalendarKind::File, "Work".into(), "/tmp/a.ics".into())
+            .await
+            .unwrap();
+        let status = reg.sync_status().await;
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].source_id, src.id);
+        assert_eq!(status[0].event_count, 0);
+    }
+
+    #[tokio::test]
+    async fn sync_status_returns_empty_when_store_list_fails() {
+        // Covers the `Err(e)` arm added in #141: a transient DB error
+        // must be logged and degrade to an empty list rather than be
+        // silently swallowed by `unwrap_or_default`.
+        let (_dir, db) = test_db().await;
+        let reg = CalendarRegistry::new(db.pool.clone()).unwrap();
+        db.pool.close().await;
+        let status = reg.sync_status().await;
+        assert!(status.is_empty());
     }
 
     #[test]
