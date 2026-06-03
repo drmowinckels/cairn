@@ -14,9 +14,22 @@ const SIGNAL_WHY_LABELS: Record<SignalKind, string> = {
   "window.title": "window",
   "app.name": "app",
   "browser.domain": "site",
+  // Dead entry: the Rust `Condition` enum has no `BrowserTab` variant, so
+  // `collect_matched_signals` never emits "browser.tab"; it exists only to
+  // satisfy the `Record<SignalKind, string>` exhaustiveness check.
   "browser.tab": "tab",
   "calendar.event": "meeting",
 };
+
+const MAX_CHIP_LEN = 40;
+
+export function truncateMiddle(value: string, max = MAX_CHIP_LEN): string {
+  if (value.length <= max) return value;
+  const keep = max - 1;
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
+}
 
 /**
  * The "why" evidence chips for the suggestion banner: `because` followed
@@ -39,7 +52,7 @@ export function SuggestWhy({ signals }: { signals: MatchedSignal[] }) {
           <Fragment key={`${s.signal}:${s.value}`}>
             {i > 0 && <span className="suggest-why-sep"> · </span>}
             {label && <span className="suggest-why-label">{label} </span>}
-            <code>{s.value}</code>
+            <code>{truncateMiddle(s.value)}</code>
           </Fragment>
         );
       })}

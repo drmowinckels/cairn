@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
-import { SuggestWhy } from "./suggest-why";
+import { SuggestWhy, truncateMiddle } from "./suggest-why";
 import type { MatchedSignal } from "../../lib/types";
 
 describe("SuggestWhy", () => {
@@ -56,6 +56,30 @@ describe("SuggestWhy", () => {
     );
     const separators = container.querySelectorAll(".suggest-why-sep");
     expect(separators.length).toBe(1);
+  });
+
+  it("truncates an over-long chip value with a middle ellipsis", () => {
+    const long = "a".repeat(30) + "/" + "b".repeat(30);
+    const { container } = render(
+      <SuggestWhy signals={[{ signal: "window.title", value: long }]} />,
+    );
+    const chip = container.querySelector("code")?.textContent ?? "";
+    expect(chip).toContain("…");
+    expect(chip.length).toBeLessThan(long.length);
+    expect(chip.length).toBeLessThanOrEqual(40);
+    expect(chip.startsWith("a")).toBe(true);
+    expect(chip.endsWith("b")).toBe(true);
+    // The full value must not leak via title/aria attributes.
+    expect(container.querySelector(`[title="${long}"]`)).toBeNull();
+  });
+
+  it("leaves a short chip value unchanged", () => {
+    const short = "~/code/cairn";
+    expect(truncateMiddle(short)).toBe(short);
+    const { container } = render(
+      <SuggestWhy signals={[{ signal: "ide.folder", value: short }]} />,
+    );
+    expect(container.querySelector("code")?.textContent).toBe(short);
   });
 
   it("labels a calendar event as a meeting", () => {

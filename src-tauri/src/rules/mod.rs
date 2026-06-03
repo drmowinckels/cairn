@@ -214,7 +214,7 @@ pub struct RuleMatch {
     /// The live signal values that contributed to this match, for the
     /// suggestion banner's "why" evidence line (#143). One entry per
     /// signal kind a matched condition referenced, de-duplicated and
-    /// ordered by the snapshot's signal order. Empty when no scalar
+    /// ordered by the rule's condition order. Empty when no scalar
     /// signal contributed (e.g. a calendar-only rule with no title
     /// op). See `MatchedSignal`.
     #[serde(default)]
@@ -386,7 +386,7 @@ fn first_matching_calendar_event<'a>(
 /// (`ExclusionMatcher::redact_snapshot`), so an excluded app /
 /// window-title / domain is `None` here and contributes nothing —
 /// it can never reach the chips. De-duplicated by signal kind,
-/// preserving the snapshot's signal order so the line reads
+/// preserving the rule's condition order so the line reads
 /// consistently across publishes.
 ///
 /// Calendar conditions emit the first active event whose title
