@@ -65,12 +65,21 @@ pub struct CalendarRegistry {
 
 impl CalendarRegistry {
     pub fn new(pool: SqlitePool) -> Result<Self> {
-        Ok(Self {
+        Ok(Self::with_fetcher(pool, Fetcher::new()?))
+    }
+
+    /// Build a registry around an already-constructed [`Fetcher`].
+    /// Infallible: the only fallible step is `Fetcher::new` (TLS-backend
+    /// init), which the caller owns. The Tauri `.setup()` path uses this
+    /// so it can inject a failing builder and exercise the startup-error
+    /// branch from a `--lib` test (see #160).
+    pub fn with_fetcher(pool: SqlitePool, fetcher: Fetcher) -> Self {
+        Self {
             pool,
-            fetcher: Arc::new(Fetcher::new()?),
+            fetcher: Arc::new(fetcher),
             state: RwLock::new(State::default()),
             sync_lock: Mutex::new(()),
-        })
+        }
     }
 
     pub async fn list_sources(&self) -> Result<Vec<CalendarSource>> {
