@@ -52,6 +52,38 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, S
     }
 }
 
+// Thin auto-backup command wrappers. The logic + branches live (and are
+// tested) in `auto_backup`; these one-line `#[tauri::command]` shims sit
+// in this coverage-ignored Tauri-wiring file so the generated invoke
+// wrappers don't count against patch coverage (same rationale as
+// `check_for_update`).
+#[tauri::command]
+async fn get_auto_backup_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<auto_backup::AutoBackupSettings, String> {
+    auto_backup::get_settings(state).await
+}
+
+#[tauri::command]
+async fn set_auto_backup_settings(
+    state: tauri::State<'_, AppState>,
+    settings: auto_backup::AutoBackupSettings,
+) -> Result<auto_backup::AutoBackupSettings, String> {
+    auto_backup::apply_settings(state, settings).await
+}
+
+#[tauri::command]
+async fn auto_backup_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<auto_backup::AutoBackupStatus, String> {
+    auto_backup::current_status(state).await
+}
+
+#[tauri::command]
+async fn backup_now(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    auto_backup::run_now(state).await
+}
+
 /// Open the SQLite database for the `.setup()` hook, mapping any
 /// failure (locked/corrupt DB, unwritable path, disk full) to a
 /// user-actionable message. Extracted from the Tauri `.setup()`
@@ -310,10 +342,10 @@ pub fn run() {
             backup::suggested_csv_name,
             backup::list_data_files,
             backup::reveal_data_folder,
-            auto_backup::get_auto_backup_settings,
-            auto_backup::set_auto_backup_settings,
-            auto_backup::auto_backup_status,
-            auto_backup::backup_now,
+            get_auto_backup_settings,
+            set_auto_backup_settings,
+            auto_backup_status,
+            backup_now,
             check_for_update,
         ])
         .setup(|app| {

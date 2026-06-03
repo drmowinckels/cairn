@@ -173,10 +173,9 @@ async fn list_backup_names(dir: &Path) -> Vec<String> {
         Err(_) => return names,
     };
     while let Ok(Some(entry)) = rd.next_entry().await {
-        if let Some(name) = entry.file_name().to_str() {
-            if is_backup_file(name) {
-                names.push(name.to_string());
-            }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if is_backup_file(&name) {
+            names.push(name);
         }
     }
     names
@@ -311,15 +310,11 @@ pub async fn tick(
 
 // ── IPC ───────────────────────────────────────────────────────────────
 
-#[tauri::command]
-pub async fn get_auto_backup_settings(
-    state: State<'_, AppState>,
-) -> Result<AutoBackupSettings, String> {
+pub async fn get_settings(state: State<'_, AppState>) -> Result<AutoBackupSettings, String> {
     Ok(load_settings(&state.db.pool).await)
 }
 
-#[tauri::command]
-pub async fn auto_backup_status(state: State<'_, AppState>) -> Result<AutoBackupStatus, String> {
+pub async fn current_status(state: State<'_, AppState>) -> Result<AutoBackupStatus, String> {
     let settings = load_settings(&state.db.pool).await;
     match settings.dir {
         Some(dir) => Ok(status_in(&PathBuf::from(dir)).await),
@@ -334,8 +329,7 @@ pub async fn auto_backup_status(state: State<'_, AppState>) -> Result<AutoBackup
 /// enabled with a folder and one is due, take an initial snapshot so the
 /// user gets immediate confirmation rather than waiting for the next tick.
 /// Returns the normalized settings actually stored.
-#[tauri::command]
-pub async fn set_auto_backup_settings(
+pub async fn apply_settings(
     state: State<'_, AppState>,
     settings: AutoBackupSettings,
 ) -> Result<AutoBackupSettings, String> {
@@ -370,8 +364,7 @@ pub async fn set_auto_backup_settings(
 
 /// Force a snapshot now, regardless of the interval. Errors if no folder
 /// is configured. Returns the snapshot path.
-#[tauri::command]
-pub async fn backup_now(state: State<'_, AppState>) -> Result<String, String> {
+pub async fn run_now(state: State<'_, AppState>) -> Result<String, String> {
     let settings = load_settings(&state.db.pool).await;
     let dir = settings
         .dir
@@ -660,7 +653,7 @@ mod tests {
 
         // Enabling with a folder normalizes (blank-trim + clamp) and takes
         // an immediate snapshot so the user gets instant confirmation.
-        let saved = set_auto_backup_settings(
+        let saved = apply_settings(
             app.state::<crate::AppState>(),
             AutoBackupSettings {
                 enabled: true,
@@ -678,14 +671,12 @@ mod tests {
 
         // get reflects what was persisted.
         assert_eq!(
-            get_auto_backup_settings(app.state::<crate::AppState>())
-                .await
-                .unwrap(),
+            get_settings(app.state::<crate::AppState>()).await.unwrap(),
             saved,
         );
 
         // The initial snapshot is on disk.
-        let status = auto_backup_status(app.state::<crate::AppState>())
+        let status = current_status(app.state::<crate::AppState>())
             .await
             .unwrap();
         assert_eq!(status.count, 1);
@@ -699,21 +690,19 @@ mod tests {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
 
         // No folder yet: status reports nothing and a forced backup errors.
-        let empty = auto_backup_status(app.state::<crate::AppState>())
+        let empty = current_status(app.state::<crate::AppState>())
             .await
             .unwrap();
         assert_eq!(empty.count, 0);
         assert_eq!(empty.last_backup_at, None);
-        let err = backup_now(app.state::<crate::AppState>())
-            .await
-            .unwrap_err();
+        let err = run_now(app.state::<crate::AppState>()).await.unwrap_err();
         assert!(err.contains("no automatic-backup folder"), "{err}");
 
         // Configure a folder but leave backups disabled — `backup_now`
         // ignores the enabled flag, and the disabled `set` skips the
         // initial snapshot, so the only file comes from the forced backup.
         let out = tempfile::tempdir().unwrap();
-        set_auto_backup_settings(
+        apply_settings(
             app.state::<crate::AppState>(),
             AutoBackupSettings {
                 enabled: false,
@@ -726,9 +715,60 @@ mod tests {
         .unwrap();
         assert!(list_backup_names(out.path()).await.is_empty());
 
-        let path = backup_now(app.state::<crate::AppState>()).await.unwrap();
+        let path = run_now(app.state::<crate::AppState>()).await.unwrap();
         assert!(std::path::Path::new(&path).exists());
         assert_eq!(list_backup_names(out.path()).await.len(), 1);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn apply_settings_enabled_without_a_folder_takes_no_snapshot() {
+        use tauri::Manager;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        // enabled but no folder: persists the flag, but there's nowhere to
+        // write, so the initial-snapshot block is skipped (no panic).
+        let saved = apply_settings(
+            app.state::<crate::AppState>(),
+            AutoBackupSettings {
+                enabled: true,
+                dir: None,
+                interval_hours: 24,
+                keep: 14,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(saved.enabled);
+        assert_eq!(saved.dir, None);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn apply_settings_skips_initial_snapshot_when_one_is_recent() {
+        use tauri::Manager;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let out = tempfile::tempdir().unwrap();
+        // A just-written snapshot means a backup is *not* due, so enabling
+        // must not add a second one (exercises the not-due skip path).
+        tokio::fs::write(out.path().join(backup_filename(Utc::now())), b"x")
+            .await
+            .unwrap();
+        apply_settings(
+            app.state::<crate::AppState>(),
+            AutoBackupSettings {
+                enabled: true,
+                dir: Some(out.path().to_string_lossy().to_string()),
+                interval_hours: 24,
+                keep: 14,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            list_backup_names(out.path()).await.len(),
+            1,
+            "no extra snapshot taken when one is already recent",
+        );
     }
 
     #[tokio::test]
@@ -777,7 +817,7 @@ mod tests {
         let blocker = dir.path().join("blocker");
         std::fs::write(&blocker, b"x").unwrap();
         let unusable = blocker.join("nope");
-        let saved = set_auto_backup_settings(
+        let saved = apply_settings(
             app.state::<crate::AppState>(),
             AutoBackupSettings {
                 enabled: true,
@@ -790,7 +830,7 @@ mod tests {
         .unwrap();
         assert!(saved.enabled);
         // No snapshot was written (the folder is unusable), reported cleanly.
-        let status = auto_backup_status(app.state::<crate::AppState>())
+        let status = current_status(app.state::<crate::AppState>())
             .await
             .unwrap();
         assert_eq!(status.count, 0);
