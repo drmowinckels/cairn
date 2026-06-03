@@ -26,7 +26,7 @@ import { ROUNDING_OFF, type Rounding } from "./rounding";
  * line after an export. Pinning suppresses the blur-hide for the
  * duration; the pin is always released, even on throw.
  */
-async function withPopoverPinned<T>(fn: () => Promise<T>): Promise<T> {
+export async function withPopoverPinned<T>(fn: () => Promise<T>): Promise<T> {
   await setPinned(true);
   try {
     return await fn();

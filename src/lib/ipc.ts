@@ -349,6 +349,46 @@ export async function revealDataFolder(): Promise<void> {
   await invoke("reveal_data_folder");
 }
 
+export interface AutoBackupSettings {
+  enabled: boolean;
+  dir: string | null;
+  intervalHours: number;
+  keep: number;
+}
+
+export interface AutoBackupStatus {
+  lastBackupAt: string | null;
+  count: number;
+}
+
+export const AUTO_BACKUP_DEFAULTS: AutoBackupSettings = {
+  enabled: false,
+  dir: null,
+  intervalHours: 24,
+  keep: 14,
+};
+
+export async function getAutoBackupSettings(): Promise<AutoBackupSettings> {
+  if (!inTauri) return { ...AUTO_BACKUP_DEFAULTS };
+  return invoke<AutoBackupSettings>("get_auto_backup_settings");
+}
+
+export async function setAutoBackupSettings(
+  settings: AutoBackupSettings,
+): Promise<AutoBackupSettings> {
+  if (!inTauri) return settings;
+  return invoke<AutoBackupSettings>("set_auto_backup_settings", { settings });
+}
+
+export async function autoBackupStatus(): Promise<AutoBackupStatus> {
+  if (!inTauri) return { lastBackupAt: null, count: 0 };
+  return invoke<AutoBackupStatus>("auto_backup_status");
+}
+
+export async function backupNow(): Promise<string> {
+  return invoke<string>("backup_now");
+}
+
 export type CalendarKind = "url" | "file";
 
 export interface CalendarSource {

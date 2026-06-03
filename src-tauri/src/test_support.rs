@@ -123,6 +123,7 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         browser_extension: Arc::new(
             crate::signals::browser_extension::BrowserExtensionState::new(),
         ),
+        auto_backup_lock: Arc::new(tokio::sync::Mutex::new(())),
     });
     (dir, app, db)
 }

@@ -1,3 +1,4 @@
+mod auto_backup;
 mod backup;
 mod db;
 mod ipc;
@@ -150,6 +151,11 @@ pub struct AppState {
     /// `signals::browser`; the IPC handler `browser_extension_status`
     /// reads from it for Settings → Integrations.
     pub browser_extension: Arc<BrowserExtensionState>,
+    /// Serializes auto-backup snapshots so the periodic scheduler and a
+    /// manual "Back up now" / settings-save trigger can't run two
+    /// `VACUUM INTO`s into the same folder at once. `Arc` so the spawned
+    /// scheduler task shares the same lock as the IPC handlers.
+    pub auto_backup_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Ensure the app data directory exists, mapping any I/O failure to a
@@ -304,6 +310,10 @@ pub fn run() {
             backup::suggested_csv_name,
             backup::list_data_files,
             backup::reveal_data_folder,
+            auto_backup::get_auto_backup_settings,
+            auto_backup::set_auto_backup_settings,
+            auto_backup::auto_backup_status,
+            auto_backup::backup_now,
             check_for_update,
         ])
         .setup(|app| {
@@ -492,6 +502,17 @@ pub fn run() {
                     .await;
             });
 
+            // Auto-backup scheduler (#data-resilience): periodic snapshot
+            // task sharing one lock with the manual/settings triggers.
+            let auto_backup_lock = Arc::new(tokio::sync::Mutex::new(()));
+            {
+                let pool = db.pool.clone();
+                let lock = auto_backup_lock.clone();
+                tauri::async_runtime::spawn(async move {
+                    auto_backup::run_scheduler(pool, lock).await;
+                });
+            }
+
             app.manage(AppState {
                 db,
                 pinned: AtomicBool::new(false),
@@ -509,6 +530,7 @@ pub fn run() {
                 git_roots_mutator: tokio::sync::Mutex::new(()),
                 last_idle: std::sync::Mutex::new(None),
                 browser_extension: browser_extension_state,
+                auto_backup_lock,
             });
 
             tray::setup(app.handle())?;
