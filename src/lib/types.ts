@@ -172,6 +172,27 @@ export interface RuleMatchEvent {
    * Empty string when the rule has no template.
    */
   description: string;
+  /**
+   * The live signal values that contributed to this match, for the
+   * suggestion banner's "why" evidence line (#143). One entry per
+   * signal kind a matched condition referenced. Render-only — these
+   * are never persisted. The backend builds them from the *redacted*
+   * snapshot, so an excluded app/window/domain can never appear here.
+   * Optional + defaulted: a payload from before #143 (or a strict
+   * auto-start path that never renders a banner) carries no chips.
+   */
+  matchedSignals?: MatchedSignal[];
+}
+
+/**
+ * One matched signal value behind the suggestion "why" line (#143).
+ * `signal` is the same `SignalKind` the rules engine uses; `value` is
+ * the live snapshot value (e.g. the actual git branch), never the
+ * rule's condition pattern.
+ */
+export interface MatchedSignal {
+  signal: SignalKind;
+  value: string;
 }
 
 export interface LiveSignal {

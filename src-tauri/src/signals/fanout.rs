@@ -445,6 +445,27 @@ mod tests {
     }
 
     #[test]
+    fn outcome_for_surfaces_matched_signals_for_evidence_line() {
+        // #143: the `signal:match` payload must carry the live signal
+        // values that contributed to the match so the suggestion
+        // banner can render its "why" chips.
+        let rules = project_rules(vec![rule_matching_app("r1", "Cairn", "cairn")]);
+        let mut snap = snap_with_app("Cairn");
+        snap.git_branch = Some("feat/x".into());
+        let outcome = outcome_for(snap, &rules);
+        let m = outcome.rule_match.expect("rule fires");
+        // Only the app.name condition matched, so only it contributes
+        // a chip — the unreferenced git branch does not leak in.
+        assert_eq!(
+            m.matched_signals,
+            vec![crate::rules::MatchedSignal {
+                signal: "app.name".into(),
+                value: "Cairn".into(),
+            }],
+        );
+    }
+
+    #[test]
     fn outcome_for_returns_none_when_no_rule_fires() {
         let rules = project_rules(vec![rule_matching_app("r1", "Cairn", "cairn")]);
         let outcome = outcome_for(snap_with_app("Other"), &rules);

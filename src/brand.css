@@ -445,6 +445,15 @@ body {
   color: var(--ink-soft);
 }
 
+.suggest-why-evidence {
+  line-height: 1.7;
+}
+
+.suggest-why-label,
+.suggest-why-sep {
+  color: var(--ink-mute);
+}
+
 .suggest-link {
   appearance: none;
   border: 0;

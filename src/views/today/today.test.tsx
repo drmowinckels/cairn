@@ -5,16 +5,25 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
 
-const SUGGESTION_FIXTURE = {
+interface SuggestionFixture {
+  ruleId: string;
+  ruleName: string;
+  confidence: "suggestive" | "strict";
+  project: string | null;
+  tags: string[];
+  matchedSignals?: { signal: string; value: string }[];
+}
+
+const SUGGESTION_FIXTURE: SuggestionFixture = {
   ruleId: "r1",
   ruleName: "Cairn dev",
-  confidence: "suggestive" as const,
-  project: "cairn" as string | null,
+  confidence: "suggestive",
+  project: "cairn",
   tags: ["dev"],
 };
 const confirmMock = vi.fn();
 const dismissMock = vi.fn();
-let suggestionOverride: typeof SUGGESTION_FIXTURE | null = SUGGESTION_FIXTURE;
+let suggestionOverride: SuggestionFixture | null = SUGGESTION_FIXTURE;
 
 vi.mock("../../lib/use-suggestion", () => ({
   useSuggestion: () => ({
@@ -105,6 +114,37 @@ describe("TodayView (idle — no running entry)", () => {
     fireEvent.click(screen.getByRole("button", { name: /view rule/i }));
     expect(dismissMock).toHaveBeenCalledTimes(1);
     expect(onOpenRule).toHaveBeenCalledWith("r1");
+  });
+
+  it("renders the 'why' evidence chips from a suggestion carrying matchedSignals (#143)", () => {
+    suggestionOverride = {
+      ...SUGGESTION_FIXTURE,
+      matchedSignals: [
+        { signal: "git.branch", value: "feat/rules-ui" },
+        { signal: "ide.folder", value: "~/code/cairn" },
+      ],
+    };
+    const { container } = render(
+      <TodayView density="comfy" layoutVariant="default" onOpenRule={vi.fn()} />,
+    );
+    const why = container.querySelector(".suggest-why");
+    const codes = Array.from(why?.querySelectorAll("code") ?? []).map(
+      (c) => c.textContent,
+    );
+    expect(codes).toEqual(["feat/rules-ui", "~/code/cairn"]);
+    expect(why?.textContent ?? "").toContain("because");
+  });
+
+  it("renders no evidence chips when the suggestion carries no matchedSignals (#143)", () => {
+    // SUGGESTION_FIXTURE has no matchedSignals — the banner still
+    // renders, just without the "because …" line.
+    const { container } = renderToday();
+    const why = container.querySelector(".suggest-why");
+    expect(why).not.toBeNull();
+    expect(why?.querySelector("code")).toBeNull();
+    expect(why?.textContent ?? "").not.toContain("because");
+    // The "view rule" link is still present.
+    expect(screen.getByRole("button", { name: /view rule/i })).toBeTruthy();
   });
 
   it("non-Escape keydown on the document does not dismiss the suggestion", () => {
