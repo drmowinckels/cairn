@@ -670,10 +670,10 @@ mod tests {
         // no-op the two forms coincide. Either way, a single repo inserts at
         // most the raw + canonical pair — never more.
         assert_eq!(watched.get(&git_dir), Some(&repo));
+        let len = watched.len();
         assert!(
-            watched.len() == 1 || watched.len() == 2,
-            "a single repo inserts only its raw and/or canonical keys, got {}",
-            watched.len()
+            len == 1 || len == 2,
+            "a single repo inserts only its raw and/or canonical keys, got {len}"
         );
     }
 
