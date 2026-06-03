@@ -154,14 +154,41 @@ pub struct Fetcher {
 
 impl Fetcher {
     pub fn new() -> Result<Self> {
-        let client = reqwest::Client::builder()
+        Ok(Self {
+            client: Self::build_client(true)?,
+        })
+    }
+
+    /// Build the underlying client. `https_only` is always `true` in
+    /// production (`new`). reqwest enforces it *after* the custom
+    /// redirect policy returns `Follow`, so a same-host HTTPS→HTTP
+    /// downgrade hop is refused as a redirect error — closing the
+    /// cleartext-credential leak in #155, where the bearer token lives
+    /// in the URL path (not an `Authorization` header reqwest would
+    /// strip). A plaintext `http://` target is likewise refused before
+    /// any request is sent.
+    fn build_client(https_only: bool) -> Result<reqwest::Client> {
+        reqwest::Client::builder()
             .user_agent(concat!("cairn/", env!("CARGO_PKG_VERSION")))
             .redirect(host_pinned_redirect_policy())
+            .https_only(https_only)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()
-            .context("build reqwest client")?;
-        Ok(Self { client })
+            .context("build reqwest client")
+    }
+
+    /// Test-only constructor that permits plaintext HTTP. The
+    /// redirect-closure integration tests (#151) drive a real redirect
+    /// through `http://127.0.0.1:<port>` because `mockito` serves HTTP
+    /// only; with `https_only` on, production would reject those URLs
+    /// before any redirect and erase that coverage. Never used outside
+    /// tests — production always goes through `new`.
+    #[cfg(test)]
+    fn new_allowing_http() -> Result<Self> {
+        Ok(Self {
+            client: Self::build_client(false)?,
+        })
     }
 
     /// Replace a `webcal://` scheme with `https://` — iCloud and others
@@ -328,7 +355,7 @@ mod tests {
             .create_async()
             .await;
 
-        let fetcher = Fetcher::new().expect("build fetcher");
+        let fetcher = Fetcher::new_allowing_http().expect("build http-allowing fetcher");
         let url = format!("{}/start.ics", server.url());
         let outcome = fetcher
             .fetch(&url, None, None)
@@ -365,7 +392,7 @@ mod tests {
             .create_async()
             .await;
 
-        let fetcher = Fetcher::new().expect("build fetcher");
+        let fetcher = Fetcher::new_allowing_http().expect("build http-allowing fetcher");
         let url = format!("{}/start.ics", server.url());
         let err = fetcher
             .fetch(&url, None, None)
@@ -408,7 +435,7 @@ mod tests {
             );
         }
 
-        let fetcher = Fetcher::new().expect("build fetcher");
+        let fetcher = Fetcher::new_allowing_http().expect("build http-allowing fetcher");
         let url = format!("{}/hop0.ics", server.url());
         let err = fetcher
             .fetch(&url, None, None)
@@ -466,6 +493,35 @@ mod tests {
         assert!(
             !chain.contains("192.0.2.1"),
             "error chain leaked target host: {chain}",
+        );
+    }
+
+    /// #155: the production constructor pins `https_only(true)`, so a
+    /// plaintext `http://` target — e.g. a same-host HTTPS→HTTP
+    /// downgrade carrying the bearer token in its path — is refused
+    /// before any request leaves the machine, and the refusal is
+    /// URL-free (it flows through `classify`, never `Display` on the
+    /// reqwest error). The test constructor would *follow* this; `new`
+    /// must not.
+    #[tokio::test]
+    async fn production_fetcher_refuses_http_downgrade_target() {
+        let fetcher = Fetcher::new().expect("build fetcher");
+        const SECRET: &str = "DOWNGRADE-TOKEN-DO-NOT-LEAK";
+        let url = format!("http://127.0.0.1/calendar/{SECRET}/basic.ics");
+
+        let err = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect_err("https_only must refuse a plaintext http target");
+
+        let chain = format!("{err:#}");
+        assert!(
+            !chain.contains(SECRET),
+            "downgrade refusal leaked URL secret: {chain}",
+        );
+        assert!(
+            chain.contains("calendar fetch:"),
+            "downgrade refusal must surface as a classified fetch error: {chain}",
         );
     }
 }
