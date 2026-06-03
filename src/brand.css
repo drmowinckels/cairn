@@ -47,11 +47,15 @@
   --font-display: 45px;
   --line-base: 1.55;
 
-  /* Type system */
-  --serif: "Newsreader", ui-serif, georgia, serif;
+  /* Type system. "* Variable" families are the self-hosted @fontsource
+     woff2 (#146); the non-variable names remain as fallbacks. */
+  --serif: "Newsreader Variable", "Newsreader", ui-serif, georgia, serif;
   --sans:
-    "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "Geist Mono", ui-monospace, "SF Mono", menlo, monospace;
+    "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --mono:
+    "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", menlo,
+    monospace;
 }
 
 [data-theme="dark"] {

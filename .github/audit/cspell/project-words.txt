@@ -108,9 +108,11 @@ chev
 dplyr
 gridline
 gridlines
+gstatic
 intg
 kbds
 negotiables
+opsz
 protonmail
 reqwest
 rgba

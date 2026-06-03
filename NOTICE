@@ -9,3 +9,22 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+-------------------------------------------------------------------------------
+Bundled fonts
+-------------------------------------------------------------------------------
+
+Cairn self-hosts the following fonts (vendored as woff2 via the @fontsource
+packages and bundled at build time; no Google Fonts CDN request is made at
+runtime). Each is licensed under the SIL Open Font License, Version 1.1
+(https://openfontlicense.org).
+
+  Newsreader   Copyright 2020 The Newsreader Project Authors
+               https://github.com/productiontype/Newsreader
+  Geist        Copyright 2024 The Geist Project Authors
+               https://github.com/vercel/geist-font
+  Geist Mono   Copyright 2024 The Geist Project Authors
+               https://github.com/vercel/geist-font
+
+Full license texts ship with each package under
+node_modules/@fontsource-variable/<family>/LICENSE.
