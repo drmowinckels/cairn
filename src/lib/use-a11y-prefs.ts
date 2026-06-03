@@ -4,62 +4,13 @@ import type {
   AmbiguityBehavior,
   DetectionPrompts,
   TextScale,
-  Theme,
   ThemePref,
 } from "./types";
-import { coerceAmbiguity } from "./use-rules";
-
-const STORAGE_KEY = "cairn:a11y-prefs:v1";
-
-const DEFAULTS: A11yPrefs = {
-  theme: "system",
-  textScale: "md",
-  highContrast: false,
-  reduceMotion: matchesReduceMotion(),
-  colorblindSafe: false,
-  announce: true,
-  alwaysFocusRing: false,
-  detectionPrompts: "subtle",
-  ambiguityDefault: "prompt",
-};
-
-function matchesReduceMotion(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-function darkSchemeQuery(): MediaQueryList | null {
-  if (typeof window === "undefined" || !window.matchMedia) return null;
-  return window.matchMedia("(prefers-color-scheme: dark)");
-}
-
-/** Resolve a theme preference to the concrete theme to paint. "system"
- *  follows the OS via prefers-color-scheme; an explicit pref wins. */
-function resolveTheme(pref: ThemePref, mq: MediaQueryList | null): Theme {
-  if (pref === "system") return mq?.matches ? "dark" : "light";
-  return pref;
-}
-
-function load(): A11yPrefs {
-  if (typeof window === "undefined") return DEFAULTS;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULTS;
-    const parsed = JSON.parse(raw) as Partial<A11yPrefs>;
-    // Coerce `ambiguityDefault` at the input boundary so a tampered
-    // localStorage blob (`"yes"`, arrays, null) can't smuggle an
-    // out-of-range value into `blankRule()` via `useRules`. Mirrors
-    // the same guard the body deserializer uses on round-trip
-    // (issue #16, security-review on #71).
-    return {
-      ...DEFAULTS,
-      ...parsed,
-      ambiguityDefault: coerceAmbiguity(parsed?.ambiguityDefault),
-    };
-  } catch {
-    return DEFAULTS;
-  }
-}
+import {
+  A11Y_STORAGE_KEY,
+  applyA11yChrome,
+  loadA11yPrefs,
+} from "./use-apply-a11y-chrome";
 
 export interface UseA11yPrefs extends A11yPrefs {
   setTheme: (v: ThemePref) => void;
@@ -74,34 +25,15 @@ export interface UseA11yPrefs extends A11yPrefs {
 }
 
 export function useA11yPrefs(): UseA11yPrefs {
-  const [prefs, setPrefs] = useState<A11yPrefs>(load);
+  const [prefs, setPrefs] = useState<A11yPrefs>(loadA11yPrefs);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+      window.localStorage.setItem(A11Y_STORAGE_KEY, JSON.stringify(prefs));
     } catch {
       /* ignore quota errors */
     }
-    const root = document.documentElement;
-    root.dataset.textScale = prefs.textScale;
-    root.dataset.highContrast = prefs.highContrast ? "on" : "off";
-    root.dataset.reduceMotion = prefs.reduceMotion ? "on" : "off";
-    root.dataset.colorblind = prefs.colorblindSafe ? "on" : "off";
-    root.dataset.focusRing = prefs.alwaysFocusRing ? "always" : "kbd";
-    root.dataset.detectionPrompts = prefs.detectionPrompts;
-
-    // Theme drives the brand.css [data-theme="dark"] token overrides.
-    // "system" resolves against the OS and tracks live changes; an
-    // explicit light/dark wins and needs no listener.
-    const mq = darkSchemeQuery();
-    const applyTheme = () => {
-      root.dataset.theme = resolveTheme(prefs.theme, mq);
-    };
-    applyTheme();
-    if (prefs.theme === "system" && mq) {
-      mq.addEventListener("change", applyTheme);
-      return () => mq.removeEventListener("change", applyTheme);
-    }
+    return applyA11yChrome(prefs);
   }, [prefs]);
 
   const patch = useCallback(

@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { Icon } from "../../lib/icon";
 import { fmtClockFromIso, fmtIdleDuration } from "../../lib/time";
 import { useIdleWindow } from "../../lib/use-idle-window";
+import { useApplyA11yChrome } from "../../lib/use-apply-a11y-chrome";
+import { useFocusTrap } from "../../lib/use-focus-trap";
 import type { IdleChoice } from "../../lib/ipc";
 
 interface ChoiceDef {
@@ -41,8 +43,12 @@ const CHOICES: ChoiceDef[] = [
  */
 export function IdleWindow() {
   const { prompt, resolve, dismiss } = useIdleWindow();
+  useApplyA11yChrome();
+  const trap = useFocusTrap(() => void dismiss());
 
-  // Dismiss (no change — idle stays as work) on Escape.
+  // Dismiss (no change — idle stays as work) on Escape. The trap handles
+  // Escape when focus is inside the dialog; this window-level listener
+  // covers the brief window before mount-focus lands.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") void dismiss();
@@ -51,12 +57,28 @@ export function IdleWindow() {
     return () => window.removeEventListener("keydown", onKey);
   }, [dismiss]);
 
+  // Focus the dialog itself on mount so keyboard users land inside the
+  // forced-choice trap rather than on the body (CLAUDE.md §4, §6).
+  useEffect(() => {
+    const node = trap.ref.current;
+    if (!node) return;
+    const id = window.requestAnimationFrame(() => node.focus());
+    return () => window.cancelAnimationFrame(id);
+  }, [trap.ref]);
+
   return (
+    // Focus-trapped modal: onKeyDown handles Escape/Tab. The dialog role is
+    // non-interactive but key handling here is the standard modal pattern,
+    // not a clickable control.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
       className="idle-win"
       role="dialog"
       aria-modal="true"
       aria-labelledby="idle-win-h"
+      tabIndex={-1}
+      ref={trap.ref}
+      onKeyDown={trap.onKeyDown}
     >
       <header className="idle-win-head">
         <Icon name="moon" size={16} />
