@@ -84,6 +84,7 @@ focusables
 fuzzysort
 ggseg
 ggsegverse
+glanceable
 gridline
 gridlines
 gstatic

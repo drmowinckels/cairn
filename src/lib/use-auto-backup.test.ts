@@ -253,6 +253,21 @@ describe("useAutoBackup (inside Tauri)", () => {
     expect(result.current.status).toEqual({ lastBackupAt: null, count: 0 });
   });
 
+  it("coalesces nullish IPC results to safe defaults", async () => {
+    // A stubbed bridge can resolve the commands to null; the hook must
+    // keep a real settings/status object so pure consumers don't choke.
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_auto_backup_settings") return null;
+      if (cmd === "auto_backup_status") return null;
+      return undefined;
+    });
+    const { useAutoBackup } = await import("./use-auto-backup");
+    const { result } = renderHook(() => useAutoBackup());
+    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    expect(result.current.settings).toEqual(DEFAULT_SETTINGS);
+    expect(result.current.status).toEqual({ lastBackupAt: null, count: 0 });
+  });
+
   it("setEnabled(true) turns backups on when a folder is already set", async () => {
     const setCall = vi.fn(
       (arg: unknown) => (arg as { settings: unknown }).settings,

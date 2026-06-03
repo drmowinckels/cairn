@@ -296,6 +296,86 @@ describe("DataStorageActions — automatic backup panel", () => {
     expect(screen.getByText(/no snapshots yet/i)).toBeTruthy();
   });
 
+  it("shows a staleness warning when the last backup is older than 2× interval", async () => {
+    invokeMock.mockResolvedValue(null);
+    const stale = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(); // 3 days, interval 24h → stale
+    auto.current = makeAuto({
+      settings: {
+        enabled: true,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      status: { lastBackupAt: stale, count: 3 },
+    });
+    await renderStorage();
+    const alerts = await screen.findAllByRole("alert");
+    expect(
+      alerts.some((a) =>
+        /check your backup folder is reachable/i.test(a.textContent ?? ""),
+      ),
+    ).toBe(true);
+  });
+
+  it("shows a 'no backup yet' warning when enabled but nothing has run", async () => {
+    invokeMock.mockResolvedValue(null);
+    auto.current = makeAuto({
+      settings: {
+        enabled: true,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      status: { lastBackupAt: null, count: 0 },
+    });
+    await renderStorage();
+    const alerts = await screen.findAllByRole("alert");
+    expect(
+      alerts.some((a) => /no backup taken yet/i.test(a.textContent ?? "")),
+    ).toBe(true);
+  });
+
+  it("hides the staleness warning when the last backup is recent (ok)", async () => {
+    invokeMock.mockResolvedValue(null);
+    auto.current = makeAuto({
+      settings: {
+        enabled: true,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      status: { lastBackupAt: new Date().toISOString(), count: 3 },
+    });
+    await renderStorage();
+    expect(
+      screen.queryByText(/check your backup folder is reachable/i),
+    ).toBeNull();
+    expect(screen.queryByText(/no backup taken yet/i)).toBeNull();
+  });
+
+  it("hides the staleness warning when automatic backup is off", async () => {
+    invokeMock.mockResolvedValue(null);
+    // Folder configured (so the configured controls render) but disabled,
+    // and the last backup is ancient — health is `off`, so no warning.
+    auto.current = makeAuto({
+      settings: {
+        enabled: false,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      status: {
+        lastBackupAt: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(),
+        count: 3,
+      },
+    });
+    await renderStorage();
+    expect(
+      screen.queryByText(/check your backup folder is reachable/i),
+    ).toBeNull();
+    expect(screen.queryByText(/no backup taken yet/i)).toBeNull();
+  });
+
   it("surfaces the panel op banner as an alert on error", async () => {
     invokeMock.mockResolvedValue(null);
     auto.current = makeAuto({

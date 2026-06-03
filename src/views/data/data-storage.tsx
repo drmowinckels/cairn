@@ -4,6 +4,7 @@ import { useAutoBackup } from "../../lib/use-auto-backup";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { PRIVACY_GUARANTEES, formatBytes } from "../../lib/privacy-copy";
 import { formatRelativeTime } from "../../lib/relative-time";
+import { backupHealth, backupHealthMessage } from "../../lib/backup-staleness";
 
 const INTERVAL_OPTIONS: Array<{ hours: number; label: string }> = [
   { hours: 6, label: "Every 6 hours" },
@@ -23,6 +24,11 @@ const KEEP_OPTIONS = [7, 14, 30];
 function AutoBackupPanel() {
   const ab = useAutoBackup();
   const { settings, status } = ab;
+  const health = backupHealth(settings, status);
+  // `backupHealthMessage` returns copy only for the unhealthy states
+  // (`stale` / `never`) and `null` for `off` / `ok`, so a non-null
+  // message is exactly when the warning banner should show.
+  const warningMessage = backupHealthMessage(health, status);
 
   return (
     <div className="auto-backup" aria-label="Automatic backup">
@@ -92,6 +98,12 @@ function AutoBackupPanel() {
                 : "No snapshots yet"}
             </span>
           </div>
+          {warningMessage && (
+            <div className="privacy-banner privacy-banner--error" role="alert">
+              <Icon name="x" size={13} />
+              <span>{warningMessage}</span>
+            </div>
+          )}
         </>
       ) : (
         <button className="btn btn--ghost btn--sm" onClick={ab.chooseFolder}>

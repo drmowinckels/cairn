@@ -3354,6 +3354,16 @@ select.rule-conf {
   display: inline-block;
 }
 
+/* Subtle backup-staleness nudge (#168 follow-up). Tinted with the
+   accent ink so it reads as "attention" in both themes without a
+   hard-coded colour; stays quiet — no fill, just a coloured label. */
+.pop-foot .foot-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-ink);
+}
+
 /* ─── CAPTURE BANNER (debug raw-signal capture) ─────────────────────── */
 .capture-banner {
   display: flex;

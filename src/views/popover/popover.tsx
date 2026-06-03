@@ -19,6 +19,8 @@ import { useUpdatePrefs } from "../../lib/use-update-prefs";
 import { useUpdateCheck } from "../../lib/use-update-check";
 import { useTimer } from "../../lib/use-timer";
 import { useToday } from "../../lib/use-today";
+import { useAutoBackup } from "../../lib/use-auto-backup";
+import { backupHealth } from "../../lib/backup-staleness";
 import { useProjects } from "../../lib/use-projects";
 import { useRules } from "../../lib/use-rules";
 import { fmtHm, totalTrackedMinutes } from "../../lib/time";
@@ -313,6 +315,15 @@ function PopoverShell({
     ? null
     : fmtHm(totalTrackedMinutes(today.entries));
 
+  // Subtle backup-staleness nudge (#168 follow-up). The hook returns the
+  // `off` defaults outside Tauri (no IPC), so `backupStale` is false in
+  // fixture/dev mode and the indicator renders nothing there. We surface
+  // only the `stale` state in the footer — `never` is for the panel, not
+  // a glanceable warning.
+  const autoBackup = useAutoBackup();
+  const backupStale =
+    backupHealth(autoBackup.settings, autoBackup.status) === "stale";
+
   if (onboarding.status === "needs-onboarding") {
     return (
       <div
@@ -481,6 +492,19 @@ function PopoverShell({
           )}
           <Icon name="sparkle" size={11} /> {activeRuleCount}{" "}
           {activeRuleCount === 1 ? "rule" : "rules"} active
+          {backupStale && (
+            <>
+              <span className="foot-sep" />
+              <span
+                className="foot-warn"
+                role="img"
+                aria-label="Automatic backup is stale — open the Data tab to check your backup folder"
+                title="Backup is stale — check the Data tab"
+              >
+                <Icon name="x" size={11} /> backup stale
+              </span>
+            </>
+          )}
         </span>
         <span className="foot-right">
           <span>
