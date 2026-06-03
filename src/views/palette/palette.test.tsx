@@ -528,3 +528,127 @@ describe("CommandPalette — focus trap + return", () => {
     expect(options[0].getAttribute("aria-selected")).toBe("true");
   });
 });
+
+describe("CommandPalette — action errors", () => {
+  // The dispatch defers `run()` into a rAF, then resolves it through a
+  // promise chain, so a rejection needs one rAF + a couple of
+  // microtask turns to reach the `.catch`.
+  async function flushDispatch() {
+    await new Promise((r) => window.requestAnimationFrame(r));
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  function runFirstStartCommand(onActionError: (m: string) => void) {
+    const input = screen.getByLabelText(/command palette/i);
+    fireEvent.change(input, { target: { value: "start timer" } });
+    const opt = screen
+      .getAllByRole("option")
+      .find((o) => /Start timer for/.test(o.textContent ?? ""))!;
+    fireEvent.click(opt);
+    return onActionError;
+  }
+
+  it("routes a rejected action to onActionError with the command label", async () => {
+    const onActionError = vi.fn();
+    const startTimer = vi.fn().mockRejectedValue(new Error("db is locked"));
+    render(
+      <CommandPalette
+        open
+        onClose={vi.fn()}
+        context={baseContext({ startTimer })}
+        onActionError={onActionError}
+      />,
+    );
+    runFirstStartCommand(onActionError);
+    await flushDispatch();
+    expect(startTimer).toHaveBeenCalled();
+    expect(onActionError).toHaveBeenCalledTimes(1);
+    const message = onActionError.mock.calls[0][0] as string;
+    expect(message).toMatch(/Start timer for/);
+    expect(message).toMatch(/db is locked/);
+  });
+
+  it("routes a rejected switchProject action to onActionError with the label", async () => {
+    const onActionError = vi.fn();
+    const switchProject = vi
+      .fn()
+      .mockRejectedValue(new Error("switch failed: io error"));
+    render(
+      <CommandPalette
+        open
+        onClose={vi.fn()}
+        context={baseContext({
+          running: { id: "r-1", projectId: "alpha" },
+          switchProject,
+        })}
+        onActionError={onActionError}
+      />,
+    );
+    const input = screen.getByLabelText(/command palette/i);
+    fireEvent.change(input, { target: { value: "switch running timer" } });
+    const opt = screen
+      .getAllByRole("option")
+      .find((o) => /Switch running timer to/.test(o.textContent ?? ""))!;
+    fireEvent.click(opt);
+    await flushDispatch();
+    expect(switchProject).toHaveBeenCalled();
+    expect(onActionError).toHaveBeenCalledTimes(1);
+    const message = onActionError.mock.calls[0][0] as string;
+    expect(message).toMatch(/Switch running timer to/);
+    expect(message).toMatch(/switch failed: io error/);
+  });
+
+  it("stringifies a non-Error rejection value", async () => {
+    const onActionError = vi.fn();
+    const startTimer = vi.fn().mockRejectedValue("boom");
+    render(
+      <CommandPalette
+        open
+        onClose={vi.fn()}
+        context={baseContext({ startTimer })}
+        onActionError={onActionError}
+      />,
+    );
+    runFirstStartCommand(onActionError);
+    await flushDispatch();
+    expect(onActionError).toHaveBeenCalledTimes(1);
+    expect(onActionError.mock.calls[0][0]).toMatch(/boom/);
+  });
+
+  it("does not call onActionError when the action resolves", async () => {
+    const onActionError = vi.fn();
+    const startTimer = vi.fn().mockResolvedValue(undefined);
+    render(
+      <CommandPalette
+        open
+        onClose={vi.fn()}
+        context={baseContext({ startTimer })}
+        onActionError={onActionError}
+      />,
+    );
+    runFirstStartCommand(onActionError);
+    await flushDispatch();
+    expect(startTimer).toHaveBeenCalled();
+    expect(onActionError).not.toHaveBeenCalled();
+  });
+
+  it("swallows a rejection harmlessly when no onActionError is provided", async () => {
+    const startTimer = vi.fn().mockRejectedValue(new Error("nope"));
+    render(
+      <CommandPalette
+        open
+        onClose={vi.fn()}
+        context={baseContext({ startTimer })}
+      />,
+    );
+    const input = screen.getByLabelText(/command palette/i);
+    fireEvent.change(input, { target: { value: "start timer" } });
+    const opt = screen
+      .getAllByRole("option")
+      .find((o) => /Start timer for/.test(o.textContent ?? ""))!;
+    fireEvent.click(opt);
+    await flushDispatch();
+    expect(startTimer).toHaveBeenCalled();
+  });
+});

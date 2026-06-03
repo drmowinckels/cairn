@@ -6,7 +6,23 @@ import {
   fmtIdleDuration,
   fmtRange,
   minutesOf,
+  totalTrackedMinutes,
 } from "./time";
+import type { BackendEntry } from "./ipc";
+
+function entry(over: Partial<BackendEntry> = {}): BackendEntry {
+  return {
+    id: "e1",
+    projectId: "p1",
+    taskId: null,
+    description: "",
+    startedAt: "2026-06-02T09:00:00Z",
+    endedAt: "2026-06-02T10:00:00Z",
+    source: "manual",
+    ruleId: null,
+    ...over,
+  };
+}
 
 describe("time formatters", () => {
   it("fmtHm formats hours and minutes", () => {
@@ -43,5 +59,63 @@ describe("time formatters", () => {
     expect(fmtIdleDuration(7200)).toBe("2 h");
     expect(fmtIdleDuration(7260)).toBe("2 h 1 min");
     expect(fmtIdleDuration(5025)).toBe("1 h 23 min");
+  });
+});
+
+describe("totalTrackedMinutes", () => {
+  it("sums closed entries by elapsed minutes", () => {
+    const entries = [
+      entry({
+        startedAt: "2026-06-02T09:00:00Z",
+        endedAt: "2026-06-02T10:00:00Z",
+      }),
+      entry({
+        startedAt: "2026-06-02T11:00:00Z",
+        endedAt: "2026-06-02T11:30:00Z",
+      }),
+    ];
+    expect(totalTrackedMinutes(entries)).toBe(90);
+  });
+
+  it("counts the running entry up to `now`", () => {
+    const now = Date.parse("2026-06-02T09:45:00Z");
+    const entries = [
+      entry({ startedAt: "2026-06-02T09:00:00Z", endedAt: null }),
+    ];
+    expect(totalTrackedMinutes(entries, now)).toBe(45);
+  });
+
+  it("clamps negative spans (clock skew / bad row) to zero", () => {
+    const entries = [
+      entry({
+        startedAt: "2026-06-02T10:00:00Z",
+        endedAt: "2026-06-02T09:00:00Z",
+      }),
+      entry({
+        startedAt: "2026-06-02T11:00:00Z",
+        endedAt: "2026-06-02T11:20:00Z",
+      }),
+    ];
+    expect(totalTrackedMinutes(entries)).toBe(20);
+  });
+
+  it("skips entries with unparseable timestamps", () => {
+    const entries = [
+      entry({ startedAt: "not-a-date", endedAt: "2026-06-02T10:00:00Z" }),
+      entry({ startedAt: "2026-06-02T09:00:00Z", endedAt: "also-bad" }),
+      entry({
+        startedAt: "2026-06-02T09:00:00Z",
+        endedAt: "2026-06-02T09:15:00Z",
+      }),
+    ];
+    expect(totalTrackedMinutes(entries)).toBe(15);
+  });
+
+  it("returns 0 for an empty day", () => {
+    expect(totalTrackedMinutes([])).toBe(0);
+  });
+
+  it("returns 0 when handed a non-array (malformed backend response)", () => {
+    expect(totalTrackedMinutes(null as unknown as BackendEntry[])).toBe(0);
   });
 });

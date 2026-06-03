@@ -22,6 +22,11 @@ export interface TimerState {
   running: BackendEntry | null;
   loading: boolean;
   error: string | null;
+  /** Bumped each time an error is raised, even when the message is
+   *  byte-identical to the previous one. Lets a consumer re-surface a
+   *  repeat failure that `error`'s string-equality would otherwise hide
+   *  (e.g. tapping Stop twice and hitting the same "io error"). */
+  errorNonce: number;
   /** ms since the running entry's `started_at`, or 0 when nothing is running. */
   elapsedMs: number;
   start: (input: StartEntryInput) => Promise<BackendEntry>;
@@ -63,7 +68,16 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
   const [running, setRunning] = useState<BackendEntry | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  const [errorNonce, setErrorNonce] = useState(0);
   const [now, setNow] = useState<number>(() => Date.now());
+
+  // Raise an error *and* bump the nonce, so an identical repeat failure
+  // is still observable to consumers that key on the nonce (React
+  // coalesces a transient null→same-string transition into a no-op).
+  const raiseError = useCallback((message: string) => {
+    setError(message);
+    setErrorNonce((n) => n + 1);
+  }, []);
 
   // `running` mirror for stable callbacks. `stop`/`update` must NOT close
   // over `running` directly: the snapshot refresh hands `setRunning` a
@@ -100,11 +114,11 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
       setRunningTracked(entry);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      raiseError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [enabled, fetchFn, setRunningTracked]);
+  }, [enabled, fetchFn, raiseError, setRunningTracked]);
 
   useEffect(() => {
     void refresh();
@@ -190,12 +204,12 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
       // restore or it'd be wiped.
       stoppingIdRef.current = null;
       await refresh();
-      setError(e instanceof Error ? e.message : String(e));
+      raiseError(e instanceof Error ? e.message : String(e));
       return null;
     } finally {
       stoppingIdRef.current = null;
     }
-  }, [stopFn, refresh, setRunningTracked]);
+  }, [stopFn, refresh, setRunningTracked, raiseError]);
 
   const update = useCallback(
     async (input: Omit<UpdateEntryInput, "id">) => {
@@ -207,5 +221,15 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
     [updateFn, setRunningTracked],
   );
 
-  return { running, loading, error, elapsedMs, start, stop, refresh, update };
+  return {
+    running,
+    loading,
+    error,
+    errorNonce,
+    elapsedMs,
+    start,
+    stop,
+    refresh,
+    update,
+  };
 }

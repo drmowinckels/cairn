@@ -483,6 +483,40 @@ describe("useRules hook", () => {
     expect(result.current.error).toMatch(/DB locked/);
   });
 
+  it("bumps errorNonce on every update failure, even when the message repeats", async () => {
+    ipcMock.__seed([
+      {
+        id: "r1",
+        name: "Original",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(1));
+    expect(result.current.errorNonce).toBe(0);
+
+    vi.mocked(ipc.saveRule).mockRejectedValueOnce(
+      new Error("save rule failed"),
+    );
+    await act(async () => {
+      await result.current.update("r1", { enabled: false });
+    });
+    const firstNonce = result.current.errorNonce;
+    expect(firstNonce).toBeGreaterThan(0);
+    expect(result.current.error).toMatch(/save rule failed/);
+
+    // Identical second failure must still advance the nonce.
+    vi.mocked(ipc.saveRule).mockRejectedValueOnce(
+      new Error("save rule failed"),
+    );
+    await act(async () => {
+      await result.current.update("r1", { enabled: true });
+    });
+    expect(result.current.errorNonce).toBeGreaterThan(firstNonce);
+  });
+
   it("update() merges `then` partials instead of replacing the whole action", async () => {
     // PR #65 review R2: a patch like `{ then: { tagsFromCalendar: true } }`
     // must NOT blow away `then.project`. Previously the contract was
@@ -558,6 +592,28 @@ describe("useRules hook", () => {
     });
     expect(result.current.rules.map((r) => r.id)).toEqual(["r2"]);
     expect(ipc.deleteRule).toHaveBeenCalledWith("r1");
+  });
+
+  it("remove() rolls back and raises an error when deleteRule fails", async () => {
+    ipcMock.__seed([
+      {
+        id: "r1",
+        name: "A",
+        enabled: true,
+        priority: 10,
+        body: { when: [], then: { project: null } },
+      },
+    ]);
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.rules).toHaveLength(1));
+    vi.mocked(ipc.deleteRule).mockRejectedValueOnce(new Error("delete failed"));
+    await act(async () => {
+      await result.current.remove("r1");
+    });
+    // Optimistic drop rolled back; error surfaced + nonce bumped.
+    expect(result.current.rules.map((r) => r.id)).toEqual(["r1"]);
+    expect(result.current.error).toMatch(/delete failed/);
+    expect(result.current.errorNonce).toBeGreaterThan(0);
   });
 
   it("shouldWarnConfidence covers every branch of the heuristic", () => {
