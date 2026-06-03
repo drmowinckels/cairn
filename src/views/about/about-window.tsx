@@ -39,6 +39,10 @@ export function AboutWindow({ onClose = hideAboutWindow }: Props) {
   }, [trap.ref]);
 
   return (
+    // Focus-trapped modal: onKeyDown handles Escape/Tab. The dialog role is
+    // non-interactive but key handling here is the standard modal pattern,
+    // not a clickable control.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
       className="about-win"
       role="dialog"
