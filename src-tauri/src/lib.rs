@@ -308,10 +308,11 @@ pub fn run() {
             let db = tauri::async_runtime::block_on(async {
                 db::Db::open(&backup::db_path(&data_dir)).await
             })
-            .expect("open SQLite database");
+            .map_err(|e| format!("could not open the database; Cairn cannot start: {e}"))?;
 
-            let calendar =
-                Arc::new(CalendarRegistry::new(db.pool.clone()).expect("init calendar registry"));
+            let calendar = Arc::new(CalendarRegistry::new(db.pool.clone()).map_err(|e| {
+                format!("could not initialise the calendar registry; Cairn cannot start: {e}")
+            })?);
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
 
             // Load the exclusion list once at startup; mutator IPC

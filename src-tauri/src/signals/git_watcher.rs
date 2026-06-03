@@ -658,18 +658,22 @@ mod tests {
     }
 
     #[test]
-    fn index_watched_dir_single_entry_when_canonicalize_is_noop() {
+    fn index_watched_dir_never_exceeds_raw_plus_canonical_keys() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = mk_repo(tmp.path(), "solo");
         let git_dir = repo.join(".git");
         let mut watched = std::collections::HashMap::new();
         index_watched_dir(&mut watched, &git_dir, &repo);
-        // On a path with no symlink rewriting the raw and canonical
-        // forms coincide, so exactly one key is inserted.
+        // The raw event path is always indexed. On platforms where the
+        // tempdir lives behind a symlink (e.g. macOS `/var`→`/private/var`)
+        // canonicalize rewrites it and a second key is added; where it is a
+        // no-op the two forms coincide. Either way, a single repo inserts at
+        // most the raw + canonical pair — never more.
         assert_eq!(watched.get(&git_dir), Some(&repo));
         assert!(
-            watched.len() <= 2,
-            "at most raw + canonical keys per repo, never more"
+            watched.len() == 1 || watched.len() == 2,
+            "a single repo inserts only its raw and/or canonical keys, got {}",
+            watched.len()
         );
     }
 
