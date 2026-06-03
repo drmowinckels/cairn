@@ -435,6 +435,7 @@ describe("Popover — command palette (#32)", () => {
   });
 
   it("executes a 'Start timer' command (idle) without throwing", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
     render(<Popover />);
     fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     const input = await screen.findByRole("textbox", {
@@ -448,6 +449,11 @@ describe("Popover — command palette (#32)", () => {
       expect(
         screen.queryByRole("textbox", { name: /command palette/i }),
       ).toBeNull(),
+    );
+    // Wait for the deferred run() (requestAnimationFrame) to invoke the
+    // popover's startTimer closure all the way through to the backend.
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("start_entry", expect.anything()),
     );
   });
 
