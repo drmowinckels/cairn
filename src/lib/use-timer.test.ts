@@ -314,6 +314,83 @@ describe("useTimer (inside Tauri)", () => {
     });
     expect(result.current.running).toBeNull();
   });
+
+  it("stop/update keep a stable identity when the snapshot tick swaps in an equal-but-new running entry", async () => {
+    // The 2s snapshot refresh hands `setRunning` a fresh IPC object even
+    // when nothing changed. `stop`/`update` must not get a new identity on
+    // that churn — otherwise every memo keyed on them (the palette context)
+    // recomputes every 2s. Replay the swap and assert referential stability.
+    const fetchCurrent = vi
+      .fn<() => Promise<import("./ipc").BackendEntry>>()
+      .mockResolvedValueOnce(ENTRY)
+      .mockResolvedValue({ ...ENTRY });
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        tickMs: 60_000,
+      }),
+    );
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+
+    const firstRunning = result.current.running;
+    const firstStop = result.current.stop;
+    const firstUpdate = result.current.update;
+    const firstStart = result.current.start;
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.running).not.toBe(firstRunning);
+    expect(result.current.stop).toBe(firstStop);
+    expect(result.current.update).toBe(firstUpdate);
+    expect(result.current.start).toBe(firstStart);
+  });
+
+  it("update() after a snapshot swap operates on the current entry id (ref is not stale)", async () => {
+    const swapped = { ...ENTRY, id: "e2" };
+    const fetchCurrent = vi
+      .fn<() => Promise<import("./ipc").BackendEntry>>()
+      .mockResolvedValueOnce(ENTRY)
+      .mockResolvedValue(swapped);
+    const updateEntry = vi.fn(async (input: { id: string }) => ({
+      ...swapped,
+      ...input,
+    }));
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        updateEntry:
+          updateEntry as unknown as typeof import("./ipc").updateEntry,
+        tickMs: 60_000,
+      }),
+    );
+    await waitFor(() => expect(result.current.running?.id).toBe("e1"));
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.running?.id).toBe("e2");
+
+    await act(async () => {
+      await result.current.update({ description: "edited" });
+    });
+    expect(updateEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "e2", description: "edited" }),
+    );
+  });
 });
 
 describe("useTimer elapsed + tick", () => {

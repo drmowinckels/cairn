@@ -168,10 +168,10 @@ function PopoverShell({
     );
   }, [running, paletteProjects, elapsedMinutes]);
 
-  const openSettingsSection = (section: SettingsSectionId) => {
+  const openSettingsSection = useCallback((section: SettingsSectionId) => {
     setView("settings");
     setSettingsSection(section);
-  };
+  }, []);
 
   // The palette closes before its action runs, so a rejected
   // start/stop/switch/toggle has nowhere to surface inside the
@@ -219,35 +219,54 @@ function PopoverShell({
     lastRulesNonceRef.current = rulesErrorNonce;
   }, [rulesError, rulesErrorNonce, handlePaletteError]);
 
+  // Depend on the stable primitives the context reads (the running
+  // entry's id/projectId, the projects array, the rules array) and the
+  // `useCallback`-stable mutators — not the whole hook-return objects,
+  // which `useTimer`/`useRules` recreate every render and would defeat
+  // the memo, handing `CommandPalette` a fresh context on every tick.
+  const runningId = paletteTimer.running?.id ?? null;
+  const runningProjectId = paletteTimer.running?.projectId ?? null;
+  const startTimer = paletteTimer.start;
+  const stopTimer = paletteTimer.stop;
+  const updateTimer = paletteTimer.update;
+  const updateRule = paletteRules.update;
+  const paletteRulesList = paletteRules.rules;
   const paletteContext: PaletteContext = useMemo(
     () => ({
       view,
-      running: paletteTimer.running
-        ? {
-            id: paletteTimer.running.id,
-            projectId: paletteTimer.running.projectId,
-          }
+      running: runningId
+        ? { id: runningId, projectId: runningProjectId }
         : null,
       projects: paletteProjects,
-      rules: paletteRules.rules,
+      rules: paletteRulesList,
       setView,
       openSettingsSection,
       startTimer: async (projectId) => {
-        await paletteTimer.start({ projectId, description: "" });
+        await startTimer({ projectId, description: "" });
       },
       stopTimer: async () => {
-        await paletteTimer.stop();
+        await stopTimer();
       },
-      switchProject: (projectId) => paletteTimer.update({ projectId }),
-      toggleRule: (ruleId, next) =>
-        paletteRules.update(ruleId, { enabled: next }),
+      switchProject: (projectId) => updateTimer({ projectId }),
+      toggleRule: (ruleId, next) => updateRule(ruleId, { enabled: next }),
       revealDataFolder: () => revealDataFolder(),
       addEntry: () => {
         setView("today");
         setAddEntryRequest((n) => n + 1);
       },
     }),
-    [view, paletteTimer, paletteProjects, paletteRules],
+    [
+      view,
+      runningId,
+      runningProjectId,
+      paletteProjects,
+      paletteRulesList,
+      openSettingsSection,
+      startTimer,
+      stopTimer,
+      updateTimer,
+      updateRule,
+    ],
   );
 
   useEffect(() => {
@@ -296,23 +315,21 @@ function PopoverShell({
 
   if (onboarding.status === "needs-onboarding") {
     return (
-      <AnnouncerProvider enabled={a11y.announce}>
-        <div
-          className="pop"
-          data-density={density}
-          data-onboarding="true"
-          role="dialog"
-          aria-label="Cairn first-run onboarding"
-        >
-          <ErrorBoundary area="Onboarding">
-            <OnboardingView
-              onComplete={async () => {
-                await onboarding.complete();
-              }}
-            />
-          </ErrorBoundary>
-        </div>
-      </AnnouncerProvider>
+      <div
+        className="pop"
+        data-density={density}
+        data-onboarding="true"
+        role="dialog"
+        aria-label="Cairn first-run onboarding"
+      >
+        <ErrorBoundary area="Onboarding">
+          <OnboardingView
+            onComplete={async () => {
+              await onboarding.complete();
+            }}
+          />
+        </ErrorBoundary>
+      </div>
     );
   }
 

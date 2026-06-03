@@ -240,6 +240,41 @@ describe("Popover — first-run onboarding gating (#31)", () => {
     // in-flow children and collapses unless this attribute pins its height
     // (brand.css .pop[data-onboarding]). Without it the popover renders blank.
     expect(dialog.getAttribute("data-onboarding")).toBe("true");
+    // Onboarding renders inside the outer AnnouncerProvider; it must not
+    // mount a second live region (which would flood ATs with duplicate
+    // role="status" announcements).
+    expect(screen.getAllByTestId("cairn-announcer")).toHaveLength(1);
+  });
+
+  it("completing onboarding swaps in the normal popover", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    let completed = false;
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "get_onboarding_state")
+          return { completedAt: completed ? "2026-01-01T00:00:00Z" : null };
+        if (cmd === "complete_onboarding") {
+          completed = true;
+          return { completedAt: "2026-01-01T00:00:00Z" };
+        }
+        if (cmd === "signal_capture_status")
+          return { active: false, path: null, bytesWritten: 0 };
+        return null;
+      },
+    );
+    const { Popover } = await import("./popover");
+    render(<Popover />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /first-run onboarding/i }),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /skip onboarding/i }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /cairn time tracker/i }),
+      ).toBeTruthy(),
+    );
   });
 
   it("renders the normal popover when completedAt is set", async () => {
@@ -257,6 +292,85 @@ describe("Popover — first-run onboarding gating (#31)", () => {
       expect(
         screen.getByRole("dialog", { name: /cairn time tracker/i }),
       ).toBeTruthy(),
+    );
+  });
+});
+
+describe("Popover — palette context with a running timer (#144)", () => {
+  let original: unknown;
+  type WithInternals = { __TAURI_INTERNALS__?: unknown };
+
+  beforeEach(() => {
+    original = (globalThis as WithInternals).__TAURI_INTERNALS__;
+    (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    } else {
+      (globalThis as WithInternals).__TAURI_INTERNALS__ = original;
+    }
+  });
+
+  const RUNNING_ENTRY = {
+    id: "entry-1",
+    projectId: "cairn",
+    taskId: null,
+    description: "",
+    startedAt: "2026-01-01T00:00:00Z",
+    endedAt: null,
+    source: "manual",
+    ruleId: null,
+  };
+
+  function mockRunning(): ReturnType<typeof vi.fn> {
+    return vi.fn(async (cmd: string) => {
+      if (cmd === "get_onboarding_state")
+        return { completedAt: "2026-01-01T00:00:00Z" };
+      if (cmd === "signal_capture_status")
+        return { active: false, path: null, bytesWritten: 0 };
+      if (cmd === "current_running") return RUNNING_ENTRY;
+      if (cmd === "stop_entry") return { ...RUNNING_ENTRY, endedAt: "now" };
+      if (cmd === "update_entry")
+        return { ...RUNNING_ENTRY, projectId: "acme" };
+      return null;
+    });
+  }
+
+  async function openPaletteWithRunningTimer(): Promise<
+    ReturnType<typeof vi.fn>
+  > {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const impl = mockRunning();
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(impl);
+    const { Popover } = await import("./popover");
+    render(<Popover />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /cairn time tracker/i }),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    await screen.findByRole("textbox", { name: /command palette/i });
+    return impl;
+  }
+
+  it("runs 'Stop running timer' through the popover context", async () => {
+    const impl = await openPaletteWithRunningTimer();
+    fireEvent.click(await screen.findByText(/Stop running timer/i));
+    await waitFor(() =>
+      expect(impl).toHaveBeenCalledWith("stop_entry", expect.anything()),
+    );
+  });
+
+  it("runs 'Switch running timer' through the popover context", async () => {
+    const impl = await openPaletteWithRunningTimer();
+    const [switchCmd] = await screen.findAllByText(/Switch running timer to/i);
+    fireEvent.click(switchCmd);
+    await waitFor(() =>
+      expect(impl).toHaveBeenCalledWith("update_entry", expect.anything()),
     );
   });
 });
@@ -352,6 +466,7 @@ describe("Popover — command palette (#32)", () => {
   });
 
   it("executes a 'Start timer' command (idle) without throwing", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
     render(<Popover />);
     fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     const input = await screen.findByRole("textbox", {
@@ -365,6 +480,11 @@ describe("Popover — command palette (#32)", () => {
       expect(
         screen.queryByRole("textbox", { name: /command palette/i }),
       ).toBeNull(),
+    );
+    // Wait for the deferred run() (requestAnimationFrame) to invoke the
+    // popover's startTimer closure all the way through to the backend.
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("start_entry", expect.anything()),
     );
   });
 

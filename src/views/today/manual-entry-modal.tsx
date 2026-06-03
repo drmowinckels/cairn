@@ -654,10 +654,19 @@ export function validateDraft(
       overlapWarning: null,
     };
   }
-  // `<input type="datetime-local">` can only yield "" (caught above) or
-  // a well-formed local timestamp. Date.parse(localToIso(...)) never
-  // returns NaN for these inputs, so no Invalid-date branch is needed.
+  // `<input type="datetime-local">` normally yields "" (caught above) or
+  // a well-formed local timestamp. Guard the unparseable case anyway:
+  // `localToIso` returns "" on an invalid value, so a non-empty-but-bad
+  // start would otherwise pass validation as NaN and forward "" to the
+  // backend. Reject it as a missing start instead.
   const startTs = Date.parse(localToIso(draft.startedLocal));
+  if (Number.isNaN(startTs)) {
+    return {
+      ok: false,
+      startError: "Start time is required.",
+      overlapWarning: null,
+    };
+  }
   if (draft.endedLocal) {
     const endTs = Date.parse(localToIso(draft.endedLocal));
     if (endTs <= startTs) {
@@ -696,6 +705,7 @@ export function validateDraft(
 export function localToIso(local: string): string {
   if (!local) return "";
   const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return "";
   return d.toISOString();
 }
 
