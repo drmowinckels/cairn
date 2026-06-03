@@ -644,6 +644,18 @@ describe("DataTree", () => {
     expect(tabbable(container)[0].getAttribute("aria-label")).toBe("ACME Co.");
   });
 
+  it("focusing an inner control does not steal the roving treeitem", () => {
+    const { container } = renderTree();
+    // The expand chevron is a descendant of both the project and client
+    // treeitems; focusing it makes focusin bubble through their onFocus
+    // handlers with target !== currentTarget, which must be ignored.
+    const expandBtn = screen.getAllByRole("button", {
+      name: /expand acme-web/i,
+    })[0];
+    expandBtn.focus();
+    expect(tabbable(container)[0].getAttribute("aria-label")).toBe("ACME Co.");
+  });
+
   it("ignores non-navigation keys pressed on a treeitem", () => {
     const { container } = renderTree();
     const first = tabbable(container)[0];

@@ -92,10 +92,11 @@ export function treeNavigate(
       if (node.expandable && state.expanded.has(node.id)) {
         return withExpanded(node.id, false);
       }
-      // Collapsed or leaf: move to the parent.
+      // Collapsed or leaf: move to the parent. A non-null parentId
+      // always resolves to a node, and moveTo clamps a -1 to the top
+      // anyway, so no separate "parent missing" branch is needed.
       if (node.parentId !== null) {
-        const parentIdx = nodes.findIndex((n) => n.id === node.parentId);
-        if (parentIdx !== -1) return moveTo(parentIdx);
+        return moveTo(nodes.findIndex((n) => n.id === node.parentId));
       }
       return state;
     }
