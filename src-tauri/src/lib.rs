@@ -61,6 +61,21 @@ async fn open_db_for_setup(path: &std::path::Path) -> Result<Db, String> {
         .map_err(|e| format!("could not open the database; Cairn cannot start: {e}"))
 }
 
+/// Build the calendar registry for the `.setup()` hook, mapping a
+/// failed fetcher init (pathological TLS-backend init) to a
+/// user-actionable message. `build_fetcher` is injected so the error
+/// branch — otherwise unreachable without a broken TLS backend — is
+/// exercised from `--lib` tests; production passes `Fetcher::new`.
+fn calendar_registry_for_setup(
+    pool: sqlx::SqlitePool,
+    build_fetcher: impl FnOnce() -> anyhow::Result<signals::calendar::fetcher::Fetcher>,
+) -> Result<Arc<CalendarRegistry>, String> {
+    let fetcher = build_fetcher().map_err(|e| {
+        format!("could not initialise the calendar engine; Cairn cannot start: {e}")
+    })?;
+    Ok(Arc::new(CalendarRegistry::with_fetcher(pool, fetcher)))
+}
+
 use rules::{Rule as EngineRule, Snoozer};
 use signals::browser_extension::BrowserExtensionState;
 use signals::calendar::CalendarRegistry;
@@ -319,12 +334,10 @@ pub fn run() {
                 open_db_for_setup(&backup::db_path(&data_dir)).await
             })?;
 
-            // `CalendarRegistry::new` only fails if `reqwest::Client`
-            // construction fails (TLS backend init) — there's no
-            // mockable surface to trigger that from a `--lib` test, so
-            // it stays an `expect` until a testable seam exists. See #160.
-            let calendar =
-                Arc::new(CalendarRegistry::new(db.pool.clone()).expect("init calendar registry"));
+            let calendar = calendar_registry_for_setup(
+                db.pool.clone(),
+                signals::calendar::fetcher::Fetcher::new,
+            )?;
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
 
             // Load the exclusion list once at startup; mutator IPC
@@ -529,7 +542,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_data_dir, open_db_for_setup};
+    use super::{calendar_registry_for_setup, ensure_data_dir, open_db_for_setup};
+    use crate::signals::calendar::fetcher::Fetcher;
 
     #[test]
     fn ensure_data_dir_creates_missing_nested_path() {
@@ -574,6 +588,39 @@ mod tests {
         assert!(
             err.contains("could not open the database") && err.contains("Cairn cannot start"),
             "opening a db under a file-as-parent must fail with the startup-fatal message, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn calendar_registry_for_setup_builds_with_a_real_fetcher() {
+        // A lazily-created pool is never connected to here — the
+        // registry only stores it — so this stays a pure, sync test of
+        // the happy path.
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").expect("lazy pool");
+        let result = calendar_registry_for_setup(pool, Fetcher::new);
+        assert!(
+            result.is_ok(),
+            "a working fetcher builder must yield a registry"
+        );
+    }
+
+    #[tokio::test]
+    async fn calendar_registry_for_setup_maps_fetcher_failure() {
+        // Inject a builder that fails the way a broken TLS backend
+        // would. This is the branch that was previously an unreachable
+        // `expect` (#160): the registry now surfaces a startup-fatal,
+        // user-actionable message instead of panicking.
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").expect("lazy pool");
+        let result = calendar_registry_for_setup(pool, || {
+            anyhow::bail!("simulated TLS backend init failure")
+        });
+        let err = result
+            .err()
+            .expect("a failing fetcher builder must surface as an error");
+        assert!(
+            err.contains("could not initialise the calendar engine")
+                && err.contains("Cairn cannot start"),
+            "fetcher-init failure must carry the startup-fatal message, got: {err}"
         );
     }
 }
