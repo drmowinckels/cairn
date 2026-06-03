@@ -13,6 +13,24 @@ vi.mock("../../lib/use-idle-window", () => ({
   useIdleWindow: () => ({ prompt, resolve, dismiss }),
 }));
 
+let useNullTrapRef = false;
+const nullRef = {};
+Object.defineProperty(nullRef, "current", { get: () => null, set: () => {} });
+
+vi.mock("../../lib/use-focus-trap", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-focus-trap")>();
+  return {
+    ...actual,
+    useFocusTrap: (onEscape: () => void) => {
+      const trap = actual.useFocusTrap(onEscape);
+      return useNullTrapRef
+        ? { ...trap, ref: nullRef as typeof trap.ref }
+        : trap;
+    },
+  };
+});
+
 import { IdleWindow } from "./idle-window";
 
 beforeEach(() => {
@@ -24,6 +42,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  useNullTrapRef = false;
   prompt = {
     since: "2026-05-30T10:00:00Z",
     until: "2026-05-30T10:12:00Z",
@@ -104,6 +123,16 @@ describe("IdleWindow", () => {
     await waitFor(() => expect(document.activeElement).toBe(dialog));
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(dismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips mount-focus when the dialog ref is unset", () => {
+    useNullTrapRef = true;
+    const raf = vi.spyOn(window, "requestAnimationFrame");
+    render(<IdleWindow />);
+    const dialog = screen.getByRole("dialog", { name: /you were away/i });
+    expect(document.activeElement).not.toBe(dialog);
+    expect(raf).not.toHaveBeenCalled();
+    raf.mockRestore();
   });
 
   it("traps Tab focus inside the dialog", () => {

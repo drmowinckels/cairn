@@ -45,6 +45,15 @@ describe("loadA11yPrefs", () => {
     );
     expect(loadA11yPrefs().ambiguityDefault).toBe("prompt");
   });
+
+  it("returns defaults without touching storage when window is undefined", () => {
+    vi.stubGlobal("window", undefined);
+    try {
+      expect(loadA11yPrefs()).toEqual(A11Y_DEFAULTS);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("matchesReduceMotion", () => {

@@ -1,9 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
+
+let useNullTrapRef = false;
+const nullRef = {};
+Object.defineProperty(nullRef, "current", { get: () => null, set: () => {} });
+
+vi.mock("../../lib/use-focus-trap", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-focus-trap")>();
+  return {
+    ...actual,
+    useFocusTrap: (onEscape: () => void) => {
+      const trap = actual.useFocusTrap(onEscape);
+      return useNullTrapRef
+        ? { ...trap, ref: nullRef as typeof trap.ref }
+        : trap;
+    },
+  };
+});
 
 import { AboutWindow } from "./about-window";
 
@@ -12,6 +30,10 @@ beforeEach(() => {
   for (const key of Object.keys(document.documentElement.dataset)) {
     delete document.documentElement.dataset[key];
   }
+});
+
+afterEach(() => {
+  useNullTrapRef = false;
 });
 
 describe("AboutWindow", () => {
@@ -65,6 +87,16 @@ describe("AboutWindow", () => {
     await waitFor(() => expect(document.activeElement).toBe(dialog));
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips mount-focus when the dialog ref is unset", () => {
+    useNullTrapRef = true;
+    const raf = vi.spyOn(window, "requestAnimationFrame");
+    render(<AboutWindow onClose={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: /about cairn/i });
+    expect(document.activeElement).not.toBe(dialog);
+    expect(raf).not.toHaveBeenCalled();
+    raf.mockRestore();
   });
 
   it("traps Tab focus inside the dialog", () => {
