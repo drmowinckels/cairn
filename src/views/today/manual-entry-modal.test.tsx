@@ -465,6 +465,14 @@ describe("validateDraft (pure)", () => {
     const v = validateDraft({ ...BASE_DRAFT, startedLocal: "" }, null);
     expect(v.ok).toBe(false);
   });
+  it("rejects a non-empty but unparseable start (localToIso yields '')", () => {
+    const v = validateDraft(
+      { ...BASE_DRAFT, startedLocal: "garbage", endedLocal: "" },
+      null,
+    );
+    expect(v.ok).toBe(false);
+    expect(v.startError).toBe("Start time is required.");
+  });
   it("rejects equal start/end", () => {
     const v = validateDraft(
       {
