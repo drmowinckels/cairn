@@ -125,7 +125,11 @@ describe("TodayView (idle — no running entry)", () => {
       ],
     };
     const { container } = render(
-      <TodayView density="comfy" layoutVariant="default" onOpenRule={vi.fn()} />,
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
     );
     const why = container.querySelector(".suggest-why");
     const codes = Array.from(why?.querySelectorAll("code") ?? []).map(

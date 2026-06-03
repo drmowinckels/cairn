@@ -54,8 +54,8 @@ describe("SuggestWhy", () => {
         ]}
       />,
     );
-    const seps = container.querySelectorAll(".suggest-why-sep");
-    expect(seps.length).toBe(1);
+    const separators = container.querySelectorAll(".suggest-why-sep");
+    expect(separators.length).toBe(1);
   });
 
   it("labels a calendar event as a meeting", () => {

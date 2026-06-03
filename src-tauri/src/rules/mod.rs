@@ -1741,6 +1741,76 @@ mod tests {
     }
 
     #[test]
+    fn matched_signals_surface_window_title_and_browser_domain() {
+        // Cover the window.title + browser.domain collection arms with
+        // live (non-redacted) values present in the snapshot.
+        let rule = rule_with(
+            "r",
+            "acme",
+            vec![
+                Condition::WindowTitle {
+                    op: Op::Contains,
+                    value: "cairn".into(),
+                    any: false,
+                },
+                Condition::BrowserDomain {
+                    op: Op::Equals,
+                    value: "github.com".into(),
+                    any: false,
+                },
+            ],
+        );
+        let mut s = snap();
+        s.window_title = Some("rules.rs — cairn".into());
+        s.browser_domain = Some("github.com".into());
+        let m = evaluate(std::iter::once(&rule), &s).expect("match");
+        assert_eq!(
+            m.matched_signals,
+            vec![
+                MatchedSignal {
+                    signal: "window.title".into(),
+                    value: "rules.rs — cairn".into(),
+                },
+                MatchedSignal {
+                    signal: "browser.domain".into(),
+                    value: "github.com".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn matched_signals_dedupe_repeated_signal_kind() {
+        // Two conditions on the same signal kind (git.branch) both
+        // match; the chip list carries the signal once, not twice.
+        let rule = rule_with(
+            "r",
+            "cairn",
+            vec![
+                Condition::GitBranch {
+                    op: Op::StartsWith,
+                    value: "feat/".into(),
+                    any: false,
+                },
+                Condition::GitBranch {
+                    op: Op::Contains,
+                    value: "rules".into(),
+                    any: false,
+                },
+            ],
+        );
+        let m = evaluate(std::iter::once(&rule), &snap()).expect("match");
+        assert_eq!(
+            m.matched_signals,
+            vec![MatchedSignal {
+                signal: "git.branch".into(),
+                value: "feat/rules-ui".into(),
+            }],
+            "the same signal kind contributes a single chip"
+        );
+    }
+
+    #[test]
     fn matched_signals_surface_calendar_event_title() {
         let rule = Rule {
             id: "r-cal".into(),
@@ -1770,6 +1840,44 @@ mod tests {
                 signal: "calendar.event".into(),
                 value: "1:1 Alice".into(),
             }]
+        );
+    }
+
+    #[test]
+    fn matched_signals_skip_empty_value() {
+        // A matched calendar.event whose title is empty contributes no
+        // chip — the `is_empty` guard in the collector drops it rather
+        // than rendering an empty mono chip.
+        let rule = Rule {
+            id: "r-cal".into(),
+            name: "Meetings".into(),
+            enabled: true,
+            priority: 0,
+            confidence: Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
+            when: vec![Condition::CalendarEvent {
+                op: Op::IsActive,
+                value: String::new(),
+                any: false,
+            }],
+            then: RuleAction {
+                project: Some("meetings".into()),
+                tags: vec![],
+                tags_from_calendar: false,
+                description_template: None,
+            },
+        };
+        let mut s = snap();
+        s.calendar = vec![CalendarEvent {
+            title: String::new(),
+            source_label: "Work".into(),
+            attendees: vec![],
+            all_day: false,
+        }];
+        let m = evaluate(std::iter::once(&rule), &s).expect("rule fires (event active)");
+        assert!(
+            m.matched_signals.is_empty(),
+            "an empty event title must not produce a chip"
         );
     }
 
