@@ -363,6 +363,15 @@ describe("DataView (inside Tauri)", () => {
           pendingImport: null,
         });
       if (cmd === "list_data_files") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_settings")
+        return Promise.resolve({
+          enabled: false,
+          dir: null,
+          intervalHours: 24,
+          keep: 14,
+        });
+      if (cmd === "auto_backup_status")
+        return Promise.resolve({ lastBackupAt: null, count: 0 });
       if (cmd in overrides) {
         const v = overrides[cmd];
         return v instanceof Error ? Promise.reject(v) : Promise.resolve(v);
@@ -496,6 +505,15 @@ describe("DataView (inside Tauri)", () => {
           usedSeconds: 18000,
           estimateHours: 10,
         });
+      if (cmd === "get_auto_backup_settings")
+        return Promise.resolve({
+          enabled: false,
+          dir: null,
+          intervalHours: 24,
+          keep: 14,
+        });
+      if (cmd === "auto_backup_status")
+        return Promise.resolve({ lastBackupAt: null, count: 0 });
       return Promise.resolve(null);
     });
     const { DataView: Fresh } = await import("./data");

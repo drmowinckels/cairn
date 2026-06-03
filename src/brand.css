@@ -2660,6 +2660,73 @@ select.rule-conf {
   line-height: 1.45;
 }
 
+/* ─── AUTOMATIC BACKUP ───────────────────────────────────────────────── */
+.auto-backup {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 0.5px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-section-title {
+  font-family: var(--serif);
+  font-size: var(--font-base);
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+
+.auto-backup-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--font-small);
+  color: var(--ink-soft);
+}
+
+.auto-backup-folder code {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auto-backup-folder svg {
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+.auto-backup-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-small);
+  color: var(--ink);
+}
+
+.auto-backup-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.auto-backup-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-tiny);
+  color: var(--ink-soft);
+}
+
+.auto-backup-meta {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+}
+
 .privacy-files {
   list-style: none;
   margin: 10px 0 0;

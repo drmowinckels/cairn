@@ -212,4 +212,29 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(await checkForUpdate()).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  it("getAutoBackupSettings returns defaults without the backend", async () => {
+    const { getAutoBackupSettings, AUTO_BACKUP_DEFAULTS } =
+      await import("./ipc");
+    expect(await getAutoBackupSettings()).toEqual(AUTO_BACKUP_DEFAULTS);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("setAutoBackupSettings echoes its input without the backend", async () => {
+    const { setAutoBackupSettings } = await import("./ipc");
+    const settings = {
+      enabled: true,
+      dir: "/sync/cairn",
+      intervalHours: 12,
+      keep: 7,
+    };
+    expect(await setAutoBackupSettings(settings)).toEqual(settings);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("autoBackupStatus returns an empty status without the backend", async () => {
+    const { autoBackupStatus } = await import("./ipc");
+    expect(await autoBackupStatus()).toEqual({ lastBackupAt: null, count: 0 });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
 });
