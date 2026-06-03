@@ -335,10 +335,10 @@ mod tests {
             .await
             .expect("same-host redirect within cap must succeed");
 
-        match outcome {
-            FetchOutcome::Changed(ok) => assert_eq!(ok.body, ICS_BODY),
-            FetchOutcome::Unchanged => panic!("expected changed body, got 304"),
-        }
+        assert!(
+            matches!(&outcome, FetchOutcome::Changed(ok) if ok.body == ICS_BODY),
+            "same-host redirect to a 200 must yield the final body, got {outcome:?}",
+        );
         redirect.assert_async().await;
         target.assert_async().await;
     }
