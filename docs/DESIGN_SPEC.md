@@ -22,38 +22,38 @@ This is the implementer's reference. Every screen, component, token, and interac
 
 ### 1.2 Color (semantic — light theme)
 
-| Token               | Value                               |
-| ------------------- | ----------------------------------- |
-| `--bg`              | `#ece8d3` (desktop background)      |
-| `--bg-soft`         | `#f4f1de` (nested surfaces)         |
-| `--surface`         | `#fbf9ee` (the popover)             |
-| `--surface-2`       | `#f4f1de` (kbd, segmented controls) |
-| `--ink`             | `#3d405b`                           |
-| `--ink-soft`        | `rgba(61, 64, 91, .66)`             |
-| `--ink-mute`        | `rgba(61, 64, 91, .42)`             |
-| `--ink-faint`       | `rgba(61, 64, 91, .18)`             |
-| `--hairline`        | `rgba(61, 64, 91, .12)`             |
-| `--hairline-strong` | `rgba(61, 64, 91, .22)`             |
-| `--accent`          | `#e07a5f`                           |
-| `--accent-soft`     | `rgba(224, 122, 95, .14)`           |
-| `--teal-soft`       | `rgba(129, 178, 154, .18)`          |
-| `--apricot-soft`    | `rgba(242, 204, 143, .35)`          |
-| `--indigo-soft`     | `rgba(61, 64, 91, .08)`             |
+| Token               | Value                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `--bg`              | `#ece8d3` (desktop background)                                                          |
+| `--bg-soft`         | `#f4f1de` (nested surfaces)                                                             |
+| `--surface`         | `#fbf9ee` (the popover)                                                                 |
+| `--surface-2`       | `#f4f1de` (kbd, segmented controls)                                                     |
+| `--ink`             | `#3d405b`                                                                               |
+| `--ink-soft`        | `rgba(61, 64, 91, .66)`                                                                 |
+| `--ink-mute`        | `rgb(61 64 91 / 78%)` (darkened from the original `.42` for ≥4.5:1 contrast — see #136) |
+| `--ink-faint`       | `rgba(61, 64, 91, .18)`                                                                 |
+| `--hairline`        | `rgba(61, 64, 91, .12)`                                                                 |
+| `--hairline-strong` | `rgba(61, 64, 91, .22)`                                                                 |
+| `--accent`          | `#e07a5f`                                                                               |
+| `--accent-soft`     | `rgba(224, 122, 95, .14)`                                                               |
+| `--teal-soft`       | `rgba(129, 178, 154, .18)`                                                              |
+| `--apricot-soft`    | `rgba(242, 204, 143, .35)`                                                              |
+| `--indigo-soft`     | `rgba(61, 64, 91, .08)`                                                                 |
 
 ### 1.3 Color (semantic — dark theme)
 
-| Token               | Value                      |
-| ------------------- | -------------------------- |
-| `--bg`              | `#1b1d29`                  |
-| `--bg-soft`         | `#232636`                  |
-| `--surface`         | `#262a3c`                  |
-| `--surface-2`       | `#2e3245`                  |
-| `--ink`             | `#f4f1de`                  |
-| `--ink-soft`        | `rgba(244, 241, 222, .72)` |
-| `--ink-mute`        | `rgba(244, 241, 222, .46)` |
-| `--ink-faint`       | `rgba(244, 241, 222, .18)` |
-| `--hairline`        | `rgba(244, 241, 222, .10)` |
-| `--hairline-strong` | `rgba(244, 241, 222, .20)` |
+| Token               | Value                                                              |
+| ------------------- | ------------------------------------------------------------------ |
+| `--bg`              | `#1b1d29`                                                          |
+| `--bg-soft`         | `#232636`                                                          |
+| `--surface`         | `#262a3c`                                                          |
+| `--surface-2`       | `#2e3245`                                                          |
+| `--ink`             | `#f4f1de`                                                          |
+| `--ink-soft`        | `rgba(244, 241, 222, .72)`                                         |
+| `--ink-mute`        | `rgb(244 241 222 / 65%)` (darkened from `.46` for contrast — #136) |
+| `--ink-faint`       | `rgba(244, 241, 222, .18)`                                         |
+| `--hairline`        | `rgba(244, 241, 222, .10)`                                         |
+| `--hairline-strong` | `rgba(244, 241, 222, .20)`                                         |
 
 Light/dark are toggled with `data-theme="light|dark"` on the document. Default = follow system (`prefers-color-scheme`).
 
@@ -74,12 +74,14 @@ The popover has a `data-density` attribute (`compact` or `comfy`). Comfy is the 
 | `--pad-x`        | 24px   | 18px    |
 | `--pad-y`        | 22px   | 16px    |
 | `--gap`          | 22px   | 16px    |
-| `--font-base`    | 16px   | 14.5px  |
-| `--font-small`   | 14px   | 13px    |
-| `--font-tiny`    | 12.5px | 11.5px  |
-| `--font-display` | 42px   | 34px    |
+| `--font-base`    | 17.5px | 14.5px  |
+| `--font-small`   | 15px   | 13px    |
+| `--font-tiny`    | 13px   | 12px    |
+| `--font-display` | 45px   | 34px    |
 | `--line-base`    | 1.55   | 1.5     |
 | popover width    | 500px  | 420px   |
+
+> Comfy type runs slightly larger than the original prototype (base 16→17.5, small 14→15, tiny 12.5→13, display 42→45) for readability. Density padding was not re-tuned to match, so dense Today states can crowd the 500px popover — tracked as a follow-up in #145.
 
 ### 1.6 Radii, shadows, hairlines
 
@@ -161,8 +163,9 @@ A small list of the next 2–3 calendar items / focus blocks. Each row: time · 
 
 ### 3.2 Reports
 
-- **Header**: serif 28px "This week" + below it the big number (`rep-big`, serif 30px tabular) + "h" suffix + delta in `--teal` ("+2.4h vs last"). Right side: segmented control Day / Week / Month.
-- **Chart**: 160px tall. 7 vertical bars, one per weekday, each a stacked column of project-colored segments. Today's bar has a 1.5px inset ring in `--ink`. Future days are 35% opacity. Horizontal gridlines at 0/2/4/6/8 hours with mono numeric labels.
+- **Header**: a serif view title that tracks the range ("Today" / "This week" / "This month") with a date-range subtitle beneath; the Day / Week / Month segmented control sits on the right. (The implementation uses this `view-head` + subtitle pattern rather than the prototype's inline `rep-big` number; the headline figures live in the totals grid below.)
+- **Totals**: a 3-up grid directly under the header — tracked hours (mono `Xh`), the delta versus the previous period (a directional ▲/▼/◆ arrow + mono percentage, colored by direction, labelled "vs last…"), and the project count.
+- **Chart**: 160px tall. 7 vertical bars, one per weekday, each a stacked column of project-colored segments. Today's bar has a 1.5px inset ring in `--ink`. Future days are 35% opacity. Horizontal gridlines at 0/2/4/6/8 hours with mono numeric labels (#148); the axis ceiling is anchored at ≥8h and rounded up to the next even hour so bars never overflow it.
 - **By project**: list of rows, each `[dot + name] [horizontal bar with fill] [hours] [%]`. Sorted by descending hours.
 - **Honesty meter**: a single 8px horizontal stacked bar showing the share of time logged by rule (`--burnt-peach`) / calendar (`--muted-teal`) / manual (`--twilight-indigo` 60% opacity). Legend below.
 
