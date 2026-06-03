@@ -9,10 +9,11 @@
 //! User-Agent: cairn/0.x
 //! ```
 //!
-//! Never sends cookies, never follows redirects across hosts, never
-//! retries with backoff (the polling loop already retries on the next
-//! tick). The returned 304-or-payload + cache headers are persisted by
-//! the registry.
+//! Never sends cookies, never follows redirects across hosts (same-host
+//! redirects are followed up to a small cap; see
+//! [`host_pinned_redirect_policy`]), never retries with backoff (the
+//! polling loop already retries on the next tick). The returned
+//! 304-or-payload + cache headers are persisted by the registry.
 
 use std::time::Duration;
 
@@ -22,6 +23,88 @@ use reqwest::header::{
 };
 use reqwest::redirect::Policy;
 use reqwest::StatusCode;
+
+/// Total redirects we will follow before giving up, matching the
+/// historical `Policy::limited(5)` cap.
+const MAX_REDIRECTS: usize = 5;
+
+/// What the redirect policy should do for a single redirect hop.
+#[derive(Debug, PartialEq, Eq)]
+enum RedirectDecision {
+    /// Same host, still under the cap — follow it.
+    Follow,
+    /// Destination host differs from the previous hop — refuse.
+    StopCrossHost,
+    /// Same host but the cap is exhausted — refuse.
+    StopTooMany,
+}
+
+/// Pure decision for a single redirect hop.
+///
+/// `prev_host` is the host we are being redirected *from*, `next_host`
+/// the host we are being redirected *to*, and `already_followed` the
+/// number of redirects already followed on this request. Hosts are
+/// compared case-insensitively; a missing host on either side counts
+/// as a host change and is refused.
+fn redirect_decision(
+    prev_host: Option<&str>,
+    next_host: Option<&str>,
+    already_followed: usize,
+) -> RedirectDecision {
+    let same_host = match (prev_host, next_host) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        _ => false,
+    };
+    if !same_host {
+        RedirectDecision::StopCrossHost
+    } else if already_followed >= MAX_REDIRECTS {
+        RedirectDecision::StopTooMany
+    } else {
+        RedirectDecision::Follow
+    }
+}
+
+/// URL-free marker error for a refused cross-host redirect.
+#[derive(Debug)]
+struct CrossHostRedirect;
+
+impl std::fmt::Display for CrossHostRedirect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cross-host redirect refused")
+    }
+}
+
+impl std::error::Error for CrossHostRedirect {}
+
+/// URL-free marker error for exceeding the redirect cap.
+#[derive(Debug)]
+struct TooManyRedirects;
+
+impl std::fmt::Display for TooManyRedirects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("too many redirects")
+    }
+}
+
+impl std::error::Error for TooManyRedirects {}
+
+/// Redirect policy that follows redirects only while the host is
+/// unchanged, capping the total at [`MAX_REDIRECTS`]. A cross-host
+/// redirect is refused via `attempt.error(..)`, which surfaces through
+/// [`classify`] as a redirect error and never carries the URL into a
+/// user-visible string.
+fn host_pinned_redirect_policy() -> Policy {
+    Policy::custom(|attempt| {
+        let prev_host = attempt.previous().last().and_then(|u| u.host_str());
+        let next_host = attempt.url().host_str();
+        let already_followed = attempt.previous().len().saturating_sub(1);
+        match redirect_decision(prev_host, next_host, already_followed) {
+            RedirectDecision::Follow => attempt.follow(),
+            RedirectDecision::StopCrossHost => attempt.error(CrossHostRedirect),
+            RedirectDecision::StopTooMany => attempt.error(TooManyRedirects),
+        }
+    })
+}
 
 /// Categorize a reqwest error into a short, URL-free reason string.
 /// This is critical: `reqwest::Error`'s `Display` impl appends
@@ -73,7 +156,7 @@ impl Fetcher {
     pub fn new() -> Result<Self> {
         let client = reqwest::Client::builder()
             .user_agent(concat!("cairn/", env!("CARGO_PKG_VERSION")))
-            .redirect(Policy::limited(5))
+            .redirect(host_pinned_redirect_policy())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()
@@ -151,6 +234,193 @@ impl Fetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_same_host_under_cap_follows() {
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), 0),
+            RedirectDecision::Follow
+        );
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), MAX_REDIRECTS - 1),
+            RedirectDecision::Follow
+        );
+    }
+
+    #[test]
+    fn redirect_same_host_is_case_insensitive() {
+        assert_eq!(
+            redirect_decision(Some("Example.COM"), Some("example.com"), 0),
+            RedirectDecision::Follow
+        );
+    }
+
+    #[test]
+    fn redirect_cross_host_stops() {
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("evil.test"), 0),
+            RedirectDecision::StopCrossHost
+        );
+    }
+
+    #[test]
+    fn redirect_missing_host_stops_cross_host() {
+        assert_eq!(
+            redirect_decision(None, Some("example.com"), 0),
+            RedirectDecision::StopCrossHost
+        );
+        assert_eq!(
+            redirect_decision(Some("example.com"), None, 0),
+            RedirectDecision::StopCrossHost
+        );
+        assert_eq!(
+            redirect_decision(None, None, 0),
+            RedirectDecision::StopCrossHost
+        );
+    }
+
+    #[test]
+    fn redirect_same_host_over_cap_stops() {
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), MAX_REDIRECTS),
+            RedirectDecision::StopTooMany
+        );
+        assert_eq!(
+            redirect_decision(Some("example.com"), Some("example.com"), MAX_REDIRECTS + 1),
+            RedirectDecision::StopTooMany
+        );
+    }
+
+    #[test]
+    fn marker_errors_are_url_free() {
+        assert_eq!(CrossHostRedirect.to_string(), "cross-host redirect refused");
+        assert_eq!(TooManyRedirects.to_string(), "too many redirects");
+    }
+
+    /// 127.0.0.1 and localhost resolve to the same address but are
+    /// distinct as `Url::host_str` — the literal the cross-host
+    /// integration test relies on to provoke `StopCrossHost` without a
+    /// second listening socket.
+    #[test]
+    fn loopback_literal_and_localhost_differ_as_host_str() {
+        let a = reqwest::Url::parse("http://127.0.0.1:8080/x").expect("parse loopback url");
+        let b = reqwest::Url::parse("http://localhost:8080/x").expect("parse localhost url");
+        assert_eq!(a.host_str(), Some("127.0.0.1"));
+        assert_eq!(b.host_str(), Some("localhost"));
+        assert_ne!(a.host_str(), b.host_str());
+    }
+
+    const ICS_BODY: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n";
+
+    #[tokio::test]
+    async fn fetch_follows_same_host_redirect_within_cap() {
+        let mut server = mockito::Server::new_async().await;
+        let redirect = server
+            .mock("GET", "/start.ics")
+            .with_status(302)
+            .with_header("Location", "/final.ics")
+            .create_async()
+            .await;
+        let target = server
+            .mock("GET", "/final.ics")
+            .with_status(200)
+            .with_body(ICS_BODY)
+            .create_async()
+            .await;
+
+        let fetcher = Fetcher::new().expect("build fetcher");
+        let url = format!("{}/start.ics", server.url());
+        let outcome = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect("same-host redirect within cap must succeed");
+
+        assert!(
+            matches!(&outcome, FetchOutcome::Changed(ok) if ok.body == ICS_BODY),
+            "same-host redirect to a 200 must yield the final body, got {outcome:?}",
+        );
+        redirect.assert_async().await;
+        target.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn fetch_refuses_cross_host_redirect() {
+        let mut server = mockito::Server::new_async().await;
+        // mockito binds to 127.0.0.1; redirecting to localhost on the
+        // same port keeps the request routable yet trips the host_str
+        // mismatch, so the closure's `StopCrossHost` arm fires without
+        // needing a second listener.
+        let port = server
+            .host_with_port()
+            .rsplit(':')
+            .next()
+            .expect("server host_with_port has a port")
+            .to_string();
+        const SECRET: &str = "CROSS-HOST-TOKEN-DO-NOT-LEAK";
+        let cross_host = format!("http://localhost:{port}/{SECRET}/evil.ics");
+        let start = server
+            .mock("GET", "/start.ics")
+            .with_status(302)
+            .with_header("Location", &cross_host)
+            .create_async()
+            .await;
+
+        let fetcher = Fetcher::new().expect("build fetcher");
+        let url = format!("{}/start.ics", server.url());
+        let err = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect_err("cross-host redirect must be refused");
+
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("too many redirects"),
+            "cross-host refusal must classify as a redirect error: {chain}",
+        );
+        assert!(
+            !chain.contains(SECRET),
+            "redirect error leaked the destination secret: {chain}",
+        );
+        assert!(
+            !chain.contains("localhost"),
+            "redirect error leaked the destination host: {chain}",
+        );
+        start.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn fetch_refuses_when_redirect_cap_exceeded() {
+        let mut server = mockito::Server::new_async().await;
+        // A chain of MAX_REDIRECTS + 1 same-host hops: each points to
+        // the next, so the closure follows up to the cap and then trips
+        // the `StopTooMany` arm.
+        let hops = MAX_REDIRECTS + 1;
+        let mut mocks = Vec::new();
+        for i in 0..hops {
+            let next = format!("/hop{}.ics", i + 1);
+            mocks.push(
+                server
+                    .mock("GET", format!("/hop{i}.ics").as_str())
+                    .with_status(302)
+                    .with_header("Location", &next)
+                    .create_async()
+                    .await,
+            );
+        }
+
+        let fetcher = Fetcher::new().expect("build fetcher");
+        let url = format!("{}/hop0.ics", server.url());
+        let err = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect_err("exceeding the redirect cap must error");
+
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("too many redirects"),
+            "over-cap refusal must classify as a redirect error: {chain}",
+        );
+    }
 
     #[test]
     fn normalize_webcal() {
