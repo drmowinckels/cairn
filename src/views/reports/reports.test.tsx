@@ -91,9 +91,7 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
     // values, so the lines must be hidden from the a11y tree.
     grid!
       .querySelectorAll(".chart-line")
-      .forEach((line) =>
-        expect(line.getAttribute("aria-hidden")).toBe("true"),
-      );
+      .forEach((line) => expect(line.getAttribute("aria-hidden")).toBe("true"));
   });
 
   it("renders the honesty meter with rule/calendar/manual segments and textual labels", () => {
