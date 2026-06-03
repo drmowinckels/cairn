@@ -696,6 +696,7 @@ export function validateDraft(
 export function localToIso(local: string): string {
   if (!local) return "";
   const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return "";
   return d.toISOString();
 }
 

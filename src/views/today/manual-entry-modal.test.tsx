@@ -662,6 +662,16 @@ describe("localToIso / isoToLocal round-trip", () => {
     expect(localToIso("")).toBe("");
   });
 
+  it("localToIso returns empty for unparseable input instead of throwing", () => {
+    expect(localToIso("garbage")).toBe("");
+  });
+
+  it("localToIso returns an RFC 3339 string for valid input", () => {
+    expect(localToIso("2026-05-26T09:30")).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+  });
+
   it("localToIso → isoToLocal round-trip preserves the wall-clock components", () => {
     const local = "2026-05-26T09:30";
     const iso = localToIso(local);
