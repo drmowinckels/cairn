@@ -246,6 +246,37 @@ describe("Popover — first-run onboarding gating (#31)", () => {
     expect(screen.getAllByTestId("cairn-announcer")).toHaveLength(1);
   });
 
+  it("completing onboarding swaps in the normal popover", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    let completed = false;
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "get_onboarding_state")
+          return { completedAt: completed ? "2026-01-01T00:00:00Z" : null };
+        if (cmd === "complete_onboarding") {
+          completed = true;
+          return { completedAt: "2026-01-01T00:00:00Z" };
+        }
+        if (cmd === "signal_capture_status")
+          return { active: false, path: null, bytesWritten: 0 };
+        return null;
+      },
+    );
+    const { Popover } = await import("./popover");
+    render(<Popover />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /first-run onboarding/i }),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /skip onboarding/i }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: /cairn time tracker/i }),
+      ).toBeTruthy(),
+    );
+  });
+
   it("renders the normal popover when completedAt is set", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     (invoke as ReturnType<typeof vi.fn>).mockImplementation(
