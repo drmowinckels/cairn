@@ -77,6 +77,25 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
     ).toBeGreaterThanOrEqual(28);
   });
 
+  it("renders horizontal gridlines with mono hour labels (#148, spec §3.2)", () => {
+    const { container } = render(<ReportsView density="comfy" />);
+    const grid = container.querySelector(".chart .chart-grid");
+    expect(grid).toBeTruthy();
+    const axisLabels = Array.from(
+      grid!.querySelectorAll(".chart-line .chart-axis"),
+    ).map((el) => el.textContent);
+    // Light fixture week never exceeds 8h, so the axis is the spec'd
+    // 0/2/4/6/8h ladder.
+    expect(axisLabels).toEqual(["0", "2", "4", "6", "8"]);
+    // Gridlines are decorative; the bars carry the accessible hour
+    // values, so the lines must be hidden from the a11y tree.
+    grid!
+      .querySelectorAll(".chart-line")
+      .forEach((line) =>
+        expect(line.getAttribute("aria-hidden")).toBe("true"),
+      );
+  });
+
   it("renders the honesty meter with rule/calendar/manual segments and textual labels", () => {
     const { container } = render(<ReportsView density="comfy" />);
     const meter = screen.getByRole("img", { name: /rule-detected|tracked/i });

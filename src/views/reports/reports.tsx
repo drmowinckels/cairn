@@ -10,6 +10,7 @@ import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { isRoundingActive, roundingLabel } from "../../lib/rounding";
 import {
   buildStackedDays,
+  chartAxis,
   computeDelta,
   deltaComparisonLabel,
   formatRangeLabel,
@@ -51,10 +52,12 @@ export function ReportsView({ density }: Props) {
     () => (data ? buildStackedDays(data) : []),
     [data],
   );
-  const maxDaySeconds = useMemo(
-    () => stackedDays.reduce((m, d) => Math.max(m, d.totalSeconds), 8 * 3600),
+  const axis = useMemo(
+    () =>
+      chartAxis(stackedDays.reduce((m, d) => Math.max(m, d.totalSeconds), 0)),
     [stackedDays],
   );
+  const axisMaxHours = axis.maxSeconds / 3600;
   const totalSeconds = data?.totalSeconds ?? 0;
   const totalHours = secondsToHours(totalSeconds);
   const delta = computeDelta(totalSeconds, data?.prevTotalSeconds ?? 0);
@@ -203,38 +206,53 @@ export function ReportsView({ density }: Props) {
       </section>
 
       <section className="chart" aria-label="Hours per day">
-        <div className="chart-bars">
-          {stackedDays.map((d) => {
-            const heightPct = (d.totalSeconds / maxDaySeconds) * 100;
-            const hours = secondsToHours(d.totalSeconds);
-            return (
-              <div
-                key={d.isoDate}
-                className={`bar-col${d.isToday ? " is-today" : ""}${d.isFuture ? " is-future" : ""}`}
-                aria-label={`${d.weekday}: ${hours.toFixed(1)} hours${d.isToday ? " (today)" : ""}`}
-              >
-                <div className="bar-stack" style={{ height: `${heightPct}%` }}>
-                  {d.segments.map((s) => (
-                    <div
-                      key={s.projectId ?? "_none"}
-                      className="bar-seg"
-                      style={{
-                        flex: s.seconds,
-                        background: projectColor(s.projectId),
-                      }}
-                      title={`${projectName(s.projectId)}: ${secondsToHours(s.seconds).toFixed(1)}h`}
-                    />
-                  ))}
+        <div className="chart-grid">
+          {axis.ticks.map((h) => (
+            <div
+              key={h}
+              className="chart-line"
+              style={{ bottom: `${(h / axisMaxHours) * 100}%` }}
+              aria-hidden="true"
+            >
+              <span className="chart-axis">{h}</span>
+            </div>
+          ))}
+          <div className="chart-bars">
+            {stackedDays.map((d) => {
+              const heightPct = (d.totalSeconds / axis.maxSeconds) * 100;
+              const hours = secondsToHours(d.totalSeconds);
+              return (
+                <div
+                  key={d.isoDate}
+                  className={`bar-col${d.isToday ? " is-today" : ""}${d.isFuture ? " is-future" : ""}`}
+                  aria-label={`${d.weekday}: ${hours.toFixed(1)} hours${d.isToday ? " (today)" : ""}`}
+                >
+                  <div
+                    className="bar-stack"
+                    style={{ height: `${heightPct}%` }}
+                  >
+                    {d.segments.map((s) => (
+                      <div
+                        key={s.projectId ?? "_none"}
+                        className="bar-seg"
+                        style={{
+                          flex: s.seconds,
+                          background: projectColor(s.projectId),
+                        }}
+                        title={`${projectName(s.projectId)}: ${secondsToHours(s.seconds).toFixed(1)}h`}
+                      />
+                    ))}
+                  </div>
+                  <div className="bar-meta">
+                    <span className="bar-h">
+                      {d.totalSeconds > 0 ? hours.toFixed(1) : "·"}
+                    </span>
+                    <span className="bar-d">{d.weekday}</span>
+                  </div>
                 </div>
-                <div className="bar-meta">
-                  <span className="bar-h">
-                    {d.totalSeconds > 0 ? hours.toFixed(1) : "·"}
-                  </span>
-                  <span className="bar-d">{d.weekday}</span>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </section>
 
