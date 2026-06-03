@@ -191,24 +191,33 @@ function PopoverShell({
   // state only ever reflects a palette-initiated action. `start` and
   // `update` reject (caught in the palette's dispatch), but `stop` and
   // `toggleRule` swallow the rejection and surface it as hook `error`
-  // instead — mirror those into the chrome banner too, on the
-  // null→message transition so a reopen doesn't re-raise a stale one.
-  const lastTimerErrorRef = useRef<string | null>(null);
-  const lastRulesErrorRef = useRef<string | null>(null);
+  // instead — mirror those into the chrome banner too. Key off the
+  // hook's `errorNonce` (bumped on every raise) rather than the message
+  // string, so a second identical failure (e.g. Stop fails twice with
+  // the same "io error") still re-surfaces; React would otherwise
+  // coalesce the repeat away and the banner would go stale-silent.
+  // Frame them the same way the palette's own `.catch` frames a
+  // start/switch failure ("Couldn't <action> — <err>"), so every
+  // palette-action failure reads consistently regardless of which path
+  // surfaced it.
   const timerError = paletteTimer.error;
+  const timerErrorNonce = paletteTimer.errorNonce;
   const rulesError = paletteRules.error;
+  const rulesErrorNonce = paletteRules.errorNonce;
+  const lastTimerNonceRef = useRef(0);
+  const lastRulesNonceRef = useRef(0);
   useEffect(() => {
-    if (timerError && timerError !== lastTimerErrorRef.current) {
-      handlePaletteError(timerError);
+    if (timerError && timerErrorNonce !== lastTimerNonceRef.current) {
+      handlePaletteError(`Couldn't stop the timer — ${timerError}`);
     }
-    lastTimerErrorRef.current = timerError;
-  }, [timerError, handlePaletteError]);
+    lastTimerNonceRef.current = timerErrorNonce;
+  }, [timerError, timerErrorNonce, handlePaletteError]);
   useEffect(() => {
-    if (rulesError && rulesError !== lastRulesErrorRef.current) {
-      handlePaletteError(rulesError);
+    if (rulesError && rulesErrorNonce !== lastRulesNonceRef.current) {
+      handlePaletteError(`Couldn't toggle the rule — ${rulesError}`);
     }
-    lastRulesErrorRef.current = rulesError;
-  }, [rulesError, handlePaletteError]);
+    lastRulesNonceRef.current = rulesErrorNonce;
+  }, [rulesError, rulesErrorNonce, handlePaletteError]);
 
   const paletteContext: PaletteContext = useMemo(
     () => ({
@@ -273,6 +282,13 @@ function PopoverShell({
   // the total advances without an extra interval. Until today's
   // entries have loaded we omit the total entirely rather than flash a
   // misleading "0m".
+  // Known lag: `paletteRules` is the chrome's own `useRules` instance.
+  // A rule toggled in the Rules view (a separate instance) won't update
+  // this count until the chrome refetches, because — unlike the timer's
+  // `entry:changed` event — there is no rule-change app event to listen
+  // on (`save_rule`/`delete_rule`/`reorder_rules` in ipc.rs don't emit
+  // one). Wiring a rule-change event bus is out of scope for #142; until
+  // then the count can trail a Rules-view toggle by a refetch window.
   const activeRuleCount = paletteRules.rules.filter((r) => r.enabled).length;
   const todayTotalLabel = today.loading
     ? null

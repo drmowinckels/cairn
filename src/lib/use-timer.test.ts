@@ -207,6 +207,69 @@ describe("useTimer (inside Tauri)", () => {
     await waitFor(() => expect(result.current.running).not.toBeNull());
   });
 
+  it("bumps errorNonce on every stop failure, even when the message repeats", async () => {
+    const stopEntry = vi.fn(async () => {
+      throw new Error("io error");
+    });
+    const fetchCurrent = vi.fn(async () => ENTRY);
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
+        tickMs: 60_000,
+      }),
+    );
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+    expect(result.current.errorNonce).toBe(0);
+
+    await act(async () => {
+      await result.current.stop();
+    });
+    const firstNonce = result.current.errorNonce;
+    expect(firstNonce).toBeGreaterThan(0);
+    expect(result.current.error).toMatch(/io error/);
+
+    // Identical second failure must still advance the nonce so a
+    // consumer can re-surface it despite the byte-identical message.
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(result.current.errorNonce).toBeGreaterThan(firstNonce);
+  });
+
+  it("stringifies a non-Error stop rejection via String(e)", async () => {
+    const stopEntry = vi.fn(async () => {
+      throw "stop-string-rejection";
+    });
+    const fetchCurrent = vi.fn(async () => ENTRY);
+    const { useTimer } = await import("./use-timer");
+    const { result } = renderHook(() =>
+      useTimer({
+        enabled: true,
+        listen: vi.fn(
+          async () => () => {},
+        ) as unknown as typeof import("@tauri-apps/api/event").listen,
+        fetchCurrent:
+          fetchCurrent as unknown as typeof import("./ipc").currentRunning,
+        stopEntry: stopEntry as unknown as typeof import("./ipc").stopEntry,
+        tickMs: 60_000,
+      }),
+    );
+    await waitFor(() => expect(result.current.running).not.toBeNull());
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(result.current.error).toBe("stop-string-rejection");
+    expect(result.current.errorNonce).toBeGreaterThan(0);
+  });
+
   it("a refresh mid-stop does not resurrect the stopping entry", async () => {
     let resolveStop: ((e: import("./ipc").BackendEntry) => void) | undefined;
     const stopEntry = vi.fn(

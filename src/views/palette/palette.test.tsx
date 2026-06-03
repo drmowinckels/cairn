@@ -569,6 +569,36 @@ describe("CommandPalette — action errors", () => {
     expect(message).toMatch(/db is locked/);
   });
 
+  it("routes a rejected switchProject action to onActionError with the label", async () => {
+    const onActionError = vi.fn();
+    const switchProject = vi
+      .fn()
+      .mockRejectedValue(new Error("switch failed: io error"));
+    render(
+      <CommandPalette
+        open
+        onClose={vi.fn()}
+        context={baseContext({
+          running: { id: "r-1", projectId: "alpha" },
+          switchProject,
+        })}
+        onActionError={onActionError}
+      />,
+    );
+    const input = screen.getByLabelText(/command palette/i);
+    fireEvent.change(input, { target: { value: "switch running timer" } });
+    const opt = screen
+      .getAllByRole("option")
+      .find((o) => /Switch running timer to/.test(o.textContent ?? ""))!;
+    fireEvent.click(opt);
+    await flushDispatch();
+    expect(switchProject).toHaveBeenCalled();
+    expect(onActionError).toHaveBeenCalledTimes(1);
+    const message = onActionError.mock.calls[0][0] as string;
+    expect(message).toMatch(/Switch running timer to/);
+    expect(message).toMatch(/switch failed: io error/);
+  });
+
   it("stringifies a non-Error rejection value", async () => {
     const onActionError = vi.fn();
     const startTimer = vi.fn().mockRejectedValue("boom");

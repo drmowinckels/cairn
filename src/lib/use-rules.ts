@@ -65,6 +65,11 @@ export interface UseRules {
   rules: Rule[];
   loading: boolean;
   error: string | null;
+  /** Bumped each time an error is raised, even when the message is
+   *  byte-identical to the previous one — so a consumer can re-surface
+   *  a repeat failure that `error`'s string-equality would hide (e.g.
+   *  toggling a rule twice and hitting the same save error). */
+  errorNonce: number;
   refresh: () => Promise<void>;
   /** Create a blank rule with sensible defaults. Returns its id. */
   add: () => Promise<string>;
@@ -107,6 +112,15 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
   const [rules, setRules] = useState<Rule[]>(inTauri ? [] : FIXTURE_RULES);
   const [loading, setLoading] = useState(inTauri);
   const [error, setError] = useState<string | null>(null);
+  const [errorNonce, setErrorNonce] = useState(0);
+
+  // Raise an error *and* bump the nonce, so an identical repeat failure
+  // is still observable to consumers that key on the nonce (React
+  // coalesces a transient same-string transition into a no-op).
+  const raiseError = useCallback((message: string) => {
+    setError(message);
+    setErrorNonce((n) => n + 1);
+  }, []);
 
   // The mutators read the current rules through this ref so two
   // rapid same-tick calls don't race on a stale `useCallback`
@@ -134,11 +148,11 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
       setRules(backend.map(deserializeRule));
       setError(null);
     } catch (e) {
-      setError(String(e));
+      raiseError(String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [raiseError]);
 
   const add = useCallback(async (): Promise<string> => {
     const draft = blankRule(rulesRef.current, defaultAmbiguity);
@@ -175,7 +189,7 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
         // on a slow save can clobber keystrokes the user already
         // typed after the optimistic update committed.
       } catch (e) {
-        setError(String(e));
+        raiseError(String(e));
         // Don't rollback. Rolling back here discards every
         // keystroke the user typed after this save was queued.
         // Surfacing the error and leaving local state alone is
@@ -184,7 +198,7 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
         // the save with the latest local value.
       }
     },
-    [commit],
+    [commit, raiseError],
   );
 
   const remove = useCallback(
@@ -195,11 +209,11 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
       try {
         await deleteRuleIpc(id);
       } catch (e) {
-        setError(String(e));
+        raiseError(String(e));
         commit(() => before);
       }
     },
-    [commit],
+    [commit, raiseError],
   );
 
   const duplicate = useCallback(
@@ -243,12 +257,12 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
       try {
         await reorderRulesIpc(renumbered.map((r) => r.id));
       } catch (e) {
-        setError(String(e));
+        raiseError(String(e));
         // Mirror update()'s policy: don't roll back. The next move
         // call retries with the latest local order.
       }
     },
-    [commit],
+    [commit, raiseError],
   );
 
   useEffect(() => {
@@ -260,6 +274,7 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
       rules,
       loading,
       error,
+      errorNonce,
       refresh,
       add,
       update,
@@ -267,7 +282,18 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
       duplicate,
       move,
     }),
-    [rules, loading, error, refresh, add, update, remove, duplicate, move],
+    [
+      rules,
+      loading,
+      error,
+      errorNonce,
+      refresh,
+      add,
+      update,
+      remove,
+      duplicate,
+      move,
+    ],
   );
 }
 

@@ -287,7 +287,50 @@ describe("Popover — palette action errors surface in the chrome (#142)", () =>
     fireEvent.click(await screen.findByText(/Stop running timer/i));
 
     const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/Couldn't stop the timer/);
     expect(alert.textContent).toMatch(/stop failed: io error/);
+  });
+
+  it("re-surfaces an identical repeat failure after the palette reopens", async () => {
+    // Reopening the palette clears `paletteError`. Without also resetting
+    // the mirrored-error dedupe ref, a second `stop` that fails with the
+    // byte-identical message would be swallowed by the null→message guard
+    // and no banner would show. Prove the ref reset re-raises it.
+    const { fireEvent } = await import("@testing-library/react");
+    await mountPopover({
+      today: [],
+      rules: [],
+      projects: [PROJECT],
+      running: entryRow({ id: "running-1", endedAt: null }),
+      stopEntry: () => Promise.reject(new Error("stop failed: io error")),
+    });
+
+    const openAndStop = async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+      const input = await screen.findByRole("textbox", {
+        name: /command palette/i,
+      });
+      fireEvent.change(input, { target: { value: "stop running timer" } });
+      fireEvent.click(await screen.findByText(/Stop running timer/i));
+    };
+
+    await openAndStop();
+    const firstAlert = await screen.findByRole("alert");
+    expect(firstAlert.textContent).toMatch(/stop failed: io error/);
+
+    // Reopen the palette: the chrome clears the banner for a fresh attempt.
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+
+    // Identical second failure must still surface (keyed on errorNonce,
+    // not the message string, so the byte-identical repeat isn't hidden).
+    const input = await screen.findByRole("textbox", {
+      name: /command palette/i,
+    });
+    fireEvent.change(input, { target: { value: "stop running timer" } });
+    fireEvent.click(await screen.findByText(/Stop running timer/i));
+    const secondAlert = await screen.findByRole("alert");
+    expect(secondAlert.textContent).toMatch(/stop failed: io error/);
   });
 
   it("surfaces a swallowed rule-toggle failure via the rules-error effect", async () => {
@@ -309,6 +352,7 @@ describe("Popover — palette action errors surface in the chrome (#142)", () =>
     fireEvent.click(await screen.findByText(/(Enable|Disable) rule:/i));
 
     const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/Couldn't toggle the rule/);
     expect(alert.textContent).toMatch(/save rule failed/);
   });
 });
