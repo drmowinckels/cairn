@@ -427,10 +427,8 @@ fn index_watched_dir(
     repo: &Path,
 ) {
     watched.insert(git_dir.to_path_buf(), repo.to_path_buf());
-    if let Ok(canonical) = git_dir.canonicalize() {
-        if canonical != git_dir {
-            watched.insert(canonical, repo.to_path_buf());
-        }
+    if let Some(canonical) = git_dir.canonicalize().ok().filter(|c| c != git_dir) {
+        watched.insert(canonical, repo.to_path_buf());
     }
 }
 
@@ -685,9 +683,7 @@ mod tests {
         // the link, so the canonical form differs from the raw form
         // and a second alias key is inserted.
         let link = tmp.path().join("alias-git");
-        if std::os::unix::fs::symlink(&git_dir, &link).is_err() {
-            return;
-        }
+        std::os::unix::fs::symlink(&git_dir, &link).expect("unix tmpdir supports symlinks");
         let mut watched = std::collections::HashMap::new();
         index_watched_dir(&mut watched, &link, &repo);
         assert_eq!(watched.len(), 2, "raw link + canonical target");
