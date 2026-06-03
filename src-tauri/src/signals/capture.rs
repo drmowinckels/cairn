@@ -292,19 +292,38 @@ mod tests {
         assert!(!cap.is_active().await);
     }
 
-    /// Wait until the writer's running byte count reaches at least
-    /// `n`. Polls the in-memory atomic so this is race-free even on
-    /// loaded CI runners; bails after ~1s so a regression doesn't
-    /// hang the suite. Returns the bytes count it observed.
-    async fn wait_for_bytes(cap: &SignalCapture, at_least: u64) -> u64 {
-        for _ in 0..100 {
-            let n = cap.status().await.bytes_written;
+    /// Count complete (newline-terminated) ndjson lines in `path`, or 0
+    /// if it cannot be read. Counting terminated lines ignores any
+    /// partial trailing write a concurrent read might observe.
+    async fn complete_lines(path: &str) -> usize {
+        tokio::fs::read_to_string(path)
+            .await
+            .map(|b| b.matches('\n').count())
+            .unwrap_or(0)
+    }
+
+    /// Poll until `path` holds at least `at_least` complete lines, up to
+    /// `attempts` × 5ms, then return the final observed count. Counting
+    /// lines — rather than bytes — is what makes this deterministic:
+    /// each snapshot writes a whole line, so "N lines landed" is an
+    /// exact, monotonic signal, whereas a byte threshold like
+    /// `after_initial + 2` is satisfied by the *first* multi-byte line
+    /// and returns before later writes land.
+    async fn wait_for_lines_with(path: &str, at_least: usize, attempts: usize) -> usize {
+        for _ in 0..attempts {
+            let n = complete_lines(path).await;
             if n >= at_least {
                 return n;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        cap.status().await.bytes_written
+        complete_lines(path).await
+    }
+
+    /// Poll for `at_least` complete lines, bailing after ~1s so a
+    /// regression doesn't hang the suite.
+    async fn wait_for_lines(path: &str, at_least: usize) -> usize {
+        wait_for_lines_with(path, at_least, 200).await
     }
 
     #[tokio::test]
@@ -317,18 +336,17 @@ mod tests {
             .await
             .expect("start ok");
 
-        // Wait for the writer to drain the initial snapshot before
-        // publishing more — the watch channel only retains the latest
-        // value, so without this sync `tick-0` would get overwritten
-        // by `tick-1` before the writer task ran. (The race only
-        // matters in tests; production publishes are 500ms apart.)
-        let after_initial = wait_for_bytes(&cap, 1).await;
-        assert!(after_initial > 0, "initial snapshot must be written");
+        // Wait for each snapshot's line to land before publishing the
+        // next — the watch channel only retains the latest value, so
+        // without this sync `tick-0` would get overwritten by `tick-1`
+        // before the writer task ran. (The race only matters in tests;
+        // production publishes are 500ms apart.)
+        wait_for_lines(&path, 1).await;
 
         tx.send(Some(snap_with("tick-1"))).unwrap();
-        wait_for_bytes(&cap, after_initial + 1).await;
+        wait_for_lines(&path, 2).await;
         tx.send(Some(snap_with("tick-2"))).unwrap();
-        wait_for_bytes(&cap, after_initial + 2).await;
+        wait_for_lines(&path, 3).await;
 
         let st = cap.status().await;
         assert!(st.active);
@@ -359,6 +377,18 @@ mod tests {
         );
 
         cap.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_for_lines_times_out_to_best_effort_count() {
+        // The target never reaches the requested line count, so a
+        // 1-attempt budget exercises the post-loop best-effort read
+        // (the fallthrough the happy-path test never hits). A missing
+        // file reads as zero rather than hanging.
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("never-written.ndjson");
+        let n = wait_for_lines_with(missing.to_str().unwrap(), 5, 1).await;
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]
