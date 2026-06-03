@@ -465,6 +465,14 @@ describe("validateDraft (pure)", () => {
     const v = validateDraft({ ...BASE_DRAFT, startedLocal: "" }, null);
     expect(v.ok).toBe(false);
   });
+  it("rejects a non-empty but unparseable start (localToIso yields '')", () => {
+    const v = validateDraft(
+      { ...BASE_DRAFT, startedLocal: "garbage", endedLocal: "" },
+      null,
+    );
+    expect(v.ok).toBe(false);
+    expect(v.startError).toBe("Start time is required.");
+  });
   it("rejects equal start/end", () => {
     const v = validateDraft(
       {
@@ -660,6 +668,16 @@ describe("localToIso / isoToLocal round-trip", () => {
 
   it("localToIso returns empty for empty input", () => {
     expect(localToIso("")).toBe("");
+  });
+
+  it("localToIso returns empty for unparseable input instead of throwing", () => {
+    expect(localToIso("garbage")).toBe("");
+  });
+
+  it("localToIso returns an RFC 3339 string for valid input", () => {
+    expect(localToIso("2026-05-26T09:30")).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
   });
 
   it("localToIso → isoToLocal round-trip preserves the wall-clock components", () => {

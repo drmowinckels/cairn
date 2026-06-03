@@ -65,6 +65,20 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
 
+  // `running` mirror for stable callbacks. `stop`/`update` must NOT close
+  // over `running` directly: the snapshot refresh hands `setRunning` a
+  // fresh object every ~2s (React only bails on `Object.is`), so closing
+  // over `running` would give those callbacks a new identity every 2s and
+  // churn every memo that depends on them (e.g. the palette context).
+  // Set imperatively alongside every `setRunning` — an effect-synced ref
+  // would lag a render, so a stop fired in the same tick as a state change
+  // could act on a stale entry.
+  const runningRef = useRef<BackendEntry | null>(null);
+  const setRunningTracked = useCallback((entry: BackendEntry | null) => {
+    runningRef.current = entry;
+    setRunning(entry);
+  }, []);
+
   // Id of the entry currently being stopped. `stop()` clears `running`
   // optimistically for instant feedback, but the snapshot-driven
   // refresh (throttled, runs on a timer) could read `current_running`
@@ -83,14 +97,14 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
         // Mid-stop on this exact entry — don't resurrect it.
         return;
       }
-      setRunning(entry);
+      setRunningTracked(entry);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [enabled, fetchFn]);
+  }, [enabled, fetchFn, setRunningTracked]);
 
   useEffect(() => {
     void refresh();
@@ -150,20 +164,21 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
   const start = useCallback(
     async (input: StartEntryInput) => {
       const entry = await startFn(input);
-      setRunning(entry);
+      setRunningTracked(entry);
       setNow(Date.now());
       return entry;
     },
-    [startFn],
+    [startFn, setRunningTracked],
   );
 
   const stop = useCallback(async () => {
-    if (!running) return null;
-    const id = running.id;
+    const current = runningRef.current;
+    if (!current) return null;
+    const id = current.id;
     // Optimistic: clear immediately so the timer + clock stop the instant
     // the user taps Stop, instead of waiting on the IPC round-trip.
     stoppingIdRef.current = id;
-    setRunning(null);
+    setRunningTracked(null);
     setNow(Date.now());
     try {
       const stopped = await stopFn(id);
@@ -180,15 +195,16 @@ export function useTimer(opts: UseTimerOpts = {}): TimerState {
     } finally {
       stoppingIdRef.current = null;
     }
-  }, [running, stopFn, refresh]);
+  }, [stopFn, refresh, setRunningTracked]);
 
   const update = useCallback(
     async (input: Omit<UpdateEntryInput, "id">) => {
-      if (!running) return;
-      const next = await updateFn({ ...input, id: running.id });
-      setRunning(next);
+      const current = runningRef.current;
+      if (!current) return;
+      const next = await updateFn({ ...input, id: current.id });
+      setRunningTracked(next);
     },
-    [running, updateFn],
+    [updateFn, setRunningTracked],
   );
 
   return { running, loading, error, elapsedMs, start, stop, refresh, update };
