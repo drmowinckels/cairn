@@ -675,6 +675,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn index_watched_dir_adds_canonical_alias_through_symlink() {
         let tmp = tempfile::tempdir().unwrap();

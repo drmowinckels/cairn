@@ -127,6 +127,19 @@ pub struct AppState {
     pub browser_extension: Arc<BrowserExtensionState>,
 }
 
+/// Ensure the app data directory exists, mapping any I/O failure to a
+/// startup-fatal message. Extracted from the Tauri `.setup()` closure
+/// (which has no mockable surface) so the success and failure arms can
+/// be unit-tested directly.
+fn ensure_data_dir(data_dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| {
+        format!(
+            "could not create the app data directory {}; Cairn cannot start: {e}",
+            data_dir.display()
+        )
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let log_level = if cfg!(debug_assertions) {
@@ -275,12 +288,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir().map_err(|e| {
                 format!("could not resolve the app data directory; Cairn cannot start: {e}")
             })?;
-            std::fs::create_dir_all(&data_dir).map_err(|e| {
-                format!(
-                    "could not create the app data directory {}; Cairn cannot start: {e}",
-                    data_dir.display()
-                )
-            })?;
+            ensure_data_dir(&data_dir)?;
 
             if let Err(e) = backup::apply_pending_import(&data_dir) {
                 log::warn!("backup: could not apply pending import: {e}");
@@ -504,4 +512,38 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_data_dir;
+
+    #[test]
+    fn ensure_data_dir_creates_missing_nested_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = tmp.path().join("a").join("b").join("cairn");
+        assert!(!nested.exists());
+        ensure_data_dir(&nested).expect("creating a fresh nested dir succeeds");
+        assert!(nested.is_dir());
+    }
+
+    #[test]
+    fn ensure_data_dir_is_idempotent_for_existing_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        ensure_data_dir(tmp.path()).expect("an already-existing dir is fine");
+        assert!(tmp.path().is_dir());
+    }
+
+    #[test]
+    fn ensure_data_dir_errors_when_path_is_a_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("not-a-dir");
+        std::fs::write(&file, b"x").unwrap();
+        let err = ensure_data_dir(&file).expect_err("create_dir_all over a file must fail");
+        assert!(
+            err.contains("could not create the app data directory")
+                && err.contains("Cairn cannot start"),
+            "error must carry the startup-fatal message, got: {err}"
+        );
+    }
 }
