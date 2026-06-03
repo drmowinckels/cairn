@@ -229,4 +229,74 @@ describe("useAutoBackup (inside Tauri)", () => {
     });
     expect(result.current.op.kind).toBe("error");
   });
+
+  it("keeps defaults when loading settings fails on mount", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_auto_backup_settings") throw new Error("db locked");
+      return undefined;
+    });
+    const { useAutoBackup } = await import("./use-auto-backup");
+    const { result } = renderHook(() => useAutoBackup());
+    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    expect(result.current.settings).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("ignores a failing status refresh on mount", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_auto_backup_settings") return CONFIGURED;
+      if (cmd === "auto_backup_status") throw new Error("nope");
+      return undefined;
+    });
+    const { useAutoBackup } = await import("./use-auto-backup");
+    const { result } = renderHook(() => useAutoBackup());
+    await waitFor(() => expect(result.current.settings).toEqual(CONFIGURED));
+    expect(result.current.status).toEqual({ lastBackupAt: null, count: 0 });
+  });
+
+  it("setEnabled(true) turns backups on when a folder is already set", async () => {
+    const setCall = vi.fn(
+      (arg: unknown) => (arg as { settings: unknown }).settings,
+    );
+    const PAUSED = { ...CONFIGURED, enabled: false };
+    mockInvoke({ set_auto_backup_settings: setCall }, PAUSED);
+    const { useAutoBackup } = await import("./use-auto-backup");
+    const { result } = renderHook(() => useAutoBackup());
+    await waitFor(() => expect(result.current.settings).toEqual(PAUSED));
+    await act(async () => {
+      await result.current.setEnabled(true);
+    });
+    expect(setCall).toHaveBeenCalledWith({
+      settings: { ...PAUSED, enabled: true },
+    });
+    expect(result.current.op.kind).toBe("done");
+  });
+
+  it("surfaces an error when saving settings fails", async () => {
+    mockInvoke(
+      {
+        set_auto_backup_settings: () => {
+          throw new Error("disk full");
+        },
+      },
+      CONFIGURED,
+    );
+    const { useAutoBackup } = await import("./use-auto-backup");
+    const { result } = renderHook(() => useAutoBackup());
+    await waitFor(() => expect(result.current.settings).toEqual(CONFIGURED));
+    await act(async () => {
+      await result.current.setIntervalHours(168);
+    });
+    expect(result.current.op.kind).toBe("error");
+  });
+
+  it("surfaces an error when the folder dialog throws", async () => {
+    mockInvoke({}, DEFAULT_SETTINGS);
+    openMock.mockRejectedValue(new Error("dialog failed"));
+    const { useAutoBackup } = await import("./use-auto-backup");
+    const { result } = renderHook(() => useAutoBackup());
+    await act(async () => {
+      await result.current.chooseFolder();
+    });
+    expect(result.current.op.kind).toBe("error");
+  });
 });

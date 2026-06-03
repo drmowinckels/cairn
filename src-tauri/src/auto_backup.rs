@@ -730,4 +730,70 @@ mod tests {
         assert!(std::path::Path::new(&path).exists());
         assert_eq!(list_backup_names(out.path()).await.len(), 1);
     }
+
+    #[tokio::test]
+    async fn load_settings_defaults_when_app_state_row_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&crate::backup::db_path(dir.path())).await.unwrap();
+        sqlx::query("DELETE FROM app_state")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(load_settings(&db.pool).await, AutoBackupSettings::default());
+    }
+
+    #[tokio::test]
+    async fn run_backup_swallows_a_prune_that_cannot_be_removed() {
+        let src = tempfile::tempdir().unwrap();
+        let db = Db::open(&crate::backup::db_path(src.path())).await.unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        // A snapshot-*named* directory is listed as a backup but can't be
+        // deleted with remove_file — the prune must log and carry on, not
+        // fail the snapshot that already landed.
+        let stale = out.path().join("cairn-auto-2020-01-01-000000.sqlite");
+        std::fs::create_dir(&stale).unwrap();
+
+        run_backup(&db.pool, out.path(), 1, dt("2026-06-03T09:00:00Z"))
+            .await
+            .expect("snapshot still succeeds despite a failed prune");
+
+        assert!(out
+            .path()
+            .join("cairn-auto-2026-06-03-090000.sqlite")
+            .exists());
+        assert!(stale.exists(), "undeletable prune target is left in place");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn set_persists_even_when_the_initial_snapshot_fails() {
+        use tauri::Manager;
+        let (dir, app, _db) = crate::test_support::mock_app_with_db().await;
+
+        // A folder nested under a regular file can't be created, so the
+        // eager initial snapshot fails — but the settings must still save
+        // and the command must not error or panic.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let unusable = blocker.join("nope");
+        let saved = set_auto_backup_settings(
+            app.state::<crate::AppState>(),
+            AutoBackupSettings {
+                enabled: true,
+                dir: Some(unusable.to_string_lossy().to_string()),
+                interval_hours: 24,
+                keep: 14,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(saved.enabled);
+        // No snapshot was written (the folder is unusable), reported cleanly.
+        let status = auto_backup_status(app.state::<crate::AppState>())
+            .await
+            .unwrap();
+        assert_eq!(status.count, 0);
+        assert_eq!(status.last_backup_at, None);
+    }
 }

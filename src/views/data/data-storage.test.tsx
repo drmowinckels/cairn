@@ -248,6 +248,39 @@ describe("DataStorageActions — automatic backup panel", () => {
     expect(a.backupNow).toHaveBeenCalled();
   });
 
+  it("uses the singular 'snapshot' for a count of one", async () => {
+    invokeMock.mockResolvedValue(null);
+    auto.current = makeAuto({
+      settings: {
+        enabled: true,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      status: { lastBackupAt: new Date().toISOString(), count: 1 },
+    });
+    await renderStorage();
+    expect(screen.getByText(/1 snapshot · last/i)).toBeTruthy();
+  });
+
+  it("renders a non-error op as a status banner (not an alert)", async () => {
+    invokeMock.mockResolvedValue(null);
+    auto.current = makeAuto({
+      settings: {
+        enabled: true,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      op: { kind: "done", message: "Backup folder set." },
+    });
+    await renderStorage();
+    const statuses = await screen.findAllByRole("status");
+    expect(
+      statuses.some((s) => /backup folder set/i.test(s.textContent ?? "")),
+    ).toBe(true);
+  });
+
   it("shows 'No snapshots yet' before the first backup", async () => {
     invokeMock.mockResolvedValue(null);
     auto.current = makeAuto({
