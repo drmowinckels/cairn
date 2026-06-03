@@ -548,6 +548,148 @@ describe("DataTree", () => {
     expect(p.create).not.toHaveBeenCalled();
   });
 
+  // ── WAI-ARIA tree keyboard navigation (#147) ──────────────────────────
+
+  function renderTree() {
+    return render(
+      <DataTree
+        projects={makeProjects()}
+        clients={makeClients()}
+        run={noopRun}
+      />,
+    );
+  }
+  const treeitems = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll<HTMLElement>('[role="treeitem"]'));
+  const tabbable = (c: HTMLElement) =>
+    treeitems(c).filter((el) => el.getAttribute("tabindex") === "0");
+
+  it("exposes exactly one tabbable treeitem (roving tabindex)", () => {
+    const { container } = renderTree();
+    const roving = tabbable(container);
+    expect(roving).toHaveLength(1);
+    // The first treeitem (first client group) is the initial tab stop.
+    expect(roving[0].getAttribute("aria-label")).toBe("ACME Co.");
+  });
+
+  it("ArrowDown moves the roving focus to the next treeitem", () => {
+    const { container } = renderTree();
+    const first = tabbable(container)[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    const roving = tabbable(container);
+    expect(roving).toHaveLength(1);
+    expect(roving[0].getAttribute("aria-label")).toBe("acme-web");
+    expect(document.activeElement).toBe(roving[0]);
+  });
+
+  it("ArrowRight expands a collapsed project; ArrowLeft collapses it", async () => {
+    const { container } = renderTree();
+    const acme = treeitems(container).find(
+      (el) => el.getAttribute("aria-label") === "acme-web",
+    )!;
+    acme.focus();
+    expect(acme.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.keyDown(acme, { key: "ArrowRight" });
+    await waitFor(() =>
+      expect(acme.getAttribute("aria-expanded")).toBe("true"),
+    );
+    expect(screen.getByLabelText(/new task for acme-web/i)).toBeTruthy();
+    fireEvent.keyDown(acme, { key: "ArrowLeft" });
+    await waitFor(() =>
+      expect(acme.getAttribute("aria-expanded")).toBe("false"),
+    );
+  });
+
+  it("ArrowLeft on a collapsed project moves focus to its parent client", () => {
+    const { container } = renderTree();
+    const acmeProj = treeitems(container).find(
+      (el) => el.getAttribute("aria-label") === "acme-web",
+    )!;
+    acmeProj.focus();
+    fireEvent.keyDown(acmeProj, { key: "ArrowLeft" });
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("ACME Co.");
+  });
+
+  it("Enter toggles project expansion", async () => {
+    const { container } = renderTree();
+    const acme = treeitems(container).find(
+      (el) => el.getAttribute("aria-label") === "acme-web",
+    )!;
+    acme.focus();
+    fireEvent.keyDown(acme, { key: "Enter" });
+    await waitFor(() =>
+      expect(acme.getAttribute("aria-expanded")).toBe("true"),
+    );
+  });
+
+  it("End jumps to the last treeitem, Home back to the first", () => {
+    const { container } = renderTree();
+    const first = tabbable(container)[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: "End" });
+    const items = treeitems(container);
+    expect(document.activeElement).toBe(items[items.length - 1]);
+    fireEvent.keyDown(document.activeElement!, { key: "Home" });
+    expect(document.activeElement).toBe(items[0]);
+  });
+
+  it("does not hijack arrow keys typed in the add-project input", () => {
+    const { container } = renderTree();
+    const input = screen.getByLabelText(/new project under acme co/i);
+    input.focus();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    // Focus stays in the input; the roving tab stop is unchanged.
+    expect(document.activeElement).toBe(input);
+    expect(tabbable(container)[0].getAttribute("aria-label")).toBe("ACME Co.");
+  });
+
+  it("focusing an inner control does not steal the roving treeitem", () => {
+    const { container } = renderTree();
+    // The expand chevron is a descendant of both the project and client
+    // treeitems; focusing it makes focusin bubble through their onFocus
+    // handlers with target !== currentTarget, which must be ignored.
+    const expandBtn = screen.getAllByRole("button", {
+      name: /expand acme-web/i,
+    })[0];
+    expandBtn.focus();
+    expect(tabbable(container)[0].getAttribute("aria-label")).toBe("ACME Co.");
+  });
+
+  it("ignores non-navigation keys pressed on a treeitem", () => {
+    const { container } = renderTree();
+    const first = tabbable(container)[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: "a" });
+    // No movement, no expansion, focus unchanged.
+    expect(document.activeElement).toBe(first);
+    expect(tabbable(container)[0].getAttribute("aria-label")).toBe("ACME Co.");
+  });
+
+  it("keeps the roving focus valid when the active project is removed", () => {
+    const projects = makeProjects();
+    const { container, rerender } = render(
+      <DataTree projects={projects} clients={makeClients()} run={noopRun} />,
+    );
+    // Navigate onto the acme-web project so activeId points at it.
+    const first = tabbable(container)[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(tabbable(container)[0].getAttribute("aria-label")).toBe("acme-web");
+
+    // Re-render with acme-web gone; the effect must re-seat the roving
+    // tab stop onto a node that still exists.
+    const fewer = makeProjects({
+      projects: PROJECTS.filter((p) => p.id !== "acme"),
+    } as unknown as Partial<UseProjects>);
+    rerender(
+      <DataTree projects={fewer} clients={makeClients()} run={noopRun} />,
+    );
+    const roving = tabbable(container);
+    expect(roving).toHaveLength(1);
+    expect(roving[0].getAttribute("aria-label")).not.toBe("acme-web");
+  });
+
   it("does not add duplicate local task (already-exists branch)", async () => {
     const p = makeProjects();
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { Empty } from "../../lib/components";
 import { cbColor } from "../../lib/colorblind";
@@ -8,6 +8,33 @@ import type { Client, Project, Task } from "../../lib/types";
 import { TASKS as FIXTURE_TASKS } from "../../test-fixtures/data";
 import type { UseProjects } from "../../lib/use-projects";
 import type { UseClients } from "../../lib/use-clients";
+import { TREE_NAV_KEYS, treeNavigate, type TreeNode } from "../../lib/tree-nav";
+
+/** Stable treeitem ids. Prefixed so a client and a project can never
+ * collide on a shared id, and reused as the DOM `data-tree-id`. */
+function clientNodeId(group: ClientGroup): string {
+  return `client:${group.clientId ?? "__none__"}`;
+}
+function projectNodeId(project: Project): string {
+  return `project:${project.id}`;
+}
+
+function buildTreeNodes(groups: ClientGroup[]): TreeNode[] {
+  const nodes: TreeNode[] = [];
+  for (const group of groups) {
+    const cid = clientNodeId(group);
+    nodes.push({ id: cid, level: 1, parentId: null, expandable: false });
+    for (const p of group.projects) {
+      nodes.push({
+        id: projectNodeId(p),
+        level: 2,
+        parentId: cid,
+        expandable: true,
+      });
+    }
+  }
+  return nodes;
+}
 
 const PROJECT_COLORS = [
   "#81b29a",
@@ -189,11 +216,24 @@ interface ProjectNodeProps {
   project: Project;
   run: Run;
   onDelete: (id: string) => void;
+  nodeId: string;
+  active: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onItemFocus: (id: string) => void;
 }
 
-function ProjectNode({ project, run, onDelete }: ProjectNodeProps) {
+function ProjectNode({
+  project,
+  run,
+  onDelete,
+  nodeId,
+  active,
+  expanded,
+  onToggle,
+  onItemFocus,
+}: ProjectNodeProps) {
   const cbEnabled = useColorblindEnabled();
-  const [expanded, setExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
@@ -204,6 +244,15 @@ function ProjectNode({ project, run, onDelete }: ProjectNodeProps) {
       // eslint-disable-next-line jsx-a11y/role-has-required-aria-props
       role="treeitem"
       aria-expanded={expanded}
+      aria-label={project.name}
+      data-tree-id={nodeId}
+      tabIndex={active ? 0 : -1}
+      // Only sync the roving id when this treeitem itself receives focus —
+      // focusin bubbles, so without this guard focusing a descendant would
+      // also fire the ancestor client's handler.
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) onItemFocus(nodeId);
+      }}
     >
       <div className="tree-project-row">
         <button
@@ -212,7 +261,8 @@ function ProjectNode({ project, run, onDelete }: ProjectNodeProps) {
           aria-label={
             expanded ? `Collapse ${project.name}` : `Expand ${project.name}`
           }
-          onClick={() => setExpanded((v) => !v)}
+          tabIndex={-1}
+          onClick={onToggle}
         >
           <Icon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
         </button>
@@ -268,10 +318,23 @@ interface ClientGroupNodeProps {
   group: ClientGroup;
   projects: UseProjects;
   run: Run;
+  activeId: string;
+  expandedProjects: Set<string>;
+  onToggleProject: (nodeId: string) => void;
+  onItemFocus: (id: string) => void;
 }
 
-function ClientGroupNode({ group, projects, run }: ClientGroupNodeProps) {
+function ClientGroupNode({
+  group,
+  projects,
+  run,
+  activeId,
+  expandedProjects,
+  onToggleProject,
+  onItemFocus,
+}: ClientGroupNodeProps) {
   const [draft, setDraft] = useState("");
+  const nodeId = clientNodeId(group);
 
   const addProject = async () => {
     const name = draft.trim();
@@ -297,6 +360,12 @@ function ClientGroupNode({ group, projects, run }: ClientGroupNodeProps) {
       // eslint-disable-next-line jsx-a11y/role-has-required-aria-props
       role="treeitem"
       aria-label={groupLabel}
+      data-tree-id={nodeId}
+      tabIndex={activeId === nodeId ? 0 : -1}
+      // See ProjectNode: ignore focus bubbling up from descendant treeitems.
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) onItemFocus(nodeId);
+      }}
     >
       <div className="tree-client-label">
         <span className="data-name">{groupLabel}</span>
@@ -310,14 +379,22 @@ function ClientGroupNode({ group, projects, run }: ClientGroupNodeProps) {
         role="group"
         aria-label={`Projects under ${groupLabel}`}
       >
-        {group.projects.map((p) => (
-          <ProjectNode
-            key={p.id}
-            project={p}
-            run={run}
-            onDelete={deleteProject}
-          />
-        ))}
+        {group.projects.map((p) => {
+          const pid = projectNodeId(p);
+          return (
+            <ProjectNode
+              key={p.id}
+              project={p}
+              run={run}
+              onDelete={deleteProject}
+              nodeId={pid}
+              active={activeId === pid}
+              expanded={expandedProjects.has(pid)}
+              onToggle={() => onToggleProject(pid)}
+              onItemFocus={onItemFocus}
+            />
+          );
+        })}
       </ul>
       <div className="data-add-row tree-add-project">
         <input
@@ -348,6 +425,58 @@ function ClientGroupNode({ group, projects, run }: ClientGroupNodeProps) {
 
 export function DataTree({ projects, clients, run }: DataTreeProps) {
   const groups = buildGroups(projects.projects, clients.clients);
+  const nodes = useMemo(() => buildTreeNodes(groups), [groups]);
+
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [activeId, setActiveId] = useState<string>(() => nodes[0]?.id ?? "");
+
+  // Keep the roving focus on a node that still exists after add/remove.
+  useEffect(() => {
+    if (nodes.length > 0 && !nodes.some((n) => n.id === activeId)) {
+      setActiveId(nodes[0].id);
+    }
+  }, [nodes, activeId]);
+
+  const onItemFocus = useCallback(
+    (id: string) => setActiveId((cur) => (cur === id ? cur : id)),
+    [],
+  );
+
+  const onToggleProject = useCallback((nodeId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLUListElement>) => {
+    const target = e.target as HTMLElement;
+    // Only treeitems carry `data-tree-id`; keystrokes from the
+    // add-project/-task inputs and action buttons (which don't) pass
+    // through untouched. The focused treeitem is the source of truth —
+    // read it from the DOM rather than the `activeId` state, which can
+    // lag a mouse/programmatic focus that hasn't re-rendered yet.
+    const currentId = target.dataset.treeId;
+    if (!currentId) return;
+    if (!TREE_NAV_KEYS.has(e.key)) return;
+    e.preventDefault();
+    const next = treeNavigate(nodes, { activeId: currentId, expanded }, e.key);
+    setActiveId(next.activeId);
+    setExpanded(next.expanded);
+    if (next.activeId === currentId) return;
+    // Focus the destination treeitem imperatively — it's always rendered
+    // (only its tabindex changes), so this doesn't wait on a re-render.
+    for (const el of e.currentTarget.querySelectorAll<HTMLElement>(
+      "[data-tree-id]",
+    )) {
+      if (el.dataset.treeId === next.activeId) {
+        el.focus();
+        break;
+      }
+    }
+  };
 
   if (groups.length === 0) {
     return (
@@ -364,6 +493,7 @@ export function DataTree({ projects, clients, run }: DataTreeProps) {
       className="tree-root"
       role="tree"
       aria-label="Client, project, and task hierarchy"
+      onKeyDown={onKeyDown}
     >
       {groups.map((group) => (
         <ClientGroupNode
@@ -371,6 +501,10 @@ export function DataTree({ projects, clients, run }: DataTreeProps) {
           group={group}
           projects={projects}
           run={run}
+          activeId={activeId}
+          expandedProjects={expanded}
+          onToggleProject={onToggleProject}
+          onItemFocus={onItemFocus}
         />
       ))}
     </ul>
