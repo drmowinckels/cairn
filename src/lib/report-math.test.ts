@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildStackedDays,
+  chartAxis,
   computeDelta,
   dayMonthLabel,
   deltaComparisonLabel,
@@ -43,6 +44,37 @@ describe("percentOf", () => {
     expect(percentOf(50, 100)).toBe(50);
     expect(percentOf(150, 100)).toBe(100);
     expect(percentOf(-10, 100)).toBe(0);
+  });
+});
+
+describe("chartAxis", () => {
+  it("anchors at 8h so a light week shows the spec'd 0/2/4/6/8 gridlines", () => {
+    const axis = chartAxis(0);
+    expect(axis.maxSeconds).toBe(8 * 3600);
+    expect(axis.ticks).toEqual([0, 2, 4, 6, 8]);
+  });
+
+  it("keeps the 8h ceiling when the busiest day is under 8h", () => {
+    const axis = chartAxis(5 * 3600);
+    expect(axis.maxSeconds).toBe(8 * 3600);
+    expect(axis.ticks).toEqual([0, 2, 4, 6, 8]);
+  });
+
+  it("rounds the ceiling up to the next even hour so bars never overflow", () => {
+    const axis = chartAxis(9.3 * 3600);
+    expect(axis.maxSeconds).toBe(10 * 3600);
+    expect(axis.ticks).toEqual([0, 2, 4, 6, 8, 10]);
+  });
+
+  it("treats an exact even-hour max as its own ceiling", () => {
+    const axis = chartAxis(12 * 3600);
+    expect(axis.maxSeconds).toBe(12 * 3600);
+    expect(axis.ticks).toEqual([0, 2, 4, 6, 8, 10, 12]);
+  });
+
+  it("treats negative or non-finite input as zero", () => {
+    expect(chartAxis(-100).maxSeconds).toBe(8 * 3600);
+    expect(chartAxis(Number.NaN).ticks).toEqual([0, 2, 4, 6, 8]);
   });
 });
 

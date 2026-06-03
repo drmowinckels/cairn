@@ -12,6 +12,30 @@ export function percentOf(part: number, total: number): number {
   return Math.max(0, Math.min(100, (part / total) * 100));
 }
 
+export interface ChartAxis {
+  /** Axis ceiling in seconds; bars are scaled against this. */
+  maxSeconds: number;
+  /** Gridline marks in whole hours, ascending from 0 to the ceiling. */
+  ticks: number[];
+}
+
+/**
+ * Y-axis for the hours-per-day chart (spec §3.2). Anchored at a minimum
+ * of 8h so a light week still shows the 0/2/4/6/8 gridlines, and the
+ * ceiling is rounded up to the next even hour so the top gridline always
+ * sits at the axis ceiling and a heavy day's bar never overflows it.
+ * Negative/NaN input is treated as zero.
+ */
+export function chartAxis(maxDaySeconds: number): ChartAxis {
+  const safeSeconds = Number.isFinite(maxDaySeconds)
+    ? Math.max(0, maxDaySeconds)
+    : 0;
+  const maxHours = Math.max(8, Math.ceil(safeSeconds / HOUR / 2) * 2);
+  const ticks: number[] = [];
+  for (let h = 0; h <= maxHours; h += 2) ticks.push(h);
+  return { maxSeconds: maxHours * HOUR, ticks };
+}
+
 export type Delta =
   | { kind: "none" }
   | { kind: "up" | "down" | "flat"; deltaSeconds: number; percent: number };

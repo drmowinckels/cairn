@@ -106,6 +106,7 @@ opensource
 unstaged
 chev
 dplyr
+gridline
 gridlines
 intg
 kbds
