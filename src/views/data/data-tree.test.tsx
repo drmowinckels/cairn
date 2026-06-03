@@ -644,6 +644,40 @@ describe("DataTree", () => {
     expect(tabbable(container)[0].getAttribute("aria-label")).toBe("ACME Co.");
   });
 
+  it("ignores non-navigation keys pressed on a treeitem", () => {
+    const { container } = renderTree();
+    const first = tabbable(container)[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: "a" });
+    // No movement, no expansion, focus unchanged.
+    expect(document.activeElement).toBe(first);
+    expect(tabbable(container)[0].getAttribute("aria-label")).toBe("ACME Co.");
+  });
+
+  it("keeps the roving focus valid when the active project is removed", () => {
+    const projects = makeProjects();
+    const { container, rerender } = render(
+      <DataTree projects={projects} clients={makeClients()} run={noopRun} />,
+    );
+    // Navigate onto the acme-web project so activeId points at it.
+    const first = tabbable(container)[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(tabbable(container)[0].getAttribute("aria-label")).toBe("acme-web");
+
+    // Re-render with acme-web gone; the effect must re-seat the roving
+    // tab stop onto a node that still exists.
+    const fewer = makeProjects({
+      projects: PROJECTS.filter((p) => p.id !== "acme"),
+    } as unknown as Partial<UseProjects>);
+    rerender(
+      <DataTree projects={fewer} clients={makeClients()} run={noopRun} />,
+    );
+    const roving = tabbable(container);
+    expect(roving).toHaveLength(1);
+    expect(roving[0].getAttribute("aria-label")).not.toBe("acme-web");
+  });
+
   it("does not add duplicate local task (already-exists branch)", async () => {
     const p = makeProjects();
     render(<DataTree projects={p} clients={makeClients()} run={noopRun} />);

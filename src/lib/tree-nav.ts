@@ -61,8 +61,10 @@ export function treeNavigate(
     return clamped === idx ? state : { ...state, activeId: nodes[clamped].id };
   };
 
+  // Only ever called when the open-state actually flips (the ArrowRight/
+  // ArrowLeft/Enter arms below guard on the current state first), so it
+  // always produces a fresh Set.
   const withExpanded = (id: string, open: boolean): TreeNavState => {
-    if (open === state.expanded.has(id)) return state;
     const next = new Set(state.expanded);
     if (open) next.add(id);
     else next.delete(id);

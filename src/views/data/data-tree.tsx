@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { Empty } from "../../lib/components";
 import { cbColor } from "../../lib/colorblind";
@@ -427,7 +427,6 @@ export function DataTree({ projects, clients, run }: DataTreeProps) {
   const groups = buildGroups(projects.projects, clients.clients);
   const nodes = useMemo(() => buildTreeNodes(groups), [groups]);
 
-  const rootRef = useRef<HTMLUListElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string>(() => nodes[0]?.id ?? "");
 
@@ -437,16 +436,6 @@ export function DataTree({ projects, clients, run }: DataTreeProps) {
       setActiveId(nodes[0].id);
     }
   }, [nodes, activeId]);
-
-  // Move DOM focus to a treeitem by id. Every treeitem is always
-  // rendered (only its tabindex changes), so focusing imperatively is
-  // reliable and doesn't depend on a re-render landing first.
-  const focusItem = useCallback((id: string) => {
-    const el = Array.from(
-      rootRef.current?.querySelectorAll<HTMLElement>("[data-tree-id]") ?? [],
-    ).find((e) => e.dataset.treeId === id);
-    el?.focus();
-  }, []);
 
   const onItemFocus = useCallback(
     (id: string) => setActiveId((cur) => (cur === id ? cur : id)),
@@ -464,20 +453,29 @@ export function DataTree({ projects, clients, run }: DataTreeProps) {
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLUListElement>) => {
     const target = e.target as HTMLElement;
-    // Arrow/Home/End/Enter/Space drive tree navigation only when a
-    // treeitem itself is focused; inside the add-project/-task inputs and
-    // the action buttons they keep their normal behaviour.
-    if (target.getAttribute("role") !== "treeitem") return;
+    // Only treeitems carry `data-tree-id`; keystrokes from the
+    // add-project/-task inputs and action buttons (which don't) pass
+    // through untouched. The focused treeitem is the source of truth —
+    // read it from the DOM rather than the `activeId` state, which can
+    // lag a mouse/programmatic focus that hasn't re-rendered yet.
+    const currentId = target.dataset.treeId;
+    if (!currentId) return;
     if (!TREE_NAV_KEYS.has(e.key)) return;
     e.preventDefault();
-    // The focused treeitem is the source of truth — read it from the DOM
-    // rather than the `activeId` state, which can lag a mouse/programmatic
-    // focus that hasn't re-rendered yet.
-    const currentId = target.dataset.treeId ?? activeId;
     const next = treeNavigate(nodes, { activeId: currentId, expanded }, e.key);
     setActiveId(next.activeId);
     setExpanded(next.expanded);
-    if (next.activeId !== currentId) focusItem(next.activeId);
+    if (next.activeId === currentId) return;
+    // Focus the destination treeitem imperatively — it's always rendered
+    // (only its tabindex changes), so this doesn't wait on a re-render.
+    for (const el of e.currentTarget.querySelectorAll<HTMLElement>(
+      "[data-tree-id]",
+    )) {
+      if (el.dataset.treeId === next.activeId) {
+        el.focus();
+        break;
+      }
+    }
   };
 
   if (groups.length === 0) {
@@ -492,7 +490,6 @@ export function DataTree({ projects, clients, run }: DataTreeProps) {
 
   return (
     <ul
-      ref={rootRef}
       className="tree-root"
       role="tree"
       aria-label="Client, project, and task hierarchy"
