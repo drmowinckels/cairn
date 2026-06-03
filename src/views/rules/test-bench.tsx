@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { ProjectChip, Tag } from "../../lib/components";
 import {
@@ -7,7 +7,9 @@ import {
   type DryRunResult,
   type DryRunSnapshot,
 } from "../../lib/ipc";
+import type { Project, ProjectId } from "../../lib/types";
 import { useDebouncedCallback } from "../../lib/use-debounced-callback";
+import { useProjects } from "../../lib/use-projects";
 
 /**
  * Per-field input cap. Mirrors `MAX_DRY_RUN_FIELD_LEN` in
@@ -62,6 +64,11 @@ export function RuleTestBench() {
   });
   const [result, setResult] = useState<DryRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { projects } = useProjects();
+  const projectsById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects],
+  );
 
   // Per-request id so a slow-resolving call from an earlier snapshot
   // can't overwrite the result of a later one (the race that lives
@@ -135,7 +142,7 @@ export function RuleTestBench() {
           onChange={(v) => setField("windowTitle", v)}
         />
       </div>
-      <BenchResult result={result} error={error} />
+      <BenchResult result={result} error={error} projectsById={projectsById} />
     </section>
   );
 }
@@ -143,9 +150,11 @@ export function RuleTestBench() {
 function BenchResult({
   result,
   error,
+  projectsById,
 }: {
   result: DryRunResult | null;
   error: string | null;
+  projectsById: Map<ProjectId, Project>;
 }) {
   if (error) {
     // role=alert: failure is unexpected, deserves an SR announcement.
@@ -183,7 +192,9 @@ function BenchResult({
         matches <strong>{result.ruleName}</strong>
         {result.project ? " → assigns " : null}
       </span>
-      {result.project ? <ProjectChip id={result.project} /> : null}
+      {result.project ? (
+        <ProjectChip project={projectsById.get(result.project)} />
+      ) : null}
       {result.tags.length > 0 ? (
         <span className="bench-tags">
           {result.tags.map((t) => (

@@ -169,6 +169,9 @@ describe("RuleTestBench", () => {
       expect(container.textContent).toMatch(/matches/i);
       expect(container.textContent).toMatch(/Cairn dev work/);
     });
+    expect(container.querySelector(".proj-chip-name")?.textContent).toBe(
+      "Cairn",
+    );
     expect(container.querySelector(".bench-tags")).toBeTruthy();
     const tags = container.querySelectorAll(".bench-tags > *");
     expect(tags.length).toBe(2);

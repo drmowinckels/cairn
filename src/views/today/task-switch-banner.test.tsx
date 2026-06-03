@@ -1,7 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { TaskSwitchBanner } from "./task-switch-banner";
-import type { RuleMatchEvent } from "../../lib/types";
+import type { Project, ProjectId, RuleMatchEvent } from "../../lib/types";
+
+const CAIRN_UUID = "9f1c0b2a-3d4e-4f5a-8b6c-7d8e9f0a1b2c";
+
+const projectsById: Record<ProjectId, Project> = {
+  [CAIRN_UUID]: {
+    id: CAIRN_UUID,
+    name: "Cairn",
+    clientId: null,
+    color: "#f2cc8f",
+    archived: false,
+    estimateHours: null,
+  },
+};
 
 function match(over: Partial<RuleMatchEvent> = {}): RuleMatchEvent {
   return {
@@ -9,7 +22,7 @@ function match(over: Partial<RuleMatchEvent> = {}): RuleMatchEvent {
     ruleName: "Cairn repo",
     confidence: "suggestive",
     ambiguityBehavior: "prompt",
-    project: "cairn",
+    project: CAIRN_UUID,
     tags: [],
     description: "",
     ...over,
@@ -21,6 +34,7 @@ describe("TaskSwitchBanner", () => {
     const { container } = render(
       <TaskSwitchBanner
         match={null}
+        projectsById={projectsById}
         style="subtle"
         announce
         onConfirm={vi.fn()}
@@ -34,6 +48,7 @@ describe("TaskSwitchBanner", () => {
     render(
       <TaskSwitchBanner
         match={match()}
+        projectsById={projectsById}
         style="subtle"
         announce
         onConfirm={vi.fn()}
@@ -44,6 +59,7 @@ describe("TaskSwitchBanner", () => {
       screen.getByRole("region", { name: /task switch detected/i }),
     ).toBeTruthy();
     expect(screen.getByText(/looks like you switched to/i)).toBeTruthy();
+    expect(screen.getByText("Cairn")).toBeTruthy();
     expect(screen.getByRole("button", { name: /^switch$/i })).toBeTruthy();
   });
 
@@ -51,6 +67,7 @@ describe("TaskSwitchBanner", () => {
     render(
       <TaskSwitchBanner
         match={match({ project: null, ruleName: "Deep work" })}
+        projectsById={projectsById}
         style="subtle"
         announce={false}
         onConfirm={vi.fn()}
@@ -65,6 +82,7 @@ describe("TaskSwitchBanner", () => {
     render(
       <TaskSwitchBanner
         match={match()}
+        projectsById={projectsById}
         style="modal"
         announce
         onConfirm={vi.fn()}
@@ -80,6 +98,7 @@ describe("TaskSwitchBanner", () => {
     render(
       <TaskSwitchBanner
         match={match()}
+        projectsById={projectsById}
         style="subtle"
         announce
         onConfirm={onConfirm}

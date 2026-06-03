@@ -2,34 +2,50 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { Kbd, LocalBadge, Mono, ProjectChip, Tag } from "./components";
 
+const liveProject = {
+  name: "Cairn",
+  color: "#f2cc8f",
+};
+
 describe("ProjectChip", () => {
-  it("renders project name + color dot for a known id", () => {
-    const { container, getByText } = render(<ProjectChip id="cairn" />);
-    expect(getByText("Cairn")).toBeTruthy();
+  it("renders the name + color dot from a live (non-fixture) project", () => {
+    const realUuidProject = {
+      name: "acme-web",
+      color: "#81b29a",
+    };
+    const { container, getByText } = render(
+      <ProjectChip project={realUuidProject} />,
+    );
+    expect(getByText("acme-web")).toBeTruthy();
     const dot = container.querySelector(".proj-dot") as HTMLElement;
     expect(dot).toBeTruthy();
-    expect(dot.style.background).toBe("#f2cc8f");
+    expect(dot.style.background).toBe("#81b29a");
     expect(dot.style.width).toBe("6px");
   });
 
   it("renders a larger dot in size=lg", () => {
-    const { container } = render(<ProjectChip id="cairn" size="lg" />);
+    const { container } = render(
+      <ProjectChip project={liveProject} size="lg" />,
+    );
     const dot = container.querySelector(".proj-dot") as HTMLElement;
     expect(dot.style.width).toBe("8px");
     expect(container.querySelector(".proj-chip--lg")).toBeTruthy();
   });
 
-  it("returns null for an unknown project id", () => {
-    const { container } = render(
-      <ProjectChip id={"does-not-exist" as never} />,
-    );
+  it("renders nothing when the project is unknown (lookup miss)", () => {
+    const { container } = render(<ProjectChip project={undefined} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders nothing when the project is explicitly null", () => {
+    const { container } = render(<ProjectChip project={null} />);
     expect(container.firstChild).toBeNull();
   });
 
   it("becomes a button when interactive, and fires onClick", () => {
     const onClick = vi.fn();
     const { getByRole } = render(
-      <ProjectChip id="cairn" interactive onClick={onClick} />,
+      <ProjectChip project={liveProject} interactive onClick={onClick} />,
     );
     const btn = getByRole("button");
     expect(btn.getAttribute("tabindex")).toBe("0");
@@ -40,7 +56,7 @@ describe("ProjectChip", () => {
   it("activates on Enter and Space when interactive", () => {
     const onClick = vi.fn();
     const { getByRole } = render(
-      <ProjectChip id="cairn" interactive onClick={onClick} />,
+      <ProjectChip project={liveProject} interactive onClick={onClick} />,
     );
     const btn = getByRole("button");
     fireEvent.keyDown(btn, { key: "Enter" });
@@ -52,7 +68,9 @@ describe("ProjectChip", () => {
 
   it("ignores key presses when not interactive", () => {
     const onClick = vi.fn();
-    const { container } = render(<ProjectChip id="cairn" onClick={onClick} />);
+    const { container } = render(
+      <ProjectChip project={liveProject} onClick={onClick} />,
+    );
     const chip = container.querySelector(".proj-chip") as HTMLElement;
     fireEvent.keyDown(chip, { key: "Enter" });
     expect(onClick).not.toHaveBeenCalled();

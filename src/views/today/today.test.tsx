@@ -84,6 +84,9 @@ describe("TodayView (idle — no running entry)", () => {
     renderToday();
     expect(screen.getByLabelText(/auto-detected work/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /^confirm$/i })).toBeTruthy();
+    const body = document.querySelector(".suggest-body");
+    expect(body?.textContent ?? "").toMatch(/Working on/);
+    expect(body?.querySelector(".proj-chip-name")?.textContent).toBe("Cairn");
   });
 
   it("dismissing the banner calls the hook's dismiss() (which handles snooze)", () => {

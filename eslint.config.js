@@ -54,6 +54,52 @@ export default tseslint.config(
           caughtErrorsIgnorePattern: "^_",
         },
       ],
+      // Shipping UI must resolve project/entry data from live state, never
+      // from the demo fixtures — importing them silently breaks real builds
+      // where the fixture ids don't exist (#138). Tests re-enable this below.
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/test-fixtures/*", "**/test-fixtures/**"],
+              message:
+                "Don't import test fixtures from shipping code — resolve from live state (useProjects, props). Fixtures are for *.test.* and test setup only.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Test files and the shared test setup are allowed to pull in fixtures.
+    files: [
+      "src/**/*.test.{ts,tsx}",
+      "src/test-fixtures/**/*.{ts,tsx}",
+      "src/test-setup.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
+  {
+    // Pre-existing modules that pull fixtures in deliberately: the
+    // `inTauri ? live : FIXTURE` browser-dev fallbacks and the static
+    // label maps that still live in the fixtures file. These are not the
+    // #138 bug (resolving *production* data from fixtures) — they degrade
+    // gracefully outside Tauri. Listed explicitly so the ban still catches
+    // any *new* accidental fixture import in shipping code.
+    files: [
+      "src/lib/use-projects.ts",
+      "src/lib/use-clients.ts",
+      "src/lib/use-rules.ts",
+      "src/lib/report-fixture.ts",
+      "src/views/rules/rules.tsx",
+      "src/views/rules/live-signals-card.tsx",
+      "src/views/data/data-tree.tsx",
+    ],
+    rules: {
+      "no-restricted-imports": "off",
     },
   },
   // Disable every stylistic rule that would conflict with Prettier; must

@@ -1,10 +1,17 @@
 import { Icon } from "../../lib/icon";
 import { ProjectChip } from "../../lib/components";
-import type { DetectionPrompts, RuleMatchEvent } from "../../lib/types";
+import type {
+  DetectionPrompts,
+  Project,
+  ProjectId,
+  RuleMatchEvent,
+} from "../../lib/types";
 
 interface Props {
   /** The switch suggestion to render, or null to render nothing. */
   match: RuleMatchEvent | null;
+  /** Live project lookup so the chip resolves the matched project's name. */
+  projectsById: Record<ProjectId, Project>;
   /** Reuses the detection-prompt presentation setting (subtle/modal). */
   style: Exclude<DetectionPrompts, "off">;
   announce: boolean;
@@ -21,6 +28,7 @@ interface Props {
  */
 export function TaskSwitchBanner({
   match,
+  projectsById,
   style,
   announce,
   onConfirm,
@@ -48,7 +56,7 @@ export function TaskSwitchBanner({
       <div className="suggest-body">
         Looks like you switched to{" "}
         {match.project ? (
-          <ProjectChip id={match.project} />
+          <ProjectChip project={projectsById[match.project]} />
         ) : (
           <em>{match.ruleName}</em>
         )}{" "}

@@ -41,6 +41,14 @@ describe("RulesView", () => {
     expect(container.querySelectorAll(".rule").length).toBeGreaterThan(0);
   });
 
+  it("resolves the rule's project chip name from live projects", () => {
+    const { container } = renderRules();
+    const chipNames = Array.from(
+      container.querySelectorAll(".rule-summary .proj-chip-name"),
+    ).map((el) => el.textContent);
+    expect(chipNames).toContain("Cairn");
+  });
+
   it("hides the Live signals card and 'combine multiple signals' copy at complexity=light", () => {
     renderRules({ complexity: "light" });
     expect(screen.queryByLabelText(/live signals/i)).toBeNull();
