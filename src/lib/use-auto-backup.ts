@@ -48,7 +48,11 @@ export function useAutoBackup(): UseAutoBackup {
 
   const refreshStatus = useCallback(async () => {
     try {
-      setStatus(await autoBackupStatus());
+      // Coalesce a nullish IPC result to the empty-status floor so
+      // consumers (e.g. the staleness helper) always see a real object;
+      // the backend should never return null, but a stubbed bridge can.
+      const next = await autoBackupStatus();
+      setStatus(next ?? { lastBackupAt: null, count: 0 });
     } catch (e) {
       console.warn("auto_backup_status failed", e);
     }
@@ -57,7 +61,8 @@ export function useAutoBackup(): UseAutoBackup {
   const load = useCallback(async () => {
     if (!inTauri) return;
     try {
-      setSettings(await getAutoBackupSettings());
+      const next = await getAutoBackupSettings();
+      setSettings(next ?? { ...AUTO_BACKUP_DEFAULTS });
       await refreshStatus();
     } catch (e) {
       console.warn("get_auto_backup_settings failed", e);

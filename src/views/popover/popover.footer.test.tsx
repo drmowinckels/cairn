@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  type RenderResult,
+} from "@testing-library/react";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
@@ -24,6 +30,19 @@ import type { BackendEntry, BackendRule } from "../../lib/ipc";
 import type { Project } from "../../lib/types";
 
 type WithInternals = { __TAURI_INTERNALS__?: unknown };
+
+// `vi.resetModules()` in `beforeEach` makes the dynamic `import("./popover")`
+// pull a fresh module graph (own React/ReactDOM root). The global `cleanup()`
+// in test-setup.ts, bound to the static RTL instance, then can't unmount that
+// foreign root, so each test leaks its mounted `.pop` dialog into the body —
+// the next test sees two and `getByRole("dialog", …)` throws "multiple
+// elements". Track every render and unmount it here so the DOM starts clean.
+let mounted: RenderResult | null = null;
+
+function trackRender(result: RenderResult): RenderResult {
+  mounted = result;
+  return result;
+}
 
 const PROJECT: Project = {
   id: "p1",
@@ -67,6 +86,13 @@ interface Backend {
   startEntry?: () => Promise<BackendEntry>;
   stopEntry?: () => Promise<BackendEntry>;
   saveRule?: () => Promise<BackendRule>;
+  autoBackupSettings?: {
+    enabled: boolean;
+    dir: string | null;
+    intervalHours: number;
+    keep: number;
+  };
+  autoBackupStatus?: { lastBackupAt: string | null; count: number };
 }
 
 async function mountPopover(backend: Backend) {
@@ -93,6 +119,17 @@ async function mountPopover(backend: Backend) {
           return backend.running ?? null;
         case "list_projects":
           return backend.projects ?? [];
+        case "get_auto_backup_settings":
+          return (
+            backend.autoBackupSettings ?? {
+              enabled: false,
+              dir: null,
+              intervalHours: 24,
+              keep: 14,
+            }
+          );
+        case "auto_backup_status":
+          return backend.autoBackupStatus ?? { lastBackupAt: null, count: 0 };
         case "signal_capture_status":
           return { active: false };
         default:
@@ -105,7 +142,7 @@ async function mountPopover(backend: Backend) {
     },
   );
   const { Popover } = await import("./popover");
-  render(<Popover />);
+  trackRender(render(<Popover />));
   await waitFor(() =>
     expect(
       screen.getByRole("dialog", { name: /cairn time tracker/i }),
@@ -117,6 +154,11 @@ describe("Popover footer — live totals (#142)", () => {
   let original: unknown;
 
   beforeEach(() => {
+    // Belt-and-braces against cross-test portal/root leakage: drop any
+    // DOM a prior test left behind before the fresh module-graph mount,
+    // so `getByRole("dialog", …)` can never match two popovers.
+    cleanup();
+    document.body.innerHTML = "";
     localStorage.clear();
     original = (globalThis as WithInternals).__TAURI_INTERNALS__;
     (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
@@ -124,6 +166,11 @@ describe("Popover footer — live totals (#142)", () => {
   });
 
   afterEach(() => {
+    // Unmount the fresh-module-graph render explicitly; the global
+    // cleanup() can't reach a root mounted by a reset-module ReactDOM.
+    mounted?.unmount();
+    mounted = null;
+    cleanup();
     if (original === undefined) {
       delete (globalThis as WithInternals).__TAURI_INTERNALS__;
     } else {
@@ -160,6 +207,48 @@ describe("Popover footer — live totals (#142)", () => {
     expect(footer.textContent).not.toMatch(/3 rules active/);
   });
 
+  it("shows a stale-backup indicator when the last backup is overdue", async () => {
+    await mountPopover({
+      today: [],
+      rules: [],
+      autoBackupSettings: {
+        enabled: true,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      // 3 days old, interval 24h → older than 2× → stale.
+      autoBackupStatus: {
+        lastBackupAt: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(),
+        count: 3,
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("img", { name: /automatic backup is stale/i }),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("omits the stale-backup indicator when the backup is healthy", async () => {
+    await mountPopover({
+      today: [],
+      rules: [],
+      autoBackupSettings: {
+        enabled: true,
+        dir: "/sync/cairn",
+        intervalHours: 24,
+        keep: 14,
+      },
+      autoBackupStatus: { lastBackupAt: new Date().toISOString(), count: 3 },
+    });
+    const footer = document.querySelector(".pop-foot") as HTMLElement;
+    await waitFor(() => expect(footer.textContent).toMatch(/rules active/));
+    expect(
+      screen.queryByRole("img", { name: /automatic backup is stale/i }),
+    ).toBeNull();
+  });
+
   it("pluralizes a single active rule", async () => {
     await mountPopover({
       today: [],
@@ -190,6 +279,10 @@ describe("Popover footer — live totals (#142)", () => {
             return pending;
           case "list_rules":
             return [ruleRow({ id: "r1", enabled: true })];
+          case "get_auto_backup_settings":
+            return { enabled: false, dir: null, intervalHours: 24, keep: 14 };
+          case "auto_backup_status":
+            return { lastBackupAt: null, count: 0 };
           case "signal_capture_status":
             return { active: false };
           default:
@@ -199,7 +292,7 @@ describe("Popover footer — live totals (#142)", () => {
       },
     );
     const { Popover } = await import("./popover");
-    render(<Popover />);
+    trackRender(render(<Popover />));
     await waitFor(() =>
       expect(
         screen.getByRole("dialog", { name: /cairn time tracker/i }),
@@ -224,6 +317,11 @@ describe("Popover — palette action errors surface in the chrome (#142)", () =>
   let original: unknown;
 
   beforeEach(() => {
+    // Belt-and-braces against cross-test portal/root leakage: drop any
+    // DOM a prior test left behind before the fresh module-graph mount,
+    // so `getByRole("dialog", …)` can never match two popovers.
+    cleanup();
+    document.body.innerHTML = "";
     localStorage.clear();
     original = (globalThis as WithInternals).__TAURI_INTERNALS__;
     (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
@@ -231,6 +329,11 @@ describe("Popover — palette action errors surface in the chrome (#142)", () =>
   });
 
   afterEach(() => {
+    // Unmount the fresh-module-graph render explicitly; the global
+    // cleanup() can't reach a root mounted by a reset-module ReactDOM.
+    mounted?.unmount();
+    mounted = null;
+    cleanup();
     if (original === undefined) {
       delete (globalThis as WithInternals).__TAURI_INTERNALS__;
     } else {
