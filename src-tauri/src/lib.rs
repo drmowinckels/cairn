@@ -2,6 +2,7 @@ mod auto_backup;
 mod backup;
 mod db;
 mod ipc;
+mod plugins;
 mod popover;
 mod prompt_scheduler;
 mod rounding;
@@ -425,7 +426,30 @@ pub fn run() {
                     discovered_repos.clone(),
                 );
                 signals::stream::spawn_default_sources(&stream);
-                signals::stream::spawn_calendar_source(&stream, calendar.clone());
+                // Calendar is a signal-source plugin (#111): start it
+                // through the plugin host rather than a bespoke spawn,
+                // so it goes through the same boundary PM/billing
+                // plugins will. The host is local to setup for now — a
+                // later PR promotes it to `AppState` once the settings
+                // UI lists/toggles plugins.
+                let mut plugin_host = plugins::SignalSourceHost::new();
+                plugin_host.register(Box::new(plugins::calendar::CalendarPlugin::new(
+                    calendar.clone(),
+                )));
+                // Transparency: log every opt-in plugin we started and
+                // the capabilities it declared, so a networked /
+                // secrets-bearing plugin is never active silently
+                // (docs/PRIVACY.md).
+                for manifest in plugin_host.manifests() {
+                    log::info!(
+                        "plugin '{}' ({}) started — network={} secrets={}",
+                        manifest.name,
+                        manifest.id,
+                        manifest.has_capability(plugins::Capability::Network),
+                        manifest.has_capability(plugins::Capability::Secrets),
+                    );
+                }
+                plugin_host.start_all(stream.event_sender());
                 stream
             }));
 
