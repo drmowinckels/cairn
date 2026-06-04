@@ -13,14 +13,17 @@ import type { Project, Task } from "../../lib/types";
 
 /** Swatches offered when creating a project inline. Mirrors the
  *  default-seed palette so new projects look at home next to them. */
-const PROJECT_COLORS = [
-  "#81b29a",
-  "#f2cc8f",
-  "#e07a5f",
-  "#9a9bb0",
-  "#c8b8e0",
-  "#6d9dc5",
+// Named so the color radios announce a human word ("Sage") to screen
+// readers instead of an unpronounceable hex string ("#81b29a").
+const PROJECT_COLORS: ReadonlyArray<{ hex: string; name: string }> = [
+  { hex: "#81b29a", name: "Sage" },
+  { hex: "#f2cc8f", name: "Sand" },
+  { hex: "#e07a5f", name: "Clay" },
+  { hex: "#9a9bb0", name: "Slate" },
+  { hex: "#c8b8e0", name: "Lilac" },
+  { hex: "#6d9dc5", name: "Sky" },
 ];
+const DEFAULT_PROJECT_COLOR = PROJECT_COLORS[0].hex;
 
 export interface ManualEntryDraft {
   id?: string;
@@ -111,7 +114,7 @@ export function ManualEntryModal({
   // Inline create-project sub-form (#21 / #4).
   const [creatingProject, setCreatingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
+  const [newProjectColor, setNewProjectColor] = useState(DEFAULT_PROJECT_COLOR);
   const [creatingProjectBusy, setCreatingProjectBusy] = useState(false);
   const [createProjectError, setCreateProjectError] = useState<string | null>(
     null,
@@ -158,7 +161,7 @@ export function ManualEntryModal({
       setError(null);
       setCreatingProject(false);
       setNewProjectName("");
-      setNewProjectColor(PROJECT_COLORS[0]);
+      setNewProjectColor(DEFAULT_PROJECT_COLOR);
       setCreateProjectError(null);
       setCreatingTask(false);
       setCreatingTaskBusy(false);
@@ -411,16 +414,16 @@ export function ManualEntryModal({
                 role="radiogroup"
                 aria-label="Project color"
               >
-                {PROJECT_COLORS.map((c) => (
+                {PROJECT_COLORS.map(({ hex, name }) => (
                   <button
-                    key={c}
+                    key={hex}
                     type="button"
-                    className={`swatch${c === newProjectColor ? " is-on" : ""}`}
-                    style={{ background: c }}
+                    className={`swatch${hex === newProjectColor ? " is-on" : ""}`}
+                    style={{ background: hex }}
                     role="radio"
-                    aria-checked={c === newProjectColor}
-                    aria-label={`Color ${c}`}
-                    onClick={() => setNewProjectColor(c)}
+                    aria-checked={hex === newProjectColor}
+                    aria-label={name}
+                    onClick={() => setNewProjectColor(hex)}
                     disabled={creatingProjectBusy}
                   />
                 ))}
