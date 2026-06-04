@@ -80,4 +80,20 @@ describe("WorkingHoursReminder", () => {
         .getAttribute("aria-live"),
     ).toBe("polite");
   });
+
+  it("turns the live region off when announcements are disabled", () => {
+    render(
+      <WorkingHoursReminder
+        style="modal"
+        announce={false}
+        onStart={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("region", { name: /start tracking reminder/i })
+        .getAttribute("aria-live"),
+    ).toBe("off");
+  });
 });
