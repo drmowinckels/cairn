@@ -88,6 +88,17 @@ export function AboutCard() {
         </a>{" "}
         · {PRIVACY_LICENSE_LABEL}
       </p>
+      <p className="settings-sub about-companion">
+        Looking for a break reminder?{" "}
+        <a
+          href="https://entracte.drmowinckels.io/"
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          Try Entracte
+        </a>
+        , Cairn's sibling app.
+      </p>
       <div className="about-actions">
         <button
           type="button"
