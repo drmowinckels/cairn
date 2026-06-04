@@ -368,20 +368,6 @@ pub fn spawn_default_sources(stream: &SnapshotStream) {
     tokio::spawn(idle_source(tx, IDLE_POLL_INTERVAL));
 }
 
-/// Spawn the calendar signal source. Kept separate from
-/// `spawn_default_sources` because, unlike the core sources, it owns a
-/// `CalendarRegistry` and is the first source on track to become a
-/// plugin (#111). It pushes `SignalEvent::Calendar` on each tick —
-/// the driver folds it into the snapshot like any other source,
-/// without knowing calendar exists. See `docs/PLUGINS.md`.
-pub fn spawn_calendar_source(stream: &SnapshotStream, calendar: Arc<CalendarRegistry>) {
-    tokio::spawn(calendar_source(
-        stream.event_sender(),
-        calendar,
-        CALENDAR_TICK_INTERVAL,
-    ));
-}
-
 // -----------------------------------------------------------------
 // driver
 // -----------------------------------------------------------------
@@ -661,7 +647,12 @@ async fn window_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
     }
 }
 
-async fn calendar_source(
+/// The calendar signal source loop. Owns a `CalendarRegistry`,
+/// re-queries active events on each tick, and pushes them as
+/// `SignalEvent::Calendar`. `pub(crate)` so the calendar plugin
+/// (`crate::plugins::calendar`) can spawn it behind the
+/// `SignalSource` boundary; nothing else should call it directly.
+pub(crate) async fn calendar_source(
     tx: mpsc::Sender<SignalEvent>,
     calendar: Arc<CalendarRegistry>,
     interval: Duration,
@@ -1448,21 +1439,6 @@ mod tests {
             .await
             .expect("calendar source exits when the channel closes")
             .expect("calendar source task joined cleanly");
-    }
-
-    #[tokio::test]
-    async fn spawn_calendar_source_wires_the_source_to_the_stream() {
-        // Cover the public wrapper lib.rs::setup calls. The push path
-        // is covered by `calendar_source_pushes_active_events_on_tick`;
-        // here we only assert the wrapper spawns without panicking and
-        // the source shuts down when the stream (and its `event_tx`)
-        // drops.
-        let (_dir, db) = test_db().await;
-        let calendar =
-            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
-        let (_dir2, stream) = fresh_stream(Duration::from_millis(50)).await;
-        spawn_calendar_source(&stream, calendar);
-        drop(stream);
     }
 
     #[tokio::test]

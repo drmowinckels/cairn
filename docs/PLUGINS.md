@@ -119,10 +119,21 @@ trait SignalSource {
 
     /// Spawn the source's task(s). The source pushes `SignalEvent`s
     /// through `tx` (`try_send`/drop-on-full — never block the driver)
-    /// and must exit when `tx` is closed or `cancel` fires.
-    fn start(&self, tx: mpsc::Sender<SignalEvent>, cancel: CancellationToken);
+    /// and exits when `tx` is closed.
+    fn start(&self, tx: mpsc::Sender<SignalEvent>);
 }
 ```
+
+This is what landed first (`src-tauri/src/plugins/`): the trait, a
+`PluginManifest` carrying `Capability::{Network, Secrets}`, and a
+`SignalSourceHost` that registers sources, exposes their manifests, and
+starts them. `CalendarPlugin` is the first implementation and wires the
+existing `CalendarRegistry` in behind the boundary; startup logs every
+plugin it starts and the capabilities it declared. Two things are
+deliberately deferred to later slices of the stack so the first PR stays
+reviewable: **per-source stop/disable** (an abort-handle on `start` plus
+a persisted enabled set, landing with the settings UI) and
+**`Capability::Paid`** (landing with billing, #109).
 
 A plugin that contributes a _new_ kind of signal (not one of today's
 `SignalEvent` variants) adds a variant to `SignalEvent` and a field to
@@ -207,11 +218,19 @@ manages only the opt-in set.
    evaluated exactly at publish (immaterial at a 30s tick; see above).
    This is the seam; it ships before any host code so the host has
    something origin-agnostic to plug into.
-2. Introduce `PluginManifest` + `SignalSource` trait + the host
-   registry (enable/disable, capability gating).
-3. Move `signals/calendar/*` + `calendar_autostop` behind a
-   `CalendarPlugin: SignalSource`; core stops linking the ICS fetcher
-   and keychain code on the always-on path (#111).
-4. Reclassify calendar as a plugin in `docs/PRIVACY.md`,
+2. **Done:** introduce `PluginManifest` + `SignalSource` trait + the
+   `SignalSourceHost` (register / manifests / start), and wrap calendar
+   as `CalendarPlugin: SignalSource` started through the host. Calendar
+   code is still compiled into core here — this slice validates the
+   boundary without moving files.
+3. Add per-source enable/disable: an abort-handle on `start`, a
+   persisted enabled set, a `list_plugins` IPC, and the settings UI that
+   lists plugins (with their declared capabilities) and toggles them.
+   Rules referencing a disabled plugin's signal degrade per above.
+4. Move `signals/calendar/*` + `calendar_autostop` + keychain ownership
+   physically behind the plugin; core stops linking the ICS fetcher and
+   secrets code on the always-on path (#111).
+5. Reclassify calendar as a plugin in `docs/PRIVACY.md`,
    `docs/DESIGN_SPEC.md`, `docs/RULES_ENGINE.md`, and `CLAUDE.md`.
-5. Build PM connectors (#110) and billing (#109) on the same host.
+6. Build PM connectors (#110) and billing (#109) on the same host;
+   billing introduces `Capability::Paid`.
