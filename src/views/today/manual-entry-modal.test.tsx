@@ -870,7 +870,8 @@ describe("ManualEntryModal — inline create project", () => {
     fireEvent.change(screen.getByLabelText(/new project name/i), {
       target: { value: "Delta" },
     });
-    fireEvent.click(screen.getByRole("radio", { name: /#e07a5f/i }));
+    // Swatches are labeled by name, not hex (#e07a5f = "Clay").
+    fireEvent.click(screen.getByRole("radio", { name: /^clay$/i }));
     fireEvent.click(screen.getByRole("button", { name: /add project/i }));
     await waitFor(() =>
       expect(onCreateProject).toHaveBeenCalledWith({
@@ -878,6 +879,29 @@ describe("ManualEntryModal — inline create project", () => {
         color: "#e07a5f",
       }),
     );
+  });
+
+  it("labels color swatches by name, not hex code", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={BASE_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onCreateProject={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    const group = screen.getByRole("radiogroup", { name: /project color/i });
+    const labels = Array.from(group.querySelectorAll('[role="radio"]')).map(
+      (el) => el.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual(["Sage", "Sand", "Clay", "Slate", "Lilac", "Sky"]);
+    // None expose a raw hex string.
+    labels.forEach((l) => expect(l).not.toMatch(/#/));
   });
 
   it("cancel collapses the sub-form without creating", () => {
