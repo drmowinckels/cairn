@@ -95,9 +95,14 @@ describe("TodayView working-hours reminder (#99)", () => {
     expect(reminder.dismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the modal presentation when detection prompts are modal", () => {
+  it("uses an assertive live region (not a dialog) when detection prompts are modal", () => {
     renderToday("modal");
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(
+      screen
+        .getByRole("region", { name: /start tracking reminder/i })
+        .getAttribute("aria-live"),
+    ).toBe("assertive");
   });
 
   it("hides the reminder when inactive", () => {

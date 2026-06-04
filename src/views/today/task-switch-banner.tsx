@@ -39,8 +39,11 @@ export function TaskSwitchBanner({
     <section
       className={`suggest suggest--${style}`}
       aria-label="Task switch detected"
-      aria-live={announce ? "polite" : "off"}
-      role={style === "modal" ? "alertdialog" : undefined}
+      // Inline notification, not a dialog — announce via the live region
+      // (assertive for "modal", polite otherwise); see today.tsx.
+      aria-live={
+        announce ? (style === "modal" ? "assertive" : "polite") : "off"
+      }
     >
       <div className="suggest-head">
         <Icon name="sparkle" size={13} />
