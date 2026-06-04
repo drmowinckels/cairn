@@ -49,6 +49,11 @@ describe("time formatters", () => {
     expect(out).toMatch(/^\d{2}:\d{2}$/);
   });
 
+  it("fmtClockFromIso degrades to an em dash on an unparseable timestamp", () => {
+    expect(fmtClockFromIso("not-a-timestamp")).toBe("—");
+    expect(fmtClockFromIso("")).toBe("—");
+  });
+
   it("fmtIdleDuration handles seconds / minutes / hours / mixed", () => {
     expect(fmtIdleDuration(0)).toBe("0 sec");
     expect(fmtIdleDuration(45)).toBe("45 sec");

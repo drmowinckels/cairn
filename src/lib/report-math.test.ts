@@ -173,6 +173,15 @@ describe("weekdayLabel / dayMonthLabel / formatRangeLabel", () => {
     });
     expect(formatRangeLabel(s)).toBe("May 18, 2026");
   });
+  it("shows both years when the range straddles a year boundary", () => {
+    const s = summaryStub({
+      byDay: [
+        { date: "2025-12-28", byProject: [] },
+        { date: "2026-01-03", byProject: [] },
+      ],
+    });
+    expect(formatRangeLabel(s)).toBe("Dec 28, 2025 — Jan 3, 2026");
+  });
   it("returns empty when byDay is empty", () => {
     expect(formatRangeLabel(summaryStub())).toBe("");
   });

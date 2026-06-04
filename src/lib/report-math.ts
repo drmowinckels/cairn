@@ -129,7 +129,15 @@ export function formatRangeLabel(summary: ReportSummary): string {
   if (first === last) {
     return `${dayMonthLabel(first)}, ${first.slice(0, 4)}`;
   }
-  return `${dayMonthLabel(first)} — ${dayMonthLabel(last)}, ${last.slice(0, 4)}`;
+  const firstYear = first.slice(0, 4);
+  const lastYear = last.slice(0, 4);
+  // When the range straddles a year boundary, show both years so the
+  // start isn't silently attributed to the end's year (e.g. a week
+  // spanning Dec 2025 → Jan 2026).
+  if (firstYear !== lastYear) {
+    return `${dayMonthLabel(first)}, ${firstYear} — ${dayMonthLabel(last)}, ${lastYear}`;
+  }
+  return `${dayMonthLabel(first)} — ${dayMonthLabel(last)}, ${lastYear}`;
 }
 
 export interface StackedDay {

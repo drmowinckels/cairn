@@ -52,6 +52,10 @@ export const fmtRange = (start: number, end: number): string =>
  */
 export const fmtClockFromIso = (iso: string): string => {
   const d = new Date(iso);
+  // Degrade to an em dash on an unparseable timestamp rather than
+  // rendering "NaN:NaN" in the idle prompt — mirrors the NaN guards on
+  // the other helpers in this module.
+  if (Number.isNaN(d.getTime())) return "—";
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
