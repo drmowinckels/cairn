@@ -201,7 +201,9 @@ export function ReportsView({ density }: Props) {
           <span className="total-num">
             <Mono>{data?.byProject.length ?? 0}</Mono>
           </span>
-          <span className="total-lbl">projects</span>
+          <span className="total-lbl">
+            {(data?.byProject.length ?? 0) === 1 ? "project" : "projects"}
+          </span>
         </div>
       </section>
 

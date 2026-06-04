@@ -60,6 +60,16 @@ describe("buildWeekSummary", () => {
     expect(out).toContain("0 projects");
   });
 
+  it("uses the singular 'project' when exactly one project is tracked", () => {
+    const out = buildWeekSummary({
+      weekLabel: "Solo",
+      week: [{ day: "Mon", hours: 2, segments: [["cairn", 2]] }],
+      projectsById: projects,
+    });
+    expect(out).toContain("1 project");
+    expect(out).not.toContain("1 projects");
+  });
+
   it("falls back to the project id when projectsById has no entry", () => {
     const out = buildWeekSummary({
       weekLabel: "Orphan",

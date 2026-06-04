@@ -25,7 +25,7 @@ export function buildWeekSummary({
 
   const lines: string[] = [
     `Cairn — ${weekLabel}`,
-    `${totalHours.toFixed(1)}h tracked · ${dailyAvg.toFixed(1)}h daily avg · ${ranked.length} projects`,
+    `${totalHours.toFixed(1)}h tracked · ${dailyAvg.toFixed(1)}h daily avg · ${ranked.length} ${ranked.length === 1 ? "project" : "projects"}`,
     "",
   ];
   for (const [pid, hours] of ranked) {

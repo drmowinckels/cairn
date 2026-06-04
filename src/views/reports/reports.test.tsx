@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
@@ -194,6 +200,29 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
       expect(container.querySelector(".bar-col.is-today")).toBeTruthy();
     });
     expect(container.querySelector(".bar-col.is-future")).toBeTruthy();
+  });
+
+  it("uses the singular 'project' label when exactly one project is tracked", async () => {
+    const summary: ReportSummary = {
+      totalSeconds: 3600,
+      prevTotalSeconds: 0,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [{ projectId: "cairn", seconds: 3600 }],
+        },
+      ],
+      byProject: [{ projectId: "cairn", seconds: 3600 }],
+      bySource: { rule: 0, calendar: 0, manual: 3600 },
+    };
+    const { container } = await renderWithSummary(summary);
+    const totals = await waitFor(() => {
+      const t = container.querySelector(".totals") as HTMLElement | null;
+      expect(t).toBeTruthy();
+      return t!;
+    });
+    expect(within(totals).getByText("project")).toBeTruthy();
+    expect(within(totals).queryByText("projects")).toBeNull();
   });
 
   it("honesty meter widths add up to 100% of the source split", async () => {
