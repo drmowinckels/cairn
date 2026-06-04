@@ -26,8 +26,11 @@ export function WorkingHoursReminder({
     <section
       className={`suggest suggest--${style}`}
       aria-label="Start tracking reminder"
-      aria-live={announce ? "polite" : "off"}
-      role={style === "modal" ? "alertdialog" : undefined}
+      // Inline notification, not a dialog — announce via the live region
+      // (assertive for "modal", polite otherwise); see today.tsx.
+      aria-live={
+        announce ? (style === "modal" ? "assertive" : "polite") : "off"
+      }
     >
       <div className="suggest-head">
         <Icon name="moon" size={13} />

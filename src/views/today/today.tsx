@@ -429,8 +429,17 @@ export function TodayView({
         <section
           className={`suggest suggest--${detectionPrompts}`}
           aria-label="Auto-detected work"
-          aria-live={announce ? "polite" : "off"}
-          role={detectionPrompts === "modal" ? "alertdialog" : undefined}
+          // A non-blocking inline notification, not a dialog: announce via
+          // the live region (assertive for the heavier "modal" style,
+          // polite otherwise) rather than claiming an `alertdialog` role it
+          // doesn't honor (no focus trap / aria-modal / Escape).
+          aria-live={
+            announce
+              ? detectionPrompts === "modal"
+                ? "assertive"
+                : "polite"
+              : "off"
+          }
         >
           <div className="suggest-head">
             <Icon name="sparkle" size={13} />

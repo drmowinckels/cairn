@@ -132,10 +132,15 @@ describe("TodayView task-switch wiring (#105)", () => {
     expect(switchConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the switch banner as a modal alertdialog in modal style", () => {
+  it("renders the switch banner as an assertive live region (not a dialog) in modal style", () => {
     activeOverride = SUGGESTION;
     renderToday(ON, "modal");
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(
+      screen
+        .getByRole("region", { name: /task switch detected/i })
+        .getAttribute("aria-live"),
+    ).toBe("assertive");
   });
 
   it("renders no switch banner when detection prompts are off", () => {

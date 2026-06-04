@@ -47,19 +47,24 @@ describe("WorkingHoursReminder", () => {
     expect(onDismiss).toHaveBeenCalledTimes(2);
   });
 
-  it("uses alertdialog role in modal style", () => {
+  it("announces assertively (not as a dialog) in modal style", () => {
     render(
       <WorkingHoursReminder
         style="modal"
-        announce={false}
+        announce
         onStart={vi.fn()}
         onDismiss={vi.fn()}
       />,
     );
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    // "modal" is visual only — a live region, never an actual dialog.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const region = screen.getByRole("region", {
+      name: /start tracking reminder/i,
+    });
+    expect(region.getAttribute("aria-live")).toBe("assertive");
   });
 
-  it("is a plain region (no dialog role) in subtle style", () => {
+  it("is a polite plain region (no dialog role) in subtle style", () => {
     render(
       <WorkingHoursReminder
         style="subtle"
@@ -70,7 +75,25 @@ describe("WorkingHoursReminder", () => {
     );
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(
-      screen.getByRole("region", { name: /start tracking reminder/i }),
-    ).toBeTruthy();
+      screen
+        .getByRole("region", { name: /start tracking reminder/i })
+        .getAttribute("aria-live"),
+    ).toBe("polite");
+  });
+
+  it("turns the live region off when announcements are disabled", () => {
+    render(
+      <WorkingHoursReminder
+        style="modal"
+        announce={false}
+        onStart={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("region", { name: /start tracking reminder/i })
+        .getAttribute("aria-live"),
+    ).toBe("off");
   });
 });

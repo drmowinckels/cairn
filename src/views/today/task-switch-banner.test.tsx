@@ -78,7 +78,7 @@ describe("TaskSwitchBanner", () => {
     expect(screen.getAllByText("Deep work").length).toBeGreaterThan(0);
   });
 
-  it("uses an alertdialog role in modal style", () => {
+  it("is an assertive live region (not a dialog) in modal style", () => {
     render(
       <TaskSwitchBanner
         match={match()}
@@ -89,7 +89,12 @@ describe("TaskSwitchBanner", () => {
         onDismiss={vi.fn()}
       />,
     );
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    // "modal" is a visual style only — never a real dialog.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const region = screen.getByRole("region", {
+      name: /task switch detected/i,
+    });
+    expect(region.getAttribute("aria-live")).toBe("assertive");
   });
 
   it("wires Switch to confirm and both dismiss affordances", () => {

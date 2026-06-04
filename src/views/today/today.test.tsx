@@ -997,7 +997,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     }
   });
 
-  it("suggestion banner has role=alertdialog when detectionPrompts=modal", () => {
+  it("suggestion banner is an assertive live region (not a dialog) when detectionPrompts=modal", () => {
     suggestionOverride = SUGGESTION_FIXTURE;
     render(
       <TodayView
@@ -1007,9 +1007,11 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         detectionPrompts="modal"
       />,
     );
-    expect(
-      screen.getByRole("alertdialog", { name: /auto-detected work/i }),
-    ).toBeTruthy();
+    // The "modal" style is visual only — a non-blocking inline
+    // notification, never an actual dialog (no focus trap / aria-modal).
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const region = screen.getByRole("region", { name: /auto-detected work/i });
+    expect(region.getAttribute("aria-live")).toBe("assertive");
   });
 
   it("suggestion banner renders generic 'Detected' label when suggestion has no project", () => {
