@@ -88,7 +88,6 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         crate::signals::exclusions::ExclusionMatcher::load(&db.pool).await,
     ));
     let stream = Arc::new(crate::signals::stream::spawn(
-        calendar.clone(),
         exclusions.clone(),
         std::time::Duration::from_millis(50),
     ));

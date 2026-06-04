@@ -141,10 +141,13 @@ pub enum SignalEvent {
     /// event reaches the stream, so any value seen here is allowed
     /// to participate in matching.
     Browser(Option<crate::signals::browser::BrowserContext>),
-    /// Calendar tick: re-query `active_events_at(now)`. The event
-    /// carries no payload — the calendar registry is the source of
-    /// truth.
-    CalendarRefresh,
+    /// Active calendar events, pushed by the calendar source on each
+    /// tick. Carries its payload like every other source so the
+    /// driver never reaches back into a `CalendarRegistry` — this is
+    /// the seam a calendar *plugin* plugs into (see `docs/PLUGINS.md`).
+    /// An empty vec means "no events active right now", which still
+    /// arms a publish so a just-ended event clears from the snapshot.
+    Calendar(Vec<CalendarEvent>),
     Idle(IdleState),
 }
 
@@ -235,6 +238,10 @@ struct LiveState {
     /// straight through — the exclusion + privacy filters fire
     /// *before* the event reaches the stream.
     browser: Option<crate::signals::browser::BrowserContext>,
+    /// Latest active calendar events from the calendar source's last
+    /// tick. The driver reads this on publish instead of pulling from
+    /// a `CalendarRegistry` — keeping the driver origin-agnostic.
+    calendar: Vec<CalendarEvent>,
     idle: IdleState,
     /// When the user first crossed the idle threshold. `None` while
     /// active; `Some(ts)` while idle. The transition `Some → None`
@@ -258,13 +265,8 @@ const IDLE_RESUME_CAPACITY: usize = 8;
 /// by `apply_event` on every `Window` (and future browser-domain)
 /// event. Wrapped in `Arc<RwLock<_>>` so the `save_exclusion` /
 /// `delete_exclusion` IPC handlers can invalidate after a write.
-pub fn spawn(
-    calendar: Arc<CalendarRegistry>,
-    exclusions: Arc<RwLock<ExclusionMatcher>>,
-    debounce: Duration,
-) -> SnapshotStream {
+pub fn spawn(exclusions: Arc<RwLock<ExclusionMatcher>>, debounce: Duration) -> SnapshotStream {
     spawn_full(
-        calendar,
         exclusions,
         debounce,
         Duration::from_secs(DEFAULT_IDLE_THRESHOLD_SECS),
@@ -276,12 +278,11 @@ pub fn spawn(
 /// can use short values (e.g. 1s) instead of waiting the production
 /// default of 5 minutes.
 pub fn spawn_with_idle_threshold(
-    calendar: Arc<CalendarRegistry>,
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
     idle_threshold: Duration,
 ) -> SnapshotStream {
-    spawn_full(calendar, exclusions, debounce, idle_threshold, Vec::new())
+    spawn_full(exclusions, debounce, idle_threshold, Vec::new())
 }
 
 /// Full spawn signature accepting the git watcher's discovered
@@ -292,7 +293,6 @@ pub fn spawn_with_idle_threshold(
 /// titles). See PR #59 for the `derive_ide_folder` shape and M1
 /// #4 for the watcher.
 pub fn spawn_full(
-    calendar: Arc<CalendarRegistry>,
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
     idle_threshold: Duration,
@@ -317,7 +317,6 @@ pub fn spawn_full(
         snapshot_tx,
         idle_tx,
         idle_resume_tx.clone(),
-        calendar,
         exclusions,
         debounce,
         idle_threshold,
@@ -354,15 +353,33 @@ async fn supervise<T>(handle: tokio::task::JoinHandle<T>) {
     }
 }
 
-/// Spawn the default cross-platform source tasks: window poller,
-/// calendar tick, idle poller. Each task ends when the stream's
-/// `event_tx` is dropped (i.e. when the stream itself goes away in
-/// test tear-down). In production they run until process exit.
+/// Spawn the core always-on source tasks: window poller and idle
+/// poller. These are the zero-config, fully-local signals that core
+/// owns unconditionally (`docs/PLUGINS.md`). Each task ends when the
+/// stream's `event_tx` is dropped (i.e. when the stream itself goes
+/// away in test tear-down). In production they run until process exit.
+///
+/// Calendar is *not* spawned here — it needs the `CalendarRegistry`
+/// and is the first source slated to move behind the plugin boundary
+/// (#111), so it has its own spawner (`spawn_calendar_source`).
 pub fn spawn_default_sources(stream: &SnapshotStream) {
     let tx = stream.event_sender();
     tokio::spawn(window_source(tx.clone(), WINDOW_POLL_INTERVAL));
-    tokio::spawn(calendar_tick_source(tx.clone(), CALENDAR_TICK_INTERVAL));
     tokio::spawn(idle_source(tx, IDLE_POLL_INTERVAL));
+}
+
+/// Spawn the calendar signal source. Kept separate from
+/// `spawn_default_sources` because, unlike the core sources, it owns a
+/// `CalendarRegistry` and is the first source on track to become a
+/// plugin (#111). It pushes `SignalEvent::Calendar` on each tick —
+/// the driver folds it into the snapshot like any other source,
+/// without knowing calendar exists. See `docs/PLUGINS.md`.
+pub fn spawn_calendar_source(stream: &SnapshotStream, calendar: Arc<CalendarRegistry>) {
+    tokio::spawn(calendar_source(
+        stream.event_sender(),
+        calendar,
+        CALENDAR_TICK_INTERVAL,
+    ));
 }
 
 // -----------------------------------------------------------------
@@ -375,7 +392,6 @@ async fn driver(
     snapshot_tx: watch::Sender<Option<SignalSnapshot>>,
     idle_tx: watch::Sender<IdleState>,
     idle_resume_tx: broadcast::Sender<IdleResume>,
-    calendar: Arc<CalendarRegistry>,
     exclusions: Arc<RwLock<ExclusionMatcher>>,
     debounce: Duration,
     idle_threshold: Duration,
@@ -409,14 +425,7 @@ async fn driver(
                         // one final snapshot if a debounce was
                         // pending, then exit.
                         if next_publish_at.is_some() {
-                            publish(
-                                &state,
-                                &snapshot_tx,
-                                &calendar,
-                                &exclusions,
-                                &repo_paths,
-                            )
-                            .await;
+                            publish(&state, &snapshot_tx, &exclusions, &repo_paths).await;
                         }
                         return;
                     }
@@ -424,14 +433,7 @@ async fn driver(
             }
 
             _ = sleep_until(next_publish_at), if next_publish_at.is_some() => {
-                publish(
-                    &state,
-                    &snapshot_tx,
-                    &calendar,
-                    &exclusions,
-                    &repo_paths,
-                )
-                .await;
+                publish(&state, &snapshot_tx, &exclusions, &repo_paths).await;
                 next_publish_at = None;
             }
         }
@@ -495,9 +497,11 @@ fn apply_event(
             // we see here is allowed to drive the snapshot directly.
             state.browser = browser;
         }
-        SignalEvent::CalendarRefresh => {
-            // No state mutation — the driver re-queries calendar on
-            // publish. The event just arms the debounce.
+        SignalEvent::Calendar(events) => {
+            // The calendar source has already mapped active events to
+            // the snapshot shape; store them straight through. The
+            // driver no longer pulls from a registry on publish.
+            state.calendar = events;
         }
         SignalEvent::Idle(idle) => {
             state.idle = idle;
@@ -555,20 +559,10 @@ fn apply_event(
 async fn publish(
     state: &LiveState,
     snapshot_tx: &watch::Sender<Option<SignalSnapshot>>,
-    calendar: &Arc<CalendarRegistry>,
     exclusions: &Arc<RwLock<ExclusionMatcher>>,
     repo_paths: &[PathBuf],
 ) {
-    let active = calendar.active_events_at(Utc::now()).await;
-    let calendar_events: Vec<CalendarEvent> = active
-        .into_iter()
-        .map(|a| CalendarEvent {
-            title: a.event.summary,
-            source_label: a.source_label,
-            attendees: a.event.attendees,
-            all_day: a.event.all_day,
-        })
-        .collect();
+    let calendar_events = state.calendar.clone();
 
     let (app_name, window_title, ide_folder) = match state.front.as_ref() {
         Some(w) => {
@@ -667,16 +661,31 @@ async fn window_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
     }
 }
 
-async fn calendar_tick_source(tx: mpsc::Sender<SignalEvent>, interval: Duration) {
-    // Start the first tick `interval` from now — the default
-    // `tokio::time::interval` fires immediately, which would arm a
-    // debounce before any window/idle signal had a chance to prime
-    // state. Using `interval_at` makes "skip first tick" explicit.
-    let mut ticker = tokio::time::interval_at(Instant::now() + interval, interval);
+async fn calendar_source(
+    tx: mpsc::Sender<SignalEvent>,
+    calendar: Arc<CalendarRegistry>,
+    interval: Duration,
+) {
+    // Fire the first tick immediately, then every `interval`. Before
+    // the driver-decoupling refactor, `publish` pulled calendar on
+    // every snapshot, so calendar was available from the first
+    // window/idle publish (~1s after launch). Now that the driver
+    // reads cached `state.calendar`, the source must prime it
+    // promptly — otherwise stream snapshots would be calendar-blind
+    // until the first tick. An immediate query+push restores that:
+    // it arms a debounce and publishes a calendar-only snapshot,
+    // which is correct (a meeting in progress IS active state).
+    let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
-        if !push_or_drop(&tx, SignalEvent::CalendarRefresh) {
+        // The source — not the driver — queries the registry and maps
+        // active events into the snapshot shape, then pushes the
+        // payload. This is what keeps the driver origin-agnostic.
+        let events = crate::signals::calendar::to_calendar_events(
+            calendar.active_events_at(Utc::now()).await,
+        );
+        if !push_or_drop(&tx, SignalEvent::Calendar(events)) {
             return;
         }
     }
@@ -749,11 +758,13 @@ mod tests {
         debounce: Duration,
         excl: ExclusionMatcher,
     ) -> (tempfile::TempDir, SnapshotStream) {
-        let (dir, db) = test_db().await;
-        let calendar =
-            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        // The stream no longer touches the DB or a CalendarRegistry —
+        // calendar events arrive as pushed `SignalEvent::Calendar`
+        // payloads. The TempDir is kept only to mirror the other
+        // helpers' return shape.
+        let (dir, _db) = test_db().await;
         let exclusions = Arc::new(RwLock::new(excl));
-        let stream = spawn(calendar, exclusions, debounce);
+        let stream = spawn(exclusions, debounce);
         (dir, stream)
     }
 
@@ -761,11 +772,9 @@ mod tests {
         debounce: Duration,
         idle_threshold: Duration,
     ) -> (tempfile::TempDir, SnapshotStream) {
-        let (dir, db) = test_db().await;
-        let calendar =
-            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let (dir, _db) = test_db().await;
         let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
-        let stream = spawn_with_idle_threshold(calendar, exclusions, debounce, idle_threshold);
+        let stream = spawn_with_idle_threshold(exclusions, debounce, idle_threshold);
         (dir, stream)
     }
 
@@ -773,12 +782,9 @@ mod tests {
         debounce: Duration,
         repo_paths: Vec<PathBuf>,
     ) -> (tempfile::TempDir, SnapshotStream) {
-        let (dir, db) = test_db().await;
-        let calendar =
-            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let (dir, _db) = test_db().await;
         let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
         let stream = spawn_full(
-            calendar,
             exclusions,
             debounce,
             Duration::from_secs(DEFAULT_IDLE_THRESHOLD_SECS),
@@ -948,21 +954,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn calendar_refresh_alone_publishes_snapshot() {
+    async fn empty_calendar_event_alone_publishes_snapshot() {
         let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
         let tx = stream.event_sender();
         let mut rx = stream.subscribe();
         let _ = rx.borrow_and_update();
 
-        tx.send(SignalEvent::CalendarRefresh).await.unwrap();
+        tx.send(SignalEvent::Calendar(vec![])).await.unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(1), rx.changed()).await;
         assert!(
             matches!(result, Ok(Ok(()))),
-            "calendar refresh alone arms the debounce and publishes a snapshot"
+            "a calendar event (even empty) arms the debounce and publishes a snapshot"
         );
         // The published snapshot is a real Some(...) value with an
-        // empty calendar (no sources registered in this test).
+        // empty calendar (we pushed no events).
         let published = rx.borrow().clone();
         let snap = published.expect("publish produced Some(snapshot), not None");
         assert!(snap.calendar.is_empty());
@@ -971,6 +977,80 @@ mod tests {
         // doesn't invent state out of thin air".
         assert!(snap.app_name.is_none());
         assert!(snap.git_branch.is_none());
+    }
+
+    #[tokio::test]
+    async fn pushed_calendar_events_appear_in_published_snapshot() {
+        // The decoupling's core contract (docs/PLUGINS.md): calendar
+        // events now travel as a `SignalEvent::Calendar` payload, not
+        // a driver-side registry pull. Pushing events directly — as a
+        // calendar plugin would — must surface them in the snapshot.
+        let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
+        let tx = stream.event_sender();
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        tx.send(SignalEvent::Calendar(vec![CalendarEvent {
+            title: "Stand-up".into(),
+            source_label: "Work".into(),
+            attendees: vec![],
+            all_day: false,
+        }]))
+        .await
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("calendar event triggers a publish")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert_eq!(snap.calendar.len(), 1);
+        assert_eq!(snap.calendar[0].title, "Stand-up");
+        assert_eq!(snap.calendar[0].source_label, "Work");
+
+        // A subsequent empty push clears the events — a just-ended
+        // event must not linger in the cached LiveState.
+        tx.send(SignalEvent::Calendar(vec![])).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("empty calendar event triggers a publish")
+            .expect("channel still open");
+        let snap = rx.borrow().clone().expect("Some snapshot");
+        assert!(
+            snap.calendar.is_empty(),
+            "ended events must clear from the snapshot, got {:?}",
+            snap.calendar
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_senders_mid_debounce_flushes_a_final_snapshot() {
+        // Driver graceful-shutdown path: when every event sender drops
+        // while a debounce is still pending, the driver must flush one
+        // final snapshot before exiting rather than discard the armed
+        // event. A long debounce guarantees the timer branch can't
+        // fire first, so the `recv() == None` + `next_publish_at.is_some()`
+        // path is the one that publishes.
+        let (_dir, _db) = test_db().await;
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let stream = spawn(exclusions, Duration::from_secs(30));
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        let tx = stream.event_sender();
+        // Arm a debounce, then drop every sender before it elapses.
+        tx.send(SignalEvent::Calendar(vec![])).await.unwrap();
+        drop(tx);
+        drop(stream);
+
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("a final snapshot is flushed on graceful shutdown")
+            .expect("snapshot channel still open");
+        assert!(
+            rx.borrow().is_some(),
+            "graceful shutdown with a pending debounce must publish, not drop"
+        );
     }
 
     #[tokio::test]
@@ -1054,15 +1134,9 @@ mod tests {
         // can't leak through. Defence-in-depth in `publish` is what
         // closes this gap (the `apply_event` filter only sees
         // *incoming* events).
-        let (_dir, db) = test_db().await;
-        let calendar =
-            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let (_dir, _db) = test_db().await;
         let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
-        let stream = spawn(
-            calendar.clone(),
-            exclusions.clone(),
-            Duration::from_millis(50),
-        );
+        let stream = spawn(exclusions.clone(), Duration::from_millis(50));
         let tx = stream.event_sender();
         let mut rx = stream.subscribe();
         let _ = rx.borrow_and_update();
@@ -1084,14 +1158,15 @@ mod tests {
         // The cached LiveState.front is still Chrome+Banking title.
         *exclusions.write().unwrap() = ExclusionMatcher::for_test(&[], &["Banking"], &[]);
 
-        // Step 3: a calendar-refresh-style event (no Window event)
-        // arms the debounce. publish() re-runs the redaction filter
-        // and the now-excluded title must NOT leak.
-        tx.send(SignalEvent::CalendarRefresh).await.unwrap();
+        // Step 3: a non-window event (an empty calendar push) arms
+        // the debounce without touching `front`. publish() re-runs
+        // the redaction filter and the now-excluded title must NOT
+        // leak.
+        tx.send(SignalEvent::Calendar(vec![])).await.unwrap();
         // Wait for the next publish.
         tokio::time::timeout(Duration::from_secs(1), rx.changed())
             .await
-            .expect("publish runs after CalendarRefresh")
+            .expect("publish runs after calendar event")
             .expect("channel still open");
         let snap = rx.borrow().clone().expect("Some snapshot");
         assert!(
@@ -1273,10 +1348,8 @@ mod tests {
             "RwLock should be poisoned for the test to be meaningful"
         );
 
-        let (_dir, db) = test_db().await;
-        let calendar =
-            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
-        let stream = spawn(calendar, exclusions, Duration::from_millis(50));
+        let (_dir, _db) = test_db().await;
+        let stream = spawn(exclusions, Duration::from_millis(50));
         let tx = stream.event_sender();
         let mut rx = stream.subscribe();
         let _ = rx.borrow_and_update();
@@ -1333,7 +1406,7 @@ mod tests {
         let (tx, rx) = mpsc::channel::<SignalEvent>(2);
         drop(rx);
         // Closed channel → caller signals the source to exit.
-        let ok = push_or_drop(&tx, SignalEvent::CalendarRefresh);
+        let ok = push_or_drop(&tx, SignalEvent::Calendar(vec![]));
         assert!(!ok, "push_or_drop returns false when the channel is closed");
     }
 
@@ -1341,11 +1414,55 @@ mod tests {
     async fn push_or_drop_drops_silently_when_full() {
         let (tx, _rx) = mpsc::channel::<SignalEvent>(1);
         // Fill the channel.
-        tx.try_send(SignalEvent::CalendarRefresh).unwrap();
+        tx.try_send(SignalEvent::Calendar(vec![])).unwrap();
         // Second push should drop, NOT block, and still return true
         // (the source keeps polling).
-        let ok = push_or_drop(&tx, SignalEvent::CalendarRefresh);
+        let ok = push_or_drop(&tx, SignalEvent::Calendar(vec![]));
         assert!(ok, "push_or_drop returns true even on Full");
+    }
+
+    #[tokio::test]
+    async fn calendar_source_pushes_active_events_on_tick() {
+        // The source — not the driver — queries the registry and
+        // pushes a `SignalEvent::Calendar`. A fresh registry has no
+        // sources, so the first tick pushes an empty event. Closing
+        // the receiver makes the next push fail, exiting the loop.
+        let (_dir, db) = test_db().await;
+        let calendar =
+            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let (tx, mut rx) = mpsc::channel::<SignalEvent>(4);
+        let handle = tokio::spawn(calendar_source(tx, calendar, Duration::from_millis(20)));
+
+        let ev = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("calendar source pushes within timeout")
+            .expect("channel still open");
+        assert!(
+            matches!(ev, SignalEvent::Calendar(ref events) if events.is_empty()),
+            "expected an empty SignalEvent::Calendar (no sources registered), got {ev:?}"
+        );
+
+        // Drop the receiver; the source must exit on the next push.
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("calendar source exits when the channel closes")
+            .expect("calendar source task joined cleanly");
+    }
+
+    #[tokio::test]
+    async fn spawn_calendar_source_wires_the_source_to_the_stream() {
+        // Cover the public wrapper lib.rs::setup calls. The push path
+        // is covered by `calendar_source_pushes_active_events_on_tick`;
+        // here we only assert the wrapper spawns without panicking and
+        // the source shuts down when the stream (and its `event_tx`)
+        // drops.
+        let (_dir, db) = test_db().await;
+        let calendar =
+            Arc::new(CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds"));
+        let (_dir2, stream) = fresh_stream(Duration::from_millis(50)).await;
+        spawn_calendar_source(&stream, calendar);
+        drop(stream);
     }
 
     #[tokio::test]
