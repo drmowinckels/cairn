@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::plugins::{Capability, PluginManifest, SignalSource};
+use crate::plugins::{spawn_supervised, Capability, PluginManifest, SignalSource, SourceHandle};
 use crate::signals::calendar::CalendarRegistry;
 use crate::signals::stream::{self, SignalEvent, CALENDAR_TICK_INTERVAL};
 
@@ -42,12 +42,27 @@ impl SignalSource for CalendarPlugin {
         &MANIFEST
     }
 
-    fn start(&self, tx: mpsc::Sender<SignalEvent>) {
-        tokio::spawn(stream::calendar_source(
-            tx,
-            self.registry.clone(),
-            CALENDAR_TICK_INTERVAL,
-        ));
+    fn start(&self, tx: mpsc::Sender<SignalEvent>) -> SourceHandle {
+        spawn_supervised(
+            MANIFEST.id,
+            stream::calendar_source(tx, self.registry.clone(), CALENDAR_TICK_INTERVAL),
+        )
+    }
+
+    fn on_disabled(&self, tx: &mpsc::Sender<SignalEvent>) {
+        // The source was just aborted, so its last-pushed events are
+        // frozen in the driver's `LiveState` and there is NO future tick
+        // to clear them. Deliver one empty event reliably so a disabled
+        // calendar clears from every future snapshot instead of leaving
+        // ghost meetings that rules keep matching. `try_send` would drop
+        // the clear under a full channel — and nothing would re-send it
+        // — so spawn a tiny task that `await`s capacity. Ordering holds:
+        // any non-empty event the source already enqueued sits ahead of
+        // this empty one, so the driver still settles on empty.
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(SignalEvent::Calendar(vec![])).await;
+        });
     }
 }
 
@@ -64,11 +79,11 @@ mod tests {
         let m = plugin.manifest();
         assert_eq!(m.id, "calendar");
         assert!(
-            m.has_capability(Capability::Network),
+            m.capabilities.contains(&Capability::Network),
             "calendar fetches ICS"
         );
         assert!(
-            m.has_capability(Capability::Secrets),
+            m.capabilities.contains(&Capability::Secrets),
             "calendar stores feed tokens in the keychain"
         );
         assert_eq!(m.capabilities.len(), 2, "no undeclared capabilities");
@@ -81,7 +96,7 @@ mod tests {
         let plugin = CalendarPlugin::new(registry);
         let (tx, mut rx) = mpsc::channel::<SignalEvent>(4);
 
-        plugin.start(tx);
+        let handle = plugin.start(tx);
 
         // A fresh registry has no sources, so the first tick pushes an
         // empty calendar event through the boundary.
@@ -91,7 +106,26 @@ mod tests {
             .expect("channel open");
         assert!(matches!(ev, SignalEvent::Calendar(ref e) if e.is_empty()));
 
-        // Dropping the receiver closes the channel; the source exits.
-        drop(rx);
+        handle.stop();
+    }
+
+    #[tokio::test]
+    async fn on_disabled_pushes_an_empty_clearing_event() {
+        let (_dir, db) = test_db().await;
+        let registry = Arc::new(CalendarRegistry::new(db.pool.clone()).expect("registry builds"));
+        let plugin = CalendarPlugin::new(registry);
+        let (tx, mut rx) = mpsc::channel::<SignalEvent>(4);
+
+        plugin.on_disabled(&tx);
+
+        // Delivery is via a spawned task that awaits channel capacity.
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("on_disabled pushed a clearing event")
+            .expect("channel open");
+        assert!(
+            matches!(ev, SignalEvent::Calendar(ref e) if e.is_empty()),
+            "disabling calendar must clear it from the snapshot"
+        );
     }
 }

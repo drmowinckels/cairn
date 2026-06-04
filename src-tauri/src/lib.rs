@@ -123,6 +123,12 @@ pub struct AppState {
     pub pinned: AtomicBool,
     pub calendar: Arc<CalendarRegistry>,
     pub stream: Arc<SnapshotStream>,
+    /// Opt-in signal-source plugins (calendar today; #111). Behind a
+    /// `tokio::Mutex` because `set_plugin_enabled` mutates running
+    /// state while `list_plugins` reads it. The host owns each enabled
+    /// source's abort handle so a plugin can be stopped without closing
+    /// the shared signal channel.
+    pub plugin_host: Arc<tokio::sync::Mutex<plugins::SignalSourceHost>>,
     /// Debug "Capture raw signals" handle. Always created off; the
     /// toggle is in-memory only and never persisted across launches.
     /// See `signals::capture` and `docs/PRIVACY.md`.
@@ -328,6 +334,8 @@ pub fn run() {
             ipc::get_onboarding_state,
             ipc::complete_onboarding,
             ipc::reset_onboarding,
+            ipc::list_plugins,
+            ipc::set_plugin_enabled,
             ipc::dry_run_rules,
             ipc::snooze_rule,
             ipc::snooze_all,
@@ -418,7 +426,7 @@ pub fn run() {
             // the spawned driver/collector tasks live on Tauri's
             // runtime for the app's lifetime, and `block_on` returns as
             // soon as they're spawned.
-            let stream = Arc::new(tauri::async_runtime::block_on(async {
+            let (stream, plugin_host) = tauri::async_runtime::block_on(async {
                 let stream = signals::stream::spawn_full(
                     exclusions.clone(),
                     signals::stream::DEFAULT_DEBOUNCE,
@@ -427,31 +435,33 @@ pub fn run() {
                 );
                 signals::stream::spawn_default_sources(&stream);
                 // Calendar is a signal-source plugin (#111): start it
-                // through the plugin host rather than a bespoke spawn,
-                // so it goes through the same boundary PM/billing
-                // plugins will. The host is local to setup for now — a
-                // later PR promotes it to `AppState` once the settings
-                // UI lists/toggles plugins.
+                // through the plugin host, applying any persisted
+                // enable/disable choice, so it goes through the same
+                // boundary PM/billing plugins will.
                 let mut plugin_host = plugins::SignalSourceHost::new();
                 plugin_host.register(Box::new(plugins::calendar::CalendarPlugin::new(
                     calendar.clone(),
                 )));
-                // Transparency: log every opt-in plugin we started and
-                // the capabilities it declared, so a networked /
+                let enabled_flags = plugins::store::load_enabled(&db.pool).await;
+                plugin_host.start_with(&enabled_flags, stream.event_sender());
+                // Transparency: log every opt-in plugin and the
+                // capabilities it declared, so a networked /
                 // secrets-bearing plugin is never active silently
                 // (docs/PRIVACY.md).
-                for manifest in plugin_host.manifests() {
+                for plugin in plugin_host.statuses() {
                     log::info!(
-                        "plugin '{}' ({}) started — network={} secrets={}",
-                        manifest.name,
-                        manifest.id,
-                        manifest.has_capability(plugins::Capability::Network),
-                        manifest.has_capability(plugins::Capability::Secrets),
+                        "plugin '{}' ({}) enabled={} — network={} secrets={}",
+                        plugin.name,
+                        plugin.id,
+                        plugin.enabled,
+                        plugin.capabilities.contains(&plugins::Capability::Network),
+                        plugin.capabilities.contains(&plugins::Capability::Secrets),
                     );
                 }
-                plugin_host.start_all(stream.event_sender());
-                stream
-            }));
+                (stream, plugin_host)
+            });
+            let stream = Arc::new(stream);
+            let plugin_host = Arc::new(tokio::sync::Mutex::new(plugin_host));
 
             // Spawn the git watcher *after* the stream so the
             // initial Git events flow into the stream's sender. Same
@@ -574,6 +584,7 @@ pub fn run() {
                 pinned: AtomicBool::new(false),
                 calendar,
                 stream,
+                plugin_host,
                 capture: SignalCapture::new(),
                 data_dir: data_dir.clone(),
                 exclusions,

@@ -223,10 +223,15 @@ manages only the opt-in set.
    as `CalendarPlugin: SignalSource` started through the host. Calendar
    code is still compiled into core here — this slice validates the
    boundary without moving files.
-3. Add per-source enable/disable: an abort-handle on `start`, a
-   persisted enabled set, a `list_plugins` IPC, and the settings UI that
-   lists plugins (with their declared capabilities) and toggles them.
-   Rules referencing a disabled plugin's signal degrade per above.
+3. **Backend done:** per-source enable/disable — an abort-handle on
+   `start` (run under a panic-logging supervisor), an `on_disabled` hook
+   so a stopped source clears its contribution from the snapshot, a
+   persisted enabled set (`plugin_state` table), the host moved into
+   `AppState` behind a `Mutex`, and the `list_plugins` / `set_plugin_enabled`
+   IPC commands. **Still pending:** the settings UI that lists plugins
+   (with their declared capabilities) and toggles them. Rules referencing
+   a disabled plugin's signal degrade per above (the source goes quiet
+   and its events clear).
 4. Move `signals/calendar/*` + `calendar_autostop` + keychain ownership
    physically behind the plugin; core stops linking the ICS fetcher and
    secrets code on the always-on path (#111).

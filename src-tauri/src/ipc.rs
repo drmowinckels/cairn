@@ -5985,6 +5985,34 @@ pub async fn reset_onboarding(state: State<'_, AppState>) -> Result<OnboardingSt
     read_onboarding_state(&state).await
 }
 
+/// List every registered signal-source plugin with its declared
+/// capabilities and current enabled state, for Settings → Plugins (#111).
+#[tauri::command]
+pub async fn list_plugins(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::plugins::PluginStatus>, String> {
+    Ok(state.plugin_host.lock().await.statuses())
+}
+
+/// Enable or disable a signal-source plugin at runtime. Starts or stops
+/// the source immediately (a disabled source clears its contribution
+/// from the snapshot) and persists the flag so the choice survives a
+/// relaunch. Returns the updated plugin list. The host lock is held
+/// across the persist so `list_plugins` never observes the live state
+/// and the DB out of step.
+#[tauri::command]
+pub async fn set_plugin_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<Vec<crate::plugins::PluginStatus>, String> {
+    let tx = state.stream.event_sender();
+    let mut host = state.plugin_host.lock().await;
+    host.set_enabled(&id, enabled, &tx)?;
+    crate::plugins::store::set_enabled(&state.db.pool, &id, enabled).await?;
+    Ok(host.statuses())
+}
+
 #[cfg(test)]
 #[cfg(not(target_os = "windows"))]
 mod onboarding_tests {
@@ -6057,6 +6085,76 @@ mod onboarding_tests {
             .unwrap()
             .get("n");
         assert_eq!(count, 1, "app_state must remain a single-row table");
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(target_os = "windows"))]
+mod plugin_tests {
+    use super::*;
+    use crate::plugins::Capability;
+    use crate::test_support::mock_app_with_db;
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn list_plugins_reports_calendar_with_capabilities() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let plugins = list_plugins(state).await.unwrap();
+        let cal = plugins
+            .iter()
+            .find(|p| p.id == "calendar")
+            .expect("calendar plugin is registered");
+        assert_eq!(cal.name, "Calendar");
+        assert!(cal.enabled, "calendar defaults to enabled on a fresh db");
+        assert!(cal.capabilities.contains(&Capability::Network));
+        assert!(cal.capabilities.contains(&Capability::Secrets));
+    }
+
+    #[tokio::test]
+    async fn set_plugin_enabled_toggles_persists_and_reflects() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        // Disable → returned list reflects it, the DB is written, and a
+        // fresh list_plugins agrees.
+        let after = set_plugin_enabled(state.clone(), "calendar".into(), false)
+            .await
+            .unwrap();
+        assert!(!after.iter().find(|p| p.id == "calendar").unwrap().enabled);
+
+        let persisted = crate::plugins::store::load_enabled(&db.pool).await;
+        assert_eq!(persisted.get("calendar"), Some(&false), "flag persisted");
+
+        let relisted = list_plugins(state.clone()).await.unwrap();
+        assert!(
+            !relisted
+                .iter()
+                .find(|p| p.id == "calendar")
+                .unwrap()
+                .enabled
+        );
+
+        // Re-enable round-trips back.
+        let after = set_plugin_enabled(state.clone(), "calendar".into(), true)
+            .await
+            .unwrap();
+        assert!(after.iter().find(|p| p.id == "calendar").unwrap().enabled);
+        let persisted = crate::plugins::store::load_enabled(&db.pool).await;
+        assert_eq!(persisted.get("calendar"), Some(&true));
+    }
+
+    #[tokio::test]
+    async fn set_plugin_enabled_unknown_id_errors_without_persisting() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = set_plugin_enabled(state, "nonesuch".into(), false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("nonesuch"));
+        // No row was written for the unknown id.
+        let persisted = crate::plugins::store::load_enabled(&db.pool).await;
+        assert!(!persisted.contains_key("nonesuch"));
     }
 }
 

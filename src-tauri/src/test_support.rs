@@ -91,6 +91,13 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         exclusions.clone(),
         std::time::Duration::from_millis(50),
     ));
+    let mut host = crate::plugins::SignalSourceHost::new();
+    host.register(Box::new(crate::plugins::calendar::CalendarPlugin::new(
+        calendar.clone(),
+    )));
+    let plugin_flags = crate::plugins::store::load_enabled(&db.pool).await;
+    host.start_with(&plugin_flags, stream.event_sender());
+    let plugin_host = Arc::new(tokio::sync::Mutex::new(host));
     let app = mock_builder()
         .build(mock_context(noop_assets()))
         .expect("mock_app builds");
@@ -105,6 +112,7 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         pinned: AtomicBool::new(false),
         calendar,
         stream,
+        plugin_host,
         capture: crate::signals::capture::SignalCapture::new(),
         data_dir,
         exclusions,
