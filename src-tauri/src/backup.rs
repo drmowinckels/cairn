@@ -47,6 +47,12 @@ pub const PENDING_SUFFIX: &str = ".pending";
 pub const BACKUP_SUFFIX: &str = ".bak";
 pub const DEBUG_SIGNALS_FILE: &str = "debug-signals.ndjson";
 
+/// Single source of truth for the CSV export header. Documented in
+/// `docs/PRIVACY.md`; the `csv_header_matches_const_and_documented_columns`
+/// test guards against silent drift between the two.
+pub const CSV_HEADER: &str =
+    "entry_id,started_at,ended_at,duration_minutes,client,project,task,description,source";
+
 /// Names the user is allowed to see under `data_dir` when they click
 /// "View what's stored". Issue #24 fixes this set: the live DB and its
 /// SQLite sidecars, the staged restore, the rotation backup, and the
@@ -181,11 +187,9 @@ pub async fn export_csv_to(
     .map_err(err)?;
 
     let mut file = tokio::fs::File::create(dest).await.map_err(err)?;
-    file.write_all(
-        b"entry_id,started_at,ended_at,duration_minutes,client,project,task,description,source\n",
-    )
-    .await
-    .map_err(err)?;
+    file.write_all(format!("{CSV_HEADER}\n").as_bytes())
+        .await
+        .map_err(err)?;
 
     for row in rows {
         let id: String = row.get("id");
@@ -744,10 +748,7 @@ mod tests {
 
         let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
         let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(
-            lines[0],
-            "entry_id,started_at,ended_at,duration_minutes,client,project,task,description,source"
-        );
+        assert_eq!(lines[0], CSV_HEADER);
         // Header + one row per entry. No tag fan-out anymore.
         assert_eq!(lines.len(), 3);
 
@@ -763,6 +764,37 @@ mod tests {
             .unwrap();
         // Task field is empty when entry has no task_id.
         assert!(lone.contains(",,lone description,"), "{lone}");
+    }
+
+    #[tokio::test]
+    async fn csv_header_matches_const_and_documented_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&db_path(dir.path())).await.unwrap();
+        let csv_path = dir.path().join("header.csv");
+        export_csv_to(&db.pool, &csv_path, Rounding::off())
+            .await
+            .unwrap();
+
+        let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
+        // The produced first line is exactly the source-of-truth const,
+        // which docs/PRIVACY.md documents verbatim.
+        assert_eq!(csv.lines().next().unwrap(), CSV_HEADER);
+        for column in [
+            "entry_id",
+            "started_at",
+            "ended_at",
+            "duration_minutes",
+            "client",
+            "project",
+            "task",
+            "description",
+            "source",
+        ] {
+            assert!(
+                CSV_HEADER.split(',').any(|c| c == column),
+                "documented column {column} missing from CSV_HEADER"
+            );
+        }
     }
 
     #[tokio::test]
