@@ -63,6 +63,7 @@ appleid
 apricot
 autonumber
 autostart
+autostop
 axe-core
 backfill
 backfilled
@@ -110,6 +111,7 @@ lychee
 mermaid
 millis
 minisign
+mpsc
 ndjson
 negotiables
 neuroimaging

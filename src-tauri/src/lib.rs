@@ -419,13 +419,13 @@ pub fn run() {
             // soon as they're spawned.
             let stream = Arc::new(tauri::async_runtime::block_on(async {
                 let stream = signals::stream::spawn_full(
-                    calendar.clone(),
                     exclusions.clone(),
                     signals::stream::DEFAULT_DEBOUNCE,
                     std::time::Duration::from_secs(signals::stream::DEFAULT_IDLE_THRESHOLD_SECS),
                     discovered_repos.clone(),
                 );
                 signals::stream::spawn_default_sources(&stream);
+                signals::stream::spawn_calendar_source(&stream, calendar.clone());
                 stream
             }));
 
