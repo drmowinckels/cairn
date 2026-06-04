@@ -1024,6 +1024,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_senders_mid_debounce_flushes_a_final_snapshot() {
+        // Driver graceful-shutdown path: when every event sender drops
+        // while a debounce is still pending, the driver must flush one
+        // final snapshot before exiting rather than discard the armed
+        // event. A long debounce guarantees the timer branch can't
+        // fire first, so the `recv() == None` + `next_publish_at.is_some()`
+        // path is the one that publishes.
+        let (_dir, _db) = test_db().await;
+        let exclusions = Arc::new(RwLock::new(ExclusionMatcher::default()));
+        let stream = spawn(exclusions, Duration::from_secs(30));
+        let mut rx = stream.subscribe();
+        let _ = rx.borrow_and_update();
+
+        let tx = stream.event_sender();
+        // Arm a debounce, then drop every sender before it elapses.
+        tx.send(SignalEvent::Calendar(vec![])).await.unwrap();
+        drop(tx);
+        drop(stream);
+
+        tokio::time::timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("a final snapshot is flushed on graceful shutdown")
+            .expect("snapshot channel still open");
+        assert!(
+            rx.borrow().is_some(),
+            "graceful shutdown with a pending debounce must publish, not drop"
+        );
+    }
+
+    #[tokio::test]
     async fn excluded_window_signal_is_dropped_at_the_collector() {
         // Privacy contract: an excluded app must never appear in
         // any published snapshot. Set up the exclusion BEFORE the
