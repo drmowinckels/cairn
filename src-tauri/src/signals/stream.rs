@@ -1407,15 +1407,10 @@ mod tests {
             .await
             .expect("calendar source pushes within timeout")
             .expect("channel still open");
-        match ev {
-            SignalEvent::Calendar(events) => {
-                assert!(
-                    events.is_empty(),
-                    "no sources registered → no active events"
-                );
-            }
-            other => panic!("expected SignalEvent::Calendar, got {other:?}"),
-        }
+        assert!(
+            matches!(ev, SignalEvent::Calendar(ref events) if events.is_empty()),
+            "expected an empty SignalEvent::Calendar (no sources registered), got {ev:?}"
+        );
 
         // Drop the receiver; the source must exit on the next push.
         drop(rx);
