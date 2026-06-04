@@ -57,6 +57,14 @@ describe("AboutCard", () => {
     expect(screen.getByRole("link", { name: /^github$/i })).toBeTruthy();
   });
 
+  it("links to Entracte as the companion break-reminder app", async () => {
+    diagnostics.mockResolvedValue(DIAG);
+    render(<AboutCard />);
+    await waitFor(() => expect(screen.getByText(/v0\.0\.1/)).toBeTruthy());
+    const link = screen.getByRole("link", { name: /try entracte/i });
+    expect(link.getAttribute("href")).toBe("https://entracte.drmowinckels.io/");
+  });
+
   it("copies the diagnostics bundle to the clipboard with feedback", async () => {
     diagnostics.mockResolvedValue(DIAG);
     render(<AboutCard />);
