@@ -23,6 +23,12 @@ pub const SUPPORTED_VERSION: u32 = 1;
 
 /// A validated connector manifest. Construct via [`ConnectorManifest::from_json`];
 /// the fields are guaranteed to satisfy the invariants documented there.
+///
+/// `Serialize` is for handing the manifest to the UI over IPC, not for
+/// re-import — the serialized shape (camelCase-tagged kind) is not what
+/// [`ConnectorManifest::from_json`] reads back, which parses the flat
+/// wire shape via [`RawManifest`]. Round-tripping through `from_json` is
+/// deliberately not supported.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConnectorManifest {
     /// Stable machine id, kebab-case (`^[a-z0-9-]+$`).
@@ -211,16 +217,18 @@ pub enum ManifestError {
     MissingSection { section: &'static str },
     #[error("file connectors are fully local and must declare no capabilities (got {0:?})")]
     FileCapabilities(Vec<Capability>),
-    #[error("http connector baseUrl must be https:// (got {0:?})")]
+    #[error("http connector baseUrl must be an absolute https:// URL with a host (got {0:?})")]
     InsecureBaseUrl(String),
     #[error("http connector is missing the {0:?} operation")]
     MissingOperation(&'static str),
-    #[error("http operation {op:?} path must start with '/' (got {path:?})")]
+    #[error("http operation {op:?} path must stay on baseUrl's host (got {path:?})")]
     OperationPath { op: String, path: String },
     #[error("http connector must declare the \"network\" capability")]
     MissingNetworkCapability,
     #[error("http connector with authentication must declare the \"secrets\" capability")]
     MissingSecretsCapability,
+    #[error("http connector declares the \"secrets\" capability but its auth uses no token")]
+    UnusedSecretsCapability,
     #[error("connector kind {0:?} is not supported in this version yet")]
     UnsupportedKind(String),
 }
@@ -310,36 +318,56 @@ impl ConnectorManifest {
 
 /// Validate a `kind: "http"` connector's parts. Enforces the egress and
 /// honesty guarantees from `docs/PM_CONNECTORS.md` at the manifest
-/// boundary: https-only base, both required operations present, every
-/// request path relative (so it can't escape `baseUrl`'s host), and that
-/// the connector declares the capabilities it actually uses.
+/// boundary: an https base with a real host, both required operations
+/// present, every request path resolving back to that **same host** (so a
+/// manifest can never reach another host), and that the connector declares
+/// exactly the capabilities it uses.
+///
+/// The host check resolves each path against the base the same way the
+/// interpreter will (`Url::join`) and compares hosts, rather than a
+/// `starts_with('/')` prefix — a prefix check is fooled by
+/// protocol-relative (`//other`) and backslash (`/\other`) paths, which
+/// `join` sends to a different host.
 fn validate_http(
     base_url: &str,
     auth: &Auth,
     operations: &BTreeMap<String, Operation>,
     capabilities: &[Capability],
 ) -> Result<(), ManifestError> {
-    if !base_url.starts_with("https://") {
+    let base = url::Url::parse(base_url)
+        .map_err(|_| ManifestError::InsecureBaseUrl(base_url.to_string()))?;
+    if base.scheme() != "https" || base.host_str().is_none() {
         return Err(ManifestError::InsecureBaseUrl(base_url.to_string()));
     }
+
     for required in [OP_LIST_PROJECTS, OP_LIST_TASKS] {
         if !operations.contains_key(required) {
             return Err(ManifestError::MissingOperation(required));
         }
     }
     for (op, operation) in operations {
-        if !operation.request.path.starts_with('/') {
+        let path = &operation.request.path;
+        let on_host = base
+            .join(path)
+            .is_ok_and(|u| u.scheme() == "https" && u.host_str() == base.host_str());
+        if !on_host {
             return Err(ManifestError::OperationPath {
                 op: op.clone(),
-                path: operation.request.path.clone(),
+                path: path.clone(),
             });
         }
     }
+
     if !capabilities.contains(&Capability::Network) {
         return Err(ManifestError::MissingNetworkCapability);
     }
-    if auth.secret_key().is_some() && !capabilities.contains(&Capability::Secrets) {
-        return Err(ManifestError::MissingSecretsCapability);
+    match (
+        auth.secret_key().is_some(),
+        capabilities.contains(&Capability::Secrets),
+    ) {
+        (true, false) => return Err(ManifestError::MissingSecretsCapability),
+        (false, true) => return Err(ManifestError::UnusedSecretsCapability),
+        _ => {}
     }
     Ok(())
 }
@@ -560,10 +588,20 @@ mod tests {
     }
 
     #[test]
-    fn http_baseurl_must_be_https() {
-        let json = HTTP_JSON.replace("https://api.todoist.com", "http://api.todoist.com");
-        let err = ConnectorManifest::from_json(&json).unwrap_err();
-        assert!(matches!(err, ManifestError::InsecureBaseUrl(_)));
+    fn http_baseurl_must_be_https_with_a_host() {
+        for bad in [
+            "http://api.todoist.com/rest/v2", // wrong scheme
+            "ftp://api.todoist.com",          // wrong scheme
+            "https://",                       // no host
+            "not a url",                      // unparseable
+        ] {
+            let json = HTTP_JSON.replace("https://api.todoist.com/rest/v2", bad);
+            let err = ConnectorManifest::from_json(&json).unwrap_err();
+            assert!(
+                matches!(err, ManifestError::InsecureBaseUrl(_)),
+                "{bad:?} should be rejected, got {err:?}"
+            );
+        }
     }
 
     #[test]
@@ -577,11 +615,38 @@ mod tests {
     }
 
     #[test]
-    fn http_operation_paths_must_be_relative() {
-        // A full URL as a path would let a manifest reach another host.
-        let json = HTTP_JSON.replace("\"/tasks\"", "\"https://evil.example/tasks\"");
+    fn http_operation_paths_must_stay_on_host() {
+        // A path that resolves to a different host — whether a full URL or
+        // the sneakier protocol-relative form — is rejected. A bare
+        // `starts_with('/')` check would let `//evil...` through.
+        for bad in ["https://evil.example/tasks", "//evil.example/tasks"] {
+            let json = HTTP_JSON.replace("\"/tasks\"", &format!("\"{bad}\""));
+            let err = ConnectorManifest::from_json(&json).unwrap_err();
+            assert!(
+                matches!(err, ManifestError::OperationPath { .. }),
+                "{bad:?} should be rejected, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn http_templated_path_is_accepted() {
+        // A `{{template}}` placeholder in the path resolves on-host (the
+        // value is substituted + encoded at request time, not now).
+        let json = HTTP_JSON.replace("\"/tasks\"", "\"/boards/{{project.id}}/cards\"");
+        let m = ConnectorManifest::from_json(&json).unwrap();
+        assert!(m.kind.as_http().is_some());
+    }
+
+    #[test]
+    fn http_secrets_capability_requires_a_token() {
+        // Declaring "secrets" while using no auth token is dishonest.
+        let json = HTTP_JSON.replace(
+            "{ \"type\": \"bearer\", \"secret\": \"todoist_token\" }",
+            "{ \"type\": \"none\" }",
+        );
         let err = ConnectorManifest::from_json(&json).unwrap_err();
-        assert!(matches!(err, ManifestError::OperationPath { .. }));
+        assert!(matches!(err, ManifestError::UnusedSecretsCapability));
     }
 
     #[test]
