@@ -137,6 +137,7 @@ protonmail
 puppeteer
 refetches
 reqwest
+respawns
 rgba
 roadmap
 roxygen2
@@ -172,6 +173,7 @@ unparseable
 unsnooze
 unstaged
 unstub
+upserts
 walthrough
 webcal
 webcals
