@@ -73,8 +73,8 @@ pub enum ManifestError {
     Id(String),
     #[error("connector name must not be empty")]
     Name,
-    #[error("{kind} connector is missing its {section:?} section")]
-    MissingSection { kind: String, section: &'static str },
+    #[error("file connector is missing its {section:?} section")]
+    MissingSection { section: &'static str },
     #[error("file connectors are fully local and must declare no capabilities (got {0:?})")]
     FileCapabilities(Vec<Capability>),
     #[error("connector kind {0:?} is not supported in this version yet")]
@@ -123,10 +123,9 @@ impl ConnectorManifest {
                 if !raw.capabilities.is_empty() {
                     return Err(ManifestError::FileCapabilities(raw.capabilities));
                 }
-                let spec = raw.file.ok_or(ManifestError::MissingSection {
-                    kind: "file".to_string(),
-                    section: "file",
-                })?;
+                let spec = raw
+                    .file
+                    .ok_or(ManifestError::MissingSection { section: "file" })?;
                 ConnectorKind::File(spec)
             }
             other => return Err(ManifestError::UnsupportedKind(other.to_string())),
@@ -243,10 +242,7 @@ mod tests {
         let err = ConnectorManifest::from_json(json).unwrap_err();
         assert!(matches!(
             err,
-            ManifestError::MissingSection {
-                section: "file",
-                ..
-            }
+            ManifestError::MissingSection { section: "file" }
         ));
     }
 

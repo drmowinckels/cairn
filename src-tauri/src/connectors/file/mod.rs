@@ -110,7 +110,13 @@ impl Builder {
     }
 
     /// Add a task to a project, assigning a stable, project-unique id.
+    /// The project must already have been registered via [`Self::project`]
+    /// (every parser does so before adding its tasks).
     pub(super) fn task(&mut self, project_id: &str, label: &str, url: Option<String>, done: bool) {
+        debug_assert!(
+            self.tasks.contains_key(project_id),
+            "task() called for an unregistered project id"
+        );
         let bucket = self.tasks.entry(project_id.to_string()).or_default();
         let mut id = task_id(project_id, label);
         let base = id.clone();
@@ -161,7 +167,10 @@ fn expand_path_with(path: &str, home: Option<PathBuf>) -> PathBuf {
 
 /// A stable id for a task: FNV-1a over `project_id\0label`, hex. Stable
 /// across runs and platforms (unlike `DefaultHasher`), so attribution
-/// survives a restart as long as the label is unchanged.
+/// survives a restart as long as the label is unchanged and unique within
+/// its project. Two tasks with the same label get order-dependent ids
+/// (the second is suffixed in [`Builder::task`]), so reordering duplicate
+/// labels can reassign them — acceptable for v1's file connectors.
 pub(super) fn task_id(project_id: &str, label: &str) -> String {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;

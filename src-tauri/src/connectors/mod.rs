@@ -108,7 +108,15 @@ impl ConnectorHost {
         let mut host = Self::new();
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
-            Err(_) => return host,
+            Err(e) => {
+                // An absent dir is the normal "no connectors configured"
+                // state; anything else (not a dir, permission denied) is a
+                // misconfiguration worth surfacing rather than hiding.
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("connector dir {dir:?} unreadable: {e}");
+                }
+                return host;
+            }
         };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -190,6 +198,17 @@ mod tests {
     fn load_missing_dir_is_empty() {
         let host = ConnectorHost::load(Path::new("/no/such/connectors/dir"));
         assert!(host.is_empty());
+    }
+
+    #[test]
+    fn load_path_that_is_a_file_is_empty() {
+        // A non-directory (here: a regular file) is a misconfiguration,
+        // not the expected "absent dir" — it logs and yields an empty host
+        // rather than erroring out.
+        let dir = temp_dir();
+        let not_a_dir = dir.path().join("connectors");
+        write_file(dir.path(), "connectors", "i am a file, not a dir");
+        assert!(ConnectorHost::load(&not_a_dir).is_empty());
     }
 
     #[tokio::test]
