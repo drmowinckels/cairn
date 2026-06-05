@@ -3106,6 +3106,93 @@ select.rule-conf {
   color: var(--ink-mute);
 }
 
+/* Settings → Connectors (#110). A disclosure list: connector → its
+   projects → their tasks, each row expandable to lazily reveal the next
+   level. Read-only browse of what a PM connector sees. */
+.connector-row {
+  display: block;
+  padding: 10px 0;
+  border-top: 0.5px solid var(--hairline);
+  font-size: var(--font-small);
+}
+
+.connector-row:first-child {
+  border-top: 0;
+}
+
+.connector-head {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.connector-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  font: inherit;
+}
+
+.connector-toggle:hover {
+  color: var(--accent-ink);
+}
+
+.connector-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.connector-kind {
+  font-family: var(--mono);
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+}
+
+.connector-panel {
+  padding: 6px 0 2px 22px;
+}
+
+.connector-projects,
+.connector-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.connector-project {
+  padding: 4px 0;
+}
+
+.connector-task {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0 3px 22px;
+  color: var(--ink-soft);
+}
+
+.connector-task--done {
+  color: var(--ink-mute);
+  text-decoration: line-through;
+}
+
+.connector-muted {
+  color: var(--ink-mute);
+  font-size: var(--font-tiny);
+  margin: 2px 0;
+  padding-left: 22px;
+}
+
 .modal-scrim {
   position: fixed;
   inset: 0;

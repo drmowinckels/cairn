@@ -194,6 +194,44 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(await listPlugins()).toEqual([]);
     expect(await setPluginEnabled("calendar", true)).toEqual([]);
   });
+
+  it("listConnectors invokes the command and returns the list", async () => {
+    const list = [
+      {
+        id: "sample-tasks",
+        name: "Sample tasks",
+        capabilities: [],
+        kind: { file: { format: "todotxt", path: "~/TODO.txt" } },
+      },
+    ];
+    invokeMock.mockResolvedValue(list);
+    const { listConnectors } = await import("./ipc");
+    expect(await listConnectors()).toEqual(list);
+    expect(invokeMock).toHaveBeenCalledWith("list_connectors");
+  });
+
+  it("listConnectorProjects / listConnectorTasks forward their ids", async () => {
+    invokeMock.mockResolvedValue([]);
+    const { listConnectorProjects, listConnectorTasks } = await import("./ipc");
+    await listConnectorProjects("sample-tasks");
+    expect(invokeMock).toHaveBeenCalledWith("list_connector_projects", {
+      connectorId: "sample-tasks",
+    });
+    await listConnectorTasks("sample-tasks", "cairn");
+    expect(invokeMock).toHaveBeenCalledWith("list_connector_tasks", {
+      connectorId: "sample-tasks",
+      projectId: "cairn",
+    });
+  });
+
+  it("connector commands coerce an undefined backend response to []", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { listConnectors, listConnectorProjects, listConnectorTasks } =
+      await import("./ipc");
+    expect(await listConnectors()).toEqual([]);
+    expect(await listConnectorProjects("x")).toEqual([]);
+    expect(await listConnectorTasks("x", "y")).toEqual([]);
+  });
 });
 
 describe("ipc helpers (outside Tauri)", () => {
@@ -281,6 +319,15 @@ describe("ipc helpers (outside Tauri)", () => {
   it("setPluginEnabled resolves to [] without the backend", async () => {
     const { setPluginEnabled } = await import("./ipc");
     expect(await setPluginEnabled("calendar", false)).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("connector commands resolve to [] without the backend", async () => {
+    const { listConnectors, listConnectorProjects, listConnectorTasks } =
+      await import("./ipc");
+    expect(await listConnectors()).toEqual([]);
+    expect(await listConnectorProjects("x")).toEqual([]);
+    expect(await listConnectorTasks("x", "y")).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

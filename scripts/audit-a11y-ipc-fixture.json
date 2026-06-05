@@ -7,6 +7,14 @@
       "enabled": true
     }
   ],
+  "list_connectors": [
+    {
+      "id": "sample-tasks",
+      "name": "Sample tasks",
+      "capabilities": [],
+      "kind": { "file": { "format": "todotxt", "path": "~/TODO.txt" } }
+    }
+  ],
   "list_projects": [
     {
       "id": "acme",
