@@ -55,6 +55,7 @@ export default withMermaid({
             { text: "Overview", link: "/architecture/" },
             { text: "Rules engine", link: "/RULES_ENGINE" },
             { text: "Plugin architecture", link: "/PLUGINS" },
+            { text: "PM connectors", link: "/PM_CONNECTORS" },
             { text: "Design spec", link: "/DESIGN_SPEC" },
             { text: "Release & signing", link: "/architecture/release" },
           ],
