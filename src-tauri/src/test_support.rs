@@ -92,11 +92,11 @@ fn seed_connector_fixture(data_dir: &std::path::Path) -> crate::connectors::Conn
         "Write spec +cairn\nx Ship it +cairn\nBuy milk +groceries\n",
     )
     .expect("write fixture todo");
+    let path_json = serde_json::to_string(&todo.to_string_lossy()).unwrap();
     let manifest = format!(
         r#"{{ "manifest": 1, "id": "{FIXTURE_CONNECTOR_ID}", "name": "Sample tasks",
               "kind": "file", "capabilities": [],
-              "file": {{ "format": "todotxt", "path": "{}" }} }}"#,
-        todo.display()
+              "file": {{ "format": "todotxt", "path": {path_json} }} }}"#,
     );
     std::fs::write(dir.join("sample.json"), manifest).expect("write fixture manifest");
     crate::connectors::ConnectorHost::load(&dir)

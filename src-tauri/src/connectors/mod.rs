@@ -186,11 +186,11 @@ mod tests {
     }
 
     fn manifest_for(id: &str, todo_path: &Path) -> String {
+        let path_json = serde_json::to_string(&todo_path.to_string_lossy()).unwrap();
         format!(
             r#"{{ "manifest": 1, "id": "{id}", "name": "{id}", "kind": "file",
                   "capabilities": [],
-                  "file": {{ "format": "todotxt", "path": "{}" }} }}"#,
-            todo_path.display()
+                  "file": {{ "format": "todotxt", "path": {path_json} }} }}"#,
         )
     }
 

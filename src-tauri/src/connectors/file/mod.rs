@@ -219,11 +219,13 @@ mod tests {
         let dir = temp_dir();
         let path = dir.path().join("tasks");
         std::fs::write(&path, body).unwrap();
+        // serde_json-escape the path: a Windows path's backslashes would
+        // otherwise be invalid JSON string escapes.
+        let path_json = serde_json::to_string(&path.to_string_lossy()).unwrap();
         let json = format!(
             r#"{{ "manifest": 1, "id": "c", "name": "C", "kind": "file",
                   "capabilities": [],
-                  "file": {{ "format": "{format}", "path": "{}" }} }}"#,
-            path.display()
+                  "file": {{ "format": "{format}", "path": {path_json} }} }}"#,
         );
         let manifest = ConnectorManifest::from_json(&json).unwrap();
         (dir, FileConnector::new(manifest))
