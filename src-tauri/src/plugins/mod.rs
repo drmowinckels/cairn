@@ -19,7 +19,7 @@ pub mod store;
 use std::collections::HashMap;
 use std::future::Future;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
@@ -28,7 +28,7 @@ use crate::signals::stream::SignalEvent;
 /// A capability a plugin declares in its manifest. The host and the
 /// settings UI read these to keep the privacy contract enforceable — a
 /// plugin may only use a capability it names. See `docs/PRIVACY.md`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
     /// Makes network requests. Destinations may be user-configured

@@ -82,6 +82,7 @@ cspell
 dplyr
 drmowinckels
 eggshell
+fnv
 focusables
 footgun
 fuzzysort

@@ -6017,6 +6017,122 @@ pub async fn set_plugin_enabled_impl(
     Ok(host.statuses())
 }
 
+/// List every loaded PM connector's manifest, for Settings → Connectors
+/// (#110). Read-only this session; the host is built once at startup from
+/// `<data_dir>/connectors/*.json`. Invoke shim in `lib.rs` — see
+/// `list_plugins_impl`.
+pub async fn list_connectors_impl(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::connectors::ConnectorManifest>, String> {
+    Ok(state.connector_host.manifests())
+}
+
+/// List one connector's projects. Errors if the id is unknown (the UI
+/// only ever passes ids from `list_connectors`, so an unknown id is a
+/// bug, not user input).
+pub async fn list_connector_projects_impl(
+    state: State<'_, AppState>,
+    connector_id: String,
+) -> Result<Vec<crate::connectors::RemoteProject>, String> {
+    let connector = state
+        .connector_host
+        .get(&connector_id)
+        .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+    connector.list_projects().await.map_err(err)
+}
+
+/// List the tasks in one of a connector's projects.
+pub async fn list_connector_tasks_impl(
+    state: State<'_, AppState>,
+    connector_id: String,
+    project_id: String,
+) -> Result<Vec<crate::connectors::RemoteTask>, String> {
+    let connector = state
+        .connector_host
+        .get(&connector_id)
+        .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+    connector
+        .list_tasks(&crate::connectors::RemoteProjectRef::new(project_id))
+        .await
+        .map_err(err)
+}
+
+#[cfg(test)]
+#[cfg(not(target_os = "windows"))]
+mod connector_tests {
+    use super::*;
+    use crate::test_support::{
+        mock_app_with_db, FIXTURE_CONNECTOR_ID, FIXTURE_CONNECTOR_PROJECT_ID,
+    };
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn list_connectors_returns_the_seeded_connector() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let connectors = list_connectors_impl(state).await.unwrap();
+        assert!(
+            connectors.iter().any(|c| c.id == FIXTURE_CONNECTOR_ID),
+            "the seeded file connector should be listed"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_projects_and_tasks_flow_through_to_the_file() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let projects = list_connector_projects_impl(state.clone(), FIXTURE_CONNECTOR_ID.into())
+            .await
+            .unwrap();
+        assert!(projects
+            .iter()
+            .any(|p| p.id == FIXTURE_CONNECTOR_PROJECT_ID));
+
+        let tasks = list_connector_tasks_impl(
+            state,
+            FIXTURE_CONNECTOR_ID.into(),
+            FIXTURE_CONNECTOR_PROJECT_ID.into(),
+        )
+        .await
+        .unwrap();
+        let ship = tasks
+            .iter()
+            .find(|t| t.label == "Ship it")
+            .expect("task present");
+        assert!(ship.done, "the `x`-prefixed line is complete");
+    }
+
+    #[tokio::test]
+    async fn unknown_connector_id_errors_for_both_commands() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let projects_err = list_connector_projects_impl(state.clone(), "nope".into())
+            .await
+            .unwrap_err();
+        assert!(projects_err.contains("nope"));
+
+        let tasks_err = list_connector_tasks_impl(state, "nope".into(), "cairn".into())
+            .await
+            .unwrap_err();
+        assert!(tasks_err.contains("nope"));
+    }
+
+    #[tokio::test]
+    async fn unknown_project_id_yields_no_tasks() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let tasks = list_connector_tasks_impl(state, FIXTURE_CONNECTOR_ID.into(), "ghost".into())
+            .await
+            .unwrap();
+        assert!(
+            tasks.is_empty(),
+            "a project with no tasks returns empty, not an error"
+        );
+    }
+}
+
 #[cfg(test)]
 #[cfg(not(target_os = "windows"))]
 mod onboarding_tests {

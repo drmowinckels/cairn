@@ -71,6 +71,37 @@ pub async fn test_db_at(path: &Path) -> Db {
 /// paths that need an `AppHandle`: event emission, `tauri::State`
 /// lookup, plugin wiring, IPC dispatch.
 ///
+/// Id of the connector seeded into every `mock_app_with_db`, so the
+/// PM-connector IPC commands have something to list. See
+/// [`seed_connector_fixture`].
+pub const FIXTURE_CONNECTOR_ID: &str = "sample-tasks";
+/// A project id present in the seeded connector's todo file.
+pub const FIXTURE_CONNECTOR_PROJECT_ID: &str = "cairn";
+
+/// Seed a single local-file connector under `<data_dir>/connectors/` and
+/// return a host loaded from it. Gives the connector IPC commands a known
+/// connector to drive in tests without a network or keychain. Harmless to
+/// tests that don't touch connectors — they simply never list it.
+#[cfg(not(target_os = "windows"))]
+fn seed_connector_fixture(data_dir: &std::path::Path) -> crate::connectors::ConnectorHost {
+    let dir = data_dir.join("connectors");
+    std::fs::create_dir_all(&dir).expect("create connectors dir");
+    let todo = dir.join("sample.todo.txt");
+    std::fs::write(
+        &todo,
+        "Write spec +cairn\nx Ship it +cairn\nBuy milk +groceries\n",
+    )
+    .expect("write fixture todo");
+    let path_json = serde_json::to_string(&todo.to_string_lossy()).unwrap();
+    let manifest = format!(
+        r#"{{ "manifest": 1, "id": "{FIXTURE_CONNECTOR_ID}", "name": "Sample tasks",
+              "kind": "file", "capabilities": [],
+              "file": {{ "format": "todotxt", "path": {path_json} }} }}"#,
+    );
+    std::fs::write(dir.join("sample.json"), manifest).expect("write fixture manifest");
+    crate::connectors::ConnectorHost::load(&dir)
+}
+
 /// Returns the `TempDir` (keep it alive — dropping it deletes the on-
 /// disk state files), the `App<MockRuntime>` (call `.handle()` for the
 /// `AppHandle<MockRuntime>`), and a clone of the `Db`.
@@ -107,12 +138,14 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
             .expect("load_engine_rules: fresh test db"),
     ));
     let data_dir = dir.path().to_path_buf();
+    let connector_host = Arc::new(seed_connector_fixture(&data_dir));
     app.manage(AppState {
         db: db.clone(),
         pinned: AtomicBool::new(false),
         calendar,
         stream,
         plugin_host,
+        connector_host,
         capture: crate::signals::capture::SignalCapture::new(),
         data_dir,
         exclusions,
