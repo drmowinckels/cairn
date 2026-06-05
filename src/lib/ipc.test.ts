@@ -163,7 +163,12 @@ describe("ipc helpers (inside Tauri)", () => {
 
   it("listPlugins invokes the command and returns the list", async () => {
     const list = [
-      { id: "calendar", name: "Calendar", capabilities: ["network"], enabled: true },
+      {
+        id: "calendar",
+        name: "Calendar",
+        capabilities: ["network"],
+        enabled: true,
+      },
     ];
     invokeMock.mockResolvedValue(list);
     const { listPlugins } = await import("./ipc");
