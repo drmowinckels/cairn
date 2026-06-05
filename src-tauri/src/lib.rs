@@ -85,6 +85,26 @@ async fn backup_now(state: tauri::State<'_, AppState>) -> Result<String, String>
     auto_backup::run_now(state).await
 }
 
+// Thin plugin command shims. Logic + tests live in `ipc::*_impl`; these
+// one-line `#[tauri::command]` wrappers sit in this coverage-ignored
+// file so the generated invoke wrappers don't count against patch
+// coverage (#111, same rationale as the auto-backup shims above).
+#[tauri::command]
+async fn list_plugins(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugins::PluginStatus>, String> {
+    ipc::list_plugins_impl(state).await
+}
+
+#[tauri::command]
+async fn set_plugin_enabled(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<Vec<plugins::PluginStatus>, String> {
+    ipc::set_plugin_enabled_impl(state, id, enabled).await
+}
+
 /// Open the SQLite database for the `.setup()` hook, mapping any
 /// failure (locked/corrupt DB, unwritable path, disk full) to a
 /// user-actionable message. Extracted from the Tauri `.setup()`
@@ -334,8 +354,8 @@ pub fn run() {
             ipc::get_onboarding_state,
             ipc::complete_onboarding,
             ipc::reset_onboarding,
-            ipc::list_plugins,
-            ipc::set_plugin_enabled,
+            list_plugins,
+            set_plugin_enabled,
             ipc::dry_run_rules,
             ipc::snooze_rule,
             ipc::snooze_all,
