@@ -33,6 +33,7 @@ import {
   PRIVACY_REPO_URL,
 } from "../../lib/privacy-copy";
 import { IntegrationsCard } from "./integrations";
+import { PluginsCard } from "./plugins-card";
 import { AboutCard } from "./about-card";
 
 /**
@@ -527,6 +528,8 @@ export function SettingsView({
       </section>
 
       <IntegrationsCard />
+
+      <PluginsCard />
 
       <section className="settings-block" aria-label="Onboarding">
         <h3 className="settings-h">Onboarding</h3>

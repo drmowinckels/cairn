@@ -769,3 +769,35 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
   if (!inTauri) return null;
   return invoke<UpdateInfo | null>("check_for_update");
 }
+
+/** A capability a signal-source plugin declares (mirrors the Rust
+ *  `Capability` enum, kebab-serialized). Surfaced as a badge so the
+ *  privacy posture of an optional plugin is visible (docs/PRIVACY.md). */
+export type PluginCapability = "network" | "secrets";
+
+export interface Plugin {
+  id: string;
+  name: string;
+  capabilities: PluginCapability[];
+  enabled: boolean;
+}
+
+/** Registered signal-source plugins with their capabilities + enabled
+ *  state (#111). Empty outside Tauri so the Settings card simply hides.
+ *  The `?? []` guards a stubbed `invoke` (the a11y audit harness) that
+ *  resolves `undefined` for un-mocked commands — never hand the UI a
+ *  non-array it would call `.length` on. */
+export async function listPlugins(): Promise<Plugin[]> {
+  if (!inTauri) return [];
+  return (await invoke<Plugin[]>("list_plugins")) ?? [];
+}
+
+/** Enable/disable a plugin; returns the updated list. No-op (empty)
+ *  outside Tauri so the dev harness keeps the optimistic UI state. */
+export async function setPluginEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<Plugin[]> {
+  if (!inTauri) return [];
+  return (await invoke<Plugin[]>("set_plugin_enabled", { id, enabled })) ?? [];
+}
