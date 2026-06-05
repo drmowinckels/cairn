@@ -83,6 +83,7 @@ dplyr
 drmowinckels
 eggshell
 focusables
+footgun
 fuzzysort
 ggseg
 ggsegverse
@@ -157,10 +158,12 @@ swaymsg
 sysinfo
 systempreferences
 tabular
+taskpaper
 tauri-apps
 testthat
 thiserror
 timesheet
+todotxt
 treeitems
 twilight
 typedoc
