@@ -1,24 +1,22 @@
 //! The calendar signal-source plugin (#111).
 //!
-//! Wraps the existing [`CalendarRegistry`] behind the [`SignalSource`]
+//! Wraps the sibling [`CalendarRegistry`] behind the [`SignalSource`]
 //! boundary. Calendar qualifies as a plugin on two counts: it is
 //! optional (not everyone uses it), and it is networked (ICS fetch) +
-//! secrets-bearing (keychain) — the one core subsystem that opens a
+//! secrets-bearing (keychain) — the one subsystem that opens a
 //! network/secrets hole. Its manifest declares both so the privacy UI
 //! can surface them. See `docs/PLUGINS.md` and `docs/PRIVACY.md`.
 //!
-//! This wrapper is the first step of the extraction: core still
-//! compiles in the calendar code, but it now starts through the plugin
-//! host rather than a bespoke `spawn_*`. Moving `signals/calendar/*`
-//! and keychain ownership fully behind the boundary is later work in
-//! the #111 stack.
+//! The calendar code (`registry` · `fetcher` · `parser` · `store` ·
+//! `secrets` · `autostop`) now lives under `plugins/calendar/`, behind
+//! this boundary, rather than in core's `signals/`.
 
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use super::CalendarRegistry;
 use crate::plugins::{spawn_supervised, Capability, PluginManifest, SignalSource, SourceHandle};
-use crate::signals::calendar::CalendarRegistry;
 use crate::signals::stream::{self, SignalEvent, CALENDAR_TICK_INTERVAL};
 
 static MANIFEST: PluginManifest = PluginManifest {

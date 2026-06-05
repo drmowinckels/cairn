@@ -55,6 +55,8 @@ Hidden in Settings → Advanced. Off by default, **sticky off** on every relaunc
 
 ## Calendar integration
 
+Calendar is an **opt-in plugin**, not a core signal — it lives behind the [plugin boundary](/PLUGINS) because it is the one subsystem that touches the network (ICS fetch) and the OS keychain. Settings → Plugins lists it with explicit **Network** and **Secrets** capability badges, and a switch to turn it off; disabling it stops all fetching and clears its events from matching, persisting across launches. Core never links calendar on its always-on path.
+
 Cairn ingests calendars by fetching ICS subscription URLs the user has explicitly added (or reading local `.ics` files). It does not use cloud calendar APIs, OAuth, or per-OS calendar databases. The same code path works on macOS, Windows, and Linux.
 
 - **Read-only** by construction — only HTTP `GET` is ever issued. Cairn cannot modify the source calendar.

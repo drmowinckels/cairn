@@ -26,8 +26,8 @@ use std::sync::RwLock;
 
 use chrono::{DateTime, Utc};
 
+use crate::plugins::calendar::CalendarRegistry;
 use crate::rules::SignalSnapshot;
-use crate::signals::calendar::CalendarRegistry;
 use crate::signals::exclusions::ExclusionMatcher;
 
 pub async fn build(
@@ -36,7 +36,7 @@ pub async fn build(
     at: DateTime<Utc>,
 ) -> SignalSnapshot {
     let calendar =
-        crate::signals::calendar::to_calendar_events(calendar.active_events_at(at).await);
+        crate::plugins::calendar::to_calendar_events(calendar.active_events_at(at).await);
 
     // `signals::window::current` shells out on every platform —
     // run it on the blocking pool so the IPC worker isn't stalled

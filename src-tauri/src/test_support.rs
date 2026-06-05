@@ -38,7 +38,7 @@ use crate::Db;
 // mock_app rig — keep their imports gated the same way so Windows
 // doesn't see them as unused.
 #[cfg(not(target_os = "windows"))]
-use crate::signals::calendar::CalendarRegistry;
+use crate::plugins::calendar::CalendarRegistry;
 #[cfg(not(target_os = "windows"))]
 use crate::AppState;
 

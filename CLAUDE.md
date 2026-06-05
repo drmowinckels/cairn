@@ -28,7 +28,7 @@ When implementing a screen, **always open `design/Cairn.html` and inspect with d
   - `signals/idle` — `CGEventSourceSecondsSinceLastEventType` / `GetLastInputInfo` / X11 idle
 - **Plugin signal sources** (feed the rules engine via the same `SignalSnapshot` contract, but live behind the plugin boundary):
   - `browser` — receive pushes from a small browser extension (Safari/Firefox/Chrome) via a local IPC socket; **never** scrape browser DBs (#37)
-  - `calendar` — currently still in core under `signals/calendar/*`; being extracted to a plugin (#111). It fetches ICS feeds (network) and stores credentials (`secrets.rs`), so it is a plugin on both the "optional" and "networked/secrets" counts.
+  - `calendar` — a signal-source plugin under `src-tauri/src/plugins/calendar/*` (#111): the `SignalSource` wrapper (`plugin.rs`), the `CalendarRegistry`, ICS `fetcher` (network), `parser`, `store`, `secrets` (keychain), and `autostop`. It fetches ICS feeds and stores credentials, so it is a plugin on both the "optional" and "networked/secrets" counts. Started + toggled through the plugin host (`plugins::SignalSourceHost`), enabled state in the `plugin_state` table; see `docs/PLUGINS.md`.
 - **Plugin sync connectors** (not signals — bidirectional task/time sync): PM connectors (#110), billing (#109).
 - **Rules engine**: pure-Rust module, no DB access. Takes a `SignalSnapshot`, returns `RuleMatch | None`. Origin-agnostic — a snapshot from a plugin signal source is indistinguishable from a core one. See `docs/RULES_ENGINE.md`.
 - **Tray popover**: 500px wide, anchored under the tray icon (use `tauri-plugin-positioner`). Closes on focus loss.

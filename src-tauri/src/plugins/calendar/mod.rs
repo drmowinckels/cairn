@@ -1,4 +1,9 @@
-//! Calendar signal collector.
+//! Calendar signal-source plugin (#111).
+//!
+//! Lives under `plugins/` — not `signals/` — because calendar is an
+//! optional, networked (ICS fetch), secrets-bearing (keychain) signal
+//! source behind the plugin boundary; see `docs/PLUGINS.md`. Core's
+//! always-on collectors (window · git · idle) stay in `signals/`.
 //!
 //! Reads VEVENTs from user-registered ICS sources (subscription URLs from
 //! Google Calendar / iCloud / Outlook / Fastmail, or local files) and
@@ -12,13 +17,16 @@
 //! - URL secrets (Google's secret-address tokens etc.) live in the OS
 //!   keychain, not in the SQLite store.
 
+pub mod autostop;
 pub mod fetcher;
 pub mod parser;
+mod plugin;
 pub mod registry;
 pub mod secrets;
 pub mod store;
 
 pub use parser::ActiveEvent;
+pub use plugin::CalendarPlugin;
 pub use registry::{CalendarKind, CalendarRegistry, CalendarSource, SyncStatus};
 
 use crate::rules::CalendarEvent;
@@ -43,8 +51,8 @@ pub fn to_calendar_events(active: Vec<ActiveEvent>) -> Vec<CalendarEvent> {
 
 #[cfg(test)]
 mod tests {
+    use super::parser::{ActiveEvent, ParsedEvent};
     use super::*;
-    use crate::signals::calendar::parser::{ActiveEvent, ParsedEvent};
     use chrono::Utc;
 
     fn active(

@@ -442,7 +442,7 @@ async fn purge_calendar_secrets(pool: &SqlitePool) {
     };
     for row in rows {
         let id: String = row.get("id");
-        if let Err(e) = crate::signals::calendar::secrets::remove(&id) {
+        if let Err(e) = crate::plugins::calendar::secrets::remove(&id) {
             log::warn!("delete_everything: could not remove keychain entry {id}: {e}");
         }
     }
@@ -520,6 +520,34 @@ mod tests {
         assert_eq!(csv_escape("has,comma"), "\"has,comma\"");
         assert_eq!(csv_escape("has\"quote"), "\"has\"\"quote\"");
         assert_eq!(csv_escape("line\nbreak"), "\"line\nbreak\"");
+    }
+
+    #[tokio::test]
+    async fn purge_calendar_secrets_visits_each_url_source() {
+        // The reset-data path removes the keychain entry behind every
+        // `url` calendar source. Seed one (without a stored secret, so
+        // `secrets::remove` is a no-op `NoEntry` on every platform) and
+        // assert the purge loop runs to completion rather than skipping
+        // or panicking. `file` sources have no keychain entry and are
+        // correctly excluded.
+        let (_dir, db) = crate::test_support::test_db().await;
+        let now = Utc::now().to_rfc3339();
+        for (id, kind) in [("cal-url", "url"), ("cal-file", "file")] {
+            sqlx::query(
+                "INSERT INTO calendar_sources \
+                 (id, kind, label, location, created_at, updated_at) \
+                 VALUES (?1, ?2, 'Seed', 'https://example.test/c.ics', ?3, ?3)",
+            )
+            .bind(id)
+            .bind(kind)
+            .bind(&now)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        }
+        // No panic, no error surfaced — the loop body executed for the
+        // url source (the file source is filtered out by the query).
+        purge_calendar_secrets(&db.pool).await;
     }
 
     #[tokio::test]

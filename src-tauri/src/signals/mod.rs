@@ -10,8 +10,6 @@
 
 pub mod browser;
 pub mod browser_extension;
-pub mod calendar;
-pub mod calendar_autostop;
 pub mod capture;
 pub mod exclusions;
 pub mod fanout;
