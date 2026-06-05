@@ -5987,8 +5987,12 @@ pub async fn reset_onboarding(state: State<'_, AppState>) -> Result<OnboardingSt
 
 /// List every registered signal-source plugin with its declared
 /// capabilities and current enabled state, for Settings → Plugins (#111).
-#[tauri::command]
-pub async fn list_plugins(
+///
+/// Plain `pub async fn` (not a `#[tauri::command]`): the thin invoke
+/// shim lives in the coverage-ignored `lib.rs` so the macro-generated
+/// wrapper doesn't count against patch coverage. Tests call this
+/// directly.
+pub async fn list_plugins_impl(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::plugins::PluginStatus>, String> {
     Ok(state.plugin_host.lock().await.statuses())
@@ -5999,9 +6003,9 @@ pub async fn list_plugins(
 /// from the snapshot) and persists the flag so the choice survives a
 /// relaunch. Returns the updated plugin list. The host lock is held
 /// across the persist so `list_plugins` never observes the live state
-/// and the DB out of step.
-#[tauri::command]
-pub async fn set_plugin_enabled(
+/// and the DB out of step. (Invoke shim in `lib.rs` — see
+/// `list_plugins_impl`.)
+pub async fn set_plugin_enabled_impl(
     state: State<'_, AppState>,
     id: String,
     enabled: bool,
@@ -6100,7 +6104,7 @@ mod plugin_tests {
     async fn list_plugins_reports_calendar_with_capabilities() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let plugins = list_plugins(state).await.unwrap();
+        let plugins = list_plugins_impl(state).await.unwrap();
         let cal = plugins
             .iter()
             .find(|p| p.id == "calendar")
@@ -6118,7 +6122,7 @@ mod plugin_tests {
 
         // Disable → returned list reflects it, the DB is written, and a
         // fresh list_plugins agrees.
-        let after = set_plugin_enabled(state.clone(), "calendar".into(), false)
+        let after = set_plugin_enabled_impl(state.clone(), "calendar".into(), false)
             .await
             .unwrap();
         assert!(!after.iter().find(|p| p.id == "calendar").unwrap().enabled);
@@ -6126,7 +6130,7 @@ mod plugin_tests {
         let persisted = crate::plugins::store::load_enabled(&db.pool).await;
         assert_eq!(persisted.get("calendar"), Some(&false), "flag persisted");
 
-        let relisted = list_plugins(state.clone()).await.unwrap();
+        let relisted = list_plugins_impl(state.clone()).await.unwrap();
         assert!(
             !relisted
                 .iter()
@@ -6136,7 +6140,7 @@ mod plugin_tests {
         );
 
         // Re-enable round-trips back.
-        let after = set_plugin_enabled(state.clone(), "calendar".into(), true)
+        let after = set_plugin_enabled_impl(state.clone(), "calendar".into(), true)
             .await
             .unwrap();
         assert!(after.iter().find(|p| p.id == "calendar").unwrap().enabled);
@@ -6148,7 +6152,7 @@ mod plugin_tests {
     async fn set_plugin_enabled_unknown_id_errors_without_persisting() {
         let (_dir, app, db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let err = set_plugin_enabled(state, "nonesuch".into(), false)
+        let err = set_plugin_enabled_impl(state, "nonesuch".into(), false)
             .await
             .unwrap_err();
         assert!(err.contains("nonesuch"));
