@@ -1,4 +1,12 @@
 {
+  "list_plugins": [
+    {
+      "id": "calendar",
+      "name": "Calendar",
+      "capabilities": ["network", "secrets"],
+      "enabled": true
+    }
+  ],
   "list_projects": [
     {
       "id": "acme",

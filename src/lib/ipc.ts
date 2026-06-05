@@ -783,10 +783,13 @@ export interface Plugin {
 }
 
 /** Registered signal-source plugins with their capabilities + enabled
- *  state (#111). Empty outside Tauri so the Settings card simply hides. */
+ *  state (#111). Empty outside Tauri so the Settings card simply hides.
+ *  The `?? []` guards a stubbed `invoke` (the a11y audit harness) that
+ *  resolves `undefined` for un-mocked commands — never hand the UI a
+ *  non-array it would call `.length` on. */
 export async function listPlugins(): Promise<Plugin[]> {
   if (!inTauri) return [];
-  return invoke<Plugin[]>("list_plugins");
+  return (await invoke<Plugin[]>("list_plugins")) ?? [];
 }
 
 /** Enable/disable a plugin; returns the updated list. No-op (empty)
@@ -796,5 +799,5 @@ export async function setPluginEnabled(
   enabled: boolean,
 ): Promise<Plugin[]> {
   if (!inTauri) return [];
-  return invoke<Plugin[]>("set_plugin_enabled", { id, enabled });
+  return (await invoke<Plugin[]>("set_plugin_enabled", { id, enabled })) ?? [];
 }

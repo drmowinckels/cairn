@@ -185,6 +185,15 @@ describe("ipc helpers (inside Tauri)", () => {
       enabled: false,
     });
   });
+
+  it("plugin commands coerce an undefined backend response to []", async () => {
+    // A stubbed invoke (e.g. the a11y audit harness) resolves undefined
+    // for un-mocked commands; the UI must never receive a non-array.
+    invokeMock.mockResolvedValue(undefined);
+    const { listPlugins, setPluginEnabled } = await import("./ipc");
+    expect(await listPlugins()).toEqual([]);
+    expect(await setPluginEnabled("calendar", true)).toEqual([]);
+  });
 });
 
 describe("ipc helpers (outside Tauri)", () => {
