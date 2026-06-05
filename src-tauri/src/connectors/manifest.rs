@@ -12,6 +12,8 @@
 //! parses far enough to be rejected with a clear message, so importing
 //! one fails loudly instead of silently doing nothing.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::plugins::Capability;
@@ -40,6 +42,26 @@ pub struct ConnectorManifest {
 pub enum ConnectorKind {
     /// A local file read by a built-in parser. Zero network / secrets.
     File(FileSpec),
+    /// A remote PM read by the declarative HTTP interpreter.
+    Http(HttpSpec),
+}
+
+impl ConnectorKind {
+    /// The file config when this is a `file` connector, else `None`.
+    pub fn as_file(&self) -> Option<&FileSpec> {
+        match self {
+            ConnectorKind::File(spec) => Some(spec),
+            ConnectorKind::Http(_) => None,
+        }
+    }
+
+    /// The HTTP config when this is an `http` connector, else `None`.
+    pub fn as_http(&self) -> Option<&HttpSpec> {
+        match self {
+            ConnectorKind::Http(spec) => Some(spec),
+            ConnectorKind::File(_) => None,
+        }
+    }
 }
 
 /// Configuration for a `kind: "file"` connector.
@@ -60,6 +82,118 @@ pub enum FileFormat {
     Taskpaper,
 }
 
+/// Operation name for "list the connector's projects".
+pub const OP_LIST_PROJECTS: &str = "listProjects";
+/// Operation name for "list a project's tasks".
+pub const OP_LIST_TASKS: &str = "listTasks";
+
+/// Configuration for a `kind: "http"` connector — the declarative HTTP
+/// interpreter's manifest. Built + validated by [`ConnectorManifest::from_json`];
+/// the interpreter (a later slice) only ever sees a validated value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HttpSpec {
+    pub auth: Auth,
+    /// `https://` base. Every request is built relative to this — the
+    /// single host a connector ever contacts (enforced again at request
+    /// time). Validated to start with `https://`.
+    pub base_url: String,
+    /// Named operations. Guaranteed to contain [`OP_LIST_PROJECTS`] and
+    /// [`OP_LIST_TASKS`]; extra entries are permitted but unused in v1.
+    pub operations: BTreeMap<String, Operation>,
+}
+
+/// How the interpreter authenticates. Declarative — the token itself is
+/// never here; it lives in the OS keychain under `secret`, and the
+/// interpreter applies it per the variant. There is deliberately no
+/// templated-token form (see `docs/PM_CONNECTORS.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Auth {
+    /// No authentication.
+    None,
+    /// `Authorization: Bearer <token>`.
+    Bearer { secret: String },
+    /// `<name>: <token>`.
+    Header { name: String, secret: String },
+    /// Adds `?<name>=<token>`.
+    Query { name: String, secret: String },
+    /// `Authorization: Basic base64(<username>:<token>)`.
+    Basic { username: String, secret: String },
+}
+
+impl Auth {
+    /// The keychain key holding this connector's token, or `None` when no
+    /// secret is involved (`Auth::None`).
+    pub fn secret_key(&self) -> Option<&str> {
+        match self {
+            Auth::None => None,
+            Auth::Bearer { secret }
+            | Auth::Header { secret, .. }
+            | Auth::Query { secret, .. }
+            | Auth::Basic { secret, .. } => Some(secret),
+        }
+    }
+}
+
+/// One operation: a request template + how to read its response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Operation {
+    pub request: RequestSpec,
+    pub response: ResponseSpec,
+    #[serde(default)]
+    pub pagination: Option<Pagination>,
+}
+
+/// HTTP method. v1 reads only; `POST` is for GraphQL queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HttpMethod {
+    Get,
+    Post,
+}
+
+/// A request template. `path`, `query`, `headers`, and `body` are filled
+/// by value substitution (see the interpreter); the maps are ordered so
+/// request building is deterministic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestSpec {
+    pub method: HttpMethod,
+    /// Appended to `baseUrl`. Validated to start with `/` so a manifest
+    /// can never template a request onto a different host.
+    pub path: String,
+    #[serde(default)]
+    pub query: BTreeMap<String, String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// How to project a response into Cairn's shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseSpec {
+    /// Dotted path to the array of items. `""` means the body is itself
+    /// the array.
+    pub items: String,
+    /// Each output field → a dotted path into one item.
+    pub map: BTreeMap<String, String>,
+}
+
+/// How to follow pages. The interpreter loops, capped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Pagination {
+    #[serde(rename_all = "camelCase")]
+    Cursor {
+        cursor_path: String,
+        has_more_path: String,
+    },
+    Offset {
+        limit: u32,
+        param: String,
+    },
+}
+
 /// Why a manifest was rejected. Library-level, so callers (the host's
 /// directory load, the future import command) can surface a precise
 /// reason without string-matching.
@@ -73,10 +207,20 @@ pub enum ManifestError {
     Id(String),
     #[error("connector name must not be empty")]
     Name,
-    #[error("file connector is missing its {section:?} section")]
+    #[error("connector is missing its {section:?} section")]
     MissingSection { section: &'static str },
     #[error("file connectors are fully local and must declare no capabilities (got {0:?})")]
     FileCapabilities(Vec<Capability>),
+    #[error("http connector baseUrl must be https:// (got {0:?})")]
+    InsecureBaseUrl(String),
+    #[error("http connector is missing the {0:?} operation")]
+    MissingOperation(&'static str),
+    #[error("http operation {op:?} path must start with '/' (got {path:?})")]
+    OperationPath { op: String, path: String },
+    #[error("http connector must declare the \"network\" capability")]
+    MissingNetworkCapability,
+    #[error("http connector with authentication must declare the \"secrets\" capability")]
+    MissingSecretsCapability,
     #[error("connector kind {0:?} is not supported in this version yet")]
     UnsupportedKind(String),
 }
@@ -96,15 +240,22 @@ struct RawManifest {
     capabilities: Vec<Capability>,
     #[serde(default)]
     file: Option<FileSpec>,
+    #[serde(default)]
+    auth: Option<Auth>,
+    #[serde(default, rename = "baseUrl")]
+    base_url: Option<String>,
+    #[serde(default)]
+    operations: Option<BTreeMap<String, Operation>>,
 }
 
 impl ConnectorManifest {
     /// Parse and validate a manifest from JSON.
     ///
     /// Enforces: schema version, non-empty kebab-case id, non-empty name,
-    /// and the kind-specific shape (a `file` connector needs a `file`
-    /// section and may declare no capabilities). An unknown or
-    /// not-yet-supported `kind` (e.g. `"http"`) is rejected.
+    /// and the kind-specific shape — a `file` connector needs a `file`
+    /// section and declares no capabilities; an `http` connector needs
+    /// `auth` / `baseUrl` / `operations` and must satisfy [`validate_http`].
+    /// An unknown `kind` is rejected.
     pub fn from_json(json: &str) -> Result<Self, ManifestError> {
         let raw: RawManifest = serde_json::from_str(json)?;
 
@@ -128,6 +279,23 @@ impl ConnectorManifest {
                     .ok_or(ManifestError::MissingSection { section: "file" })?;
                 ConnectorKind::File(spec)
             }
+            "http" => {
+                let auth = raw
+                    .auth
+                    .ok_or(ManifestError::MissingSection { section: "auth" })?;
+                let base_url = raw
+                    .base_url
+                    .ok_or(ManifestError::MissingSection { section: "baseUrl" })?;
+                let operations = raw.operations.ok_or(ManifestError::MissingSection {
+                    section: "operations",
+                })?;
+                validate_http(&base_url, &auth, &operations, &raw.capabilities)?;
+                ConnectorKind::Http(HttpSpec {
+                    auth,
+                    base_url,
+                    operations,
+                })
+            }
             other => return Err(ManifestError::UnsupportedKind(other.to_string())),
         };
 
@@ -138,6 +306,42 @@ impl ConnectorManifest {
             kind,
         })
     }
+}
+
+/// Validate a `kind: "http"` connector's parts. Enforces the egress and
+/// honesty guarantees from `docs/PM_CONNECTORS.md` at the manifest
+/// boundary: https-only base, both required operations present, every
+/// request path relative (so it can't escape `baseUrl`'s host), and that
+/// the connector declares the capabilities it actually uses.
+fn validate_http(
+    base_url: &str,
+    auth: &Auth,
+    operations: &BTreeMap<String, Operation>,
+    capabilities: &[Capability],
+) -> Result<(), ManifestError> {
+    if !base_url.starts_with("https://") {
+        return Err(ManifestError::InsecureBaseUrl(base_url.to_string()));
+    }
+    for required in [OP_LIST_PROJECTS, OP_LIST_TASKS] {
+        if !operations.contains_key(required) {
+            return Err(ManifestError::MissingOperation(required));
+        }
+    }
+    for (op, operation) in operations {
+        if !operation.request.path.starts_with('/') {
+            return Err(ManifestError::OperationPath {
+                op: op.clone(),
+                path: operation.request.path.clone(),
+            });
+        }
+    }
+    if !capabilities.contains(&Capability::Network) {
+        return Err(ManifestError::MissingNetworkCapability);
+    }
+    if auth.secret_key().is_some() && !capabilities.contains(&Capability::Secrets) {
+        return Err(ManifestError::MissingSecretsCapability);
+    }
+    Ok(())
 }
 
 /// `^[a-z0-9-]+$` without pulling in a regex engine.
@@ -167,6 +371,11 @@ mod tests {
         assert_eq!(m.id, "my-todo");
         assert_eq!(m.name, "Project TODO");
         assert!(m.capabilities.is_empty());
+        assert!(
+            m.kind.as_file().is_some(),
+            "a file manifest exposes its file spec"
+        );
+        assert!(m.kind.as_http().is_none(), "a file kind is not http");
         assert_eq!(
             m.kind,
             ConnectorKind::File(FileSpec {
@@ -247,19 +456,176 @@ mod tests {
     }
 
     #[test]
-    fn http_kind_is_recognized_but_unsupported() {
-        let json = r#"{
-            "manifest": 1, "id": "todoist", "name": "Todoist", "kind": "http",
-            "capabilities": ["network", "secrets"]
-        }"#;
-        let err = ConnectorManifest::from_json(json).unwrap_err();
-        assert!(matches!(err, ManifestError::UnsupportedKind(k) if k == "http"));
-    }
-
-    #[test]
     fn unknown_kind_is_rejected() {
         let json = FILE_JSON.replace("\"kind\": \"file\"", "\"kind\": \"smoke-signals\"");
         let err = ConnectorManifest::from_json(&json).unwrap_err();
         assert!(matches!(err, ManifestError::UnsupportedKind(_)));
+    }
+
+    const HTTP_JSON: &str = r#"{
+        "manifest": 1,
+        "id": "todoist",
+        "name": "Todoist",
+        "kind": "http",
+        "capabilities": ["network", "secrets"],
+        "auth": { "type": "bearer", "secret": "todoist_token" },
+        "baseUrl": "https://api.todoist.com/rest/v2",
+        "operations": {
+            "listProjects": {
+                "request": { "method": "GET", "path": "/projects" },
+                "response": { "items": "", "map": { "id": "id", "name": "name" } }
+            },
+            "listTasks": {
+                "request": {
+                    "method": "GET",
+                    "path": "/tasks",
+                    "query": { "project_id": "{{project.id}}" }
+                },
+                "response": {
+                    "items": "",
+                    "map": { "id": "id", "label": "content", "done": "is_completed" }
+                },
+                "pagination": { "type": "offset", "limit": 100, "param": "offset" }
+            }
+        }
+    }"#;
+
+    #[test]
+    fn secret_key_for_each_auth_variant() {
+        assert_eq!(Auth::None.secret_key(), None);
+        assert_eq!(Auth::Bearer { secret: "b".into() }.secret_key(), Some("b"));
+        assert_eq!(
+            Auth::Header {
+                name: "X-Api-Key".into(),
+                secret: "h".into()
+            }
+            .secret_key(),
+            Some("h")
+        );
+        assert_eq!(
+            Auth::Query {
+                name: "token".into(),
+                secret: "q".into()
+            }
+            .secret_key(),
+            Some("q")
+        );
+        assert_eq!(
+            Auth::Basic {
+                username: "u".into(),
+                secret: "p".into()
+            }
+            .secret_key(),
+            Some("p")
+        );
+    }
+
+    #[test]
+    fn parses_a_valid_http_manifest() {
+        let m = ConnectorManifest::from_json(HTTP_JSON).unwrap();
+        assert_eq!(m.id, "todoist");
+        assert!(m.kind.as_file().is_none(), "an http kind is not file");
+        let s = m.kind.as_http().expect("http kind");
+        assert_eq!(s.base_url, "https://api.todoist.com/rest/v2");
+        assert_eq!(s.auth.secret_key(), Some("todoist_token"));
+        assert!(s.operations.contains_key("listProjects"));
+        let tasks = &s.operations["listTasks"];
+        assert_eq!(tasks.request.method, HttpMethod::Get);
+        assert_eq!(tasks.request.query["project_id"], "{{project.id}}");
+        assert_eq!(tasks.response.map["label"], "content");
+        assert_eq!(
+            tasks.pagination,
+            Some(Pagination::Offset {
+                limit: 100,
+                param: "offset".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn http_without_a_required_section_is_rejected() {
+        for (section, key) in [
+            ("auth", "\"auth\""),
+            ("baseUrl", "\"baseUrl\""),
+            ("operations", "\"operations\""),
+        ] {
+            // Blank the section's key so it deserializes as absent.
+            let json = HTTP_JSON.replacen(key, "\"_omitted\"", 1);
+            let err = ConnectorManifest::from_json(&json).unwrap_err();
+            assert!(
+                matches!(err, ManifestError::MissingSection { section: s } if s == section),
+                "omitting {section} should be MissingSection, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn http_baseurl_must_be_https() {
+        let json = HTTP_JSON.replace("https://api.todoist.com", "http://api.todoist.com");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::InsecureBaseUrl(_)));
+    }
+
+    #[test]
+    fn http_requires_both_list_operations() {
+        let json = HTTP_JSON.replace("\"listProjects\"", "\"listSomethingElse\"");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(
+            err,
+            ManifestError::MissingOperation("listProjects")
+        ));
+    }
+
+    #[test]
+    fn http_operation_paths_must_be_relative() {
+        // A full URL as a path would let a manifest reach another host.
+        let json = HTTP_JSON.replace("\"/tasks\"", "\"https://evil.example/tasks\"");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::OperationPath { .. }));
+    }
+
+    #[test]
+    fn http_must_declare_network() {
+        let json = HTTP_JSON.replace("[\"network\", \"secrets\"]", "[\"secrets\"]");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::MissingNetworkCapability));
+    }
+
+    #[test]
+    fn http_with_auth_must_declare_secrets() {
+        let json = HTTP_JSON.replace("[\"network\", \"secrets\"]", "[\"network\"]");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::MissingSecretsCapability));
+    }
+
+    #[test]
+    fn parses_cursor_pagination() {
+        let json = HTTP_JSON.replace(
+            "{ \"type\": \"offset\", \"limit\": 100, \"param\": \"offset\" }",
+            "{ \"type\": \"cursor\", \"cursorPath\": \"meta.next\", \"hasMorePath\": \"meta.more\" }",
+        );
+        let m = ConnectorManifest::from_json(&json).unwrap();
+        let s = m.kind.as_http().expect("http kind");
+        assert_eq!(
+            s.operations["listTasks"].pagination,
+            Some(Pagination::Cursor {
+                cursor_path: "meta.next".to_string(),
+                has_more_path: "meta.more".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn http_with_no_auth_does_not_require_secrets() {
+        let json = HTTP_JSON
+            .replace("[\"network\", \"secrets\"]", "[\"network\"]")
+            .replace(
+                "{ \"type\": \"bearer\", \"secret\": \"todoist_token\" }",
+                "{ \"type\": \"none\" }",
+            );
+        let m = ConnectorManifest::from_json(&json).unwrap();
+        let s = m.kind.as_http().expect("http kind");
+        assert_eq!(s.auth, Auth::None);
+        assert_eq!(s.auth.secret_key(), None);
     }
 }
