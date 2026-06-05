@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tauri::{Emitter, Manager, State};
 
+use crate::plugins::calendar::{ActiveEvent, CalendarKind, CalendarSource, SyncStatus};
 use crate::rounding::Rounding;
 use crate::signals::browser_extension::BrowserExtensionStatus;
-use crate::signals::calendar::{ActiveEvent, CalendarKind, CalendarSource, SyncStatus};
 use crate::signals::git_watcher::GitWatcherStatus;
 use crate::AppState;
 
@@ -5409,7 +5409,7 @@ mod tests {
         let active = ActiveEvent {
             source_id: "src-1".into(),
             source_label: "Work".into(),
-            event: crate::signals::calendar::parser::ParsedEvent {
+            event: crate::plugins::calendar::parser::ParsedEvent {
                 uid: "u@x".into(),
                 summary: "Stand-up".into(),
                 start: Utc::now(),

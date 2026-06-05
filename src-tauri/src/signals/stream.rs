@@ -60,8 +60,8 @@ use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
+use crate::plugins::calendar::CalendarRegistry;
 use crate::rules::{CalendarEvent, SignalSnapshot};
-use crate::signals::calendar::CalendarRegistry;
 use crate::signals::exclusions::ExclusionMatcher;
 use crate::signals::git::GitContext;
 use crate::signals::window::FrontWindow;
@@ -673,7 +673,7 @@ pub(crate) async fn calendar_source(
         // The source — not the driver — queries the registry and maps
         // active events into the snapshot shape, then pushes the
         // payload. This is what keeps the driver origin-agnostic.
-        let events = crate::signals::calendar::to_calendar_events(
+        let events = crate::plugins::calendar::to_calendar_events(
             calendar.active_events_at(Utc::now()).await,
         );
         if !push_or_drop(&tx, SignalEvent::Calendar(events)) {

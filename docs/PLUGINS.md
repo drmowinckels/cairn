@@ -228,14 +228,20 @@ manages only the opt-in set.
    so a stopped source clears its contribution from the snapshot, a
    persisted enabled set (`plugin_state` table), the host moved into
    `AppState` behind a `Mutex`, and the `list_plugins` / `set_plugin_enabled`
-   IPC commands. **Still pending:** the settings UI that lists plugins
-   (with their declared capabilities) and toggles them. Rules referencing
-   a disabled plugin's signal degrade per above (the source goes quiet
-   and its events clear).
-4. Move `signals/calendar/*` + `calendar_autostop` + keychain ownership
-   physically behind the plugin; core stops linking the ICS fetcher and
-   secrets code on the always-on path (#111).
-5. Reclassify calendar as a plugin in `docs/PRIVACY.md`,
-   `docs/DESIGN_SPEC.md`, `docs/RULES_ENGINE.md`, and `CLAUDE.md`.
+   IPC commands, plus the **settings UI** (Settings → Plugins) listing each
+   plugin with its capability badges and a toggle. Rules referencing a
+   disabled plugin's signal degrade per above (the source goes quiet and
+   its events clear).
+4. **Done:** relocate the calendar code (`registry` · `fetcher` · `parser`
+   · `store` · `secrets` · `autostop` + the `SignalSource` wrapper) from
+   `signals/calendar/*` to `src-tauri/src/plugins/calendar/*`, so it lives
+   behind the boundary rather than in core's `signals/`. (A single binary
+   still compiles it in; true cargo-feature-gating so core can link
+   without it is deferred — low ROI for a local-first app, and it would
+   make the DB/IPC/migration surface conditional.)
+5. **Done:** reclassified calendar as a plugin in `docs/PRIVACY.md`,
+   `docs/architecture/`, and `CLAUDE.md`. (`RULES_ENGINE.md` needs no
+   change — `calendar.*` conditions are unaffected; the engine is
+   origin-agnostic. `DESIGN_SPEC.md` describes UI, also unaffected.)
 6. Build PM connectors (#110) and billing (#109) on the same host;
    billing introduces `Capability::Paid`.

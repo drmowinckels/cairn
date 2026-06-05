@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use crate::rules::{evaluate, Confidence, Rule, SignalSnapshot};
 // `Confidence` is used by `should_auto_stop`'s Strict gate.
-use crate::signals::calendar::CalendarRegistry;
+use super::CalendarRegistry;
 
 /// How often the auto-stop task wakes. Meetings are minute-grained
 /// so 30s is plenty; aligning with the calendar tick keeps the

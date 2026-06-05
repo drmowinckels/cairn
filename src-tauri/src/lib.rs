@@ -122,7 +122,7 @@ async fn open_db_for_setup(path: &std::path::Path) -> Result<Db, String> {
 /// exercised from `--lib` tests; production passes `Fetcher::new`.
 fn calendar_registry_for_setup(
     pool: sqlx::SqlitePool,
-    build_fetcher: impl FnOnce() -> anyhow::Result<signals::calendar::fetcher::Fetcher>,
+    build_fetcher: impl FnOnce() -> anyhow::Result<plugins::calendar::fetcher::Fetcher>,
 ) -> Result<Arc<CalendarRegistry>, String> {
     let fetcher = build_fetcher().map_err(|e| {
         format!("could not initialise the calendar engine; Cairn cannot start: {e}")
@@ -130,9 +130,9 @@ fn calendar_registry_for_setup(
     Ok(Arc::new(CalendarRegistry::with_fetcher(pool, fetcher)))
 }
 
+use plugins::calendar::CalendarRegistry;
 use rules::{Rule as EngineRule, Snoozer};
 use signals::browser_extension::BrowserExtensionState;
-use signals::calendar::CalendarRegistry;
 use signals::capture::SignalCapture;
 use signals::exclusions::ExclusionMatcher;
 use signals::git_watcher::GitWatcherStatus;
@@ -407,7 +407,7 @@ pub fn run() {
 
             let calendar = calendar_registry_for_setup(
                 db.pool.clone(),
-                signals::calendar::fetcher::Fetcher::new,
+                plugins::calendar::fetcher::Fetcher::new,
             )?;
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
 
@@ -584,7 +584,7 @@ pub fn run() {
             let autostop_calendar = calendar.clone();
             let autostop_rules = rules_cache.clone();
             tauri::async_runtime::spawn(async move {
-                signals::calendar_autostop::run(autostop_pool, autostop_calendar, autostop_rules)
+                plugins::calendar::autostop::run(autostop_pool, autostop_calendar, autostop_rules)
                     .await;
             });
 
@@ -652,7 +652,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{calendar_registry_for_setup, ensure_data_dir, open_db_for_setup};
-    use crate::signals::calendar::fetcher::Fetcher;
+    use crate::plugins::calendar::fetcher::Fetcher;
 
     #[test]
     fn ensure_data_dir_creates_missing_nested_path() {
