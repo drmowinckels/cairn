@@ -3082,6 +3082,30 @@ select.rule-conf {
   font-size: var(--font-tiny);
 }
 
+/* Plugin capability badges (Settings → Plugins). Sit in the intg-row
+   status column; communicate what an optional plugin can access. */
+.cap-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.cap-badge {
+  font-family: var(--mono);
+  font-size: var(--font-tiny);
+  line-height: 1;
+  color: var(--ink-soft);
+  background: var(--surface-2);
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: 4px;
+  padding: 3px 6px;
+  letter-spacing: 0.01em;
+}
+
+.cap-badge--local {
+  color: var(--ink-mute);
+}
+
 .modal-scrim {
   position: fixed;
   inset: 0;
