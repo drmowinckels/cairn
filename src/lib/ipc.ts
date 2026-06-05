@@ -801,3 +801,72 @@ export async function setPluginEnabled(
   if (!inTauri) return [];
   return (await invoke<Plugin[]>("set_plugin_enabled", { id, enabled })) ?? [];
 }
+
+/** A capability a PM connector declares (mirrors the Rust `Capability`,
+ *  kebab-serialized). A local-file connector declares none. */
+export type ConnectorCapability = "network" | "secrets";
+
+export type ConnectorFileFormat = "todotxt" | "markdown" | "taskpaper";
+
+/** The connector's interpreter + its config (mirrors Rust `ConnectorKind`,
+ *  externally tagged). Only the local-file kind exists today. */
+export type ConnectorKind = {
+  file: { format: ConnectorFileFormat; path: string };
+};
+
+export interface Connector {
+  id: string;
+  name: string;
+  capabilities: ConnectorCapability[];
+  kind: ConnectorKind;
+}
+
+/** A project as seen in the connected planner. */
+export interface RemoteProject {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
+/** A task as seen in the connected planner. */
+export interface RemoteTask {
+  id: string;
+  label: string;
+  url: string | null;
+  status: string | null;
+  done: boolean;
+}
+
+/** Loaded PM connectors (#110). Empty outside Tauri so the Settings card
+ *  hides; `?? []` guards the a11y audit's stubbed `invoke` (see
+ *  `listPlugins`). */
+export async function listConnectors(): Promise<Connector[]> {
+  if (!inTauri) return [];
+  return (await invoke<Connector[]>("list_connectors")) ?? [];
+}
+
+/** A connector's projects. */
+export async function listConnectorProjects(
+  connectorId: string,
+): Promise<RemoteProject[]> {
+  if (!inTauri) return [];
+  return (
+    (await invoke<RemoteProject[]>("list_connector_projects", {
+      connectorId,
+    })) ?? []
+  );
+}
+
+/** The tasks in one of a connector's projects. */
+export async function listConnectorTasks(
+  connectorId: string,
+  projectId: string,
+): Promise<RemoteTask[]> {
+  if (!inTauri) return [];
+  return (
+    (await invoke<RemoteTask[]>("list_connector_tasks", {
+      connectorId,
+      projectId,
+    })) ?? []
+  );
+}
