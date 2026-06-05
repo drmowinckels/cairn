@@ -56,6 +56,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "linux-
 # FSEvents path is preferred.
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 dirs = "5"
+async-trait = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

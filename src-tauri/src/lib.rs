@@ -1,5 +1,6 @@
 mod auto_backup;
 mod backup;
+mod connectors;
 mod db;
 mod ipc;
 mod plugins;
@@ -105,6 +106,31 @@ async fn set_plugin_enabled(
     ipc::set_plugin_enabled_impl(state, id, enabled).await
 }
 
+// Thin PM-connector command shims (#110), same coverage rationale.
+#[tauri::command]
+async fn list_connectors(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<connectors::ConnectorManifest>, String> {
+    ipc::list_connectors_impl(state).await
+}
+
+#[tauri::command]
+async fn list_connector_projects(
+    state: tauri::State<'_, AppState>,
+    connector_id: String,
+) -> Result<Vec<connectors::RemoteProject>, String> {
+    ipc::list_connector_projects_impl(state, connector_id).await
+}
+
+#[tauri::command]
+async fn list_connector_tasks(
+    state: tauri::State<'_, AppState>,
+    connector_id: String,
+    project_id: String,
+) -> Result<Vec<connectors::RemoteTask>, String> {
+    ipc::list_connector_tasks_impl(state, connector_id, project_id).await
+}
+
 /// Open the SQLite database for the `.setup()` hook, mapping any
 /// failure (locked/corrupt DB, unwritable path, disk full) to a
 /// user-actionable message. Extracted from the Tauri `.setup()`
@@ -149,6 +175,12 @@ pub struct AppState {
     /// source's abort handle so a plugin can be stopped without closing
     /// the shared signal channel.
     pub plugin_host: Arc<tokio::sync::Mutex<plugins::SignalSourceHost>>,
+    /// PM connectors loaded from `<data_dir>/connectors/*.json` (#110).
+    /// Read-only this session (built once at startup); per-connector
+    /// enable/disable + import land with the Settings → Connectors card.
+    /// `Arc` so the IPC handlers share the one registry without cloning
+    /// every connector.
+    pub connector_host: Arc<connectors::ConnectorHost>,
     /// Debug "Capture raw signals" handle. Always created off; the
     /// toggle is in-memory only and never persisted across launches.
     /// See `signals::capture` and `docs/PRIVACY.md`.
@@ -356,6 +388,9 @@ pub fn run() {
             ipc::reset_onboarding,
             list_plugins,
             set_plugin_enabled,
+            list_connectors,
+            list_connector_projects,
+            list_connector_tasks,
             ipc::dry_run_rules,
             ipc::snooze_rule,
             ipc::snooze_all,
@@ -599,12 +634,17 @@ pub fn run() {
                 });
             }
 
+            let connector_host = Arc::new(connectors::ConnectorHost::load(
+                &data_dir.join("connectors"),
+            ));
+
             app.manage(AppState {
                 db,
                 pinned: AtomicBool::new(false),
                 calendar,
                 stream,
                 plugin_host,
+                connector_host,
                 capture: SignalCapture::new(),
                 data_dir: data_dir.clone(),
                 exclusions,
