@@ -84,6 +84,7 @@ drmowinckels
 eggshell
 fnv
 focusables
+footgun
 fuzzysort
 ggseg
 ggsegverse
