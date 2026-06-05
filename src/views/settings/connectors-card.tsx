@@ -19,6 +19,8 @@ const CAPABILITY: Record<ConnectorCapability, { label: string; hint: string }> =
 
 function describeKind(kind: ConnectorKind): string {
   if ("file" in kind) return `Local file · ${kind.file.format}`;
+  // Forward-compat: a kind this build's type doesn't model yet (e.g. a
+  // future `http`) degrades to a generic label instead of crashing.
   return "Connector";
 }
 
@@ -67,6 +69,8 @@ function ConnectorRow({ connector }: { connector: Connector }) {
   async function toggle() {
     const next = !expanded;
     setExpanded(next);
+    // Fetch once on first expand. A failed load leaves `projects` null so
+    // re-expanding retries; an empty success ([]) does not re-fetch.
     if (next && projects === null && !loading) {
       setLoading(true);
       setError(null);
@@ -87,7 +91,7 @@ function ConnectorRow({ connector }: { connector: Connector }) {
           type="button"
           className="connector-toggle"
           aria-expanded={expanded}
-          aria-controls={panelId}
+          aria-controls={expanded ? panelId : undefined}
           onClick={() => void toggle()}
         >
           <Icon name={expanded ? "chevron-down" : "chevron-right"} size={14} />
@@ -175,7 +179,7 @@ function ProjectRow({
         type="button"
         className="connector-toggle"
         aria-expanded={expanded}
-        aria-controls={panelId}
+        aria-controls={expanded ? panelId : undefined}
         onClick={() => void toggle()}
       >
         <Icon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
