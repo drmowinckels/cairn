@@ -125,8 +125,7 @@ impl ConnectorHost {
                 continue;
             }
             match build_from_path(&path) {
-                Ok(Some(connector)) => host.register(connector),
-                Ok(None) => {} // recognized but not yet runnable; build() logged it
+                Ok(connector) => host.register(connector),
                 Err(e) => log::warn!("connector manifest {path:?} skipped: {e}"),
             }
         }
@@ -163,31 +162,23 @@ impl ConnectorHost {
 }
 
 /// Read + validate a manifest file and build the connector it describes.
-/// `Ok(None)` means the manifest is valid but its kind has no runtime
-/// interpreter in this build yet (the declarative HTTP interpreter lands
-/// in a later slice).
-fn build_from_path(path: &Path) -> anyhow::Result<Option<Box<dyn PmConnector>>> {
+fn build_from_path(path: &Path) -> anyhow::Result<Box<dyn PmConnector>> {
     let json = std::fs::read_to_string(path)?;
     let manifest = ConnectorManifest::from_json(&json)?;
     Ok(build(manifest))
 }
 
-/// Map a validated manifest to its interpreter, or `None` when the kind
-/// is recognized but not yet runnable.
-fn build(manifest: ConnectorManifest) -> Option<Box<dyn PmConnector>> {
+/// Map a validated manifest to its interpreter: the local-file connector
+/// or the declarative HTTP connector (production reqwest fetcher + keychain
+/// secret store).
+fn build(manifest: ConnectorManifest) -> Box<dyn PmConnector> {
     match &manifest.kind {
-        ConnectorKind::File(_) => Some(Box::new(file::FileConnector::new(manifest))),
-        ConnectorKind::Http(_) => {
-            // Surface the host it *would* contact for transparency, even
-            // though the HTTP interpreter isn't in this build yet.
-            let host = manifest.kind.as_http().map_or("", |s| s.base_url.as_str());
-            log::info!(
-                "connector '{}' (kind=http, host {host}) recognized but the HTTP \
-                 interpreter is not yet available in this build, skipping",
-                manifest.id
-            );
-            None
-        }
+        ConnectorKind::File(_) => Box::new(file::FileConnector::new(manifest)),
+        ConnectorKind::Http(_) => Box::new(http::DeclarativeConnector::new(
+            manifest,
+            http::ReqwestFetcher::new(),
+            http::KeychainStore::new(),
+        )),
     }
 }
 
@@ -235,8 +226,7 @@ mod tests {
         write_file(dir.path(), "todo.txt", "Buy milk +groceries\n");
 
         write_file(dir.path(), "good.json", &manifest_for("good", &todo));
-        // A *valid* http manifest: recognized, but the http interpreter
-        // isn't in this build yet → build() returns None → not registered.
+        // A valid http manifest builds a runnable declarative connector.
         write_file(
             dir.path(),
             "http.json",
@@ -259,15 +249,8 @@ mod tests {
         write_file(dir.path(), "notes.txt", "ignore me");
 
         let host = ConnectorHost::load(dir.path());
-        assert_eq!(
-            host.len(),
-            1,
-            "only the runnable file connector is registered"
-        );
-        assert!(
-            host.get("remote").is_none(),
-            "http connector is not runnable yet"
-        );
+        assert_eq!(host.len(), 2, "the file and http connectors both register");
+        assert!(host.get("remote").is_some(), "http connector is runnable");
 
         let connector = host.get("good").expect("registered by id");
         let projects = connector.list_projects().await.unwrap();
