@@ -7,8 +7,10 @@
 //! token in the URL, and reqwest's error `Display` would otherwise append
 //! the full URL (token and all) to any error string.
 //!
-//! A hard response-size cap bounds memory against a hostile or runaway
-//! server, on top of the read timeout.
+//! A response-size cap bounds the accumulated body against a hostile or
+//! runaway server, on top of the read timeout. It is checked incrementally
+//! per chunk, so a single transport-frame-sized chunk can briefly overshoot
+//! before the bail — the accumulator never grows unbounded across chunks.
 
 use std::time::Duration;
 
