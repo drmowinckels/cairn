@@ -194,10 +194,9 @@ pub enum Pagination {
         cursor_path: String,
         has_more_path: String,
     },
-    Offset {
-        limit: u32,
-        param: String,
-    },
+    /// Page size; the interpreter advances the `{{offset}}` template
+    /// variable by `limit` until a page returns fewer than `limit` items.
+    Offset { limit: u32 },
 }
 
 /// Why a manifest was rejected. Library-level, so callers (the host's
@@ -513,7 +512,7 @@ mod tests {
                     "items": "",
                     "map": { "id": "id", "label": "content", "done": "is_completed" }
                 },
-                "pagination": { "type": "offset", "limit": 100, "param": "offset" }
+                "pagination": { "type": "offset", "limit": 100 }
             }
         }
     }"#;
@@ -561,13 +560,7 @@ mod tests {
         assert_eq!(tasks.request.method, HttpMethod::Get);
         assert_eq!(tasks.request.query["project_id"], "{{project.id}}");
         assert_eq!(tasks.response.map["label"], "content");
-        assert_eq!(
-            tasks.pagination,
-            Some(Pagination::Offset {
-                limit: 100,
-                param: "offset".to_string()
-            })
-        );
+        assert_eq!(tasks.pagination, Some(Pagination::Offset { limit: 100 }));
     }
 
     #[test]
@@ -666,7 +659,7 @@ mod tests {
     #[test]
     fn parses_cursor_pagination() {
         let json = HTTP_JSON.replace(
-            "{ \"type\": \"offset\", \"limit\": 100, \"param\": \"offset\" }",
+            "{ \"type\": \"offset\", \"limit\": 100 }",
             "{ \"type\": \"cursor\", \"cursorPath\": \"meta.next\", \"hasMorePath\": \"meta.more\" }",
         );
         let m = ConnectorManifest::from_json(&json).unwrap();
