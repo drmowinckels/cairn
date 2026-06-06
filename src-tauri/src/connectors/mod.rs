@@ -20,6 +20,7 @@
 //! API. `push_time` is a separate, later, per-connector write grant.
 
 pub mod file;
+pub mod http;
 pub mod manifest;
 
 use std::path::Path;
