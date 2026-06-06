@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use async_trait::async_trait;
 
-use super::manifest::{ConnectorKind, FileFormat, FileSpec};
+use super::manifest::FileFormat;
 use super::{ConnectorManifest, PmConnector, RemoteProject, RemoteProjectRef, RemoteTask};
 
 /// A connector backed by a local file.
@@ -35,14 +35,14 @@ impl FileConnector {
         Self { manifest }
     }
 
-    fn spec(&self) -> &FileSpec {
-        match &self.manifest.kind {
-            ConnectorKind::File(spec) => spec,
-        }
-    }
-
     fn read_and_parse(&self) -> anyhow::Result<Parsed> {
-        let spec = self.spec();
+        // FileConnector is only ever built for a file manifest (see
+        // `connectors::build`), so this is infallible.
+        let spec = self
+            .manifest
+            .kind
+            .as_file()
+            .expect("file connector holds a file manifest");
         let path = expand_path(&spec.path);
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("reading connector file {}", path.display()))?;
