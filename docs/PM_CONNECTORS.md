@@ -184,8 +184,10 @@ loops, capped (see Limits).
 ```
 
 Two strategies: `cursor` (above) and `offset` (`{ "type": "offset",
-"limit": 100, "param": "offset" }`, the interpreter increments
-<code v-pre>{{offset}}</code> until a page returns fewer than `limit` items).
+"limit": 100 }`, the interpreter advances the <code v-pre>{{offset}}</code>
+template variable by `limit` until a page returns fewer than `limit`
+items — reference it in a request `query` value, e.g.
+`"query": { "offset": "{{offset}}" }`).
 
 ## `kind: "file"` — local-file connectors
 
@@ -433,8 +435,7 @@ check yours (it is published at `/schemas/pm-connector.json`).
                     "type": { "enum": ["cursor", "offset"] },
                     "cursorPath": { "type": "string" },
                     "hasMorePath": { "type": "string" },
-                    "limit": { "type": "integer" },
-                    "param": { "type": "string" }
+                    "limit": { "type": "integer" }
                   }
                 }
               }

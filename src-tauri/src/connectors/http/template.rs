@@ -138,4 +138,23 @@ mod tests {
     fn template_without_placeholders_is_verbatim() {
         assert_eq!(fill("/projects", &ctx(), Escape::Url).unwrap(), "/projects");
     }
+
+    #[test]
+    fn a_substituted_value_is_not_re_expanded() {
+        // A value that itself contains `{{...}}` must emit it literally, not
+        // re-expand (which would also be an "unknown variable" error).
+        let mut c = Context::new();
+        c.set("cursor", "{{project.id}}");
+        assert_eq!(
+            fill("x={{cursor}}", &c, Escape::Raw).unwrap(),
+            "x={{project.id}}"
+        );
+    }
+
+    #[test]
+    fn json_escape_handles_newlines_and_unicode() {
+        let mut c = Context::new();
+        c.set("project.id", "a\nb→c");
+        assert_eq!(fill("{{project.id}}", &c, Escape::Json).unwrap(), "a\\nb→c");
+    }
 }

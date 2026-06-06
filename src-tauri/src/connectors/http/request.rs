@@ -93,7 +93,14 @@ fn apply_auth(
 }
 
 fn require(token: Option<&str>) -> Result<&str> {
-    token.ok_or_else(|| anyhow!("connector needs a token but none is stored"))
+    let token = token.ok_or_else(|| anyhow!("connector needs a token but none is stored"))?;
+    // The token is user-entered into the keychain, not remote-controlled,
+    // but reject control bytes here so the interpreter — not a downstream
+    // HTTP client — is the thing that prevents header injection.
+    if token.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        bail!("connector token contains a control character");
+    }
+    Ok(token)
 }
 
 #[cfg(test)]
@@ -230,6 +237,19 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("token"));
+    }
+
+    #[test]
+    fn a_token_with_control_chars_is_rejected() {
+        let err = build(
+            &base(),
+            &op(req(HttpMethod::Get, "/me")),
+            &Context::new(),
+            &Auth::Bearer { secret: "k".into() },
+            Some("tok\nen"),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("control"));
     }
 
     #[test]

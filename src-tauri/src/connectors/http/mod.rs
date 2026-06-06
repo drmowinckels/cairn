@@ -151,12 +151,16 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
                     has_more_path,
                 }) => {
                     let has_more = extract::truthy(extract::dotted(&body, has_more_path));
-                    cursor = extract::dotted(&body, cursor_path)
+                    let next = extract::dotted(&body, cursor_path)
                         .and_then(extract::as_string)
                         .unwrap_or_default();
-                    has_more && !cursor.is_empty()
+                    // Stop on no forward progress (empty or repeated cursor)
+                    // so a server that never clears `has_more` can't spin.
+                    let advanced = !next.is_empty() && next != cursor;
+                    cursor = next;
+                    has_more && advanced
                 }
-                Some(Pagination::Offset { limit, .. }) => {
+                Some(Pagination::Offset { limit }) => {
                     offset = offset.saturating_add(*limit);
                     page_len as u32 >= *limit
                 }
@@ -471,7 +475,7 @@ mod tests {
             "listProjects": {
                 "request": { "method": "GET", "path": "/p", "query": { "offset": "{{offset}}" } },
                 "response": { "items": "", "map": { "id": "id", "name": "n" } },
-                "pagination": { "type": "offset", "limit": 2, "param": "offset" }
+                "pagination": { "type": "offset", "limit": 2 }
             },
             "listTasks": {
                 "request": { "method": "GET", "path": "/t" },
@@ -525,6 +529,24 @@ mod tests {
         let c = connector(OFFSET, FakeFetcher::with(&[&items]), no_secrets());
         let projects = c.list_projects().await.unwrap();
         assert_eq!(projects.len(), MAX_ITEMS);
+    }
+
+    #[tokio::test]
+    async fn cursor_pagination_stops_when_the_cursor_does_not_advance() {
+        let gh_secrets = FakeSecrets(BTreeMap::from([("gh".into(), "t".into())]));
+        // The server keeps has_more=true but returns the same cursor — the
+        // no-progress guard must stop rather than spin to MAX_PAGES.
+        let body =
+            r#"{"data":{"nodes":[{"id":"1","title":"a"}],"page":{"end":"STUCK","more":true}}}"#;
+        let c = connector(
+            GRAPHQL_CURSOR,
+            FakeFetcher::with(&[body, body, body]),
+            gh_secrets,
+        );
+        let tasks = c.list_tasks(&RemoteProjectRef::new("x")).await.unwrap();
+        assert_eq!(tasks.len(), 2, "two pages before the cursor repeats");
+        let DeclarativeConnector { fetcher, .. } = &c;
+        assert_eq!(fetcher.seen.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]
