@@ -10,15 +10,18 @@
 //!   - [`SecretStore`] resolves a connector's token from the OS keychain
 //!     (tests use an in-memory map).
 //!
-//! This module ships ahead of that wiring: `build()` still skips http
-//! connectors until the reqwest fetcher + keychain store land, so the
-//! interpreter is not yet referenced by `build()`. `#![allow(dead_code)]`
-//! keeps `-D warnings` happy until then; the next slice removes it.
-#![allow(dead_code)]
+//! `connectors::build` constructs a [`DeclarativeConnector`] with the
+//! production [`ReqwestFetcher`] + [`KeychainStore`] for every `kind:
+//! "http"` manifest, so http connectors run like any other.
 
 mod extract;
+mod fetcher;
 mod request;
+mod secrets;
 mod template;
+
+pub use fetcher::ReqwestFetcher;
+pub use secrets::KeychainStore;
 
 use std::collections::BTreeMap;
 
@@ -76,23 +79,26 @@ pub struct DeclarativeConnector<F, S> {
 }
 
 impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
-    /// Build from a validated `kind: "http"` manifest. Errors if the
-    /// manifest isn't http (a programming error — `build()` only routes
-    /// http manifests here) or its base URL doesn't parse.
-    pub fn new(manifest: ConnectorManifest, fetcher: F, secrets: S) -> Result<Self> {
-        let base = manifest
-            .kind
-            .as_http()
-            .ok_or_else(|| anyhow!("not an http connector"))
-            .and_then(|spec| {
-                Url::parse(&spec.base_url).map_err(|e| anyhow!("bad base url: {e}"))
-            })?;
-        Ok(Self {
+    /// Build from a **validated** `kind: "http"` manifest. The two
+    /// `expect`s are invariants `from_json` + `validate_http` already
+    /// guarantee (the kind is http; the base is a parseable https URL),
+    /// and `build()` only routes http manifests here — same documented-
+    /// infallibility as `FileConnector`'s spec access.
+    pub fn new(manifest: ConnectorManifest, fetcher: F, secrets: S) -> Self {
+        let base = Url::parse(
+            &manifest
+                .kind
+                .as_http()
+                .expect("declarative connector holds an http manifest")
+                .base_url,
+        )
+        .expect("validated http manifest has a parseable https base url");
+        Self {
             manifest,
             base,
             fetcher,
             secrets,
-        })
+        }
     }
 
     fn spec(&self) -> &HttpSpec {
@@ -312,7 +318,7 @@ mod tests {
         secrets: FakeSecrets,
     ) -> DeclarativeConnector<F, FakeSecrets> {
         let manifest = ConnectorManifest::from_json(json).unwrap();
-        DeclarativeConnector::new(manifest, fetcher, secrets).unwrap()
+        DeclarativeConnector::new(manifest, fetcher, secrets)
     }
 
     const TODOIST: &str = r#"{
@@ -556,16 +562,5 @@ mod tests {
         let c = connector(OFFSET, FakeFetcher::with(&[]), no_secrets());
         let err = c.list_projects().await.unwrap_err();
         assert!(err.to_string().contains("ran out"));
-    }
-
-    #[tokio::test]
-    async fn new_rejects_a_non_http_manifest() {
-        let file_json = r#"{ "manifest": 1, "id": "f", "name": "F", "kind": "file",
-            "capabilities": [], "file": { "format": "todotxt", "path": "/x" } }"#;
-        let manifest = ConnectorManifest::from_json(file_json).unwrap();
-        let err = DeclarativeConnector::new(manifest, FakeFetcher::with(&[]), no_secrets())
-            .err()
-            .unwrap();
-        assert!(err.to_string().contains("not an http connector"));
     }
 }

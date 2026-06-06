@@ -172,18 +172,31 @@ fn build_from_path(path: &Path) -> anyhow::Result<Option<Box<dyn PmConnector>>> 
     Ok(build(manifest))
 }
 
-/// Map a validated manifest to its interpreter, or `None` when the kind
-/// is recognized but not yet runnable.
+/// Map a validated manifest to its interpreter, or `None` when it can't
+/// be constructed (only the http client build can fail, and rarely).
 fn build(manifest: ConnectorManifest) -> Option<Box<dyn PmConnector>> {
     match &manifest.kind {
         ConnectorKind::File(_) => Some(Box::new(file::FileConnector::new(manifest))),
-        ConnectorKind::Http(_) => {
-            // Surface the host it *would* contact for transparency, even
-            // though the HTTP interpreter isn't in this build yet.
-            let host = manifest.kind.as_http().map_or("", |s| s.base_url.as_str());
-            log::info!(
-                "connector '{}' (kind=http, host {host}) recognized but the HTTP \
-                 interpreter is not yet available in this build, skipping",
+        ConnectorKind::Http(_) => build_http(manifest),
+    }
+}
+
+/// Construct the declarative HTTP connector with the production reqwest
+/// fetcher + keychain secret store. `None` (logged) if the http client
+/// can't be built.
+fn build_http(manifest: ConnectorManifest) -> Option<Box<dyn PmConnector>> {
+    match http::ReqwestFetcher::new() {
+        Ok(fetcher) => Some(Box::new(http::DeclarativeConnector::new(
+            manifest,
+            fetcher,
+            http::KeychainStore::new(),
+        ))),
+        Err(e) => {
+            // Defensive: reqwest only fails to build on a catastrophic TLS
+            // backend init, never in a working environment — skip rather
+            // than crash startup.
+            log::warn!(
+                "connector '{}' skipped: could not build http client: {e}",
                 manifest.id
             );
             None
@@ -235,8 +248,7 @@ mod tests {
         write_file(dir.path(), "todo.txt", "Buy milk +groceries\n");
 
         write_file(dir.path(), "good.json", &manifest_for("good", &todo));
-        // A *valid* http manifest: recognized, but the http interpreter
-        // isn't in this build yet → build() returns None → not registered.
+        // A valid http manifest builds a runnable declarative connector.
         write_file(
             dir.path(),
             "http.json",
@@ -259,15 +271,8 @@ mod tests {
         write_file(dir.path(), "notes.txt", "ignore me");
 
         let host = ConnectorHost::load(dir.path());
-        assert_eq!(
-            host.len(),
-            1,
-            "only the runnable file connector is registered"
-        );
-        assert!(
-            host.get("remote").is_none(),
-            "http connector is not runnable yet"
-        );
+        assert_eq!(host.len(), 2, "the file and http connectors both register");
+        assert!(host.get("remote").is_some(), "http connector is runnable");
 
         let connector = host.get("good").expect("registered by id");
         let projects = connector.list_projects().await.unwrap();
