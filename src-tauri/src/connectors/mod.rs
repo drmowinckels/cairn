@@ -125,8 +125,7 @@ impl ConnectorHost {
                 continue;
             }
             match build_from_path(&path) {
-                Ok(Some(connector)) => host.register(connector),
-                Ok(None) => {} // recognized but not yet runnable; build() logged it
+                Ok(connector) => host.register(connector),
                 Err(e) => log::warn!("connector manifest {path:?} skipped: {e}"),
             }
         }
@@ -163,44 +162,23 @@ impl ConnectorHost {
 }
 
 /// Read + validate a manifest file and build the connector it describes.
-/// `Ok(None)` means the manifest is valid but its kind has no runtime
-/// interpreter in this build yet (the declarative HTTP interpreter lands
-/// in a later slice).
-fn build_from_path(path: &Path) -> anyhow::Result<Option<Box<dyn PmConnector>>> {
+fn build_from_path(path: &Path) -> anyhow::Result<Box<dyn PmConnector>> {
     let json = std::fs::read_to_string(path)?;
     let manifest = ConnectorManifest::from_json(&json)?;
     Ok(build(manifest))
 }
 
-/// Map a validated manifest to its interpreter, or `None` when it can't
-/// be constructed (only the http client build can fail, and rarely).
-fn build(manifest: ConnectorManifest) -> Option<Box<dyn PmConnector>> {
+/// Map a validated manifest to its interpreter: the local-file connector
+/// or the declarative HTTP connector (production reqwest fetcher + keychain
+/// secret store).
+fn build(manifest: ConnectorManifest) -> Box<dyn PmConnector> {
     match &manifest.kind {
-        ConnectorKind::File(_) => Some(Box::new(file::FileConnector::new(manifest))),
-        ConnectorKind::Http(_) => build_http(manifest),
-    }
-}
-
-/// Construct the declarative HTTP connector with the production reqwest
-/// fetcher + keychain secret store. `None` (logged) if the http client
-/// can't be built.
-fn build_http(manifest: ConnectorManifest) -> Option<Box<dyn PmConnector>> {
-    match http::ReqwestFetcher::new() {
-        Ok(fetcher) => Some(Box::new(http::DeclarativeConnector::new(
+        ConnectorKind::File(_) => Box::new(file::FileConnector::new(manifest)),
+        ConnectorKind::Http(_) => Box::new(http::DeclarativeConnector::new(
             manifest,
-            fetcher,
+            http::ReqwestFetcher::new(),
             http::KeychainStore::new(),
-        ))),
-        Err(e) => {
-            // Defensive: reqwest only fails to build on a catastrophic TLS
-            // backend init, never in a working environment — skip rather
-            // than crash startup.
-            log::warn!(
-                "connector '{}' skipped: could not build http client: {e}",
-                manifest.id
-            );
-            None
-        }
+        )),
     }
 }
 

@@ -109,22 +109,26 @@ pub struct ReqwestFetcher {
 }
 
 impl ReqwestFetcher {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            client: build_client(true)?,
+    /// Build the production fetcher. The reqwest client build only fails on
+    /// a catastrophic TLS-backend init — infallible in any working runtime
+    /// (the "infallible in practice" call other crates `unwrap`), so a
+    /// failure is a fatal environment fault, not a per-connector one.
+    pub fn new() -> Self {
+        Self {
+            client: build_client(true).expect("connector http client builds"),
             max_bytes: MAX_RESPONSE_BYTES,
-        })
+        }
     }
 
     /// Test-only constructor permitting plaintext HTTP (mockito serves
     /// HTTP only) and a custom byte cap so the size-limit path is cheap
     /// to exercise. Never used outside tests.
     #[cfg(test)]
-    fn new_for_test(max_bytes: usize) -> Result<Self> {
-        Ok(Self {
-            client: build_client(false)?,
+    fn new_for_test(max_bytes: usize) -> Self {
+        Self {
+            client: build_client(false).expect("test http client builds"),
             max_bytes,
-        })
+        }
     }
 
     async fn read_capped(&self, mut resp: reqwest::Response) -> Result<String> {
@@ -263,7 +267,7 @@ mod tests {
             .with_body(r#"[{"id":"1"}]"#)
             .create_async()
             .await;
-        let fetcher = ReqwestFetcher::new_for_test(1024).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(1024);
         let resp = fetcher
             .fetch(&get(&format!("{}/projects", server.url())))
             .await
@@ -282,7 +286,7 @@ mod tests {
             .with_body("nope")
             .create_async()
             .await;
-        let fetcher = ReqwestFetcher::new_for_test(1024).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(1024);
         let resp = fetcher
             .fetch(&get(&format!("{}/x", server.url())))
             .await
@@ -301,7 +305,7 @@ mod tests {
             .with_body("{}")
             .create_async()
             .await;
-        let fetcher = ReqwestFetcher::new_for_test(1024).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(1024);
         let req = PreparedRequest {
             method: HttpMethod::Post,
             url: format!("{}/graphql", server.url()),
@@ -322,7 +326,7 @@ mod tests {
             .with_body("x".repeat(100))
             .create_async()
             .await;
-        let fetcher = ReqwestFetcher::new_for_test(10).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(10);
         let err = fetcher
             .fetch(&get(&format!("{}/big", server.url())))
             .await
@@ -348,7 +352,7 @@ mod tests {
             .with_header("Location", &cross)
             .create_async()
             .await;
-        let fetcher = ReqwestFetcher::new_for_test(1024).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(1024);
         let err = fetcher
             .fetch(&get(&format!("{}/start", server.url())))
             .await
@@ -357,6 +361,35 @@ mod tests {
         assert!(chain.contains("redirect refused") || chain.contains("redirect"));
         assert!(!chain.contains(SECRET), "leaked the redirect URL: {chain}");
         assert!(!chain.contains("localhost"), "leaked the host: {chain}");
+    }
+
+    #[tokio::test]
+    async fn fetch_surfaces_a_body_read_error_url_free() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // A raw server that promises 1000 bytes but sends 5 then drops the
+        // connection — reqwest errors mid-body. mockito can't do this (it
+        // normalizes Content-Length to the body). The error must be URL-free.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            let _ = sock
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nshort")
+                .await;
+            // Drop the socket → connection closed before the body completes.
+        });
+        let fetcher = ReqwestFetcher::new_for_test(1_000_000);
+        const SECRET: &str = "BODY-READ-SECRET";
+        let err = fetcher
+            .fetch(&get(&format!("http://{addr}/x?token={SECRET}")))
+            .await
+            .unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(chain.contains("connector response"), "{chain}");
+        assert!(!chain.contains(SECRET), "leaked the query token: {chain}");
+        let _ = server.await;
     }
 
     #[tokio::test]
@@ -374,7 +407,7 @@ mod tests {
             .with_body("{}")
             .create_async()
             .await;
-        let fetcher = ReqwestFetcher::new_for_test(1024).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(1024);
         let resp = fetcher
             .fetch(&get(&format!("{}/start", server.url())))
             .await
@@ -396,7 +429,7 @@ mod tests {
                 .create_async()
                 .await;
         }
-        let fetcher = ReqwestFetcher::new_for_test(1024).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(1024);
         let err = fetcher
             .fetch(&get(&format!("{}/hop0", server.url())))
             .await
@@ -413,7 +446,7 @@ mod tests {
             .with_body(vec![0xff, 0xfe, 0xfd])
             .create_async()
             .await;
-        let fetcher = ReqwestFetcher::new_for_test(1024).unwrap();
+        let fetcher = ReqwestFetcher::new_for_test(1024);
         let err = fetcher
             .fetch(&get(&format!("{}/x", server.url())))
             .await
@@ -425,7 +458,7 @@ mod tests {
     async fn fetch_error_never_contains_a_query_token() {
         // A connection failure to TEST-NET-1; the token in the query must
         // not surface (production https_only path).
-        let fetcher = ReqwestFetcher::new().unwrap();
+        let fetcher = ReqwestFetcher::new();
         const SECRET: &str = "URL-QUERY-SECRET-9c3a";
         let url = format!("https://192.0.2.1/tasks?token={SECRET}");
         let err = fetcher.fetch(&get(&url)).await.unwrap_err();
@@ -442,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn production_fetcher_refuses_a_plaintext_target() {
-        let fetcher = ReqwestFetcher::new().unwrap();
+        let fetcher = ReqwestFetcher::new();
         const SECRET: &str = "PLAINTEXT-TOKEN";
         let err = fetcher
             .fetch(&get(&format!("http://127.0.0.1/x?token={SECRET}")))
