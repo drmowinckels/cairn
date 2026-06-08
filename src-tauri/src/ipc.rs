@@ -6017,16 +6017,18 @@ pub async fn set_plugin_enabled_impl(
     Ok(host.statuses())
 }
 
-/// Each loaded connector's manifest paired with its secret state, read
-/// against `store`. The token itself never crosses this boundary, only its
-/// presence. Generic over the store so the secret-management logic is unit-
-/// tested with a fake keychain rather than only the OS one (which is
-/// platform-gated); the production callers pass [`KeychainStore`].
+/// Each loaded connector's manifest paired with its secret state (read
+/// against `store`) and enabled flag (from `enabled`; absent = enabled). The
+/// token never crosses this boundary, only its presence. Generic over the
+/// store so the secret logic is unit-tested with a fake keychain rather than
+/// only the OS one (which is platform-gated); production callers pass
+/// [`KeychainStore`].
 ///
 /// [`KeychainStore`]: crate::connectors::http::KeychainStore
 fn connector_views_with(
     state: &State<'_, AppState>,
     store: &dyn crate::connectors::http::SecretStore,
+    enabled: &std::collections::HashMap<String, bool>,
 ) -> Vec<crate::connectors::ConnectorView> {
     state
         .connector_host
@@ -6034,12 +6036,16 @@ fn connector_views_with(
         .into_iter()
         .map(|manifest| {
             let secret = crate::connectors::secret_state(manifest.secret_key(), store);
-            crate::connectors::ConnectorView { manifest, secret }
+            let is_enabled = crate::connectors::state::is_enabled(enabled, &manifest.id);
+            crate::connectors::ConnectorView {
+                manifest,
+                secret,
+                enabled: is_enabled,
+            }
         })
         .collect()
 }
 
-/// Resolve a connector's keychain secret key, erroring if the id is unknown
 /// Set (`Some`) or clear (`None`) a connector's token in `keychain`, then
 /// return the refreshed connector list read back through the same keychain.
 /// The whole set/clear path is here, generic over the keychain, so it is
@@ -6051,6 +6057,7 @@ fn apply_connector_secret<K>(
     connector_id: &str,
     token: Option<&str>,
     keychain: &K,
+    enabled: &std::collections::HashMap<String, bool>,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String>
 where
     K: crate::connectors::http::SecretStore + crate::connectors::http::SecretWriter,
@@ -6066,19 +6073,21 @@ where
         Some(token) => crate::connectors::store_secret(secret_key.as_deref(), token, keychain)?,
         None => crate::connectors::remove_secret(secret_key.as_deref(), keychain)?,
     }
-    Ok(connector_views_with(state, keychain))
+    Ok(connector_views_with(state, keychain, enabled))
 }
 
-/// List every loaded PM connector with its secret state, for Settings →
-/// Connectors (#110). The host is built once at startup from
-/// `<data_dir>/connectors/*.json`. Invoke shim in `lib.rs` — see
-/// `list_plugins_impl`.
+/// List every loaded PM connector with its secret + enabled state, for
+/// Settings → Connectors (#110). The host is built once at startup from
+/// `<data_dir>/connectors/*.json`; enabled flags come from `connector_state`.
+/// Invoke shim in `lib.rs` — see `list_plugins_impl`.
 pub async fn list_connectors_impl(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    let enabled = crate::connectors::state::load_enabled(&state.db.pool).await;
     Ok(connector_views_with(
         &state,
         &crate::connectors::http::KeychainStore::new(),
+        &enabled,
     ))
 }
 
@@ -6092,11 +6101,13 @@ pub async fn set_connector_secret_impl(
     connector_id: String,
     token: String,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    let enabled = crate::connectors::state::load_enabled(&state.db.pool).await;
     apply_connector_secret(
         &state,
         &connector_id,
         Some(&token),
         &crate::connectors::http::KeychainStore::new(),
+        &enabled,
     )
 }
 
@@ -6106,12 +6117,35 @@ pub async fn clear_connector_secret_impl(
     state: State<'_, AppState>,
     connector_id: String,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    let enabled = crate::connectors::state::load_enabled(&state.db.pool).await;
     apply_connector_secret(
         &state,
         &connector_id,
         None,
         &crate::connectors::http::KeychainStore::new(),
+        &enabled,
     )
+}
+
+/// Enable or disable a connector (#110), persisting the flag so a disabled
+/// (networked) connector stays opted out across launches and makes no
+/// requests — its browse is refused in `list_connector_*`. Returns the
+/// refreshed connector list. Invoke shim in `lib.rs`.
+pub async fn set_connector_enabled_impl(
+    state: State<'_, AppState>,
+    connector_id: String,
+    enabled: bool,
+) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    if state.connector_host.get(&connector_id).is_none() {
+        return Err(format!("unknown connector '{connector_id}'"));
+    }
+    crate::connectors::state::set_enabled(&state.db.pool, &connector_id, enabled).await?;
+    let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
+    Ok(connector_views_with(
+        &state,
+        &crate::connectors::http::KeychainStore::new(),
+        &flags,
+    ))
 }
 
 /// Run a connector read through the offline cache (#110): on success, cache
@@ -6168,9 +6202,24 @@ where
     }
 }
 
+/// Error if the connector is disabled — a disabled connector makes no
+/// requests, so browsing it is refused (the UI hides browse for a disabled
+/// connector; this is the backend enforcement of that).
+async fn ensure_connector_enabled(
+    state: &State<'_, AppState>,
+    connector_id: &str,
+) -> Result<(), String> {
+    let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
+    if crate::connectors::state::is_enabled(&flags, connector_id) {
+        Ok(())
+    } else {
+        Err(format!("connector '{connector_id}' is disabled"))
+    }
+}
+
 /// List one connector's projects, through the offline cache. Errors if the
 /// id is unknown (the UI only ever passes ids from `list_connectors`, so an
-/// unknown id is a bug, not user input).
+/// unknown id is a bug, not user input) or the connector is disabled.
 pub async fn list_connector_projects_impl(
     state: State<'_, AppState>,
     connector_id: String,
@@ -6179,6 +6228,7 @@ pub async fn list_connector_projects_impl(
         .connector_host
         .get(&connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+    ensure_connector_enabled(&state, &connector_id).await?;
     read_with_cache(
         &state.db.pool,
         &connector_id,
@@ -6199,6 +6249,7 @@ pub async fn list_connector_tasks_impl(
         .connector_host
         .get(&connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+    ensure_connector_enabled(&state, &connector_id).await?;
     let scope = crate::connectors::cache::tasks_scope(&project_id);
     read_with_cache(
         &state.db.pool,
@@ -6279,17 +6330,28 @@ mod connector_tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         let kc = FakeKeychain::default();
+        let enabled = std::collections::HashMap::new();
 
-        let after_set =
-            apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, Some("ghp_x"), &kc).unwrap();
+        let after_set = apply_connector_secret(
+            &state,
+            FIXTURE_HTTP_CONNECTOR_ID,
+            Some("ghp_x"),
+            &kc,
+            &enabled,
+        )
+        .unwrap();
         let http = after_set
             .iter()
             .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
             .unwrap();
         assert_eq!(http.secret, SecretState::Set, "stored token reads as Set");
+        assert!(
+            http.enabled,
+            "a connector with no state row defaults enabled"
+        );
 
         let after_clear =
-            apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, None, &kc).unwrap();
+            apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, None, &kc, &enabled).unwrap();
         let http = after_clear
             .iter()
             .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
@@ -6398,6 +6460,87 @@ mod connector_tests {
             tasks.items.is_empty(),
             "a project with no tasks returns empty, not an error"
         );
+    }
+
+    #[tokio::test]
+    async fn connectors_default_enabled() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let connectors = list_connectors_impl(state).await.unwrap();
+        assert!(
+            connectors.iter().all(|c| c.enabled),
+            "a connector with no state row is enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_connector_enabled_toggles_persists_and_reflects() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let after_off =
+            set_connector_enabled_impl(state.clone(), FIXTURE_CONNECTOR_ID.into(), false)
+                .await
+                .unwrap();
+        let row = after_off
+            .iter()
+            .find(|c| c.manifest.id == FIXTURE_CONNECTOR_ID)
+            .unwrap();
+        assert!(!row.enabled, "the view reflects the disable");
+
+        // The flag persists: a fresh list still shows it disabled.
+        let listed = list_connectors_impl(state.clone()).await.unwrap();
+        assert!(
+            !listed
+                .iter()
+                .find(|c| c.manifest.id == FIXTURE_CONNECTOR_ID)
+                .unwrap()
+                .enabled
+        );
+
+        let after_on = set_connector_enabled_impl(state, FIXTURE_CONNECTOR_ID.into(), true)
+            .await
+            .unwrap();
+        assert!(
+            after_on
+                .iter()
+                .find(|c| c.manifest.id == FIXTURE_CONNECTOR_ID)
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[tokio::test]
+    async fn set_connector_enabled_rejects_an_unknown_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = set_connector_enabled_impl(state, "nope".into(), false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("nope"));
+    }
+
+    #[tokio::test]
+    async fn a_disabled_connector_refuses_browsing() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        set_connector_enabled_impl(state.clone(), FIXTURE_CONNECTOR_ID.into(), false)
+            .await
+            .unwrap();
+
+        let projects_err = list_connector_projects_impl(state.clone(), FIXTURE_CONNECTOR_ID.into())
+            .await
+            .unwrap_err();
+        assert!(projects_err.contains("disabled"), "{projects_err}");
+
+        let tasks_err = list_connector_tasks_impl(
+            state,
+            FIXTURE_CONNECTOR_ID.into(),
+            FIXTURE_CONNECTOR_PROJECT_ID.into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(tasks_err.contains("disabled"), "{tasks_err}");
     }
 
     use crate::connectors::{cache, RemoteProject};

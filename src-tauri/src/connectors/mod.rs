@@ -24,6 +24,7 @@ pub mod cache;
 pub mod file;
 pub mod http;
 pub mod manifest;
+pub mod state;
 
 use std::path::Path;
 
@@ -121,6 +122,9 @@ pub struct ConnectorView {
     #[serde(flatten)]
     pub manifest: ConnectorManifest,
     pub secret: SecretState,
+    /// Whether the user has this connector enabled. A disabled connector is
+    /// listed (with its toggle) but makes no requests — browsing is refused.
+    pub enabled: bool,
 }
 
 /// Resolve a connector's [`SecretState`] from its secret key (if any) and

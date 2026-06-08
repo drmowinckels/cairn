@@ -55,7 +55,7 @@ function StaleNote({ fetchedAt }: { fetchedAt: string | null }) {
  *  enable/disable land later). Hides when there are no connectors and no
  *  error (the browser dev harness, or none configured). */
 export function ConnectorsCard() {
-  const { connectors, error, replace } = useConnectors();
+  const { connectors, error, busyId, replace, toggleEnabled } = useConnectors();
 
   if (connectors.length === 0 && !error) return null;
 
@@ -72,7 +72,9 @@ export function ConnectorsCard() {
       </p>
       {error && (
         <p className="privacy-banner privacy-banner--error" role="alert">
-          Couldn’t load connectors: {error}
+          {connectors.length === 0
+            ? `Couldn’t load connectors: ${error}`
+            : `Couldn’t update the connector: ${error}`}
         </p>
       )}
       <ul className="intg-list">
@@ -80,7 +82,9 @@ export function ConnectorsCard() {
           <ConnectorRow
             key={connector.id}
             connector={connector}
+            busy={busyId === connector.id}
             onSecretChange={replace}
+            onToggleEnabled={toggleEnabled}
           />
         ))}
       </ul>
@@ -90,10 +94,14 @@ export function ConnectorsCard() {
 
 function ConnectorRow({
   connector,
+  busy,
   onSecretChange,
+  onToggleEnabled,
 }: {
   connector: Connector;
+  busy: boolean;
   onSecretChange: (next: Connector[]) => void;
+  onToggleEnabled: (id: string, next: boolean) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [projects, setProjects] = useState<RemoteProject[] | null>(null);
@@ -126,7 +134,11 @@ function ConnectorRow({
   }
 
   return (
-    <li className="connector-row" data-connector={connector.id}>
+    <li
+      className="connector-row"
+      data-connector={connector.id}
+      data-enabled={connector.enabled}
+    >
       <div className="connector-head">
         <button
           type="button"
@@ -134,6 +146,7 @@ function ConnectorRow({
           aria-expanded={expanded}
           aria-controls={expanded ? panelId : undefined}
           onClick={() => void toggle()}
+          disabled={!connector.enabled}
         >
           <Icon name={expanded ? "chevron-down" : "chevron-right"} size={14} />
           <Icon name="folder" size={14} />
@@ -156,9 +169,20 @@ function ConnectorRow({
             ))
           )}
         </span>
+        <button
+          type="button"
+          className={`tgl${connector.enabled ? " is-on" : ""}`}
+          role="switch"
+          aria-checked={connector.enabled}
+          aria-label={`Enable ${connector.name}`}
+          onClick={() => void onToggleEnabled(connector.id, !connector.enabled)}
+          disabled={busy}
+        >
+          <span className="tgl-dot" />
+        </button>
       </div>
       <ConnectorSecret connector={connector} onChange={onSecretChange} />
-      {expanded && (
+      {expanded && connector.enabled && (
         <div id={panelId} className="connector-panel">
           {loading && <p className="connector-muted">Loading…</p>}
           {error && (

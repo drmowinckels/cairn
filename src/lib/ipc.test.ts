@@ -238,6 +238,16 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
+  it("setConnectorEnabled forwards its args and coerces undefined to []", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { setConnectorEnabled } = await import("./ipc");
+    expect(await setConnectorEnabled("remote", false)).toEqual([]);
+    expect(invokeMock).toHaveBeenCalledWith("set_connector_enabled", {
+      connectorId: "remote",
+      enabled: false,
+    });
+  });
+
   it("connector commands coerce an undefined backend response to a safe default", async () => {
     invokeMock.mockResolvedValue(undefined);
     const {
@@ -296,9 +306,11 @@ describe("ipc helpers (outside Tauri)", () => {
   });
 
   it("connector secret commands short-circuit to [] without the backend", async () => {
-    const { setConnectorSecret, clearConnectorSecret } = await import("./ipc");
+    const { setConnectorSecret, clearConnectorSecret, setConnectorEnabled } =
+      await import("./ipc");
     expect(await setConnectorSecret("x", "t")).toEqual([]);
     expect(await clearConnectorSecret("x")).toEqual([]);
+    expect(await setConnectorEnabled("x", false)).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

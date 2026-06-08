@@ -155,6 +155,7 @@ mod tests {
             "calendar_sources",
             "app_state",
             "connector_cache",
+            "connector_state",
         ] {
             let row = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name=?1")
                 .bind(table)
