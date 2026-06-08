@@ -157,7 +157,9 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
             .expect("load_engine_rules: fresh test db"),
     ));
     let data_dir = dir.path().to_path_buf();
-    let connector_host = Arc::new(seed_connector_fixture(&data_dir));
+    let connector_host = Arc::new(std::sync::RwLock::new(Arc::new(seed_connector_fixture(
+        &data_dir,
+    ))));
     app.manage(AppState {
         db: db.clone(),
         pinned: AtomicBool::new(false),
