@@ -344,15 +344,15 @@ mod tests {
         "manifest": 1, "id": "todoist", "name": "Todoist", "kind": "http",
         "capabilities": ["network", "secrets"],
         "auth": { "type": "bearer", "secret": "todoist_token" },
-        "baseUrl": "https://api.todoist.com/rest/v2",
+        "baseUrl": "https://api.todoist.com",
         "operations": {
             "listProjects": {
-                "request": { "method": "GET", "path": "/projects" },
+                "request": { "method": "GET", "path": "/rest/v2/projects" },
                 "response": { "items": "", "map": { "id": "id", "name": "name" } }
             },
             "listTasks": {
                 "request": {
-                    "method": "GET", "path": "/tasks",
+                    "method": "GET", "path": "/rest/v2/tasks",
                     "query": { "project_id": "{{project.id}}" }
                 },
                 "response": {
@@ -380,7 +380,10 @@ mod tests {
 
         let DeclarativeConnector { fetcher, .. } = &c;
         assert_eq!(fetcher.last().headers["Authorization"], "Bearer tok");
-        assert_eq!(fetcher.last().url, "https://api.todoist.com/projects");
+        assert_eq!(
+            fetcher.last().url,
+            "https://api.todoist.com/rest/v2/projects"
+        );
     }
 
     #[tokio::test]
@@ -694,6 +697,20 @@ mod tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].id, "42", "a numeric id is stringified");
         assert_eq!(projects[0].name, "acme / web");
+        {
+            // Anchor on the base+path prefix (not a mid-string `contains`): the
+            // `/api/v4` prefix must survive `Url::join`. The path-dropped wrong
+            // URL ("https://gitlab.com/projects…") fails this.
+            let DeclarativeConnector { fetcher, .. } = &c;
+            assert!(
+                fetcher
+                    .last()
+                    .url
+                    .starts_with("https://gitlab.com/api/v4/projects?"),
+                "{}",
+                fetcher.last().url
+            );
+        }
 
         let tasks = c
             .list_tasks(&RemoteProjectRef::new(projects[0].id.clone()))
@@ -710,8 +727,16 @@ mod tests {
             Some("https://gitlab.com/acme/web/-/issues/2")
         );
 
-        // The numeric project id was substituted (URL-encoded) into the path.
+        // The numeric project id is substituted into the path and the
+        // `/api/v4` base prefix is preserved.
         let DeclarativeConnector { fetcher, .. } = &c;
-        assert!(fetcher.last().url.contains("/projects/42/issues"));
+        assert!(
+            fetcher
+                .last()
+                .url
+                .starts_with("https://gitlab.com/api/v4/projects/42/issues?"),
+            "{}",
+            fetcher.last().url
+        );
     }
 }

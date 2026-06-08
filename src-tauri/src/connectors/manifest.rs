@@ -222,6 +222,12 @@ pub enum ManifestError {
     MissingOperation(&'static str),
     #[error("http operation {op:?} path must stay on baseUrl's host (got {path:?})")]
     OperationPath { op: String, path: String },
+    #[error(
+        "http operation {op:?} path {path:?} drops baseUrl's path — an absolute \
+         path replaces it (RFC 3986). Put the full path in the operation and a \
+         host-only baseUrl, e.g. baseUrl \"https://host\" + path \"/api/v4/x\""
+    )]
+    OperationPathDropsBase { op: String, path: String },
     #[error("http connector must declare the \"network\" capability")]
     MissingNetworkCapability,
     #[error("http connector with authentication must declare the \"secrets\" capability")]
@@ -354,14 +360,27 @@ fn validate_http(
     }
     for (op, operation) in operations {
         let path = &operation.request.path;
-        let on_host = base
-            .join(path)
-            .is_ok_and(|u| u.scheme() == "https" && u.host_str() == base.host_str());
-        if !on_host {
-            return Err(ManifestError::OperationPath {
-                op: op.clone(),
-                path: path.clone(),
-            });
+        match base.join(path) {
+            Ok(u) if u.scheme() == "https" && u.host_str() == base.host_str() => {
+                // `join` *replaces* the path for an absolute reference, so a
+                // non-root `baseUrl` path (e.g. ".../api/v4") is silently
+                // dropped by a path like "/projects" — the request would hit
+                // the wrong endpoint. Require the resolved path to keep the
+                // base's path prefix so the manifest must spell out the full
+                // path (and `baseUrl` stays host-only).
+                if !u.path().starts_with(base.path()) {
+                    return Err(ManifestError::OperationPathDropsBase {
+                        op: op.clone(),
+                        path: path.clone(),
+                    });
+                }
+            }
+            _ => {
+                return Err(ManifestError::OperationPath {
+                    op: op.clone(),
+                    path: path.clone(),
+                });
+            }
         }
     }
 
@@ -504,16 +523,16 @@ mod tests {
         "kind": "http",
         "capabilities": ["network", "secrets"],
         "auth": { "type": "bearer", "secret": "todoist_token" },
-        "baseUrl": "https://api.todoist.com/rest/v2",
+        "baseUrl": "https://api.todoist.com",
         "operations": {
             "listProjects": {
-                "request": { "method": "GET", "path": "/projects" },
+                "request": { "method": "GET", "path": "/rest/v2/projects" },
                 "response": { "items": "", "map": { "id": "id", "name": "name" } }
             },
             "listTasks": {
                 "request": {
                     "method": "GET",
-                    "path": "/tasks",
+                    "path": "/rest/v2/tasks",
                     "query": { "project_id": "{{project.id}}" }
                 },
                 "response": {
@@ -561,7 +580,7 @@ mod tests {
         assert_eq!(m.id, "todoist");
         assert!(m.kind.as_file().is_none(), "an http kind is not file");
         let s = m.kind.as_http().expect("http kind");
-        assert_eq!(s.base_url, "https://api.todoist.com/rest/v2");
+        assert_eq!(s.base_url, "https://api.todoist.com");
         assert_eq!(s.auth.secret_key(), Some("todoist_token"));
         assert!(s.operations.contains_key("listProjects"));
         let tasks = &s.operations["listTasks"];
@@ -591,12 +610,12 @@ mod tests {
     #[test]
     fn http_baseurl_must_be_https_with_a_host() {
         for bad in [
-            "http://api.todoist.com/rest/v2", // wrong scheme
-            "ftp://api.todoist.com",          // wrong scheme
-            "https://",                       // no host
-            "not a url",                      // unparseable
+            "http://api.todoist.com", // wrong scheme
+            "ftp://api.todoist.com",  // wrong scheme
+            "https://",               // no host
+            "not a url",              // unparseable
         ] {
-            let json = HTTP_JSON.replace("https://api.todoist.com/rest/v2", bad);
+            let json = HTTP_JSON.replace("https://api.todoist.com", bad);
             let err = ConnectorManifest::from_json(&json).unwrap_err();
             assert!(
                 matches!(err, ManifestError::InsecureBaseUrl(_)),
@@ -621,7 +640,7 @@ mod tests {
         // the sneakier protocol-relative form — is rejected. A bare
         // `starts_with('/')` check would let `//evil...` through.
         for bad in ["https://evil.example/tasks", "//evil.example/tasks"] {
-            let json = HTTP_JSON.replace("\"/tasks\"", &format!("\"{bad}\""));
+            let json = HTTP_JSON.replace("\"/rest/v2/tasks\"", &format!("\"{bad}\""));
             let err = ConnectorManifest::from_json(&json).unwrap_err();
             assert!(
                 matches!(err, ManifestError::OperationPath { .. }),
@@ -634,9 +653,28 @@ mod tests {
     fn http_templated_path_is_accepted() {
         // A `{{template}}` placeholder in the path resolves on-host (the
         // value is substituted + encoded at request time, not now).
-        let json = HTTP_JSON.replace("\"/tasks\"", "\"/boards/{{project.id}}/cards\"");
+        let json = HTTP_JSON.replace(
+            "\"/rest/v2/tasks\"",
+            "\"/rest/v2/boards/{{project.id}}/cards\"",
+        );
         let m = ConnectorManifest::from_json(&json).unwrap();
         assert!(m.kind.as_http().is_some());
+    }
+
+    #[test]
+    fn http_rejects_a_baseurl_path_dropped_by_an_absolute_path() {
+        // baseUrl with a path + an absolute operation path that `Url::join`
+        // would replace (dropping the base path) is rejected loudly, so an
+        // imported manifest can't silently hit the wrong endpoint.
+        let json = HTTP_JSON
+            .replace("https://api.todoist.com", "https://api.todoist.com/rest/v2")
+            .replace("/rest/v2/projects", "/projects")
+            .replace("/rest/v2/tasks", "/tasks");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::OperationPathDropsBase { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
