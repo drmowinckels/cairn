@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
-import { Kbd, LocalBadge, Mono, ProjectChip, Tag } from "./components";
+import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  CapabilityBadges,
+  Kbd,
+  LocalBadge,
+  Mono,
+  ProjectChip,
+  Tag,
+} from "./components";
 
 const liveProject = {
   name: "Cairn",
@@ -107,6 +114,35 @@ describe("LocalBadge", () => {
     const { getByText, queryByText } = render(<LocalBadge compact />);
     expect(getByText("local")).toBeTruthy();
     expect(queryByText("local only")).toBeNull();
+  });
+});
+
+describe("CapabilityBadges", () => {
+  it("renders a labelled badge per capability", () => {
+    render(<CapabilityBadges capabilities={["network", "secrets"]} />);
+    const net = screen.getByText("Network");
+    expect(net.getAttribute("aria-label")).toBe(
+      "Network: Makes network requests",
+    );
+    expect(net.getAttribute("title")).toBe("Makes network requests");
+    expect(screen.getByText("Secrets")).toBeTruthy();
+  });
+
+  it("shows a single Local badge when there are no capabilities", () => {
+    render(<CapabilityBadges capabilities={[]} />);
+    const local = screen.getByText("Local");
+    expect(local.className).toContain("cap-badge--local");
+    expect(screen.queryByText("Network")).toBeNull();
+  });
+
+  it("uses a custom empty label when given one", () => {
+    render(
+      <CapabilityBadges
+        capabilities={[]}
+        emptyLabel="Local — no network or secrets"
+      />,
+    );
+    expect(screen.getByText("Local — no network or secrets")).toBeTruthy();
   });
 });
 

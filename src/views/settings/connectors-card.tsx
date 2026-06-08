@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { CapabilityBadges } from "../../lib/components";
 import { Icon } from "../../lib/icon";
 import { formatRelativeTime } from "../../lib/relative-time";
 import { useConnectors } from "../../lib/use-connectors";
@@ -13,18 +14,11 @@ import {
   previewConnectorManifest,
   setConnectorSecret,
   type Connector,
-  type ConnectorCapability,
   type ConnectorKind,
   type ConnectorManifest,
   type RemoteProject,
   type RemoteTask,
 } from "../../lib/ipc";
-
-const CAPABILITY: Record<ConnectorCapability, { label: string; hint: string }> =
-  {
-    network: { label: "Network", hint: "Makes network requests" },
-    secrets: { label: "Secrets", hint: "Stores credentials in your keychain" },
-  };
 
 function describeKind(kind: ConnectorKind): string {
   if ("file" in kind) return `Local file · ${kind.file.format}`;
@@ -156,22 +150,10 @@ function AddConnector({
                 {describeKind(pending.manifest.kind)}
               </p>
               <p className="cap-badges">
-                {pending.manifest.capabilities.length === 0 ? (
-                  <span className="cap-badge cap-badge--local">
-                    Local — no network or secrets
-                  </span>
-                ) : (
-                  pending.manifest.capabilities.map((cap) => (
-                    <span
-                      key={cap}
-                      className="cap-badge"
-                      title={CAPABILITY[cap].hint}
-                      aria-label={`${CAPABILITY[cap].label}: ${CAPABILITY[cap].hint}`}
-                    >
-                      {CAPABILITY[cap].label}
-                    </span>
-                  ))
-                )}
+                <CapabilityBadges
+                  capabilities={pending.manifest.capabilities}
+                  emptyLabel="Local — no network or secrets"
+                />
               </p>
               <p className="connector-muted">
                 Installs into Cairn; you can disable or remove it later.
@@ -317,20 +299,7 @@ function ConnectorRow({
         </button>
         <span className="connector-kind">{describeKind(connector.kind)}</span>
         <span className="cap-badges">
-          {connector.capabilities.length === 0 ? (
-            <span className="cap-badge cap-badge--local">Local</span>
-          ) : (
-            connector.capabilities.map((cap) => (
-              <span
-                key={cap}
-                className="cap-badge"
-                title={CAPABILITY[cap].hint}
-                aria-label={`${CAPABILITY[cap].label}: ${CAPABILITY[cap].hint}`}
-              >
-                {CAPABILITY[cap].label}
-              </span>
-            ))
-          )}
+          <CapabilityBadges capabilities={connector.capabilities} />
         </span>
         <button
           type="button"

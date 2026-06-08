@@ -69,6 +69,46 @@ export function LocalBadge({ compact = false }: { compact?: boolean }) {
   );
 }
 
+const CAPABILITY = {
+  network: { label: "Network", hint: "Makes network requests" },
+  secrets: { label: "Secrets", hint: "Stores credentials in your keychain" },
+} as const;
+
+/** A capability surfaced to the user for a plugin or connector (mirrors the
+ *  Rust `Capability`). Shown as a badge so a networked / secrets-bearing
+ *  integration is never active silently — see docs/PRIVACY.md. */
+export type Capability = keyof typeof CAPABILITY;
+
+/** Capability badges for a plugin or connector, or a single "Local" badge
+ *  when it declares none. Returns the inline badges only; the caller supplies
+ *  the wrapping `.cap-badges` element. `emptyLabel` overrides the
+ *  no-capability text (the import-consent dialog spells it out in full). */
+export function CapabilityBadges({
+  capabilities,
+  emptyLabel = "Local",
+}: {
+  capabilities: readonly Capability[];
+  emptyLabel?: string;
+}) {
+  if (capabilities.length === 0) {
+    return <span className="cap-badge cap-badge--local">{emptyLabel}</span>;
+  }
+  return (
+    <>
+      {capabilities.map((cap) => (
+        <span
+          key={cap}
+          className="cap-badge"
+          title={CAPABILITY[cap].hint}
+          aria-label={`${CAPABILITY[cap].label}: ${CAPABILITY[cap].hint}`}
+        >
+          {CAPABILITY[cap].label}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export function Mono({ children }: { children: ReactNode }) {
   return <span className="mono">{children}</span>;
 }
