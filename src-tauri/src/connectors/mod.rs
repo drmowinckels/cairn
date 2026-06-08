@@ -226,27 +226,32 @@ impl ConnectorHost {
         host
     }
 
-    /// Parse + register each raw JSON manifest, skipping any whose id is
-    /// already registered (so user manifests loaded earlier win) and any
-    /// that fails to parse. Used for the compiled-in builtins; a parse
-    /// failure there is a build-time authoring bug, so it is logged at
-    /// `error` rather than silently dropped.
+    /// Parse + register each raw JSON manifest, skipping any that fails to
+    /// parse (id-clash dedup is handled by [`register`]). Used for the
+    /// compiled-in builtins; a parse failure there is a build-time authoring
+    /// bug, so it is logged at `error` rather than silently dropped.
+    ///
+    /// [`register`]: Self::register
     fn register_manifests(&mut self, manifests: &[&str]) {
         for json in manifests {
             match ConnectorManifest::from_json(json) {
-                Ok(manifest) if self.get(&manifest.id).is_some() => {
-                    log::debug!(
-                        "builtin connector '{}' overridden by a user manifest",
-                        manifest.id
-                    );
-                }
                 Ok(manifest) => self.register(build(manifest)),
                 Err(e) => log::error!("bundled connector manifest is invalid: {e}"),
             }
         }
     }
 
+    /// Register a connector unless one with the same id is already present —
+    /// first registration wins. This is the single place the host's id-
+    /// uniqueness invariant is enforced, so every source (user dir files,
+    /// then builtins) gets it: a user manifest loaded first shadows a same-id
+    /// builtin, and a duplicate id never registers twice.
     pub fn register(&mut self, connector: Box<dyn PmConnector>) {
+        let id = &connector.manifest().id;
+        if self.get(id).is_some() {
+            log::debug!("connector '{id}' already registered; skipping duplicate");
+            return;
+        }
         self.connectors.push(connector);
     }
 
@@ -300,7 +305,7 @@ fn build(manifest: ConnectorManifest) -> Box<dyn PmConnector> {
 mod tests {
     use super::*;
     use crate::connectors::http::{SecretStore, SecretWriter};
-    use crate::test_support::temp_dir;
+    use crate::test_support::{temp_dir, FakeKeychain};
     use std::io::Write;
 
     fn write_file(dir: &Path, name: &str, contents: &str) {
@@ -428,6 +433,48 @@ mod tests {
     }
 
     #[test]
+    fn register_skips_a_duplicate_id_first_wins() {
+        let dir = temp_dir();
+        let todo = dir.path().join("todo.txt");
+        write_file(dir.path(), "todo.txt", "Task +dup\n");
+        // Two user files claiming the same id register only once.
+        write_file(dir.path(), "a.json", &manifest_for("dup", &todo));
+        write_file(dir.path(), "b.json", &manifest_for("dup", &todo));
+
+        let host = ConnectorHost::load(dir.path());
+        assert_eq!(
+            host.len(),
+            1 + builtin::ALL.len(),
+            "a duplicate id is registered once, not twice"
+        );
+        assert!(host.get("dup").is_some());
+    }
+
+    #[test]
+    fn every_bundled_manifest_file_is_listed_in_all() {
+        // Guard against adding a `manifests/*.json` and forgetting to wire it
+        // into `builtin::ALL` (which is what actually gets registered).
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/connectors/manifests");
+        let registered: Vec<String> = builtin::ALL
+            .iter()
+            .map(|json| ConnectorManifest::from_json(json).unwrap().id)
+            .collect();
+        let json_files = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("json"));
+        for path in json_files {
+            let json = std::fs::read_to_string(&path).unwrap();
+            let id = ConnectorManifest::from_json(&json).unwrap().id;
+            assert!(
+                registered.contains(&id),
+                "manifest file {path:?} (id {id:?}) is not in builtin::ALL"
+            );
+        }
+    }
+
+    #[test]
     fn remote_project_ref_from_project() {
         let p = RemoteProject {
             id: "p1".into(),
@@ -435,34 +482,6 @@ mod tests {
             description: None,
         };
         assert_eq!(RemoteProjectRef::from(&p), RemoteProjectRef::new("p1"));
-    }
-
-    /// In-memory keychain stand-in so the secret helpers are tested without
-    /// touching a real OS keychain.
-    #[derive(Default)]
-    struct FakeKeychain {
-        store: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
-    }
-
-    impl http::SecretStore for FakeKeychain {
-        fn token(&self, key: &str) -> Option<String> {
-            self.store.lock().unwrap().get(key).cloned()
-        }
-    }
-
-    impl http::SecretWriter for FakeKeychain {
-        fn set(&self, key: &str, token: &str) -> Result<(), String> {
-            self.store
-                .lock()
-                .unwrap()
-                .insert(key.to_string(), token.to_string());
-            Ok(())
-        }
-
-        fn clear(&self, key: &str) -> Result<(), String> {
-            self.store.lock().unwrap().remove(key);
-            Ok(())
-        }
     }
 
     #[test]

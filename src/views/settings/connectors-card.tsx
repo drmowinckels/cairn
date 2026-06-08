@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon } from "../../lib/icon";
+import { formatRelativeTime } from "../../lib/relative-time";
 import { useConnectors } from "../../lib/use-connectors";
 import {
   clearConnectorSecret,
@@ -33,19 +34,6 @@ function describeKind(kind: ConnectorKind): string {
   return "Connector";
 }
 
-/** A coarse "how old" label for a cached snapshot's RFC 3339 timestamp.
- *  `now` is injectable so the phrasing is deterministic under test. */
-export function staleAge(fetchedAt: string, now = Date.now()): string {
-  const then = Date.parse(fetchedAt);
-  if (Number.isNaN(then)) return "an earlier read";
-  const mins = Math.max(0, Math.floor((now - then) / 60000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
 /** Shown when a connector list came from the offline cache because the remote
  *  was unreachable — so the user knows the data may be out of date. The cache
  *  only falls back on genuine connectivity failures (a rejected token or bad
@@ -54,8 +42,9 @@ function StaleNote({ fetchedAt }: { fetchedAt: string | null }) {
   return (
     <p className="connector-stale" role="status">
       <Icon name="info" size={12} />
-      Showing cached data{fetchedAt ? ` from ${staleAge(fetchedAt)}` : ""} —
-      couldn’t reach the connector.
+      Showing cached data
+      {fetchedAt ? ` from ${formatRelativeTime(fetchedAt)}` : ""} — couldn’t
+      reach the connector.
     </p>
   );
 }

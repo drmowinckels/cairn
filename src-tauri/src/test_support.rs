@@ -256,3 +256,31 @@ pub fn ide_folder_rule(id: &str, project: &str, value: &str) -> Rule {
         },
     }
 }
+
+/// In-memory keychain stand-in implementing both connector secret traits, so
+/// the secret-management logic is tested without touching a real OS keychain.
+#[derive(Default)]
+pub struct FakeKeychain {
+    store: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+}
+
+impl crate::connectors::http::SecretStore for FakeKeychain {
+    fn token(&self, key: &str) -> Option<String> {
+        self.store.lock().unwrap().get(key).cloned()
+    }
+}
+
+impl crate::connectors::http::SecretWriter for FakeKeychain {
+    fn set(&self, key: &str, token: &str) -> Result<(), String> {
+        self.store
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), token.to_string());
+        Ok(())
+    }
+
+    fn clear(&self, key: &str) -> Result<(), String> {
+        self.store.lock().unwrap().remove(key);
+        Ok(())
+    }
+}

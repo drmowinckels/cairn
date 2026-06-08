@@ -22,7 +22,7 @@ vi.mock("../../lib/ipc", async () => {
   };
 });
 
-import { ConnectorsCard, staleAge } from "./connectors-card";
+import { ConnectorsCard } from "./connectors-card";
 
 const fileConnector = {
   id: "sample-tasks",
@@ -459,24 +459,5 @@ describe("ConnectorsCard", () => {
     unmount();
     reject(new Error("late"));
     await waitFor(() => expect(listConnectors).toHaveBeenCalled());
-  });
-});
-
-describe("staleAge", () => {
-  const now = Date.parse("2026-01-02T00:00:00Z");
-
-  it("buckets an age into a coarse relative label", () => {
-    expect(staleAge("2026-01-01T23:59:30Z", now)).toBe("just now");
-    expect(staleAge("2026-01-01T23:30:00Z", now)).toBe("30m ago");
-    expect(staleAge("2026-01-01T21:00:00Z", now)).toBe("3h ago");
-    expect(staleAge("2025-12-30T00:00:00Z", now)).toBe("3d ago");
-  });
-
-  it("degrades gracefully on an unparseable timestamp", () => {
-    expect(staleAge("not a date", now)).toBe("an earlier read");
-  });
-
-  it("never reports a negative age for a future timestamp", () => {
-    expect(staleAge("2026-01-03T00:00:00Z", now)).toBe("just now");
   });
 });
