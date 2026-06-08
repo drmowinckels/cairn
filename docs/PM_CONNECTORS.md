@@ -250,6 +250,16 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
 }
 ```
 
+> **Bundled version notes.** The shipped `github-projects` manifest spreads
+> all three `ProjectV2ItemContent` members (`DraftIssue`/`Issue`/`PullRequest`)
+> so every card yields a `label` — covering only `Issue` makes one draft or PR
+> fail the whole list (`label` is required, mapping fails fast). It reads the
+> first page only (`first:20` projects / `first:50` items); cursor pagination
+> is a tracked follow-up. Values templated into a GraphQL **string literal**
+> (`id:"{{project.id}}"`) are JSON-escaped but not GraphQL-string-escaped —
+> safe here because the id is an opaque GitHub node id from `listProjects`, and
+> the host is pinned, so the worst case is a malformed read-only query.
+
 **Trello (REST, token in query):**
 
 ```json
@@ -466,13 +476,15 @@ check yours (it is published at `/schemas/pm-connector.json`).
 
 ## Roadmap
 
-1. **This doc** — lock the format + author instructions.
-2. Local-file connector (`kind: "file"`) end-to-end: the `PmConnector`
+1. ✅ **This doc** — lock the format + author instructions.
+2. ✅ Local-file connector (`kind: "file"`) end-to-end: the `PmConnector`
    trait, the `ConnectorHost`, the `Task` model, attribution — zero
    network, proves the spine.
-3. The `DeclarativeConnector` (`kind: "http"`) + schema validation +
-   import/consent flow + the Settings → Connectors card.
-4. A couple of bundled manifests (GitHub Projects, GitLab) as both
-   features and worked references.
-5. `pushTime` (v2): a per-connector write grant, with the outbound
+3. ✅ The `DeclarativeConnector` (`kind: "http"`) + schema validation +
+   the Settings → Connectors card + keychain-backed token management.
+4. Bundled manifests as both features and worked references. **GitHub
+   Projects** ships compiled in (`connectors/manifests/github-projects.json`,
+   registered by `ConnectorHost::load`); GitLab/Trello to follow.
+5. Offline cache so attribution survives a dropped network.
+6. `pushTime` (v2): a per-connector write grant, with the outbound
    payload shown before the first push.

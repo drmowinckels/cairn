@@ -809,10 +809,13 @@ export type ConnectorCapability = "network" | "secrets";
 export type ConnectorFileFormat = "todotxt" | "markdown" | "taskpaper";
 
 /** The connector's interpreter + its config (mirrors Rust `ConnectorKind`,
- *  externally tagged). Only the local-file kind exists today. */
-export type ConnectorKind = {
-  file: { format: ConnectorFileFormat; path: string };
-};
+ *  externally tagged): a local file read by a built-in parser, or a remote
+ *  read by the declarative HTTP interpreter. The http variant carries more
+ *  than `baseUrl` on the wire (auth key, operations); the card only needs
+ *  the host it contacts. */
+export type ConnectorKind =
+  | { file: { format: ConnectorFileFormat; path: string } }
+  | { http: { baseUrl: string } };
 
 /** Whether a connector's auth token is present (mirrors Rust `SecretState`).
  *  `notRequired` — local, or `auth.type == none`; `missing` — a token is

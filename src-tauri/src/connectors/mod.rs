@@ -19,6 +19,7 @@
 //! surface beyond a future HTTP connector's auth token reaching its own
 //! API. `push_time` is a separate, later, per-connector write grant.
 
+pub mod builtin;
 pub mod file;
 pub mod http;
 pub mod manifest;
@@ -161,35 +162,58 @@ impl ConnectorHost {
         Self::default()
     }
 
-    /// Build a host from every `*.json` manifest in `dir`. A missing
-    /// directory yields an empty host (no connectors configured is the
-    /// default state). A single unparseable or unsupported manifest is
-    /// logged and skipped — one bad file must not hide the others.
+    /// Build a host from every `*.json` manifest in `dir`, plus the
+    /// compiled-in [`builtin`] connectors. User manifests load first and
+    /// win on an id clash, so a user can override a builtin by dropping a
+    /// same-id file. A missing dir is the normal "no user connectors"
+    /// state — the builtins still load. A single unparseable or unsupported
+    /// user manifest is logged and skipped; one bad file must not hide the
+    /// others.
     pub fn load(dir: &Path) -> Self {
         let mut host = Self::new();
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(e) => {
-                // An absent dir is the normal "no connectors configured"
-                // state; anything else (not a dir, permission denied) is a
-                // misconfiguration worth surfacing rather than hiding.
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!("connector dir {dir:?} unreadable: {e}");
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                        continue;
+                    }
+                    match build_from_path(&path) {
+                        Ok(connector) => host.register(connector),
+                        Err(e) => log::warn!("connector manifest {path:?} skipped: {e}"),
+                    }
                 }
-                return host;
             }
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
+            // An absent dir is the normal "no user connectors" state;
+            // anything else (not a dir, permission denied) is a
+            // misconfiguration worth surfacing rather than hiding.
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                log::warn!("connector dir {dir:?} unreadable: {e}");
             }
-            match build_from_path(&path) {
-                Ok(connector) => host.register(connector),
-                Err(e) => log::warn!("connector manifest {path:?} skipped: {e}"),
+            Err(_) => {}
+        }
+        host.register_manifests(builtin::ALL);
+        host
+    }
+
+    /// Parse + register each raw JSON manifest, skipping any whose id is
+    /// already registered (so user manifests loaded earlier win) and any
+    /// that fails to parse. Used for the compiled-in builtins; a parse
+    /// failure there is a build-time authoring bug, so it is logged at
+    /// `error` rather than silently dropped.
+    fn register_manifests(&mut self, manifests: &[&str]) {
+        for json in manifests {
+            match ConnectorManifest::from_json(json) {
+                Ok(manifest) if self.get(&manifest.id).is_some() => {
+                    log::debug!(
+                        "builtin connector '{}' overridden by a user manifest",
+                        manifest.id
+                    );
+                }
+                Ok(manifest) => self.register(build(manifest)),
+                Err(e) => log::error!("bundled connector manifest is invalid: {e}"),
             }
         }
-        host
     }
 
     pub fn register(&mut self, connector: Box<dyn PmConnector>) {
@@ -264,20 +288,25 @@ mod tests {
     }
 
     #[test]
-    fn load_missing_dir_is_empty() {
+    fn load_missing_dir_yields_only_builtins() {
+        // No user dir means no user connectors, but the compiled-in
+        // builtins still load — they ship with the app, not the data dir.
         let host = ConnectorHost::load(Path::new("/no/such/connectors/dir"));
-        assert!(host.is_empty());
+        assert_eq!(host.len(), builtin::ALL.len());
+        assert!(host.get("github-projects").is_some());
     }
 
     #[test]
-    fn load_path_that_is_a_file_is_empty() {
+    fn load_path_that_is_a_file_yields_only_builtins() {
         // A non-directory (here: a regular file) is a misconfiguration,
-        // not the expected "absent dir" — it logs and yields an empty host
-        // rather than erroring out.
+        // not the expected "absent dir" — it logs and falls back to just
+        // the builtins rather than erroring out.
         let dir = temp_dir();
         let not_a_dir = dir.path().join("connectors");
         write_file(dir.path(), "connectors", "i am a file, not a dir");
-        assert!(ConnectorHost::load(&not_a_dir).is_empty());
+        let host = ConnectorHost::load(&not_a_dir);
+        assert_eq!(host.len(), builtin::ALL.len());
+        assert!(host.get("github-projects").is_some());
     }
 
     #[tokio::test]
@@ -310,8 +339,10 @@ mod tests {
         write_file(dir.path(), "notes.txt", "ignore me");
 
         let host = ConnectorHost::load(dir.path());
-        assert_eq!(host.len(), 2, "the file and http connectors both register");
+        // Two user connectors + the compiled-in builtins.
+        assert_eq!(host.len(), 2 + builtin::ALL.len());
         assert!(host.get("remote").is_some(), "http connector is runnable");
+        assert!(host.get("github-projects").is_some(), "builtins load too");
 
         let connector = host.get("good").expect("registered by id");
         let projects = connector.list_projects().await.unwrap();
@@ -319,6 +350,51 @@ mod tests {
         assert_eq!(projects[0].name, "groceries");
 
         assert!(host.get("missing").is_none());
+    }
+
+    #[test]
+    fn builtins_all_parse_and_ship_github_projects() {
+        for json in builtin::ALL {
+            ConnectorManifest::from_json(json)
+                .expect("every bundled manifest must parse — a failure is an authoring bug");
+        }
+        let gh = ConnectorManifest::from_json(builtin::GITHUB_PROJECTS).unwrap();
+        assert_eq!(gh.id, "github-projects");
+        assert_eq!(gh.secret_key(), Some("github_token"));
+        let spec = gh
+            .kind
+            .as_http()
+            .expect("github-projects is an http connector");
+        assert_eq!(spec.base_url, "https://api.github.com");
+    }
+
+    #[test]
+    fn register_manifests_skips_an_unparseable_builtin() {
+        let mut host = ConnectorHost::new();
+        host.register_manifests(&["{ not json"]);
+        assert!(host.is_empty(), "an invalid bundled manifest is dropped");
+    }
+
+    #[test]
+    fn a_user_manifest_overrides_a_same_id_builtin() {
+        let dir = temp_dir();
+        let todo = dir.path().join("todo.txt");
+        write_file(dir.path(), "todo.txt", "Task +github-projects\n");
+        // A user file claiming the builtin's id wins — it loads first, so
+        // the builtin is skipped on the id clash.
+        write_file(
+            dir.path(),
+            "mine.json",
+            &manifest_for("github-projects", &todo),
+        );
+
+        let host = ConnectorHost::load(dir.path());
+        let gh = host.get("github-projects").expect("present");
+        assert!(
+            gh.manifest().kind.as_file().is_some(),
+            "the user's file connector replaced the bundled http one"
+        );
+        assert_eq!(host.len(), builtin::ALL.len(), "no duplicate id registered");
     }
 
     #[test]

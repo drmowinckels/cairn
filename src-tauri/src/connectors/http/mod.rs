@@ -573,4 +573,67 @@ mod tests {
         let err = c.list_projects().await.unwrap_err();
         assert!(err.to_string().contains("ran out"));
     }
+
+    fn github_secrets() -> FakeSecrets {
+        FakeSecrets(BTreeMap::from([("github_token".into(), "ghp_x".into())]))
+    }
+
+    #[tokio::test]
+    async fn bundled_github_projects_maps_a_graphql_project_list() {
+        let body = r#"{"data":{"viewer":{"projectsV2":{"nodes":[
+            {"id":"PVT_1","title":"Roadmap"},
+            {"id":"PVT_2","title":"Bugs"}
+        ]}}}}"#;
+        let c = connector(
+            crate::connectors::builtin::GITHUB_PROJECTS,
+            FakeFetcher::with(&[body]),
+            github_secrets(),
+        );
+        let projects = c.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].id, "PVT_1");
+        assert_eq!(projects[1].name, "Bugs");
+
+        let DeclarativeConnector { fetcher, .. } = &c;
+        let req = fetcher.last();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.url, "https://api.github.com/graphql");
+        assert_eq!(req.headers["Authorization"], "Bearer ghp_x");
+    }
+
+    #[tokio::test]
+    async fn bundled_github_projects_maps_mixed_issue_draft_and_pr_items() {
+        // A ProjectV2's items can be Issues, draft issues, or PRs. The query
+        // spreads all three, so every node yields a `content.title`; if the
+        // manifest only covered `... on Issue`, a single draft/PR card would
+        // make `label` (required) missing and fail the whole list.
+        let body = r#"{"data":{"node":{"items":{"nodes":[
+            {"id":"i1","content":{"title":"Fix bug","url":"https://github.com/o/r/issues/1"}},
+            {"id":"i2","content":{"title":"Draft idea"}},
+            {"id":"i3","content":{"title":"Open PR","url":"https://github.com/o/r/pull/2"}}
+        ]}}}}"#;
+        let c = connector(
+            crate::connectors::builtin::GITHUB_PROJECTS,
+            FakeFetcher::with(&[body]),
+            github_secrets(),
+        );
+        let tasks = c.list_tasks(&RemoteProjectRef::new("PVT_1")).await.unwrap();
+        assert_eq!(
+            tasks.len(),
+            3,
+            "all three union members map, none fail-fast"
+        );
+        assert_eq!(tasks[0].label, "Fix bug");
+        assert_eq!(
+            tasks[0].url.as_deref(),
+            Some("https://github.com/o/r/issues/1")
+        );
+        assert_eq!(tasks[1].label, "Draft idea");
+        assert_eq!(tasks[1].url, None, "a draft issue has no url");
+        assert_eq!(tasks[2].label, "Open PR");
+
+        // The project node id was substituted into the GraphQL body.
+        let DeclarativeConnector { fetcher, .. } = &c;
+        assert!(fetcher.last().body.as_deref().unwrap().contains("PVT_1"));
+    }
 }
