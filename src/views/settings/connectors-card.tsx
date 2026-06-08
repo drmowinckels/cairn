@@ -33,6 +33,20 @@ function describeKind(kind: ConnectorKind): string {
   return "Connector";
 }
 
+/** Shown when a connector list came from the offline cache because the live
+ *  read failed — so the user knows the data may be out of date. The copy is
+ *  deliberately cause-agnostic: the read can fail because the remote is
+ *  unreachable, the token was rejected, or the response didn't parse, and
+ *  the connector layer doesn't yet distinguish them (tracked separately). */
+function StaleNote() {
+  return (
+    <p className="connector-stale" role="status">
+      <Icon name="info" size={12} />
+      Showing cached data — couldn’t refresh from the connector.
+    </p>
+  );
+}
+
 /** Settings → Connectors (#110). Lists each loaded PM connector with the
  *  capabilities it declared, and lets you browse — lazily — its projects
  *  and their tasks. Read-only this session (import + per-connector
@@ -81,6 +95,7 @@ function ConnectorRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [projects, setProjects] = useState<RemoteProject[] | null>(null);
+  const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelId = `connector-${connector.id}-projects`;
@@ -94,7 +109,9 @@ function ConnectorRow({
       setLoading(true);
       setError(null);
       try {
-        setProjects(await listConnectorProjects(connector.id));
+        const res = await listConnectorProjects(connector.id);
+        setProjects(res.items);
+        setStale(res.stale);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -144,6 +161,7 @@ function ConnectorRow({
               Couldn’t load projects: {error}
             </p>
           )}
+          {stale && !loading && <StaleNote />}
           {projects && projects.length === 0 && !loading && (
             <p className="connector-muted">No projects.</p>
           )}
@@ -306,6 +324,7 @@ function ProjectRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [tasks, setTasks] = useState<RemoteTask[] | null>(null);
+  const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelId = `project-${connectorId}-${project.id}-tasks`;
@@ -317,7 +336,9 @@ function ProjectRow({
       setLoading(true);
       setError(null);
       try {
-        setTasks(await listConnectorTasks(connectorId, project.id));
+        const res = await listConnectorTasks(connectorId, project.id);
+        setTasks(res.items);
+        setStale(res.stale);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -346,6 +367,7 @@ function ProjectRow({
               Couldn’t load tasks: {error}
             </p>
           )}
+          {stale && !loading && <StaleNote />}
           {tasks && tasks.length === 0 && !loading && (
             <p className="connector-muted">No tasks.</p>
           )}

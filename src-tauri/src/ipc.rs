@@ -6120,34 +6120,95 @@ pub async fn clear_connector_secret_impl(
     )
 }
 
-/// List one connector's projects. Errors if the id is unknown (the UI
-/// only ever passes ids from `list_connectors`, so an unknown id is a
-/// bug, not user input).
+/// Run a connector read through the offline cache (#110): on success, cache
+/// the result (best-effort — a cache-write failure is logged, not fatal) and
+/// return it fresh; on failure, fall back to the last cached snapshot marked
+/// `stale`, or propagate the error if there is no cache. Generic over the
+/// fetch future so it is unit-tested without a live connector.
+async fn read_with_cache<T, Fut>(
+    pool: &sqlx::SqlitePool,
+    connector_id: &str,
+    scope: &str,
+    fetch: Fut,
+) -> Result<crate::connectors::CachedList<T>, String>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<T>>>,
+{
+    use crate::connectors::{cache, CachedList};
+    match fetch.await {
+        Ok(items) => {
+            let now = Utc::now().to_rfc3339();
+            // Serializing a Vec of these plain structs is infallible; the
+            // default is dead but keeps the cache write branch-free.
+            let payload = serde_json::to_string(&items).unwrap_or_default();
+            // Caching is best-effort — a write failure must not fail an
+            // otherwise-successful live read.
+            if let Err(e) = cache::put(pool, connector_id, scope, &payload, &now).await {
+                log::warn!("connector cache write skipped: {e}");
+            }
+            Ok(CachedList {
+                items,
+                stale: false,
+                fetched_at: Some(now),
+            })
+        }
+        Err(fetch_err) => match cache::get(pool, connector_id, scope).await {
+            Some(cached) => {
+                let items = serde_json::from_str(&cached.payload)
+                    .map_err(|e| format!("cached connector data was unreadable: {e}"))?;
+                Ok(CachedList {
+                    items,
+                    stale: true,
+                    fetched_at: Some(cached.fetched_at),
+                })
+            }
+            None => Err(err(fetch_err)),
+        },
+    }
+}
+
+/// List one connector's projects, through the offline cache. Errors if the
+/// id is unknown (the UI only ever passes ids from `list_connectors`, so an
+/// unknown id is a bug, not user input).
 pub async fn list_connector_projects_impl(
     state: State<'_, AppState>,
     connector_id: String,
-) -> Result<Vec<crate::connectors::RemoteProject>, String> {
+) -> Result<crate::connectors::CachedList<crate::connectors::RemoteProject>, String> {
     let connector = state
         .connector_host
         .get(&connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
-    connector.list_projects().await.map_err(err)
+    read_with_cache(
+        &state.db.pool,
+        &connector_id,
+        crate::connectors::cache::PROJECTS_SCOPE,
+        connector.list_projects(),
+    )
+    .await
 }
 
-/// List the tasks in one of a connector's projects.
+/// List the tasks in one of a connector's projects, through the offline
+/// cache.
 pub async fn list_connector_tasks_impl(
     state: State<'_, AppState>,
     connector_id: String,
     project_id: String,
-) -> Result<Vec<crate::connectors::RemoteTask>, String> {
+) -> Result<crate::connectors::CachedList<crate::connectors::RemoteTask>, String> {
     let connector = state
         .connector_host
         .get(&connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
-    connector
-        .list_tasks(&crate::connectors::RemoteProjectRef::new(project_id))
-        .await
-        .map_err(err)
+    let scope = crate::connectors::cache::tasks_scope(&project_id);
+    read_with_cache(
+        &state.db.pool,
+        &connector_id,
+        &scope,
+        connector.list_tasks(&crate::connectors::RemoteProjectRef::new(
+            project_id.clone(),
+        )),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -6314,7 +6375,9 @@ mod connector_tests {
         let projects = list_connector_projects_impl(state.clone(), FIXTURE_CONNECTOR_ID.into())
             .await
             .unwrap();
+        assert!(!projects.stale, "a live file read is fresh");
         assert!(projects
+            .items
             .iter()
             .any(|p| p.id == FIXTURE_CONNECTOR_PROJECT_ID));
 
@@ -6326,6 +6389,7 @@ mod connector_tests {
         .await
         .unwrap();
         let ship = tasks
+            .items
             .iter()
             .find(|t| t.label == "Ship it")
             .expect("task present");
@@ -6356,9 +6420,103 @@ mod connector_tests {
             .await
             .unwrap();
         assert!(
-            tasks.is_empty(),
+            tasks.items.is_empty(),
             "a project with no tasks returns empty, not an error"
         );
+    }
+
+    use crate::connectors::{cache, RemoteProject};
+
+    fn sample_projects() -> Vec<RemoteProject> {
+        vec![RemoteProject {
+            id: "p1".into(),
+            name: "Roadmap".into(),
+            description: None,
+        }]
+    }
+
+    #[tokio::test]
+    async fn read_with_cache_caches_a_fresh_read() {
+        let (_dir, db) = crate::test_support::test_db().await;
+        let got = read_with_cache(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+            Ok(sample_projects())
+        })
+        .await
+        .unwrap();
+        assert!(!got.stale);
+        assert_eq!(got.items, sample_projects());
+        assert!(got.fetched_at.is_some());
+
+        // The fresh read populated the cache.
+        let cached = cache::get(&db.pool, "gh", cache::PROJECTS_SCOPE)
+            .await
+            .expect("cache populated");
+        assert_eq!(
+            serde_json::from_str::<Vec<RemoteProject>>(&cached.payload).unwrap(),
+            sample_projects()
+        );
+    }
+
+    #[tokio::test]
+    async fn read_with_cache_serves_a_stale_snapshot_when_the_read_fails() {
+        let (_dir, db) = crate::test_support::test_db().await;
+        // Seed a prior successful read.
+        read_with_cache(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+            Ok(sample_projects())
+        })
+        .await
+        .unwrap();
+
+        // A later read that fails falls back to the cached snapshot.
+        let got: crate::connectors::CachedList<RemoteProject> =
+            read_with_cache(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+                anyhow::bail!("offline")
+            })
+            .await
+            .unwrap();
+        assert!(got.stale, "a cache fallback is marked stale");
+        assert_eq!(got.items, sample_projects());
+    }
+
+    #[tokio::test]
+    async fn read_with_cache_propagates_the_error_with_no_cache() {
+        let (_dir, db) = crate::test_support::test_db().await;
+        let err =
+            read_with_cache::<RemoteProject, _>(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+                anyhow::bail!("offline and uncached")
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("offline and uncached"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn read_with_cache_errors_when_the_cached_payload_is_corrupt() {
+        let (_dir, db) = crate::test_support::test_db().await;
+        // A payload that won't deserialize into Vec<RemoteProject>.
+        cache::put(&db.pool, "gh", cache::PROJECTS_SCOPE, "{not json}", "t")
+            .await
+            .unwrap();
+        let err =
+            read_with_cache::<RemoteProject, _>(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+                anyhow::bail!("offline")
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("unreadable"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn read_with_cache_returns_fresh_data_even_if_caching_fails() {
+        let (_dir, db) = crate::test_support::test_db().await;
+        db.pool.close().await; // the cache write will fail, but the read stands
+        let got = read_with_cache(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+            Ok(sample_projects())
+        })
+        .await
+        .unwrap();
+        assert!(!got.stale);
+        assert_eq!(got.items, sample_projects());
     }
 }
 

@@ -485,6 +485,7 @@ check yours (it is published at `/schemas/pm-connector.json`).
 4. Bundled manifests as both features and worked references. **GitHub
    Projects** ships compiled in (`connectors/manifests/github-projects.json`,
    registered by `ConnectorHost::load`); GitLab/Trello to follow.
-5. Offline cache so attribution survives a dropped network.
+5. ✅ Offline cache (`connector_cache`) so attribution survives a dropped
+   network — a failed read falls back to the last snapshot, marked stale.
 6. `pushTime` (v2): a per-connector write grant, with the outbound
    payload shown before the first push.

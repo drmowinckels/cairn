@@ -135,7 +135,7 @@ async fn clear_connector_secret(
 async fn list_connector_projects(
     state: tauri::State<'_, AppState>,
     connector_id: String,
-) -> Result<Vec<connectors::RemoteProject>, String> {
+) -> Result<connectors::CachedList<connectors::RemoteProject>, String> {
     ipc::list_connector_projects_impl(state, connector_id).await
 }
 
@@ -144,7 +144,7 @@ async fn list_connector_tasks(
     state: tauri::State<'_, AppState>,
     connector_id: String,
     project_id: String,
-) -> Result<Vec<connectors::RemoteTask>, String> {
+) -> Result<connectors::CachedList<connectors::RemoteTask>, String> {
     ipc::list_connector_tasks_impl(state, connector_id, project_id).await
 }
 

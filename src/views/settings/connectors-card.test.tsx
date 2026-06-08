@@ -40,6 +40,11 @@ const httpConnector = {
   secret: "missing" as const,
 };
 
+/** Wrap items in the `CachedList` shape the connector reads now return. */
+function list<T>(items: T[], stale = false) {
+  return { items, stale, fetchedAt: stale ? "2026-01-01T00:00:00Z" : null };
+}
+
 beforeEach(() => {
   listConnectors.mockReset();
   listConnectorProjects.mockReset();
@@ -120,9 +125,9 @@ describe("ConnectorsCard", () => {
 
   it("expands a connector to lazily load its projects", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([
-      { id: "cairn", name: "Cairn", description: null },
-    ]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }]),
+    );
     render(<ConnectorsCard />);
 
     const toggle = await screen.findByRole("button", { name: "Sample tasks" });
@@ -143,13 +148,15 @@ describe("ConnectorsCard", () => {
 
   it("expands a project to lazily load its tasks with done state", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([
-      { id: "cairn", name: "Cairn", description: null },
-    ]);
-    listConnectorTasks.mockResolvedValue([
-      { id: "t1", label: "Write spec", url: null, status: null, done: false },
-      { id: "t2", label: "Ship it", url: null, status: null, done: true },
-    ]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }]),
+    );
+    listConnectorTasks.mockResolvedValue(
+      list([
+        { id: "t1", label: "Write spec", url: null, status: null, done: false },
+        { id: "t2", label: "Ship it", url: null, status: null, done: true },
+      ]),
+    );
     render(<ConnectorsCard />);
 
     await userEvent.click(
@@ -170,7 +177,7 @@ describe("ConnectorsCard", () => {
 
   it("shows an empty-state when a connector has no projects", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([]);
+    listConnectorProjects.mockResolvedValue(list([]));
     render(<ConnectorsCard />);
     await userEvent.click(
       await screen.findByRole("button", { name: "Sample tasks" }),
@@ -192,11 +199,13 @@ describe("ConnectorsCard", () => {
 
   it("shows an empty-state and an error path for tasks", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([
-      { id: "cairn", name: "Cairn", description: null },
-      { id: "ops", name: "Ops", description: null },
-    ]);
-    listConnectorTasks.mockResolvedValueOnce([]); // Cairn → empty
+    listConnectorProjects.mockResolvedValue(
+      list([
+        { id: "cairn", name: "Cairn", description: null },
+        { id: "ops", name: "Ops", description: null },
+      ]),
+    );
+    listConnectorTasks.mockResolvedValueOnce(list([])); // Cairn → empty
     listConnectorTasks.mockRejectedValueOnce(new Error("task boom")); // Ops → error
     render(<ConnectorsCard />);
 
@@ -210,6 +219,48 @@ describe("ConnectorsCard", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn’t load tasks");
     expect(alert.textContent).toContain("task boom");
+  });
+
+  it("flags projects served from the offline cache as stale", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }], true),
+    );
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Sample tasks" }),
+    );
+    expect(await screen.findByText(/Showing cached data/)).toBeTruthy();
+    // The cached items still render.
+    expect(screen.getByRole("button", { name: "Cairn" })).toBeTruthy();
+  });
+
+  it("flags tasks served from the offline cache as stale", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }]),
+    );
+    listConnectorTasks.mockResolvedValue(
+      list(
+        [
+          {
+            id: "t1",
+            label: "Write spec",
+            url: null,
+            status: null,
+            done: false,
+          },
+        ],
+        true,
+      ),
+    );
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Sample tasks" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Cairn" }));
+    expect(await screen.findByText(/Showing cached data/)).toBeTruthy();
+    expect(screen.getByText("Write spec")).toBeTruthy();
   });
 
   it("shows no token affordance for a connector that needs none", async () => {
