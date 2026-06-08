@@ -823,6 +823,16 @@ export type ConnectorKind =
  *  itself never crosses IPC, only this state. */
 export type ConnectorSecretState = "notRequired" | "missing" | "set";
 
+/** A connector manifest as validated by the backend (mirrors Rust
+ *  `ConnectorManifest`) — what `previewConnectorManifest` returns so the
+ *  import UI can show what would be installed before committing. */
+export interface ConnectorManifest {
+  id: string;
+  name: string;
+  capabilities: ConnectorCapability[];
+  kind: ConnectorKind;
+}
+
 export interface Connector {
   id: string;
   name: string;
@@ -896,6 +906,27 @@ export async function setConnectorEnabled(
       connectorId,
       enabled,
     })) ?? []
+  );
+}
+
+/** Validate a picked connector-manifest file WITHOUT installing it (#110),
+ *  so the import UI can show what it would add (host, capabilities) for
+ *  consent. Returns null outside Tauri. */
+export async function previewConnectorManifest(
+  path: string,
+): Promise<ConnectorManifest | null> {
+  if (!inTauri) return null;
+  return invoke<ConnectorManifest>("preview_connector_manifest", { path });
+}
+
+/** Install a picked connector-manifest file (#110): copies it into the
+ *  connectors dir and hot-reloads. Returns the refreshed connector list. */
+export async function installConnectorManifest(
+  path: string,
+): Promise<Connector[]> {
+  if (!inTauri) return [];
+  return (
+    (await invoke<Connector[]>("install_connector_manifest", { path })) ?? []
   );
 }
 
