@@ -46,17 +46,16 @@ export function staleAge(fetchedAt: string, now = Date.now()): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-/** Shown when a connector list came from the offline cache because the live
- *  read failed — so the user knows the data may be out of date. The copy is
- *  deliberately cause-agnostic: the read can fail because the remote is
- *  unreachable, the token was rejected, or the response didn't parse, and
- *  the connector layer doesn't yet distinguish them (tracked separately). */
+/** Shown when a connector list came from the offline cache because the remote
+ *  was unreachable — so the user knows the data may be out of date. The cache
+ *  only falls back on genuine connectivity failures (a rejected token or bad
+ *  response surfaces as an error instead), so "couldn't reach" is accurate. */
 function StaleNote({ fetchedAt }: { fetchedAt: string | null }) {
   return (
     <p className="connector-stale" role="status">
       <Icon name="info" size={12} />
       Showing cached data{fetchedAt ? ` from ${staleAge(fetchedAt)}` : ""} —
-      couldn’t refresh from the connector.
+      couldn’t reach the connector.
     </p>
   );
 }

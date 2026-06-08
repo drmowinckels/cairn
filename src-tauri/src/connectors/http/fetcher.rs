@@ -87,6 +87,14 @@ fn host_pinned_redirect_policy() -> Policy {
     })
 }
 
+/// Wrap a URL-free transport-failure message as an [`Unreachable`] error, so
+/// the offline cache can tell "couldn't reach the host" apart from "the host
+/// answered with an error". The message stays the `Display`; `Unreachable`
+/// rides the chain.
+fn unreachable(message: String) -> anyhow::Error {
+    anyhow::Error::new(crate::connectors::Unreachable).context(message)
+}
+
 /// A short, **URL-free** reason for a reqwest error. Critical: a reqwest
 /// error's `Display` appends ` for url ({url})`, and for a `query`-auth
 /// connector that URL carries the token — so callers must classify, not
@@ -142,7 +150,8 @@ impl ReqwestFetcher {
                     bytes.extend_from_slice(&chunk);
                 }
                 Ok(None) => break,
-                Err(e) => bail!("connector response: {}", classify(&e)),
+                // A dropped/aborted body read is a connectivity failure.
+                Err(e) => return Err(unreachable(format!("connector response: {}", classify(&e)))),
             }
         }
         String::from_utf8(bytes).map_err(|_| anyhow!("connector response was not valid UTF-8"))
@@ -187,7 +196,8 @@ impl HttpFetcher for ReqwestFetcher {
 
         let resp = match builder.send().await {
             Ok(r) => r,
-            Err(e) => bail!("connector request: {}", classify(&e)),
+            // No usable response arrived (connect/timeout/redirect-refused).
+            Err(e) => return Err(unreachable(format!("connector request: {}", classify(&e)))),
         };
         let status = resp.status().as_u16();
         let body = self.read_capped(resp).await?;
@@ -484,5 +494,11 @@ mod tests {
         let chain = format!("{err:#}");
         assert!(!chain.contains(SECRET));
         assert!(chain.contains("connector request:"));
+        // A transport failure is classified Unreachable so the offline cache
+        // (which consults this) can fall back to a stale snapshot.
+        assert!(
+            crate::connectors::is_unreachable(&err),
+            "a transport failure must be Unreachable"
+        );
     }
 }

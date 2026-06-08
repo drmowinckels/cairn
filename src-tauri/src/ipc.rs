@@ -6153,18 +6153,24 @@ where
                 fetched_at: Some(now),
             })
         }
-        Err(fetch_err) => match cache::get(pool, connector_id, scope).await {
-            Some(cached) => {
-                let items = serde_json::from_str(&cached.payload)
-                    .map_err(|e| format!("cached connector data was unreadable: {e}"))?;
-                Ok(CachedList {
-                    items,
-                    stale: true,
-                    fetched_at: Some(cached.fetched_at),
-                })
+        // Fall back to the cached snapshot only when the remote was genuinely
+        // unreachable. A remote that *answered* with an error (rejected token,
+        // 404, unparseable body) must surface — serving stale data there would
+        // hide a real problem the user needs to act on.
+        Err(fetch_err) => {
+            if crate::connectors::is_unreachable(&fetch_err) {
+                if let Some(cached) = cache::get(pool, connector_id, scope).await {
+                    let items = serde_json::from_str(&cached.payload)
+                        .map_err(|e| format!("cached connector data was unreadable: {e}"))?;
+                    return Ok(CachedList {
+                        items,
+                        stale: true,
+                        fetched_at: Some(cached.fetched_at),
+                    });
+                }
             }
-            None => Err(err(fetch_err)),
-        },
+            Err(err(fetch_err))
+        }
     }
 }
 
@@ -6435,6 +6441,12 @@ mod connector_tests {
         }]
     }
 
+    /// An error that classifies as a genuine connectivity failure, so the
+    /// cache fallback engages (a fetcher transport error in production).
+    fn unreachable_err() -> anyhow::Error {
+        anyhow::Error::new(crate::connectors::Unreachable)
+    }
+
     #[tokio::test]
     async fn read_with_cache_caches_a_fresh_read() {
         let (_dir, db) = crate::test_support::test_db().await;
@@ -6467,10 +6479,10 @@ mod connector_tests {
         .await
         .unwrap();
 
-        // A later read that fails falls back to the cached snapshot.
+        // A later *unreachable* read falls back to the cached snapshot.
         let got: crate::connectors::CachedList<RemoteProject> =
             read_with_cache(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
-                anyhow::bail!("offline")
+                Err::<Vec<RemoteProject>, _>(unreachable_err())
             })
             .await
             .unwrap();
@@ -6479,15 +6491,36 @@ mod connector_tests {
     }
 
     #[tokio::test]
+    async fn read_with_cache_propagates_a_remote_error_even_with_a_cache() {
+        let (_dir, db) = crate::test_support::test_db().await;
+        // Seed a cache so a blind fallback would have something to serve.
+        read_with_cache(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+            Ok(sample_projects())
+        })
+        .await
+        .unwrap();
+
+        // A remote that *answered* with an error (not Unreachable) must
+        // surface, not silently serve the cached snapshot.
+        let err =
+            read_with_cache::<RemoteProject, _>(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
+                anyhow::bail!("the connector rejected the token (HTTP 401)")
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("rejected the token"), "{err}");
+    }
+
+    #[tokio::test]
     async fn read_with_cache_propagates_the_error_with_no_cache() {
         let (_dir, db) = crate::test_support::test_db().await;
         let err =
             read_with_cache::<RemoteProject, _>(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
-                anyhow::bail!("offline and uncached")
+                Err::<Vec<RemoteProject>, _>(unreachable_err())
             })
             .await
             .unwrap_err();
-        assert!(err.contains("offline and uncached"), "{err}");
+        assert!(err.contains("could not be reached"), "{err}");
     }
 
     #[tokio::test]
@@ -6499,7 +6532,7 @@ mod connector_tests {
             .unwrap();
         let err =
             read_with_cache::<RemoteProject, _>(&db.pool, "gh", cache::PROJECTS_SCOPE, async {
-                anyhow::bail!("offline")
+                Err::<Vec<RemoteProject>, _>(unreachable_err())
             })
             .await
             .unwrap_err();

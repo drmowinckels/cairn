@@ -142,6 +142,15 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
             let req = request::build(&self.base, op, ctx, &spec.auth, token.as_deref())?;
             let resp = self.fetcher.fetch(&req).await?;
             if !(200..300).contains(&resp.status) {
+                // The remote answered — so these are NOT `Unreachable` and
+                // must surface, not fall back to stale cache. A rejected token
+                // gets an actionable message pointing at the fix.
+                if resp.status == 401 || resp.status == 403 {
+                    bail!(
+                        "the connector rejected the token (HTTP {}); update it in Settings → Connectors",
+                        resp.status
+                    );
+                }
                 bail!("connector request failed with HTTP {}", resp.status);
             }
             let body: Value = serde_json::from_str(&resp.body)
@@ -405,21 +414,46 @@ mod tests {
         assert!(err.to_string().contains("token"));
     }
 
-    #[tokio::test]
-    async fn non_2xx_status_errors() {
-        let c = connector(
+    fn connector_returning_status(status: u16) -> DeclarativeConnector<FakeFetcher, FakeSecrets> {
+        connector(
             TODOIST,
             FakeFetcher {
                 pages: Mutex::new(VecDeque::from([HttpResponse {
-                    status: 401,
+                    status,
                     body: String::new(),
                 }])),
                 seen: Mutex::new(Vec::new()),
             },
             todoist_secrets(),
-        );
-        let err = c.list_projects().await.unwrap_err();
-        assert!(err.to_string().contains("401"));
+        )
+    }
+
+    #[tokio::test]
+    async fn rejected_token_status_gives_an_actionable_non_unreachable_error() {
+        for status in [401, 403] {
+            let err = connector_returning_status(status)
+                .list_projects()
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("rejected the token"), "{err}");
+            assert!(err.to_string().contains("Settings"), "{err}");
+            // The remote answered — it is not a connectivity failure, so the
+            // offline cache must NOT treat it as a reason to serve stale data.
+            assert!(
+                !crate::connectors::is_unreachable(&err),
+                "a {status} is a remote answer, not Unreachable"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn other_non_2xx_status_errors_generically_and_is_not_unreachable() {
+        let err = connector_returning_status(500)
+            .list_projects()
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("HTTP 500"), "{err}");
+        assert!(!crate::connectors::is_unreachable(&err));
     }
 
     #[tokio::test]
