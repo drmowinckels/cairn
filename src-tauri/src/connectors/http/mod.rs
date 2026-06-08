@@ -670,4 +670,48 @@ mod tests {
         let DeclarativeConnector { fetcher, .. } = &c;
         assert!(fetcher.last().body.as_deref().unwrap().contains("PVT_1"));
     }
+
+    fn gitlab_secrets() -> FakeSecrets {
+        FakeSecrets(BTreeMap::from([("gitlab_token".into(), "glpat".into())]))
+    }
+
+    #[tokio::test]
+    async fn bundled_gitlab_maps_numeric_ids_and_closed_at() {
+        // GitLab REST returns numeric ids; `as_string` coerces them. `done`
+        // maps from `closed_at` (null when open → not done).
+        let projects = r#"[{"id":42,"name_with_namespace":"acme / web","description":null}]"#;
+        let issues = r#"[
+            {"id":7,"title":"Open issue","web_url":"https://gitlab.com/acme/web/-/issues/1","state":"opened","closed_at":null},
+            {"id":8,"title":"Done issue","web_url":"https://gitlab.com/acme/web/-/issues/2","state":"closed","closed_at":"2026-01-02T00:00:00Z"}
+        ]"#;
+        let c = connector(
+            crate::connectors::builtin::GITLAB,
+            FakeFetcher::with(&[projects, issues]),
+            gitlab_secrets(),
+        );
+
+        let projects = c.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "42", "a numeric id is stringified");
+        assert_eq!(projects[0].name, "acme / web");
+
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new(projects[0].id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert!(
+            !tasks[0].done,
+            "an open issue (closed_at: null) is not done"
+        );
+        assert!(tasks[1].done, "a closed issue (closed_at set) is done");
+        assert_eq!(
+            tasks[1].url.as_deref(),
+            Some("https://gitlab.com/acme/web/-/issues/2")
+        );
+
+        // The numeric project id was substituted (URL-encoded) into the path.
+        let DeclarativeConnector { fetcher, .. } = &c;
+        assert!(fetcher.last().url.contains("/projects/42/issues"));
+    }
 }

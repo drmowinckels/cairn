@@ -1,0 +1,48 @@
+{
+  "manifest": 1,
+  "id": "gitlab",
+  "name": "GitLab",
+  "kind": "http",
+  "capabilities": ["network", "secrets"],
+  "auth": { "type": "bearer", "secret": "gitlab_token" },
+  "baseUrl": "https://gitlab.com/api/v4",
+  "operations": {
+    "listProjects": {
+      "request": {
+        "method": "GET",
+        "path": "/projects",
+        "query": {
+          "membership": "true",
+          "simple": "true",
+          "order_by": "last_activity_at",
+          "per_page": "100"
+        }
+      },
+      "response": {
+        "items": "",
+        "map": {
+          "id": "id",
+          "name": "name_with_namespace",
+          "description": "description"
+        }
+      }
+    },
+    "listTasks": {
+      "request": {
+        "method": "GET",
+        "path": "/projects/{{project.id}}/issues",
+        "query": { "scope": "all", "per_page": "100" }
+      },
+      "response": {
+        "items": "",
+        "map": {
+          "id": "id",
+          "label": "title",
+          "url": "web_url",
+          "status": "state",
+          "done": "closed_at"
+        }
+      }
+    }
+  }
+}
