@@ -1,0 +1,33 @@
+{
+  "manifest": 1,
+  "id": "github-projects",
+  "name": "GitHub Projects",
+  "kind": "http",
+  "capabilities": ["network", "secrets"],
+  "auth": { "type": "bearer", "secret": "github_token" },
+  "baseUrl": "https://api.github.com",
+  "operations": {
+    "listProjects": {
+      "request": {
+        "method": "POST",
+        "path": "/graphql",
+        "body": "{\"query\":\"{ viewer { projectsV2(first:20){nodes{id title}} } }\"}"
+      },
+      "response": {
+        "items": "data.viewer.projectsV2.nodes",
+        "map": { "id": "id", "name": "title" }
+      }
+    },
+    "listTasks": {
+      "request": {
+        "method": "POST",
+        "path": "/graphql",
+        "body": "{\"query\":\"{ node(id:\\\"{{project.id}}\\\"){ ... on ProjectV2 { items(first:50){nodes{id content{... on DraftIssue{title} ... on Issue{title url} ... on PullRequest{title url}}}} } } }\"}"
+      },
+      "response": {
+        "items": "data.node.items.nodes",
+        "map": { "id": "id", "label": "content.title", "url": "content.url" }
+      }
+    }
+  }
+}

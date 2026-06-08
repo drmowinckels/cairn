@@ -36,7 +36,7 @@ const httpConnector = {
   id: "remote",
   name: "Remote",
   capabilities: ["network", "secrets"] as const,
-  kind: { file: { format: "todotxt" as const, path: "" } },
+  kind: { http: { baseUrl: "https://api.github.com" } },
   secret: "missing" as const,
 };
 
@@ -73,6 +73,26 @@ describe("ConnectorsCard", () => {
     render(<ConnectorsCard />);
     expect(await screen.findByText("Network")).toBeTruthy();
     expect(screen.getByText("Secrets")).toBeTruthy();
+  });
+
+  it("describes an http connector by its remote host", async () => {
+    listConnectors.mockResolvedValue([httpConnector]);
+    render(<ConnectorsCard />);
+    expect(await screen.findByText("Remote · api.github.com")).toBeTruthy();
+  });
+
+  it("falls back to a bare Remote label for an unparseable baseUrl", async () => {
+    listConnectors.mockResolvedValue([
+      {
+        id: "broken",
+        name: "Broken",
+        capabilities: ["network"],
+        kind: { http: { baseUrl: "not a url" } },
+        secret: "notRequired",
+      },
+    ]);
+    render(<ConnectorsCard />);
+    expect(await screen.findByText("Remote")).toBeTruthy();
   });
 
   it("describes an unknown kind generically", async () => {

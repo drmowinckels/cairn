@@ -21,8 +21,15 @@ const CAPABILITY: Record<ConnectorCapability, { label: string; hint: string }> =
 
 function describeKind(kind: ConnectorKind): string {
   if ("file" in kind) return `Local file · ${kind.file.format}`;
-  // Forward-compat: a kind this build's type doesn't model yet (e.g. a
-  // future `http`) degrades to a generic label instead of crashing.
+  if ("http" in kind) {
+    try {
+      return `Remote · ${new URL(kind.http.baseUrl).host}`;
+    } catch {
+      return "Remote";
+    }
+  }
+  // Forward-compat: a kind this build's type doesn't model yet degrades to
+  // a generic label instead of crashing.
   return "Connector";
 }
 
