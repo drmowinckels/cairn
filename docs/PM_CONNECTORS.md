@@ -60,7 +60,7 @@ Every connector — built-in or community — is described by a manifest.
   "kind": "http",
   "capabilities": ["network", "secrets"],
   "auth": { "type": "bearer", "secret": "todoist_token" },
-  "baseUrl": "https://api.todoist.com/rest/v2",
+  "baseUrl": "https://api.todoist.com",
   "operations": { "listProjects": { … }, "listTasks": { … } }
 }
 ```
@@ -81,11 +81,16 @@ Adds `auth`, `baseUrl`, and `operations`.
 
 ### `baseUrl`
 
-`https://` only. **Every request is built relative to this base** — a
-manifest cannot template a full URL to some other host. That is the
-core egress guarantee: the only host a connector ever contacts is
-`baseUrl`'s host, which Cairn shows you on import. Redirects to a
-different host are refused.
+`https://` only, and **host-only** — give the origin (`https://api.example.com`),
+not a path. Each operation `path` is resolved against it with URL `join`,
+which **replaces** the base's path for an absolute path like `/x` (RFC 3986):
+a `baseUrl` of `https://host/api/v4` plus `path: "/projects"` resolves to
+`https://host/projects` — the `/api/v4` is dropped. So put the **full path**
+(including any API prefix) in each operation's `path` and keep `baseUrl`
+host-only. A manifest whose `baseUrl` path would be dropped is rejected on
+import. A manifest cannot template a full URL to some other host — the only
+host a connector ever contacts is `baseUrl`'s host, which Cairn shows you on
+import; redirects to a different host are refused.
 
 ### `auth`
 
@@ -119,7 +124,7 @@ a `response` mapping.
 "listTasks": {
   "request": {
     "method": "GET",
-    "path": "/tasks",
+    "path": "/rest/v2/tasks",
     "query": { "project_id": "{{project.id}}" },
     "headers": { "Accept": "application/json" }
   },
@@ -132,13 +137,13 @@ a `response` mapping.
 
 **`request`**
 
-| Field     | Notes                                                                                    |
-| --------- | ---------------------------------------------------------------------------------------- |
-| `method`  | `GET` or `POST` (v1 read; `POST` is for GraphQL).                                        |
-| `path`    | Appended to `baseUrl`. Templated.                                                        |
-| `query`   | Object of `key → templated value`. URL-encoded.                                          |
-| `headers` | Object of `key → templated value`.                                                       |
-| `body`    | String, templated. For GraphQL `POST`s. Defaults the content type to `application/json`. |
+| Field     | Notes                                                                                                                                              |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `method`  | `GET` or `POST` (v1 read; `POST` is for GraphQL).                                                                                                  |
+| `path`    | Full path from the host (resolved against `baseUrl` via URL join — an absolute `/x` replaces the base path, so include any API prefix). Templated. |
+| `query`   | Object of `key → templated value`. URL-encoded.                                                                                                    |
+| `headers` | Object of `key → templated value`.                                                                                                                 |
+| `body`    | String, templated. For GraphQL `POST`s. Defaults the content type to `application/json`.                                                           |
 
 **`response`**
 

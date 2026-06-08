@@ -5,12 +5,12 @@
   "kind": "http",
   "capabilities": ["network", "secrets"],
   "auth": { "type": "bearer", "secret": "gitlab_token" },
-  "baseUrl": "https://gitlab.com/api/v4",
+  "baseUrl": "https://gitlab.com",
   "operations": {
     "listProjects": {
       "request": {
         "method": "GET",
-        "path": "/projects",
+        "path": "/api/v4/projects",
         "query": {
           "membership": "true",
           "simple": "true",
@@ -30,7 +30,7 @@
     "listTasks": {
       "request": {
         "method": "GET",
-        "path": "/projects/{{project.id}}/issues",
+        "path": "/api/v4/projects/{{project.id}}/issues",
         "query": { "scope": "all", "per_page": "100" }
       },
       "response": {
