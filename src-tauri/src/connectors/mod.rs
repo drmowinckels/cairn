@@ -54,6 +54,22 @@ pub struct RemoteTask {
     pub done: bool,
 }
 
+/// Marker error meaning the connector's remote could not be contacted at all
+/// (no network, DNS failure, connection refused, timeout, dropped response) —
+/// as opposed to a remote that *answered* with an error status or unparseable
+/// body. Carried in an [`anyhow::Error`] chain by the fetcher; the offline
+/// cache falls back to a stale snapshot only for this case, so a rejected
+/// token or a garbled response surfaces the real error instead of silently
+/// serving stale data. See `is_unreachable`.
+#[derive(Debug, thiserror::Error)]
+#[error("the connector's remote could not be reached")]
+pub struct Unreachable;
+
+/// Whether `err` (or any cause in its chain) is an [`Unreachable`].
+pub fn is_unreachable(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| cause.is::<Unreachable>())
+}
+
 /// A connector read paired with its freshness, returned to the UI. `stale`
 /// means the live read failed and these items came from the offline
 /// [`cache`]; `fetched_at` is when the cached snapshot (or this read) was
