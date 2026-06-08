@@ -6017,14 +6017,107 @@ pub async fn set_plugin_enabled_impl(
     Ok(host.statuses())
 }
 
-/// List every loaded PM connector's manifest, for Settings → Connectors
-/// (#110). Read-only this session; the host is built once at startup from
+/// Each loaded connector's manifest paired with its secret state, read
+/// against `store`. The token itself never crosses this boundary, only its
+/// presence. Generic over the store so the secret-management logic is unit-
+/// tested with a fake keychain rather than only the OS one (which is
+/// platform-gated); the production callers pass [`KeychainStore`].
+///
+/// [`KeychainStore`]: crate::connectors::http::KeychainStore
+fn connector_views_with(
+    state: &State<'_, AppState>,
+    store: &dyn crate::connectors::http::SecretStore,
+) -> Vec<crate::connectors::ConnectorView> {
+    state
+        .connector_host
+        .manifests()
+        .into_iter()
+        .map(|manifest| {
+            let secret = crate::connectors::secret_state(manifest.secret_key(), store);
+            crate::connectors::ConnectorView { manifest, secret }
+        })
+        .collect()
+}
+
+/// Resolve a connector's keychain secret key, erroring if the id is unknown
+/// (the UI only ever passes ids from `list_connectors`, so an unknown id is
+/// a bug). `None` means the connector takes no token.
+fn connector_secret_key(
+    state: &State<'_, AppState>,
+    connector_id: &str,
+) -> Result<Option<String>, String> {
+    let connector = state
+        .connector_host
+        .get(connector_id)
+        .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+    Ok(connector.manifest().secret_key().map(str::to_owned))
+}
+
+/// Set (`Some`) or clear (`None`) a connector's token in `keychain`, then
+/// return the refreshed connector list read back through the same keychain.
+/// The whole set/clear path is here, generic over the keychain, so it is
+/// exercised cross-platform with a fake — the OS keychain only enters
+/// through the thin `*_impl` wrappers.
+fn apply_connector_secret<K>(
+    state: &State<'_, AppState>,
+    connector_id: &str,
+    token: Option<&str>,
+    keychain: &K,
+) -> Result<Vec<crate::connectors::ConnectorView>, String>
+where
+    K: crate::connectors::http::SecretStore + crate::connectors::http::SecretWriter,
+{
+    let secret_key = connector_secret_key(state, connector_id)?;
+    match token {
+        Some(token) => crate::connectors::store_secret(secret_key.as_deref(), token, keychain)?,
+        None => crate::connectors::remove_secret(secret_key.as_deref(), keychain)?,
+    }
+    Ok(connector_views_with(state, keychain))
+}
+
+/// List every loaded PM connector with its secret state, for Settings →
+/// Connectors (#110). The host is built once at startup from
 /// `<data_dir>/connectors/*.json`. Invoke shim in `lib.rs` — see
 /// `list_plugins_impl`.
 pub async fn list_connectors_impl(
     state: State<'_, AppState>,
-) -> Result<Vec<crate::connectors::ConnectorManifest>, String> {
-    Ok(state.connector_host.manifests())
+) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    Ok(connector_views_with(
+        &state,
+        &crate::connectors::http::KeychainStore::new(),
+    ))
+}
+
+/// Store a connector's auth token in the OS keychain (#110). Validates the
+/// connector takes a token and the token is non-empty, then writes it under
+/// the manifest's `secret` key. The token is a write-only input — never
+/// logged, echoed back, or returned; the reply is the refreshed connector
+/// list so the card can flip its badge to "Set". Invoke shim in `lib.rs`.
+pub async fn set_connector_secret_impl(
+    state: State<'_, AppState>,
+    connector_id: String,
+    token: String,
+) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    apply_connector_secret(
+        &state,
+        &connector_id,
+        Some(&token),
+        &crate::connectors::http::KeychainStore::new(),
+    )
+}
+
+/// Clear a connector's stored auth token from the keychain (#110). Returns
+/// the refreshed connector list. Invoke shim in `lib.rs`.
+pub async fn clear_connector_secret_impl(
+    state: State<'_, AppState>,
+    connector_id: String,
+) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    apply_connector_secret(
+        &state,
+        &connector_id,
+        None,
+        &crate::connectors::http::KeychainStore::new(),
+    )
 }
 
 /// List one connector's projects. Errors if the id is unknown (the UI
@@ -6061,19 +6154,155 @@ pub async fn list_connector_tasks_impl(
 #[cfg(not(target_os = "windows"))]
 mod connector_tests {
     use super::*;
+    use crate::connectors::SecretState;
     use crate::test_support::{
         mock_app_with_db, FIXTURE_CONNECTOR_ID, FIXTURE_CONNECTOR_PROJECT_ID,
+        FIXTURE_HTTP_CONNECTOR_ID,
     };
     use tauri::Manager;
 
     #[tokio::test]
-    async fn list_connectors_returns_the_seeded_connector() {
+    async fn list_connectors_reports_each_connectors_secret_state() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         let connectors = list_connectors_impl(state).await.unwrap();
-        assert!(
-            connectors.iter().any(|c| c.id == FIXTURE_CONNECTOR_ID),
-            "the seeded file connector should be listed"
+
+        let file = connectors
+            .iter()
+            .find(|c| c.manifest.id == FIXTURE_CONNECTOR_ID)
+            .expect("the seeded file connector is listed");
+        assert_eq!(
+            file.secret,
+            SecretState::NotRequired,
+            "a local file connector needs no token"
+        );
+
+        let http = connectors
+            .iter()
+            .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
+            .expect("the seeded http connector is listed");
+        assert_eq!(
+            http.secret,
+            SecretState::Missing,
+            "a token-bearing connector with nothing stored reports Missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_secret_rejects_a_connector_that_takes_no_token() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = set_connector_secret_impl(state, FIXTURE_CONNECTOR_ID.into(), "tok".into())
+            .await
+            .unwrap_err();
+        assert!(err.contains("does not take a token"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn secret_commands_reject_an_unknown_connector_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let set_err = set_connector_secret_impl(state.clone(), "nope".into(), "tok".into())
+            .await
+            .unwrap_err();
+        assert!(set_err.contains("nope"));
+        let clear_err = clear_connector_secret_impl(state, "nope".into())
+            .await
+            .unwrap_err();
+        assert!(clear_err.contains("nope"));
+    }
+
+    /// In-memory keychain (reader + writer) so the set/clear happy path is
+    /// exercised on every platform, not only where the OS keychain works
+    /// headless.
+    #[derive(Default)]
+    struct FakeKeychain {
+        store: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+    }
+    impl crate::connectors::http::SecretStore for FakeKeychain {
+        fn token(&self, key: &str) -> Option<String> {
+            self.store.lock().unwrap().get(key).cloned()
+        }
+    }
+    impl crate::connectors::http::SecretWriter for FakeKeychain {
+        fn set(&self, key: &str, token: &str) -> Result<(), String> {
+            self.store
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), token.to_string());
+            Ok(())
+        }
+        fn clear(&self, key: &str) -> Result<(), String> {
+            self.store.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_secret_sets_then_clears_through_a_fake_keychain() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let kc = FakeKeychain::default();
+
+        let after_set =
+            apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, Some("ghp_x"), &kc).unwrap();
+        let http = after_set
+            .iter()
+            .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
+            .unwrap();
+        assert_eq!(http.secret, SecretState::Set, "stored token reads as Set");
+
+        let after_clear =
+            apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, None, &kc).unwrap();
+        let http = after_clear
+            .iter()
+            .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
+            .unwrap();
+        assert_eq!(
+            http.secret,
+            SecretState::Missing,
+            "cleared token reads as Missing"
+        );
+    }
+
+    // End-to-end through the real OS keychain, available headless only on
+    // Linux (the keyutils backend) where coverage is collected — same gate
+    // as the `KeychainStore` roundtrip test. Proves the `*_impl` wrappers
+    // actually persist; the logic itself is covered cross-platform above.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn set_then_clear_flips_the_http_connectors_secret_state() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let after_set = set_connector_secret_impl(
+            state.clone(),
+            FIXTURE_HTTP_CONNECTOR_ID.into(),
+            "ghp_x".into(),
+        )
+        .await
+        .unwrap();
+        let http = after_set
+            .iter()
+            .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
+            .unwrap();
+        assert_eq!(
+            http.secret,
+            SecretState::Set,
+            "stored token reads back as Set"
+        );
+
+        let after_clear = clear_connector_secret_impl(state, FIXTURE_HTTP_CONNECTOR_ID.into())
+            .await
+            .unwrap();
+        let http = after_clear
+            .iter()
+            .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
+            .unwrap();
+        assert_eq!(
+            http.secret,
+            SecretState::Missing,
+            "cleared token reads as Missing"
         );
     }
 

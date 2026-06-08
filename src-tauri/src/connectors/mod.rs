@@ -69,6 +69,66 @@ impl From<&RemoteProject> for RemoteProjectRef {
     }
 }
 
+/// Whether a connector's auth token is present, for the settings UI. The
+/// token itself never crosses this boundary — only its state does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SecretState {
+    /// The connector needs no token (a local file, or `auth.type == none`).
+    NotRequired,
+    /// A token is required but none is stored yet.
+    Missing,
+    /// A token is stored in the keychain.
+    Set,
+}
+
+/// A connector manifest plus its current secret state — what
+/// `list_connectors` hands the settings card so it can render a "needs
+/// token" affordance without the token ever leaving the backend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConnectorView {
+    #[serde(flatten)]
+    pub manifest: ConnectorManifest,
+    pub secret: SecretState,
+}
+
+/// Resolve a connector's [`SecretState`] from its secret key (if any) and
+/// the keychain. Pure over the store so it is unit-tested with a fake.
+pub fn secret_state(secret_key: Option<&str>, store: &dyn http::SecretStore) -> SecretState {
+    match secret_key {
+        None => SecretState::NotRequired,
+        Some(key) if store.token(key).is_some() => SecretState::Set,
+        Some(_) => SecretState::Missing,
+    }
+}
+
+/// Validate then store a connector's token. Rejects a connector that takes
+/// no token (a local file, or `auth.type == none`) and an empty/whitespace
+/// token, which would persist a useless credential. The token is trimmed
+/// before storing. Pure over the writer so it is unit-tested with a fake.
+pub fn store_secret(
+    secret_key: Option<&str>,
+    token: &str,
+    writer: &dyn http::SecretWriter,
+) -> Result<(), String> {
+    let key = secret_key.ok_or("this connector does not take a token")?;
+    let token = token.trim();
+    if token.is_empty() {
+        return Err("token must not be empty".to_string());
+    }
+    writer.set(key, token)
+}
+
+/// Remove a connector's stored token. Rejects a connector that takes none.
+/// Pure over the writer so it is unit-tested with a fake.
+pub fn remove_secret(
+    secret_key: Option<&str>,
+    writer: &dyn http::SecretWriter,
+) -> Result<(), String> {
+    let key = secret_key.ok_or("this connector does not take a token")?;
+    writer.clear(key)
+}
+
 /// What the rest of Cairn talks to, regardless of how a connector is
 /// implemented (built-in, local file, or the declarative interpreter).
 /// Async because real connectors do network I/O; the file connector
@@ -185,6 +245,7 @@ fn build(manifest: ConnectorManifest) -> Box<dyn PmConnector> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connectors::http::{SecretStore, SecretWriter};
     use crate::test_support::temp_dir;
     use std::io::Write;
 
@@ -268,5 +329,74 @@ mod tests {
             description: None,
         };
         assert_eq!(RemoteProjectRef::from(&p), RemoteProjectRef::new("p1"));
+    }
+
+    /// In-memory keychain stand-in so the secret helpers are tested without
+    /// touching a real OS keychain.
+    #[derive(Default)]
+    struct FakeKeychain {
+        store: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+    }
+
+    impl http::SecretStore for FakeKeychain {
+        fn token(&self, key: &str) -> Option<String> {
+            self.store.lock().unwrap().get(key).cloned()
+        }
+    }
+
+    impl http::SecretWriter for FakeKeychain {
+        fn set(&self, key: &str, token: &str) -> Result<(), String> {
+            self.store
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), token.to_string());
+            Ok(())
+        }
+
+        fn clear(&self, key: &str) -> Result<(), String> {
+            self.store.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn secret_state_reflects_need_and_presence() {
+        let kc = FakeKeychain::default();
+        assert_eq!(secret_state(None, &kc), SecretState::NotRequired);
+        assert_eq!(
+            secret_state(Some("github_token"), &kc),
+            SecretState::Missing
+        );
+        kc.set("github_token", "ghp_x").unwrap();
+        assert_eq!(secret_state(Some("github_token"), &kc), SecretState::Set);
+    }
+
+    #[test]
+    fn store_secret_writes_a_trimmed_token() {
+        let kc = FakeKeychain::default();
+        store_secret(Some("github_token"), "  ghp_x  ", &kc).unwrap();
+        assert_eq!(kc.token("github_token").as_deref(), Some("ghp_x"));
+    }
+
+    #[test]
+    fn store_secret_rejects_a_tokenless_connector() {
+        let kc = FakeKeychain::default();
+        assert!(store_secret(None, "ghp_x", &kc).is_err());
+    }
+
+    #[test]
+    fn store_secret_rejects_an_empty_token() {
+        let kc = FakeKeychain::default();
+        assert!(store_secret(Some("github_token"), "   ", &kc).is_err());
+        assert_eq!(kc.token("github_token"), None, "nothing is stored");
+    }
+
+    #[test]
+    fn remove_secret_clears_and_rejects_tokenless() {
+        let kc = FakeKeychain::default();
+        kc.set("github_token", "ghp_x").unwrap();
+        remove_secret(Some("github_token"), &kc).unwrap();
+        assert_eq!(kc.token("github_token"), None);
+        assert!(remove_secret(None, &kc).is_err());
     }
 }

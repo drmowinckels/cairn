@@ -224,13 +224,34 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
+  it("setConnectorSecret / clearConnectorSecret forward their args", async () => {
+    invokeMock.mockResolvedValue([]);
+    const { setConnectorSecret, clearConnectorSecret } = await import("./ipc");
+    await setConnectorSecret("remote", "ghp_x");
+    expect(invokeMock).toHaveBeenCalledWith("set_connector_secret", {
+      connectorId: "remote",
+      token: "ghp_x",
+    });
+    await clearConnectorSecret("remote");
+    expect(invokeMock).toHaveBeenCalledWith("clear_connector_secret", {
+      connectorId: "remote",
+    });
+  });
+
   it("connector commands coerce an undefined backend response to []", async () => {
     invokeMock.mockResolvedValue(undefined);
-    const { listConnectors, listConnectorProjects, listConnectorTasks } =
-      await import("./ipc");
+    const {
+      listConnectors,
+      listConnectorProjects,
+      listConnectorTasks,
+      setConnectorSecret,
+      clearConnectorSecret,
+    } = await import("./ipc");
     expect(await listConnectors()).toEqual([]);
     expect(await listConnectorProjects("x")).toEqual([]);
     expect(await listConnectorTasks("x", "y")).toEqual([]);
+    expect(await setConnectorSecret("x", "t")).toEqual([]);
+    expect(await clearConnectorSecret("x")).toEqual([]);
   });
 });
 
@@ -270,6 +291,13 @@ describe("ipc helpers (outside Tauri)", () => {
   it("setPopoverSize short-circuits without the backend", async () => {
     const { setPopoverSize } = await import("./ipc");
     await setPopoverSize(560, 760);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("connector secret commands short-circuit to [] without the backend", async () => {
+    const { setConnectorSecret, clearConnectorSecret } = await import("./ipc");
+    expect(await setConnectorSecret("x", "t")).toEqual([]);
+    expect(await clearConnectorSecret("x")).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

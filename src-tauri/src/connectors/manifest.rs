@@ -256,6 +256,14 @@ struct RawManifest {
 }
 
 impl ConnectorManifest {
+    /// The keychain key holding this connector's token, or `None` when the
+    /// connector needs none (a file connector, or an `http` one with
+    /// `auth.type == "none"`). Lets the settings layer tell "needs a token"
+    /// apart from "fully local" without re-walking the kind.
+    pub fn secret_key(&self) -> Option<&str> {
+        self.kind.as_http().and_then(|spec| spec.auth.secret_key())
+    }
+
     /// Parse and validate a manifest from JSON.
     ///
     /// Enforces: schema version, non-empty kebab-case id, non-empty name,

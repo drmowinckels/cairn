@@ -70,6 +70,16 @@ pub trait SecretStore: Send + Sync {
     fn token(&self, key: &str) -> Option<String>;
 }
 
+/// Writes a connector's token to (or clears it from) the keychain. Split
+/// from [`SecretStore`] because the interpreter only ever *reads*; the
+/// settings command that stores a user's token is the sole writer. Both
+/// methods return a token-free message on failure so a secret can't leak
+/// through an error string the UI then renders.
+pub trait SecretWriter: Send + Sync {
+    fn set(&self, key: &str, token: &str) -> Result<(), String>;
+    fn clear(&self, key: &str) -> Result<(), String>;
+}
+
 /// A connector that runs a JSON manifest through the fixed interpreter.
 pub struct DeclarativeConnector<F, S> {
     manifest: ConnectorManifest,

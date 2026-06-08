@@ -77,6 +77,10 @@ pub async fn test_db_at(path: &Path) -> Db {
 pub const FIXTURE_CONNECTOR_ID: &str = "sample-tasks";
 /// A project id present in the seeded connector's todo file.
 pub const FIXTURE_CONNECTOR_PROJECT_ID: &str = "cairn";
+/// Id of a seeded `http` connector that declares a bearer token, so the
+/// secret-management commands have a token-bearing connector to drive
+/// without making a network request.
+pub const FIXTURE_HTTP_CONNECTOR_ID: &str = "sample-remote";
 
 /// Seed a single local-file connector under `<data_dir>/connectors/` and
 /// return a host loaded from it. Gives the connector IPC commands a known
@@ -99,6 +103,21 @@ fn seed_connector_fixture(data_dir: &std::path::Path) -> crate::connectors::Conn
               "file": {{ "format": "todotxt", "path": {path_json} }} }}"#,
     );
     std::fs::write(dir.join("sample.json"), manifest).expect("write fixture manifest");
+
+    let http_manifest = format!(
+        r#"{{ "manifest": 1, "id": "{FIXTURE_HTTP_CONNECTOR_ID}", "name": "Sample remote",
+              "kind": "http", "capabilities": ["network", "secrets"],
+              "auth": {{ "type": "bearer", "secret": "sample_remote_token" }},
+              "baseUrl": "https://api.example.com",
+              "operations": {{
+                "listProjects": {{ "request": {{ "method": "GET", "path": "/projects" }},
+                                   "response": {{ "items": "", "map": {{ "id": "id", "name": "name" }} }} }},
+                "listTasks": {{ "request": {{ "method": "GET", "path": "/tasks" }},
+                                "response": {{ "items": "", "map": {{ "id": "id", "label": "label" }} }} }}
+              }} }}"#,
+    );
+    std::fs::write(dir.join("sample-remote.json"), http_manifest)
+        .expect("write fixture http manifest");
     crate::connectors::ConnectorHost::load(&dir)
 }
 

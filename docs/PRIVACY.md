@@ -74,6 +74,15 @@ Cairn ingests calendars by fetching ICS subscription URLs the user has explicitl
 - The socket has restrictive permissions (`0600` on Unix).
 - **Never** scrape browser history databases or sqlite files. That breaks the trust model.
 
+## PM connectors
+
+Connectors are **opt-in plugins** that read a task list from a project-management tool so time can be attributed to it (see [PM_CONNECTORS](/PM_CONNECTORS)). A networked connector authenticates with a token the user supplies.
+
+- **Tokens live in the OS keychain only**, keyed by the connector's `secret` name (macOS Keychain / Windows Credential Manager / Secret Service) — never in `cairn.sqlite` and never in the manifest, which is data the user can share.
+- **The token is write-only across the IPC boundary.** Settings → Connectors lets the user set, replace, or clear it; the value is typed into a masked field and sent once. It is never read back, echoed, returned, or written to a log. A keychain failure surfaces a fixed message naming only the operation, never the token or key.
+- **The card shows whether a token is stored** (a "Needs token" / "Token saved" badge), so the user can see the credential state without the value ever leaving the backend.
+- Read-only v1: a connector only ever _reads_ its remote. Writing time back out is a separate, later, per-connector grant.
+
 ## Update checks
 
 Cairn can check whether a newer version exists. This is the one outbound request core makes besides user-configured calendar fetches, and it is **off by default**.

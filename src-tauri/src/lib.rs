@@ -110,8 +110,25 @@ async fn set_plugin_enabled(
 #[tauri::command]
 async fn list_connectors(
     state: tauri::State<'_, AppState>,
-) -> Result<Vec<connectors::ConnectorManifest>, String> {
+) -> Result<Vec<connectors::ConnectorView>, String> {
     ipc::list_connectors_impl(state).await
+}
+
+#[tauri::command]
+async fn set_connector_secret(
+    state: tauri::State<'_, AppState>,
+    connector_id: String,
+    token: String,
+) -> Result<Vec<connectors::ConnectorView>, String> {
+    ipc::set_connector_secret_impl(state, connector_id, token).await
+}
+
+#[tauri::command]
+async fn clear_connector_secret(
+    state: tauri::State<'_, AppState>,
+    connector_id: String,
+) -> Result<Vec<connectors::ConnectorView>, String> {
+    ipc::clear_connector_secret_impl(state, connector_id).await
 }
 
 #[tauri::command]
@@ -389,6 +406,8 @@ pub fn run() {
             list_plugins,
             set_plugin_enabled,
             list_connectors,
+            set_connector_secret,
+            clear_connector_secret,
             list_connector_projects,
             list_connector_tasks,
             ipc::dry_run_rules,
