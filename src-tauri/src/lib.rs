@@ -141,6 +141,19 @@ async fn set_connector_enabled(
 }
 
 #[tauri::command]
+async fn preview_connector_manifest(path: String) -> Result<connectors::ConnectorManifest, String> {
+    ipc::preview_connector_manifest_impl(path).await
+}
+
+#[tauri::command]
+async fn install_connector_manifest(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Vec<connectors::ConnectorView>, String> {
+    ipc::install_connector_manifest_impl(state, path).await
+}
+
+#[tauri::command]
 async fn list_connector_projects(
     state: tauri::State<'_, AppState>,
     connector_id: String,
@@ -202,11 +215,12 @@ pub struct AppState {
     /// the shared signal channel.
     pub plugin_host: Arc<tokio::sync::Mutex<plugins::SignalSourceHost>>,
     /// PM connectors loaded from `<data_dir>/connectors/*.json` (#110).
-    /// Read-only this session (built once at startup); per-connector
-    /// enable/disable + import land with the Settings → Connectors card.
-    /// `Arc` so the IPC handlers share the one registry without cloning
-    /// every connector.
-    pub connector_host: Arc<connectors::ConnectorHost>,
+    /// The loaded PM connectors. `RwLock<Arc<…>>` so importing a manifest
+    /// can swap in a freshly-loaded registry at runtime: readers cheaply
+    /// clone the inner `Arc` snapshot (releasing the lock immediately, so no
+    /// guard is held across the network reads), and `install_connector`
+    /// takes the write lock just long enough to replace it.
+    pub connector_host: Arc<std::sync::RwLock<Arc<connectors::ConnectorHost>>>,
     /// Debug "Capture raw signals" handle. Always created off; the
     /// toggle is in-memory only and never persisted across launches.
     /// See `signals::capture` and `docs/PRIVACY.md`.
@@ -418,6 +432,8 @@ pub fn run() {
             set_connector_secret,
             clear_connector_secret,
             set_connector_enabled,
+            preview_connector_manifest,
+            install_connector_manifest,
             list_connector_projects,
             list_connector_tasks,
             ipc::dry_run_rules,
@@ -663,9 +679,9 @@ pub fn run() {
                 });
             }
 
-            let connector_host = Arc::new(connectors::ConnectorHost::load(
-                &data_dir.join("connectors"),
-            ));
+            let connector_host = Arc::new(std::sync::RwLock::new(Arc::new(
+                connectors::ConnectorHost::load(&data_dir.join("connectors")),
+            )));
 
             app.manage(AppState {
                 db,

@@ -6017,6 +6017,34 @@ pub async fn set_plugin_enabled_impl(
     Ok(host.statuses())
 }
 
+/// A cheap snapshot of the connector registry: clones the inner `Arc` and
+/// releases the lock immediately, so callers can hold it across the network
+/// reads without blocking a concurrent `install_connector` swap. Recovers
+/// from a poisoned lock (a prior panic while installing) rather than
+/// propagating it — mirrors the `rules_cache` recovery in `dry_run_rules`.
+fn connector_host(state: &State<'_, AppState>) -> std::sync::Arc<crate::connectors::ConnectorHost> {
+    match state.connector_host.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => {
+            log::warn!("connector_host: recovered from poisoned RwLock");
+            poisoned.into_inner().clone()
+        }
+    }
+}
+
+/// Swap in a freshly-loaded connector registry (after an import). Recovers
+/// from a poisoned lock rather than propagating it.
+fn store_connector_host(state: &State<'_, AppState>, host: crate::connectors::ConnectorHost) {
+    let next = std::sync::Arc::new(host);
+    match state.connector_host.write() {
+        Ok(mut guard) => *guard = next,
+        Err(poisoned) => {
+            log::warn!("connector_host: recovered from poisoned RwLock on store");
+            *poisoned.into_inner() = next;
+        }
+    }
+}
+
 /// Each loaded connector's manifest paired with its secret state (read
 /// against `store`) and enabled flag (from `enabled`; absent = enabled). The
 /// token never crosses this boundary, only its presence. Generic over the
@@ -6030,8 +6058,7 @@ fn connector_views_with(
     store: &dyn crate::connectors::http::SecretStore,
     enabled: &std::collections::HashMap<String, bool>,
 ) -> Vec<crate::connectors::ConnectorView> {
-    state
-        .connector_host
+    connector_host(state)
         .manifests()
         .into_iter()
         .map(|manifest| {
@@ -6062,8 +6089,8 @@ fn apply_connector_secret<K>(
 where
     K: crate::connectors::http::SecretStore + crate::connectors::http::SecretWriter,
 {
-    let connector = state
-        .connector_host
+    let host = connector_host(state);
+    let connector = host
         .get(connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
     // `None` here means the connector takes no token (a local file, or
@@ -6136,10 +6163,57 @@ pub async fn set_connector_enabled_impl(
     connector_id: String,
     enabled: bool,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
-    if state.connector_host.get(&connector_id).is_none() {
+    if connector_host(&state).get(&connector_id).is_none() {
         return Err(format!("unknown connector '{connector_id}'"));
     }
     crate::connectors::state::set_enabled(&state.db.pool, &connector_id, enabled).await?;
+    let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
+    Ok(connector_views_with(
+        &state,
+        &crate::connectors::http::KeychainStore::new(),
+        &flags,
+    ))
+}
+
+/// Validate a connector manifest file the user picked, WITHOUT installing it
+/// (#110) — so the UI can show its id/name/kind/capabilities and the host it
+/// would contact, for an informed consent step before `install_connector`.
+/// Reads only the chosen file; nothing is written and the host is untouched.
+/// Invoke shim in `lib.rs`.
+pub async fn preview_connector_manifest_impl(
+    path: String,
+) -> Result<crate::connectors::ConnectorManifest, String> {
+    let json = std::fs::read_to_string(&path)
+        .map_err(|e| format!("could not read the manifest file: {e}"))?;
+    crate::connectors::ConnectorManifest::from_json(&json)
+        .map_err(|e| format!("not a valid connector manifest: {e}"))
+}
+
+/// Install a connector manifest the user picked (#110): validate it, copy it
+/// into `<data_dir>/connectors/<id>.json`, and hot-reload the registry so the
+/// connector appears without a restart. The destination filename is the
+/// manifest's validated kebab-case id, so a malicious `path` can't traverse
+/// out of the connectors dir. A same-id file is overwritten (re-import / a
+/// user override of a builtin). Returns the refreshed connector list. Invoke
+/// shim in `lib.rs`.
+pub async fn install_connector_manifest_impl(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    let json = std::fs::read_to_string(&path)
+        .map_err(|e| format!("could not read the manifest file: {e}"))?;
+    let manifest = crate::connectors::ConnectorManifest::from_json(&json)
+        .map_err(|e| format!("not a valid connector manifest: {e}"))?;
+
+    let dir = state.data_dir.join("connectors");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create the connectors dir: {e}"))?;
+    // `manifest.id` is validated `^[a-z0-9-]+$` by `from_json`, so it is a
+    // safe single path segment — no traversal from the user-chosen source.
+    let dest = dir.join(format!("{}.json", manifest.id));
+    std::fs::write(&dest, &json).map_err(|e| format!("could not save the connector: {e}"))?;
+
+    store_connector_host(&state, crate::connectors::ConnectorHost::load(&dir));
     let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
     Ok(connector_views_with(
         &state,
@@ -6224,8 +6298,8 @@ pub async fn list_connector_projects_impl(
     state: State<'_, AppState>,
     connector_id: String,
 ) -> Result<crate::connectors::CachedList<crate::connectors::RemoteProject>, String> {
-    let connector = state
-        .connector_host
+    let host = connector_host(&state);
+    let connector = host
         .get(&connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
     ensure_connector_enabled(&state, &connector_id).await?;
@@ -6245,8 +6319,8 @@ pub async fn list_connector_tasks_impl(
     connector_id: String,
     project_id: String,
 ) -> Result<crate::connectors::CachedList<crate::connectors::RemoteTask>, String> {
-    let connector = state
-        .connector_host
+    let host = connector_host(&state);
+    let connector = host
         .get(&connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
     ensure_connector_enabled(&state, &connector_id).await?;
@@ -6541,6 +6615,89 @@ mod connector_tests {
         .await
         .unwrap_err();
         assert!(tasks_err.contains("disabled"), "{tasks_err}");
+    }
+
+    const IMPORTED_MANIFEST: &str = r#"{ "manifest": 1, "id": "imported-todo",
+        "name": "Imported", "kind": "file", "capabilities": [],
+        "file": { "format": "todotxt", "path": "/tmp/x.txt" } }"#;
+
+    fn write_temp_manifest(json: &str) -> (crate::test_support::TempDir, String) {
+        let dir = crate::test_support::temp_dir();
+        let path = dir.path().join("picked.json");
+        std::fs::write(&path, json).unwrap();
+        (dir, path.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn preview_validates_without_installing() {
+        let (_src, path) = write_temp_manifest(IMPORTED_MANIFEST);
+        let manifest = preview_connector_manifest_impl(path).await.unwrap();
+        assert_eq!(manifest.id, "imported-todo");
+        assert!(manifest.kind.as_file().is_some());
+    }
+
+    #[tokio::test]
+    async fn preview_rejects_an_invalid_manifest_and_an_unreadable_path() {
+        let (_src, bad) = write_temp_manifest("{ not a manifest");
+        assert!(preview_connector_manifest_impl(bad).await.is_err());
+        let missing = preview_connector_manifest_impl("/no/such/file.json".into())
+            .await
+            .unwrap_err();
+        assert!(missing.contains("could not read"), "{missing}");
+    }
+
+    #[tokio::test]
+    async fn install_copies_reloads_and_lists_the_connector() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (_src, path) = write_temp_manifest(IMPORTED_MANIFEST);
+
+        let after = install_connector_manifest_impl(state.clone(), path)
+            .await
+            .unwrap();
+        assert!(
+            after.iter().any(|c| c.manifest.id == "imported-todo"),
+            "the imported connector is hot-loaded into the list"
+        );
+        // It was written into the connectors dir under its id.
+        let dest = state.data_dir.join("connectors").join("imported-todo.json");
+        assert!(dest.exists(), "the manifest was copied to {dest:?}");
+
+        // A fresh list (re-reads the swapped host) still shows it.
+        let listed = list_connectors_impl(state).await.unwrap();
+        assert!(listed.iter().any(|c| c.manifest.id == "imported-todo"));
+    }
+
+    #[tokio::test]
+    async fn install_rejects_an_invalid_manifest() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (_src, bad) = write_temp_manifest(r#"{ "manifest": 99, "id": "x" }"#);
+        assert!(install_connector_manifest_impl(state, bad).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn connector_commands_recover_from_a_poisoned_host_lock() {
+        // Poison the RwLock the way the rules-cache poison test does, then
+        // confirm the read- and write-side recovery branches both hold.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let lock = state.connector_host.clone();
+        let handle = std::thread::spawn(move || {
+            let _g = lock.write().unwrap();
+            panic!("intentional poison for test");
+        });
+        let _ = handle.join();
+        assert!(state.connector_host.read().is_err(), "lock is poisoned");
+
+        // Read side recovers.
+        let listed = list_connectors_impl(state.clone()).await.unwrap();
+        assert!(listed.iter().any(|c| c.manifest.id == FIXTURE_CONNECTOR_ID));
+
+        // Write side (install → store) recovers.
+        let (_src, path) = write_temp_manifest(IMPORTED_MANIFEST);
+        let after = install_connector_manifest_impl(state, path).await.unwrap();
+        assert!(after.iter().any(|c| c.manifest.id == "imported-todo"));
     }
 
     use crate::connectors::{cache, RemoteProject};
