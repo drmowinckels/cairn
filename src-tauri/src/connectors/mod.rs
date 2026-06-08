@@ -20,18 +20,20 @@
 //! API. `push_time` is a separate, later, per-connector write grant.
 
 pub mod builtin;
+pub mod cache;
 pub mod file;
 pub mod http;
 pub mod manifest;
 
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use manifest::{ConnectorKind, ConnectorManifest};
 
-/// A project as seen in the remote planner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// A project as seen in the remote planner. `Deserialize` so it round-trips
+/// through the offline [`cache`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteProject {
     pub id: String,
@@ -41,8 +43,8 @@ pub struct RemoteProject {
 
 /// A task as seen in the remote planner. `done` collapses the planner's
 /// notion of completion to a bool; `status` keeps the raw label when one
-/// exists.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// exists. `Deserialize` so it round-trips through the offline [`cache`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteTask {
     pub id: String,
@@ -50,6 +52,18 @@ pub struct RemoteTask {
     pub url: Option<String>,
     pub status: Option<String>,
     pub done: bool,
+}
+
+/// A connector read paired with its freshness, returned to the UI. `stale`
+/// means the live read failed and these items came from the offline
+/// [`cache`]; `fetched_at` is when the cached snapshot (or this read) was
+/// taken (RFC 3339), or `None` for a fresh read with no clock involved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedList<T> {
+    pub items: Vec<T>,
+    pub stale: bool,
+    pub fetched_at: Option<String>,
 }
 
 /// A thin reference to a remote project — all `list_tasks` needs to know.

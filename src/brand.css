@@ -3193,6 +3193,16 @@ select.rule-conf {
   padding-left: 22px;
 }
 
+.connector-stale {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-mute);
+  font-size: var(--font-tiny);
+  margin: 2px 0 6px;
+  padding-left: 22px;
+}
+
 /* Token affordance for a connector that authenticates (#110). The token is
    typed into a masked field and sent once; this only ever shows whether one
    is stored, never the value. */

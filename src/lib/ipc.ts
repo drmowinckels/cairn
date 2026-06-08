@@ -881,28 +881,41 @@ export async function clearConnectorSecret(
   );
 }
 
-/** A connector's projects. */
+/** A connector read paired with its freshness (mirrors Rust `CachedList`).
+ *  `stale` means the live read failed and `items` came from the offline
+ *  cache; `fetchedAt` is when the snapshot was taken (RFC 3339). */
+export interface CachedList<T> {
+  items: T[];
+  stale: boolean;
+  fetchedAt: string | null;
+}
+
+function emptyList<T>(): CachedList<T> {
+  return { items: [], stale: false, fetchedAt: null };
+}
+
+/** A connector's projects, through the offline cache. */
 export async function listConnectorProjects(
   connectorId: string,
-): Promise<RemoteProject[]> {
-  if (!inTauri) return [];
+): Promise<CachedList<RemoteProject>> {
+  if (!inTauri) return emptyList();
   return (
-    (await invoke<RemoteProject[]>("list_connector_projects", {
+    (await invoke<CachedList<RemoteProject>>("list_connector_projects", {
       connectorId,
-    })) ?? []
+    })) ?? emptyList()
   );
 }
 
-/** The tasks in one of a connector's projects. */
+/** The tasks in one of a connector's projects, through the offline cache. */
 export async function listConnectorTasks(
   connectorId: string,
   projectId: string,
-): Promise<RemoteTask[]> {
-  if (!inTauri) return [];
+): Promise<CachedList<RemoteTask>> {
+  if (!inTauri) return emptyList();
   return (
-    (await invoke<RemoteTask[]>("list_connector_tasks", {
+    (await invoke<CachedList<RemoteTask>>("list_connector_tasks", {
       connectorId,
       projectId,
-    })) ?? []
+    })) ?? emptyList()
   );
 }

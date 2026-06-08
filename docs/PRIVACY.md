@@ -81,6 +81,7 @@ Connectors are **opt-in plugins** that read a task list from a project-managemen
 - **Tokens live in the OS keychain only**, keyed by the connector's `secret` name (macOS Keychain / Windows Credential Manager / Secret Service) — never in `cairn.sqlite` and never in the manifest, which is data the user can share.
 - **The token is write-only across the IPC boundary.** Settings → Connectors lets the user set, replace, or clear it; the value is typed into a masked field and sent once. It is never read back, echoed, returned, or written to a log. A keychain failure surfaces a fixed message naming only the operation, never the token or key.
 - **The card shows whether a token is stored** (a "Needs token" / "Token saved" badge), so the user can see the credential state without the value ever leaving the backend.
+- **An offline cache** stores the last successful read of each connector's project names, task labels, and task URLs in `cairn.sqlite` (the `connector_cache` table), so attribution still works when the remote is unreachable; the card marks such data as cached. This is metadata Cairn already received over an authorized read — no new data leaves the machine — and "Delete everything" wipes it with the rest of the user tables.
 - Read-only v1: a connector only ever _reads_ its remote. Writing time back out is a separate, later, per-connector grant.
 
 ## Update checks

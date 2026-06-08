@@ -238,7 +238,7 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
-  it("connector commands coerce an undefined backend response to []", async () => {
+  it("connector commands coerce an undefined backend response to a safe default", async () => {
     invokeMock.mockResolvedValue(undefined);
     const {
       listConnectors,
@@ -247,9 +247,10 @@ describe("ipc helpers (inside Tauri)", () => {
       setConnectorSecret,
       clearConnectorSecret,
     } = await import("./ipc");
+    const emptyList = { items: [], stale: false, fetchedAt: null };
     expect(await listConnectors()).toEqual([]);
-    expect(await listConnectorProjects("x")).toEqual([]);
-    expect(await listConnectorTasks("x", "y")).toEqual([]);
+    expect(await listConnectorProjects("x")).toEqual(emptyList);
+    expect(await listConnectorTasks("x", "y")).toEqual(emptyList);
     expect(await setConnectorSecret("x", "t")).toEqual([]);
     expect(await clearConnectorSecret("x")).toEqual([]);
   });
@@ -350,12 +351,13 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("connector commands resolve to [] without the backend", async () => {
+  it("connector commands resolve to safe defaults without the backend", async () => {
     const { listConnectors, listConnectorProjects, listConnectorTasks } =
       await import("./ipc");
+    const emptyList = { items: [], stale: false, fetchedAt: null };
     expect(await listConnectors()).toEqual([]);
-    expect(await listConnectorProjects("x")).toEqual([]);
-    expect(await listConnectorTasks("x", "y")).toEqual([]);
+    expect(await listConnectorProjects("x")).toEqual(emptyList);
+    expect(await listConnectorTasks("x", "y")).toEqual(emptyList);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

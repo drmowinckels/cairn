@@ -22,7 +22,7 @@ vi.mock("../../lib/ipc", async () => {
   };
 });
 
-import { ConnectorsCard } from "./connectors-card";
+import { ConnectorsCard, staleAge } from "./connectors-card";
 
 const fileConnector = {
   id: "sample-tasks",
@@ -39,6 +39,11 @@ const httpConnector = {
   kind: { http: { baseUrl: "https://api.github.com" } },
   secret: "missing" as const,
 };
+
+/** Wrap items in the `CachedList` shape the connector reads now return. */
+function list<T>(items: T[], stale = false) {
+  return { items, stale, fetchedAt: stale ? "2026-01-01T00:00:00Z" : null };
+}
 
 beforeEach(() => {
   listConnectors.mockReset();
@@ -120,9 +125,9 @@ describe("ConnectorsCard", () => {
 
   it("expands a connector to lazily load its projects", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([
-      { id: "cairn", name: "Cairn", description: null },
-    ]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }]),
+    );
     render(<ConnectorsCard />);
 
     const toggle = await screen.findByRole("button", { name: "Sample tasks" });
@@ -143,13 +148,15 @@ describe("ConnectorsCard", () => {
 
   it("expands a project to lazily load its tasks with done state", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([
-      { id: "cairn", name: "Cairn", description: null },
-    ]);
-    listConnectorTasks.mockResolvedValue([
-      { id: "t1", label: "Write spec", url: null, status: null, done: false },
-      { id: "t2", label: "Ship it", url: null, status: null, done: true },
-    ]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }]),
+    );
+    listConnectorTasks.mockResolvedValue(
+      list([
+        { id: "t1", label: "Write spec", url: null, status: null, done: false },
+        { id: "t2", label: "Ship it", url: null, status: null, done: true },
+      ]),
+    );
     render(<ConnectorsCard />);
 
     await userEvent.click(
@@ -170,7 +177,7 @@ describe("ConnectorsCard", () => {
 
   it("shows an empty-state when a connector has no projects", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([]);
+    listConnectorProjects.mockResolvedValue(list([]));
     render(<ConnectorsCard />);
     await userEvent.click(
       await screen.findByRole("button", { name: "Sample tasks" }),
@@ -192,11 +199,13 @@ describe("ConnectorsCard", () => {
 
   it("shows an empty-state and an error path for tasks", async () => {
     listConnectors.mockResolvedValue([fileConnector]);
-    listConnectorProjects.mockResolvedValue([
-      { id: "cairn", name: "Cairn", description: null },
-      { id: "ops", name: "Ops", description: null },
-    ]);
-    listConnectorTasks.mockResolvedValueOnce([]); // Cairn → empty
+    listConnectorProjects.mockResolvedValue(
+      list([
+        { id: "cairn", name: "Cairn", description: null },
+        { id: "ops", name: "Ops", description: null },
+      ]),
+    );
+    listConnectorTasks.mockResolvedValueOnce(list([])); // Cairn → empty
     listConnectorTasks.mockRejectedValueOnce(new Error("task boom")); // Ops → error
     render(<ConnectorsCard />);
 
@@ -210,6 +219,125 @@ describe("ConnectorsCard", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn’t load tasks");
     expect(alert.textContent).toContain("task boom");
+  });
+
+  it("flags projects served from the offline cache as stale, with an age", async () => {
+    // Compute the timestamp relative to real `now` so the rendered age is
+    // deterministic without faking timers (which would stall userEvent).
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    listConnectors.mockResolvedValue([fileConnector]);
+    listConnectorProjects.mockResolvedValue({
+      items: [{ id: "cairn", name: "Cairn", description: null }],
+      stale: true,
+      fetchedAt: twoHoursAgo,
+    });
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Sample tasks" }),
+    );
+    expect(
+      await screen.findByText(/Showing cached data from 2h ago/),
+    ).toBeTruthy();
+    // The cached items still render.
+    expect(screen.getByRole("button", { name: "Cairn" })).toBeTruthy();
+  });
+
+  it("renders the stale note without an age when no timestamp is present", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    listConnectorProjects.mockResolvedValue({
+      items: [{ id: "cairn", name: "Cairn", description: null }],
+      stale: true,
+      fetchedAt: null,
+    });
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Sample tasks" }),
+    );
+    const note = await screen.findByText(/Showing cached data/);
+    // The age phrase ("…data from 2h ago") is absent; the static "refresh
+    // from the connector" copy remains.
+    expect(note.textContent).not.toMatch(/cached data from/);
+  });
+
+  it("re-fetches a stale list on re-expand and clears the note when live data returns", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    listConnectorProjects
+      .mockResolvedValueOnce(
+        list([{ id: "cairn", name: "Cairn", description: null }], true),
+      )
+      .mockResolvedValueOnce(
+        list([{ id: "cairn", name: "Cairn", description: null }]),
+      );
+    render(<ConnectorsCard />);
+    const toggle = await screen.findByRole("button", { name: "Sample tasks" });
+
+    await userEvent.click(toggle); // first load → stale
+    expect(await screen.findByText(/Showing cached data/)).toBeTruthy();
+    await userEvent.click(toggle); // collapse
+    await userEvent.click(toggle); // re-expand → re-fetch, now fresh
+
+    await screen.findByRole("button", { name: "Cairn" });
+    expect(listConnectorProjects).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/Showing cached data/)).toBeNull();
+  });
+
+  it("flags tasks served from the offline cache as stale", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }]),
+    );
+    listConnectorTasks.mockResolvedValue(
+      list(
+        [
+          {
+            id: "t1",
+            label: "Write spec",
+            url: null,
+            status: null,
+            done: false,
+          },
+        ],
+        true,
+      ),
+    );
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Sample tasks" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Cairn" }));
+    expect(await screen.findByText(/Showing cached data/)).toBeTruthy();
+    expect(screen.getByText("Write spec")).toBeTruthy();
+  });
+
+  it("re-fetches stale tasks on re-expand", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "cairn", name: "Cairn", description: null }]),
+    );
+    const task = {
+      id: "t1",
+      label: "Write spec",
+      url: null,
+      status: null,
+      done: false,
+    };
+    listConnectorTasks
+      .mockResolvedValueOnce(list([task], true)) // stale
+      .mockResolvedValueOnce(list([task])); // fresh on retry
+    render(<ConnectorsCard />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Sample tasks" }),
+    );
+    const project = await screen.findByRole("button", { name: "Cairn" });
+    await userEvent.click(project); // load tasks → stale
+    expect(await screen.findByText(/Showing cached data/)).toBeTruthy();
+    await userEvent.click(project); // collapse
+    await userEvent.click(project); // re-expand → re-fetch, fresh
+
+    await screen.findByText("Write spec");
+    expect(listConnectorTasks).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/Showing cached data/)).toBeNull();
   });
 
   it("shows no token affordance for a connector that needs none", async () => {
@@ -331,5 +459,24 @@ describe("ConnectorsCard", () => {
     unmount();
     reject(new Error("late"));
     await waitFor(() => expect(listConnectors).toHaveBeenCalled());
+  });
+});
+
+describe("staleAge", () => {
+  const now = Date.parse("2026-01-02T00:00:00Z");
+
+  it("buckets an age into a coarse relative label", () => {
+    expect(staleAge("2026-01-01T23:59:30Z", now)).toBe("just now");
+    expect(staleAge("2026-01-01T23:30:00Z", now)).toBe("30m ago");
+    expect(staleAge("2026-01-01T21:00:00Z", now)).toBe("3h ago");
+    expect(staleAge("2025-12-30T00:00:00Z", now)).toBe("3d ago");
+  });
+
+  it("degrades gracefully on an unparseable timestamp", () => {
+    expect(staleAge("not a date", now)).toBe("an earlier read");
+  });
+
+  it("never reports a negative age for a future timestamp", () => {
+    expect(staleAge("2026-01-03T00:00:00Z", now)).toBe("just now");
   });
 });
