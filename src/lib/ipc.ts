@@ -814,11 +814,18 @@ export type ConnectorKind = {
   file: { format: ConnectorFileFormat; path: string };
 };
 
+/** Whether a connector's auth token is present (mirrors Rust `SecretState`).
+ *  `notRequired` — local, or `auth.type == none`; `missing` — a token is
+ *  needed but none is stored; `set` — a token is in the keychain. The token
+ *  itself never crosses IPC, only this state. */
+export type ConnectorSecretState = "notRequired" | "missing" | "set";
+
 export interface Connector {
   id: string;
   name: string;
   capabilities: ConnectorCapability[];
   kind: ConnectorKind;
+  secret: ConnectorSecretState;
 }
 
 /** A project as seen in the connected planner. */
@@ -843,6 +850,32 @@ export interface RemoteTask {
 export async function listConnectors(): Promise<Connector[]> {
   if (!inTauri) return [];
   return (await invoke<Connector[]>("list_connectors")) ?? [];
+}
+
+/** Store a connector's auth token in the OS keychain (#110), returning the
+ *  refreshed connector list so the card can flip the badge to "set". The
+ *  token is write-only — it is never read back. No-ops outside Tauri. */
+export async function setConnectorSecret(
+  connectorId: string,
+  token: string,
+): Promise<Connector[]> {
+  if (!inTauri) return [];
+  return (
+    (await invoke<Connector[]>("set_connector_secret", {
+      connectorId,
+      token,
+    })) ?? []
+  );
+}
+
+/** Clear a connector's stored auth token, returning the refreshed list. */
+export async function clearConnectorSecret(
+  connectorId: string,
+): Promise<Connector[]> {
+  if (!inTauri) return [];
+  return (
+    (await invoke<Connector[]>("clear_connector_secret", { connectorId })) ?? []
+  );
 }
 
 /** A connector's projects. */

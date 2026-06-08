@@ -8,10 +8,13 @@ export interface ConnectorsState {
   ready: boolean;
   /** Load error, or null. */
   error: string | null;
+  /** Replace the list — used after a set/clear-token command, which returns
+   *  the refreshed connectors, so the card reflects the new secret state. */
+  replace: (next: Connector[]) => void;
 }
 
-/** Loads the PM-connector list once (read-only this session — per-connector
- *  enable/disable + import land with a later slice). */
+/** Loads the PM-connector list once (read-only browsing; setting/clearing a
+ *  connector's token updates the list in place via `replace`). */
 export function useConnectors(): ConnectorsState {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [ready, setReady] = useState(false);
@@ -34,5 +37,5 @@ export function useConnectors(): ConnectorsState {
     };
   }, []);
 
-  return { connectors, ready, error };
+  return { connectors, ready, error, replace: setConnectors };
 }

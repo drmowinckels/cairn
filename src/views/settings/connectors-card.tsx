@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Icon } from "../../lib/icon";
 import { useConnectors } from "../../lib/use-connectors";
 import {
+  clearConnectorSecret,
   listConnectorProjects,
   listConnectorTasks,
+  setConnectorSecret,
   type Connector,
   type ConnectorCapability,
   type ConnectorKind,
@@ -30,7 +32,7 @@ function describeKind(kind: ConnectorKind): string {
  *  enable/disable land later). Hides when there are no connectors and no
  *  error (the browser dev harness, or none configured). */
 export function ConnectorsCard() {
-  const { connectors, error } = useConnectors();
+  const { connectors, error, replace } = useConnectors();
 
   if (connectors.length === 0 && !error) return null;
 
@@ -52,14 +54,24 @@ export function ConnectorsCard() {
       )}
       <ul className="intg-list">
         {connectors.map((connector) => (
-          <ConnectorRow key={connector.id} connector={connector} />
+          <ConnectorRow
+            key={connector.id}
+            connector={connector}
+            onSecretChange={replace}
+          />
         ))}
       </ul>
     </section>
   );
 }
 
-function ConnectorRow({ connector }: { connector: Connector }) {
+function ConnectorRow({
+  connector,
+  onSecretChange,
+}: {
+  connector: Connector;
+  onSecretChange: (next: Connector[]) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [projects, setProjects] = useState<RemoteProject[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -116,6 +128,7 @@ function ConnectorRow({ connector }: { connector: Connector }) {
           )}
         </span>
       </div>
+      <ConnectorSecret connector={connector} onChange={onSecretChange} />
       {expanded && (
         <div id={panelId} className="connector-panel">
           {loading && <p className="connector-muted">Loading…</p>}
@@ -141,6 +154,139 @@ function ConnectorRow({ connector }: { connector: Connector }) {
         </div>
       )}
     </li>
+  );
+}
+
+/** The keychain-token affordance for a connector that needs one. Shows the
+ *  current state (Needs token / Token saved) and lets the user set, replace,
+ *  or clear it. The token is write-only — it is typed into a masked field,
+ *  sent once, and never read back; the command returns the refreshed list so
+ *  the state flips without re-reading the secret. Renders nothing for a
+ *  connector that needs no token. */
+function ConnectorSecret({
+  connector,
+  onChange,
+}: {
+  connector: Connector;
+  onChange: (next: Connector[]) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (connector.secret === "notRequired") return null;
+
+  const inputId = `connector-${connector.id}-token`;
+
+  function cancel() {
+    setEditing(false);
+    setToken("");
+    setError(null);
+  }
+
+  async function save() {
+    // Save is disabled while busy or empty, so this only runs with a real
+    // token; trim it so a stray-whitespace credential is never stored.
+    const trimmed = token.trim();
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await setConnectorSecret(connector.id, trimmed));
+      setToken("");
+      setEditing(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clear() {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await clearConnectorSecret(connector.id));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="connector-secret" data-state={connector.secret}>
+      {editing ? (
+        <form
+          className="connector-secret-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <label htmlFor={inputId} className="connector-secret-label">
+            API token
+          </label>
+          <input
+            id={inputId}
+            type="password"
+            className="field-input connector-secret-input"
+            value={token}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Paste token"
+            disabled={busy}
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="connector-secret-action"
+            disabled={busy || token.trim() === ""}
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            className="connector-secret-action connector-secret-action--ghost"
+            onClick={cancel}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div className="connector-secret-status">
+          <span
+            className={`connector-secret-badge connector-secret-badge--${connector.secret}`}
+          >
+            {connector.secret === "missing" ? "Needs token" : "Token saved"}
+          </span>
+          <button
+            type="button"
+            className="connector-secret-action"
+            onClick={() => setEditing(true)}
+            disabled={busy}
+          >
+            {connector.secret === "missing" ? "Set token" : "Replace"}
+          </button>
+          {connector.secret === "set" && (
+            <button
+              type="button"
+              className="connector-secret-action connector-secret-action--ghost"
+              onClick={() => void clear()}
+              disabled={busy}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="privacy-banner privacy-banner--error" role="alert">
+          Couldn’t update token: {error}
+        </p>
+      )}
+    </div>
   );
 }
 
