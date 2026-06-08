@@ -3120,6 +3120,14 @@ select.rule-conf {
   border-top: 0;
 }
 
+.connector-add {
+  margin: 4px 0 10px;
+}
+
+.connector-consent .cap-badges {
+  margin: 8px 0;
+}
+
 .connector-head {
   display: grid;
   grid-template-columns: 1fr auto auto auto;

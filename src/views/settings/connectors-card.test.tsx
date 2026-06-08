@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const listConnectors = vi.fn();
@@ -8,6 +8,9 @@ const listConnectorTasks = vi.fn();
 const setConnectorSecret = vi.fn();
 const clearConnectorSecret = vi.fn();
 const setConnectorEnabled = vi.fn();
+const previewConnectorManifest = vi.fn();
+const installConnectorManifest = vi.fn();
+const openDialog = vi.fn();
 
 vi.mock("../../lib/ipc", async () => {
   const actual =
@@ -21,7 +24,23 @@ vi.mock("../../lib/ipc", async () => {
     setConnectorSecret: (...a: unknown[]) => setConnectorSecret(...a),
     clearConnectorSecret: (...a: unknown[]) => clearConnectorSecret(...a),
     setConnectorEnabled: (...a: unknown[]) => setConnectorEnabled(...a),
+    previewConnectorManifest: (...a: unknown[]) =>
+      previewConnectorManifest(...a),
+    installConnectorManifest: (...a: unknown[]) =>
+      installConnectorManifest(...a),
   };
+});
+
+// The native file dialog and the popover-pin wrapper: stub `open` and run
+// the pinned fn directly (avoids the real `setPinned` IPC).
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (...a: unknown[]) => openDialog(...a),
+}));
+vi.mock("../../lib/use-backup", async () => {
+  const actual = await vi.importActual<typeof import("../../lib/use-backup")>(
+    "../../lib/use-backup",
+  );
+  return { ...actual, withPopoverPinned: (fn: () => unknown) => fn() };
 });
 
 import { ConnectorsCard } from "./connectors-card";
@@ -56,6 +75,9 @@ beforeEach(() => {
   setConnectorSecret.mockReset();
   clearConnectorSecret.mockReset();
   setConnectorEnabled.mockReset();
+  previewConnectorManifest.mockReset();
+  installConnectorManifest.mockReset();
+  openDialog.mockReset();
 });
 
 describe("ConnectorsCard", () => {
@@ -557,5 +579,148 @@ describe("ConnectorsCard", () => {
     expect(expand.hasAttribute("disabled")).toBe(true);
     await userEvent.click(expand);
     expect(listConnectorProjects).not.toHaveBeenCalled();
+  });
+
+  const remoteManifest = {
+    id: "todoist",
+    name: "Todoist",
+    capabilities: ["network", "secrets"],
+    kind: { http: { baseUrl: "https://api.todoist.com" } },
+  };
+
+  it("previews a picked manifest and installs it on consent", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue("/picked/todoist.json");
+    previewConnectorManifest.mockResolvedValue(remoteManifest);
+    installConnectorManifest.mockResolvedValue([
+      fileConnector,
+      { ...remoteManifest, secret: "missing", enabled: true },
+    ]);
+    render(<ConnectorsCard />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Add connector/ }),
+    );
+    // Consent dialog shows the name, host, and capabilities before install.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("Add Todoist?");
+    expect(dialog.textContent).toContain("Remote · api.todoist.com");
+    expect(previewConnectorManifest).toHaveBeenCalledWith(
+      "/picked/todoist.json",
+    );
+    expect(installConnectorManifest).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Install" }));
+    expect(installConnectorManifest).toHaveBeenCalledWith(
+      "/picked/todoist.json",
+    );
+    // The installed connector joins the list; the dialog closes.
+    expect(await screen.findByRole("button", { name: "Todoist" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does nothing when the file picker is dismissed", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue(null);
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Add connector/ }),
+    );
+    expect(previewConnectorManifest).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("cancels the consent dialog without installing", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue("/picked/todoist.json");
+    previewConnectorManifest.mockResolvedValue(remoteManifest);
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Add connector/ }),
+    );
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(installConnectorManifest).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a preview validation error", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue("/picked/bad.json");
+    previewConnectorManifest.mockRejectedValue(
+      new Error("not a valid manifest"),
+    );
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Add connector/ }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Couldn’t add the connector");
+    expect(alert.textContent).toContain("not a valid manifest");
+  });
+
+  it("surfaces an install failure inside the dialog", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue("/picked/todoist.json");
+    previewConnectorManifest.mockResolvedValue(remoteManifest);
+    installConnectorManifest.mockRejectedValue(new Error("disk full"));
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Add connector/ }),
+    );
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByRole("button", { name: "Install" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("disk full");
+    // Dialog stays open so the user can retry or cancel.
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+  });
+
+  it("closes the consent dialog on Escape and on a backdrop click", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue("/picked/todoist.json");
+    previewConnectorManifest.mockResolvedValue(remoteManifest);
+    render(<ConnectorsCard />);
+
+    const addBtn = await screen.findByRole("button", { name: /Add connector/ });
+    await userEvent.click(addBtn);
+    fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Re-open, then click the backdrop (the overlay outside the dialog).
+    await userEvent.click(addBtn);
+    const overlay = (await screen.findByRole("dialog")).parentElement!;
+    fireEvent.mouseDown(overlay);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(installConnectorManifest).not.toHaveBeenCalled();
+  });
+
+  it("marks a local (no-capability) manifest as local in the consent dialog", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue("/picked/local.json");
+    previewConnectorManifest.mockResolvedValue({
+      id: "my-todo",
+      name: "My TODO",
+      capabilities: [],
+      kind: { file: { format: "todotxt", path: "~/T.txt" } },
+    });
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Add connector/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("Local — no network or secrets");
+  });
+
+  it("shows no dialog when the preview yields nothing", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    openDialog.mockResolvedValue("/picked/x.json");
+    previewConnectorManifest.mockResolvedValue(null);
+    render(<ConnectorsCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Add connector/ }),
+    );
+    await waitFor(() => expect(previewConnectorManifest).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

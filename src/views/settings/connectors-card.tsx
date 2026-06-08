@@ -1,15 +1,21 @@
-import { useState } from "react";
+import { useId, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Icon } from "../../lib/icon";
 import { formatRelativeTime } from "../../lib/relative-time";
 import { useConnectors } from "../../lib/use-connectors";
+import { withPopoverPinned } from "../../lib/use-backup";
+import { useFocusTrap } from "../../lib/use-focus-trap";
 import {
   clearConnectorSecret,
+  installConnectorManifest,
   listConnectorProjects,
   listConnectorTasks,
+  previewConnectorManifest,
   setConnectorSecret,
   type Connector,
   type ConnectorCapability,
   type ConnectorKind,
+  type ConnectorManifest,
   type RemoteProject,
   type RemoteTask,
 } from "../../lib/ipc";
@@ -49,6 +55,162 @@ function StaleNote({ fetchedAt }: { fetchedAt: string | null }) {
   );
 }
 
+/** "Add connector" — pick a manifest file, preview what it would install
+ *  (name, host, capabilities), and install on consent (#110). The picker is
+ *  a native dialog, so the popover is pinned for its duration (it steals
+ *  focus, which would otherwise hide the popover — see `withPopoverPinned`).
+ *  Installing copies the manifest into Cairn's connectors dir and hot-reloads
+ *  the list; nothing is written until the user confirms. */
+function AddConnector({
+  onInstalled,
+}: {
+  onInstalled: (next: Connector[]) => void;
+}) {
+  const [pending, setPending] = useState<{
+    path: string;
+    manifest: ConnectorManifest;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const titleId = useId();
+  // Escape/backdrop close the dialog even mid-install — the install
+  // completes and refreshes the list regardless; hiding the modal just
+  // stops blocking the UI.
+  const trap = useFocusTrap(() => setPending(null));
+
+  function close() {
+    setPending(null);
+    setError(null);
+  }
+
+  async function pick() {
+    setError(null);
+    try {
+      const path = await withPopoverPinned(() =>
+        open({
+          title: "Add a connector",
+          multiple: false,
+          directory: false,
+          filters: [{ name: "Connector manifest", extensions: ["json"] }],
+        }),
+      );
+      // `multiple: false` yields a string or null; guard both.
+      if (typeof path !== "string") return;
+      const manifest = await previewConnectorManifest(path);
+      if (manifest) setPending({ path, manifest });
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function install(chosen: {
+    path: string;
+    manifest: ConnectorManifest;
+  }) {
+    setBusy(true);
+    setError(null);
+    try {
+      onInstalled(await installConnectorManifest(chosen.path));
+      setPending(null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="connector-add">
+      <button type="button" className="link-btn" onClick={() => void pick()}>
+        <Icon name="plus" size={12} /> Add connector
+      </button>
+      {error && !pending && (
+        <p className="privacy-banner privacy-banner--error" role="alert">
+          Couldn’t add the connector: {error}
+        </p>
+      )}
+      {pending && (
+        <div
+          className="modal-overlay"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) close();
+          }}
+        >
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+          <div
+            ref={trap.ref}
+            className="modal connector-consent"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            onKeyDown={trap.onKeyDown}
+          >
+            <header className="modal-head">
+              <h2 id={titleId} className="modal-title">
+                Add {pending.manifest.name}?
+              </h2>
+            </header>
+            <div className="modal-body">
+              <p className="connector-kind">
+                {describeKind(pending.manifest.kind)}
+              </p>
+              <p className="cap-badges">
+                {pending.manifest.capabilities.length === 0 ? (
+                  <span className="cap-badge cap-badge--local">
+                    Local — no network or secrets
+                  </span>
+                ) : (
+                  pending.manifest.capabilities.map((cap) => (
+                    <span
+                      key={cap}
+                      className="cap-badge"
+                      title={CAPABILITY[cap].hint}
+                      aria-label={`${CAPABILITY[cap].label}: ${CAPABILITY[cap].hint}`}
+                    >
+                      {CAPABILITY[cap].label}
+                    </span>
+                  ))
+                )}
+              </p>
+              <p className="connector-muted">
+                Installs into Cairn; you can disable or remove it later.
+              </p>
+              {error && (
+                <p
+                  className="privacy-banner privacy-banner--error"
+                  role="alert"
+                >
+                  {error}
+                </p>
+              )}
+            </div>
+            <footer className="modal-foot">
+              <span className="spacer" />
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={close}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => void install(pending)}
+                disabled={busy}
+              >
+                Install
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Settings → Connectors (#110). Lists each loaded PM connector with the
  *  capabilities it declared, and lets you browse — lazily — its projects
  *  and their tasks. Read-only this session (import + per-connector
@@ -70,6 +232,7 @@ export function ConnectorsCard() {
         Project-management tools Cairn reads your tasks from, so you can
         attribute time to them.
       </p>
+      <AddConnector onInstalled={replace} />
       {error && (
         <p className="privacy-banner privacy-banner--error" role="alert">
           {connectors.length === 0

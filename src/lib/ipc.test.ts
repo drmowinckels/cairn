@@ -248,6 +248,27 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
+  it("preview/install connector manifest forward the picked path", async () => {
+    const manifest = {
+      id: "todoist",
+      name: "Todoist",
+      capabilities: [],
+      kind: {},
+    };
+    invokeMock.mockResolvedValueOnce(manifest);
+    const { previewConnectorManifest, installConnectorManifest } =
+      await import("./ipc");
+    expect(await previewConnectorManifest("/p.json")).toEqual(manifest);
+    expect(invokeMock).toHaveBeenCalledWith("preview_connector_manifest", {
+      path: "/p.json",
+    });
+    invokeMock.mockResolvedValueOnce(undefined); // install coerces to []
+    expect(await installConnectorManifest("/p.json")).toEqual([]);
+    expect(invokeMock).toHaveBeenCalledWith("install_connector_manifest", {
+      path: "/p.json",
+    });
+  });
+
   it("connector commands coerce an undefined backend response to a safe default", async () => {
     invokeMock.mockResolvedValue(undefined);
     const {
@@ -311,6 +332,14 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(await setConnectorSecret("x", "t")).toEqual([]);
     expect(await clearConnectorSecret("x")).toEqual([]);
     expect(await setConnectorEnabled("x", false)).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("preview/install connector manifest short-circuit without the backend", async () => {
+    const { previewConnectorManifest, installConnectorManifest } =
+      await import("./ipc");
+    expect(await previewConnectorManifest("/p.json")).toBeNull();
+    expect(await installConnectorManifest("/p.json")).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
