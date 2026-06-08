@@ -3,7 +3,10 @@
     {
       "id": "calendar",
       "name": "Calendar",
-      "capabilities": ["network", "secrets"],
+      "capabilities": [
+        "network",
+        "secrets"
+      ],
       "enabled": true
     }
   ],
@@ -12,7 +15,14 @@
       "id": "sample-tasks",
       "name": "Sample tasks",
       "capabilities": [],
-      "kind": { "file": { "format": "todotxt", "path": "~/TODO.txt" } }
+      "kind": {
+        "file": {
+          "format": "todotxt",
+          "path": "~/TODO.txt"
+        }
+      },
+      "secret": "notRequired",
+      "enabled": true
     }
   ],
   "list_projects": [

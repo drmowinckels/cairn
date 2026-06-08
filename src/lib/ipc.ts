@@ -829,6 +829,9 @@ export interface Connector {
   capabilities: ConnectorCapability[];
   kind: ConnectorKind;
   secret: ConnectorSecretState;
+  /** Whether the user has this connector enabled. A disabled connector is
+   *  listed but makes no requests — browsing it is refused. */
+  enabled: boolean;
 }
 
 /** A project as seen in the connected planner. */
@@ -878,6 +881,21 @@ export async function clearConnectorSecret(
   if (!inTauri) return [];
   return (
     (await invoke<Connector[]>("clear_connector_secret", { connectorId })) ?? []
+  );
+}
+
+/** Enable or disable a connector (#110), returning the refreshed list. A
+ *  disabled connector makes no requests — browsing it is refused. */
+export async function setConnectorEnabled(
+  connectorId: string,
+  enabled: boolean,
+): Promise<Connector[]> {
+  if (!inTauri) return [];
+  return (
+    (await invoke<Connector[]>("set_connector_enabled", {
+      connectorId,
+      enabled,
+    })) ?? []
   );
 }
 

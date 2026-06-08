@@ -7,6 +7,7 @@ const listConnectorProjects = vi.fn();
 const listConnectorTasks = vi.fn();
 const setConnectorSecret = vi.fn();
 const clearConnectorSecret = vi.fn();
+const setConnectorEnabled = vi.fn();
 
 vi.mock("../../lib/ipc", async () => {
   const actual =
@@ -19,6 +20,7 @@ vi.mock("../../lib/ipc", async () => {
     listConnectorTasks: (...a: unknown[]) => listConnectorTasks(...a),
     setConnectorSecret: (...a: unknown[]) => setConnectorSecret(...a),
     clearConnectorSecret: (...a: unknown[]) => clearConnectorSecret(...a),
+    setConnectorEnabled: (...a: unknown[]) => setConnectorEnabled(...a),
   };
 });
 
@@ -30,6 +32,7 @@ const fileConnector = {
   capabilities: [] as const,
   kind: { file: { format: "todotxt" as const, path: "~/TODO.txt" } },
   secret: "notRequired" as const,
+  enabled: true,
 };
 
 const httpConnector = {
@@ -38,6 +41,7 @@ const httpConnector = {
   capabilities: ["network", "secrets"] as const,
   kind: { http: { baseUrl: "https://api.github.com" } },
   secret: "missing" as const,
+  enabled: true,
 };
 
 /** Wrap items in the `CachedList` shape the connector reads now return. */
@@ -51,6 +55,7 @@ beforeEach(() => {
   listConnectorTasks.mockReset();
   setConnectorSecret.mockReset();
   clearConnectorSecret.mockReset();
+  setConnectorEnabled.mockReset();
 });
 
 describe("ConnectorsCard", () => {
@@ -73,6 +78,7 @@ describe("ConnectorsCard", () => {
         capabilities: ["network", "secrets"],
         kind: { file: { format: "markdown", path: "/x.md" } },
         secret: "notRequired",
+        enabled: true,
       },
     ]);
     render(<ConnectorsCard />);
@@ -94,6 +100,7 @@ describe("ConnectorsCard", () => {
         capabilities: ["network"],
         kind: { http: { baseUrl: "not a url" } },
         secret: "notRequired",
+        enabled: true,
       },
     ]);
     render(<ConnectorsCard />);
@@ -102,7 +109,14 @@ describe("ConnectorsCard", () => {
 
   it("describes an unknown kind generically", async () => {
     listConnectors.mockResolvedValue([
-      { id: "x", name: "X", capabilities: [], kind: {}, secret: "notRequired" },
+      {
+        id: "x",
+        name: "X",
+        capabilities: [],
+        kind: {},
+        secret: "notRequired",
+        enabled: true,
+      },
     ]);
     render(<ConnectorsCard />);
     expect(await screen.findByText("Connector")).toBeTruthy();
@@ -459,5 +473,89 @@ describe("ConnectorsCard", () => {
     unmount();
     reject(new Error("late"));
     await waitFor(() => expect(listConnectors).toHaveBeenCalled());
+  });
+
+  it("toggles one connector and leaves the others untouched", async () => {
+    // Two connectors so the optimistic map's non-target branch is exercised.
+    listConnectors.mockResolvedValue([fileConnector, httpConnector]);
+    setConnectorEnabled.mockResolvedValue([
+      { ...fileConnector, enabled: false },
+      httpConnector,
+    ]);
+    render(<ConnectorsCard />);
+
+    const sw = await screen.findByRole("switch", {
+      name: "Enable Sample tasks",
+    });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    await userEvent.click(sw);
+
+    expect(setConnectorEnabled).toHaveBeenCalledWith("sample-tasks", false);
+    expect(
+      screen
+        .getByRole("switch", { name: "Enable Sample tasks" })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
+    // The other connector's switch is unchanged.
+    expect(
+      screen
+        .getByRole("switch", { name: "Enable Remote" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+  });
+
+  it("keeps the optimistic state when the backend returns an empty list", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    setConnectorEnabled.mockResolvedValue([]); // e.g. outside Tauri
+    render(<ConnectorsCard />);
+
+    const sw = await screen.findByRole("switch", {
+      name: "Enable Sample tasks",
+    });
+    await userEvent.click(sw);
+    // The optimistic flip stands rather than blanking the list.
+    expect(
+      screen
+        .getByRole("switch", { name: "Enable Sample tasks" })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
+  });
+
+  it("reverts the toggle and surfaces an error when the backend rejects", async () => {
+    // Two connectors so the revert map's non-target branch is exercised too.
+    listConnectors.mockResolvedValue([fileConnector, httpConnector]);
+    setConnectorEnabled.mockRejectedValue(new Error("db locked"));
+    render(<ConnectorsCard />);
+
+    const sw = await screen.findByRole("switch", {
+      name: "Enable Sample tasks",
+    });
+    await userEvent.click(sw);
+
+    // Optimistic flip reverts back to enabled after the rejection.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("switch", { name: "Enable Sample tasks" })
+          .getAttribute("aria-checked"),
+      ).toBe("true"),
+    );
+    expect(
+      screen
+        .getByRole("switch", { name: "Enable Remote" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("db locked");
+  });
+
+  it("does not browse a disabled connector", async () => {
+    listConnectors.mockResolvedValue([{ ...fileConnector, enabled: false }]);
+    render(<ConnectorsCard />);
+
+    const expand = await screen.findByRole("button", { name: "Sample tasks" });
+    expect(expand.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(expand);
+    expect(listConnectorProjects).not.toHaveBeenCalled();
   });
 });
