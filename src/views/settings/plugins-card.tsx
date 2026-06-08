@@ -1,11 +1,6 @@
+import { CapabilityBadges } from "../../lib/components";
 import { Icon } from "../../lib/icon";
 import { usePlugins } from "../../lib/use-plugins";
-import type { PluginCapability } from "../../lib/ipc";
-
-const CAPABILITY: Record<PluginCapability, { label: string; hint: string }> = {
-  network: { label: "Network", hint: "Makes network requests" },
-  secrets: { label: "Secrets", hint: "Stores credentials in your keychain" },
-};
 
 /** Settings → Plugins (#111). Lists each registered signal-source
  *  plugin with the capabilities it declared (so a networked /
@@ -49,20 +44,7 @@ export function PluginsCard() {
             <Icon name="grid" size={14} />
             <span className="intg-name">{plugin.name}</span>
             <span className="cap-badges">
-              {plugin.capabilities.length === 0 ? (
-                <span className="cap-badge cap-badge--local">Local</span>
-              ) : (
-                plugin.capabilities.map((cap) => (
-                  <span
-                    key={cap}
-                    className="cap-badge"
-                    title={CAPABILITY[cap].hint}
-                    aria-label={`${CAPABILITY[cap].label}: ${CAPABILITY[cap].hint}`}
-                  >
-                    {CAPABILITY[cap].label}
-                  </span>
-                ))
-              )}
+              <CapabilityBadges capabilities={plugin.capabilities} />
             </span>
             <button
               type="button"
