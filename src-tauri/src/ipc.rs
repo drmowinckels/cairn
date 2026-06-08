@@ -6040,24 +6040,12 @@ fn connector_views_with(
 }
 
 /// Resolve a connector's keychain secret key, erroring if the id is unknown
-/// (the UI only ever passes ids from `list_connectors`, so an unknown id is
-/// a bug). `None` means the connector takes no token.
-fn connector_secret_key(
-    state: &State<'_, AppState>,
-    connector_id: &str,
-) -> Result<Option<String>, String> {
-    let connector = state
-        .connector_host
-        .get(connector_id)
-        .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
-    Ok(connector.manifest().secret_key().map(str::to_owned))
-}
-
 /// Set (`Some`) or clear (`None`) a connector's token in `keychain`, then
 /// return the refreshed connector list read back through the same keychain.
 /// The whole set/clear path is here, generic over the keychain, so it is
 /// exercised cross-platform with a fake — the OS keychain only enters
-/// through the thin `*_impl` wrappers.
+/// through the thin `*_impl` wrappers. Errors if the id is unknown (the UI
+/// only ever passes ids from `list_connectors`, so that is a bug, not input).
 fn apply_connector_secret<K>(
     state: &State<'_, AppState>,
     connector_id: &str,
@@ -6067,7 +6055,13 @@ fn apply_connector_secret<K>(
 where
     K: crate::connectors::http::SecretStore + crate::connectors::http::SecretWriter,
 {
-    let secret_key = connector_secret_key(state, connector_id)?;
+    let connector = state
+        .connector_host
+        .get(connector_id)
+        .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+    // `None` here means the connector takes no token (a local file, or
+    // `auth.type == none`); `store_secret`/`remove_secret` reject that.
+    let secret_key = connector.manifest().secret_key().map(str::to_owned);
     match token {
         Some(token) => crate::connectors::store_secret(secret_key.as_deref(), token, keychain)?,
         None => crate::connectors::remove_secret(secret_key.as_deref(), keychain)?,
@@ -6279,34 +6273,9 @@ mod connector_tests {
         assert!(clear_err.contains("nope"));
     }
 
-    /// In-memory keychain (reader + writer) so the set/clear happy path is
-    /// exercised on every platform, not only where the OS keychain works
-    /// headless.
-    #[derive(Default)]
-    struct FakeKeychain {
-        store: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
-    }
-    impl crate::connectors::http::SecretStore for FakeKeychain {
-        fn token(&self, key: &str) -> Option<String> {
-            self.store.lock().unwrap().get(key).cloned()
-        }
-    }
-    impl crate::connectors::http::SecretWriter for FakeKeychain {
-        fn set(&self, key: &str, token: &str) -> Result<(), String> {
-            self.store
-                .lock()
-                .unwrap()
-                .insert(key.to_string(), token.to_string());
-            Ok(())
-        }
-        fn clear(&self, key: &str) -> Result<(), String> {
-            self.store.lock().unwrap().remove(key);
-            Ok(())
-        }
-    }
-
     #[tokio::test]
     async fn apply_secret_sets_then_clears_through_a_fake_keychain() {
+        use crate::test_support::FakeKeychain;
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         let kc = FakeKeychain::default();
