@@ -33,16 +33,30 @@ function describeKind(kind: ConnectorKind): string {
   return "Connector";
 }
 
+/** A coarse "how old" label for a cached snapshot's RFC 3339 timestamp.
+ *  `now` is injectable so the phrasing is deterministic under test. */
+export function staleAge(fetchedAt: string, now = Date.now()): string {
+  const then = Date.parse(fetchedAt);
+  if (Number.isNaN(then)) return "an earlier read";
+  const mins = Math.max(0, Math.floor((now - then) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 /** Shown when a connector list came from the offline cache because the live
  *  read failed — so the user knows the data may be out of date. The copy is
  *  deliberately cause-agnostic: the read can fail because the remote is
  *  unreachable, the token was rejected, or the response didn't parse, and
  *  the connector layer doesn't yet distinguish them (tracked separately). */
-function StaleNote() {
+function StaleNote({ fetchedAt }: { fetchedAt: string | null }) {
   return (
     <p className="connector-stale" role="status">
       <Icon name="info" size={12} />
-      Showing cached data — couldn’t refresh from the connector.
+      Showing cached data{fetchedAt ? ` from ${staleAge(fetchedAt)}` : ""} —
+      couldn’t refresh from the connector.
     </p>
   );
 }
@@ -96,6 +110,7 @@ function ConnectorRow({
   const [expanded, setExpanded] = useState(false);
   const [projects, setProjects] = useState<RemoteProject[] | null>(null);
   const [stale, setStale] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelId = `connector-${connector.id}-projects`;
@@ -103,15 +118,17 @@ function ConnectorRow({
   async function toggle() {
     const next = !expanded;
     setExpanded(next);
-    // Fetch once on first expand. A failed load leaves `projects` null so
-    // re-expanding retries; an empty success ([]) does not re-fetch.
-    if (next && projects === null && !loading) {
+    // Fetch on first expand. A failed load (null) or a stale cache hit both
+    // re-fetch on re-expand so a recovered connector shows live data again;
+    // a fresh success does not re-fetch.
+    if (next && (projects === null || stale) && !loading) {
       setLoading(true);
       setError(null);
       try {
         const res = await listConnectorProjects(connector.id);
         setProjects(res.items);
         setStale(res.stale);
+        setFetchedAt(res.fetchedAt);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -161,7 +178,7 @@ function ConnectorRow({
               Couldn’t load projects: {error}
             </p>
           )}
-          {stale && !loading && <StaleNote />}
+          {stale && !loading && <StaleNote fetchedAt={fetchedAt} />}
           {projects && projects.length === 0 && !loading && (
             <p className="connector-muted">No projects.</p>
           )}
@@ -325,6 +342,7 @@ function ProjectRow({
   const [expanded, setExpanded] = useState(false);
   const [tasks, setTasks] = useState<RemoteTask[] | null>(null);
   const [stale, setStale] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelId = `project-${connectorId}-${project.id}-tasks`;
@@ -332,13 +350,16 @@ function ProjectRow({
   async function toggle() {
     const next = !expanded;
     setExpanded(next);
-    if (next && tasks === null && !loading) {
+    // null (failed) or a stale cache hit re-fetch on re-expand; a fresh
+    // success does not. See ConnectorRow.toggle.
+    if (next && (tasks === null || stale) && !loading) {
       setLoading(true);
       setError(null);
       try {
         const res = await listConnectorTasks(connectorId, project.id);
         setTasks(res.items);
         setStale(res.stale);
+        setFetchedAt(res.fetchedAt);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -367,7 +388,7 @@ function ProjectRow({
               Couldn’t load tasks: {error}
             </p>
           )}
-          {stale && !loading && <StaleNote />}
+          {stale && !loading && <StaleNote fetchedAt={fetchedAt} />}
           {tasks && tasks.length === 0 && !loading && (
             <p className="connector-muted">No tasks.</p>
           )}
