@@ -9,6 +9,40 @@ export interface UseTasks {
   remove: (id: string) => Promise<void>;
 }
 
+export interface TaskMap {
+  byId: Record<string, Task>;
+  refresh: () => Promise<void>;
+}
+
+/**
+ * All tasks (local + remote), keyed by id, so a view holding only an
+ * entry's `taskId` can resolve the task — its name and remote-link fields
+ * (#110). Refresh after attributing an entry, which interns a new task.
+ */
+export function useTaskMap(): TaskMap {
+  const [byId, setById] = useState<Record<string, Task>>({});
+
+  const refresh = useCallback(async () => {
+    if (!inTauri) {
+      setById({});
+      return;
+    }
+    try {
+      const tasks = await listTasks(null);
+      setById(Object.fromEntries(tasks.map((t) => [t.id, t])));
+    } catch (e) {
+      console.error("list_tasks failed", e);
+      setById({});
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { byId, refresh };
+}
+
 /**
  * Project-scoped tasks for the Data tab. Reloads whenever `projectId`
  * changes; create/remove operate on that project. A null projectId

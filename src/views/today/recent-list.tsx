@@ -14,6 +14,10 @@ export interface RecentEntry {
   startedAt: string;
   endedAt: string | null;
   source: string;
+  /** Label of the linked connector task (#110), when the entry is attributed
+   *  to a remote task. Shown as a non-interactive chip — the row itself is the
+   *  edit button, so the deep-link lives in the editor, not here. */
+  remoteTaskLabel?: string | null;
 }
 
 interface Props {
@@ -66,6 +70,12 @@ export function RecentList({
             <span className="entry-main">
               <span className="entry-proj">{projectName}</span>
               <span className="entry-task">{description}</span>
+              {e.remoteTaskLabel && (
+                <span className="entry-remote">
+                  <Icon name="globe" size={10} />
+                  {e.remoteTaskLabel}
+                </span>
+              )}
             </span>
             <span className="entry-dur">{fmtHm(duration)}</span>
             <span

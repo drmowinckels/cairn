@@ -57,6 +57,7 @@ import {
   ManualEntryModal,
   isoToLocal,
   localToIso,
+  sameRemoteLink,
   validateDraft,
   type ManualEntryDraft,
   type ManualEntrySubmit,
@@ -1233,6 +1234,85 @@ describe("ManualEntryModal — remote-task attribution (#110)", () => {
     expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
   });
 
+  it("pre-populates the linked-task chip in edit mode (#110)", () => {
+    render(
+      withConnector({
+        mode: "edit",
+        initial: {
+          ...BASE_DRAFT,
+          id: "e1",
+          projectId: "p1",
+          remoteTask: {
+            connectorId: "gh",
+            remoteId: "42",
+            label: "Seeded task",
+            url: "https://gh/42",
+            remoteProjectName: "Acme",
+          },
+        },
+      }),
+    );
+    expect(screen.getByTestId("remote-link").textContent).toContain(
+      "Seeded task",
+    );
+    // The local task picker is superseded by the existing remote link.
+    expect(screen.queryByLabelText("Task")).toBeNull();
+  });
+
+  const SEEDED_LINK = {
+    connectorId: "gh",
+    remoteId: "42",
+    label: "Seeded task",
+    url: "https://gh/42",
+    remoteProjectName: "Acme",
+  };
+
+  it("preserves an untouched seeded link on save (no re-attribution)", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      withConnector({
+        mode: "edit",
+        onSubmit,
+        initial: {
+          ...BASE_DRAFT,
+          id: "e1",
+          projectId: "p1",
+          taskId: "t-remote",
+          remoteTask: SEEDED_LINK,
+        },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0][0] as ManualEntrySubmit;
+    // The existing link rides on taskId; nothing is re-attributed.
+    expect(payload.taskId).toBe("t-remote");
+    expect(payload.remoteTask).toBeNull();
+  });
+
+  it("unlinking a seeded link on save nulls the task and does not re-attribute", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      withConnector({
+        mode: "edit",
+        onSubmit,
+        initial: {
+          ...BASE_DRAFT,
+          id: "e1",
+          projectId: "p1",
+          taskId: "t-remote",
+          remoteTask: SEEDED_LINK,
+        },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /unlink task/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0][0] as ManualEntrySubmit;
+    expect(payload.taskId).toBeNull();
+    expect(payload.remoteTask).toBeNull();
+  });
+
   it("cancels the picker, restoring the affordance", async () => {
     render(withConnector());
     fireEvent.click(
@@ -1286,5 +1366,30 @@ describe("ManualEntryModal — remote-task attribution (#110)", () => {
       url: "https://gh/42",
       remoteProjectName: "Acme",
     });
+  });
+});
+
+describe("sameRemoteLink (#110)", () => {
+  const link = (connectorId: string, remoteId: string) => ({
+    connectorId,
+    remoteId,
+    label: "x",
+    url: null,
+    remoteProjectName: null,
+  });
+
+  it("treats two nulls as the same (no link either side)", () => {
+    expect(sameRemoteLink(null, null)).toBe(true);
+  });
+
+  it("treats null vs a link as different", () => {
+    expect(sameRemoteLink(link("gh", "42"), null)).toBe(false);
+    expect(sameRemoteLink(null, link("gh", "42"))).toBe(false);
+  });
+
+  it("matches on connector + remote id, ignoring label/url", () => {
+    expect(sameRemoteLink(link("gh", "42"), link("gh", "42"))).toBe(true);
+    expect(sameRemoteLink(link("gh", "42"), link("gh", "43"))).toBe(false);
+    expect(sameRemoteLink(link("gh", "42"), link("gl", "42"))).toBe(false);
   });
 });

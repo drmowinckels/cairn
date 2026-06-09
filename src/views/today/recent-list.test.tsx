@@ -57,6 +57,26 @@ describe("RecentList", () => {
     ).not.toBeNull();
   });
 
+  it("shows a remote-task chip only when the entry is linked (#110)", () => {
+    const { rerender } = render(
+      <RecentList
+        entries={[entry({ remoteTaskLabel: "Fix bug #42" })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    const chip = document.querySelector(".entry-remote");
+    expect(chip).toBeTruthy();
+    expect(chip?.textContent).toContain("Fix bug #42");
+
+    rerender(
+      <RecentList
+        entries={[entry({ remoteTaskLabel: null })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    expect(document.querySelector(".entry-remote")).toBeNull();
+  });
+
   it("calendar source row carries aria-label 'source: calendar'", () => {
     render(
       <RecentList
