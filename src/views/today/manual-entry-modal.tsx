@@ -6,10 +6,13 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Icon } from "../../lib/icon";
 import { useFocusTrap } from "../../lib/use-focus-trap";
-import type { SaveProjectInput } from "../../lib/ipc";
+import { isSafeExternalUrl } from "../../lib/url";
+import type { Connector, SaveProjectInput } from "../../lib/ipc";
 import type { Project, Task } from "../../lib/types";
+import { RemoteTaskPicker, type PickedRemoteTask } from "./remote-task-picker";
 
 /** Swatches offered when creating a project inline. Mirrors the
  *  default-seed palette so new projects look at home next to them. */
@@ -45,6 +48,9 @@ export interface ManualEntrySubmit {
   startedAt: string;
   /** RFC 3339 UTC timestamp, or null for "running". */
   endedAt: string | null;
+  /** A connector task to attribute the entry to after it is created/updated
+   *  (#110). `null` ⇒ no remote attribution this submit. */
+  remoteTask?: PickedRemoteTask | null;
 }
 
 interface Props {
@@ -73,6 +79,12 @@ interface Props {
   loadTasks?: (projectId: string) => Promise<Task[]>;
   /** Create a task under a project inline from the Task picker. */
   onCreateTask?: (projectId: string, name: string) => Promise<Task>;
+  /**
+   * Enabled PM connectors (#110). When provided and non-empty, a "Link a
+   * connector task" affordance lets the user attribute the entry to a remote
+   * task. Omitted/empty in contexts with no connector store.
+   */
+  connectors?: Connector[];
   onDelete?: (id: string) => Promise<void>;
   onClose: () => void;
 }
@@ -95,6 +107,7 @@ export function ManualEntryModal({
   onCreateProject,
   loadTasks,
   onCreateTask,
+  connectors,
   onDelete,
   onClose,
 }: Props) {
@@ -129,6 +142,11 @@ export function ManualEntryModal({
   const [creatingTaskBusy, setCreatingTaskBusy] = useState(false);
   const [createTaskError, setCreateTaskError] = useState<string | null>(null);
   const newTaskNameRef = useRef<HTMLInputElement | null>(null);
+
+  // Remote-task attribution (#110). A picked connector task is linked on
+  // submit; selecting one supersedes the local task (both set entries.task_id).
+  const [remoteTask, setRemoteTask] = useState<PickedRemoteTask | null>(null);
+  const [showRemotePicker, setShowRemotePicker] = useState(false);
 
   useEffect(() => {
     if (!loadTasks || !draft.projectId) {
@@ -167,6 +185,8 @@ export function ManualEntryModal({
       setCreatingTaskBusy(false);
       setNewTaskName("");
       setCreateTaskError(null);
+      setRemoteTask(null);
+      setShowRemotePicker(false);
       // Drop the previous project's tasks so a reopen for a different
       // project can't flash a stale list before loadTasks resolves.
       setTasks([]);
@@ -197,12 +217,17 @@ export function ManualEntryModal({
       await onSubmit({
         id: draft.id,
         projectId: draft.projectId,
-        // A task only makes sense with a project; never send a dangling
-        // task id if the project was cleared.
-        taskId: draft.projectId ? draft.taskId : null,
+        // A linked remote task supersedes the local one (both resolve to
+        // entries.task_id). Otherwise keep the current task id: clearing the
+        // project already nulls a local task selection (see the Project
+        // onChange), so a non-null id here is a valid local OR remote task —
+        // nulling it on a missing project would silently drop a remote link
+        // when editing a project-less attributed entry.
+        taskId: remoteTask ? null : draft.taskId,
         description: draft.description.trim(),
         startedAt: localToIso(draft.startedLocal),
         endedAt: draft.endedLocal ? localToIso(draft.endedLocal) : null,
+        remoteTask,
       });
       onClose();
     } catch (err) {
@@ -299,6 +324,10 @@ export function ManualEntryModal({
 
   const title = mode === "edit" ? "Edit entry" : "New entry";
   const showTaskPicker = Boolean(loadTasks && draft.projectId);
+  // A linked remote task supersedes the local one, so hide the local picker
+  // while one is linked.
+  const showLocalTask = showTaskPicker && !remoteTask;
+  const enabledConnectors = (connectors ?? []).filter((c) => c.enabled);
 
   return (
     <div
@@ -455,7 +484,7 @@ export function ManualEntryModal({
             </div>
           )}
 
-          {showTaskPicker && (
+          {showLocalTask && (
             <div className="field">
               <div className="field-label-row">
                 <label className="field-label" htmlFor={taskFieldId}>
@@ -492,7 +521,7 @@ export function ManualEntryModal({
             </div>
           )}
 
-          {showTaskPicker && onCreateTask && creatingTask && (
+          {showLocalTask && onCreateTask && creatingTask && (
             <div className="create-project" role="group" aria-label="New task">
               <input
                 ref={newTaskNameRef}
@@ -534,6 +563,52 @@ export function ManualEntryModal({
                   <Icon name="check" size={12} /> Add task
                 </button>
               </div>
+            </div>
+          )}
+
+          {enabledConnectors.length > 0 && (
+            <div className="field">
+              {remoteTask ? (
+                <div className="remote-link" data-testid="remote-link">
+                  <Icon name="globe" size={13} />
+                  <span className="remote-link-label">{remoteTask.label}</span>
+                  {isSafeExternalUrl(remoteTask.url) && (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => void openUrl(remoteTask.url as string)}
+                    >
+                      Open
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => setRemoteTask(null)}
+                    aria-label="Unlink task"
+                  >
+                    Unlink
+                  </button>
+                </div>
+              ) : showRemotePicker ? (
+                <RemoteTaskPicker
+                  connectors={enabledConnectors}
+                  onPick={(picked) => {
+                    setRemoteTask(picked);
+                    setShowRemotePicker(false);
+                    setDraft((d) => ({ ...d, taskId: null }));
+                  }}
+                  onCancel={() => setShowRemotePicker(false)}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="field-action"
+                  onClick={() => setShowRemotePicker(true)}
+                >
+                  <Icon name="globe" size={11} /> Link a connector task
+                </button>
+              )}
             </div>
           )}
 

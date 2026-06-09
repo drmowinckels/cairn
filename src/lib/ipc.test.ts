@@ -224,6 +224,25 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
+  it("attributeEntryToRemoteTask forwards the input under an `input` key", async () => {
+    const result = { entry: { id: "e1" }, task: { id: "t1" } };
+    invokeMock.mockResolvedValue(result);
+    const { attributeEntryToRemoteTask } = await import("./ipc");
+    const input = {
+      entryId: "e1",
+      connectorId: "github-projects",
+      remoteId: "42",
+      label: "Fix bug",
+      url: "https://github.com/o/r/issues/42",
+      remoteProjectName: "Acme",
+    };
+    const got = await attributeEntryToRemoteTask(input);
+    expect(invokeMock).toHaveBeenCalledWith("attribute_entry_to_remote_task", {
+      input,
+    });
+    expect(got).toEqual(result);
+  });
+
   it("setConnectorSecret / clearConnectorSecret forward their args", async () => {
     invokeMock.mockResolvedValue([]);
     const { setConnectorSecret, clearConnectorSecret } = await import("./ipc");

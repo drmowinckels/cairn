@@ -5,6 +5,54 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
 
+const openUrl = vi.fn();
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: (...a: unknown[]) => openUrl(...a),
+}));
+
+// Isolate the modal from the picker's connector drill (covered in
+// remote-task-picker.test.tsx): a stub button reports a pick whose URL the
+// test can vary to exercise the safe/unsafe deep-link branch.
+const picked = vi.hoisted(() => ({ url: "https://gh/42" as string | null }));
+vi.mock("./remote-task-picker", () => ({
+  RemoteTaskPicker: ({
+    onPick,
+    onCancel,
+  }: {
+    onPick: (p: unknown) => void;
+    onCancel: () => void;
+  }) => (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          onPick({
+            connectorId: "gh",
+            remoteId: "42",
+            label: "Fix bug",
+            url: picked.url,
+            remoteProjectName: "Acme",
+          })
+        }
+      >
+        mock-pick
+      </button>
+      <button type="button" onClick={onCancel}>
+        mock-cancel
+      </button>
+    </>
+  ),
+}));
+
+const GH_CONNECTOR: Connector = {
+  id: "gh",
+  name: "GitHub Projects",
+  capabilities: [],
+  kind: { http: { baseUrl: "https://api.github.com" } },
+  secret: "set",
+  enabled: true,
+};
+
 import {
   ManualEntryModal,
   isoToLocal,
@@ -14,6 +62,7 @@ import {
   type ManualEntrySubmit,
 } from "./manual-entry-modal";
 import type { Project, Task } from "../../lib/types";
+import type { Connector } from "../../lib/ipc";
 
 const PROJECTS: Project[] = [
   {
@@ -1118,5 +1167,124 @@ describe("ManualEntryModal — task picker (#21)", () => {
     fireEvent.click(screen.getByRole("button", { name: /cancel new task/i }));
     expect(screen.queryByLabelText(/new task name/i)).toBeNull();
     expect(onCreateTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("ManualEntryModal — remote-task attribution (#110)", () => {
+  const withConnector = (
+    extra: Partial<Parameters<typeof ManualEntryModal>[0]> = {},
+  ) => (
+    <ManualEntryModal
+      open
+      mode="create"
+      initial={{ ...BASE_DRAFT, projectId: "p1" }}
+      projects={PROJECTS}
+      runningRange={null}
+      connectors={[GH_CONNECTOR]}
+      onSubmit={vi.fn().mockResolvedValue(undefined)}
+      onClose={vi.fn()}
+      loadTasks={vi.fn().mockResolvedValue(TASKS_P1)}
+      {...extra}
+    />
+  );
+
+  it("hides the affordance when there is no enabled connector", () => {
+    render(
+      <ManualEntryModal
+        open
+        mode="create"
+        initial={{ ...BASE_DRAFT, projectId: "p1" }}
+        projects={PROJECTS}
+        runningRange={null}
+        connectors={[{ ...GH_CONNECTOR, enabled: false }]}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/link a connector task/i)).toBeNull();
+  });
+
+  it("links a picked task: shows the chip, an Open link, hides the local picker", async () => {
+    picked.url = "https://gh/42";
+    render(withConnector());
+    fireEvent.click(
+      screen.getByRole("button", { name: /link a connector task/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "mock-pick" }));
+
+    const chip = await screen.findByTestId("remote-link");
+    expect(chip.textContent).toContain("Fix bug");
+    // The local task <select> is superseded while a remote task is linked.
+    expect(screen.queryByLabelText("Task")).toBeNull();
+
+    openUrl.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(openUrl).toHaveBeenCalledWith("https://gh/42");
+  });
+
+  it("does not offer Open for an unsafe URL scheme", async () => {
+    picked.url = "javascript:alert(1)";
+    render(withConnector());
+    fireEvent.click(
+      screen.getByRole("button", { name: /link a connector task/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "mock-pick" }));
+    await screen.findByTestId("remote-link");
+    expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
+  });
+
+  it("cancels the picker, restoring the affordance", async () => {
+    render(withConnector());
+    fireEvent.click(
+      screen.getByRole("button", { name: /link a connector task/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "mock-cancel" }));
+    expect(
+      screen.getByRole("button", { name: /link a connector task/i }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "mock-pick" })).toBeNull();
+  });
+
+  it("unlinks a picked task, restoring the affordance", async () => {
+    picked.url = "https://gh/42";
+    render(withConnector());
+    fireEvent.click(
+      screen.getByRole("button", { name: /link a connector task/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "mock-pick" }));
+    await screen.findByTestId("remote-link");
+    fireEvent.click(screen.getByRole("button", { name: /unlink task/i }));
+    expect(screen.queryByTestId("remote-link")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /link a connector task/i }),
+    ).toBeTruthy();
+  });
+
+  it("submits the picked remote task and nulls the local task id", async () => {
+    picked.url = "https://gh/42";
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      withConnector({
+        initial: { ...BASE_DRAFT, projectId: "p1", taskId: "t1" },
+        onSubmit,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /link a connector task/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "mock-pick" }));
+    await screen.findByTestId("remote-link");
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0][0] as ManualEntrySubmit;
+    expect(payload.taskId).toBeNull();
+    expect(payload.remoteTask).toEqual({
+      connectorId: "gh",
+      remoteId: "42",
+      label: "Fix bug",
+      url: "https://gh/42",
+      remoteProjectName: "Acme",
+    });
   });
 });

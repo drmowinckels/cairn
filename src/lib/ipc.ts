@@ -939,7 +939,7 @@ export interface CachedList<T> {
   fetchedAt: string | null;
 }
 
-function emptyList<T>(): CachedList<T> {
+export function emptyList<T>(): CachedList<T> {
   return { items: [], stale: false, fetchedAt: null };
 }
 
@@ -967,4 +967,33 @@ export async function listConnectorTasks(
       projectId,
     })) ?? emptyList()
   );
+}
+
+/** Identity of a connector task to attribute an entry to (#110). The fields
+ *  come from a `RemoteTask` the UI already fetched via `listConnectorTasks`,
+ *  plus the connector + remote-project context needed to intern it. */
+export interface AttributeRemoteTaskInput {
+  entryId: string;
+  connectorId: string;
+  remoteId: string;
+  label: string;
+  url?: string | null;
+  remoteProjectName?: string | null;
+}
+
+/** The result of attributing an entry: the updated entry plus the interned
+ *  task it now points at. Mirrors the Rust `AttributedEntry`. */
+export interface AttributedEntry {
+  entry: BackendEntry;
+  task: Task;
+}
+
+/** Attribute a time entry to a remote PM-connector task (#110): interns the
+ *  task into the local `tasks` table and points the entry's `taskId` at it.
+ *  The connector must be enabled. Throws outside Tauri — it is only ever
+ *  invoked from a real attribution action, never during a stubbed render. */
+export async function attributeEntryToRemoteTask(
+  input: AttributeRemoteTaskInput,
+): Promise<AttributedEntry> {
+  return invoke<AttributedEntry>("attribute_entry_to_remote_task", { input });
 }
