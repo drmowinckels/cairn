@@ -20,7 +20,14 @@ import {
   startToPercent,
   type TimelineSegment,
 } from "../../lib/timeline";
-import { inTauri, listTasks, saveTask, type BackendEntry } from "../../lib/ipc";
+import {
+  attributeEntryToRemoteTask,
+  inTauri,
+  listTasks,
+  saveTask,
+  type BackendEntry,
+} from "../../lib/ipc";
+import { useConnectors } from "../../lib/use-connectors";
 import {
   WORKING_HOURS_OFF,
   type WorkingHours,
@@ -56,6 +63,29 @@ import {
   REQUIRED_FIELDS_OFF,
   type RequiredFieldsPrefs,
 } from "../../lib/required-fields";
+import type { PickedRemoteTask } from "./remote-task-picker";
+
+/** Attribute a just-saved entry to a picked connector task (#110). Returns a
+ *  user-facing message if linking failed — the entry is already saved, so we
+ *  don't throw (that would reopen the modal and a retry would duplicate the
+ *  entry) — else null. A no-op returning null when nothing was picked. */
+export async function linkRemoteTask(
+  remoteTask: PickedRemoteTask | null | undefined,
+  entryId: string,
+  refresh: () => Promise<void>,
+): Promise<string | null> {
+  if (!remoteTask) return null;
+  let error: string | null = null;
+  try {
+    await attributeEntryToRemoteTask({ entryId, ...remoteTask });
+  } catch (e) {
+    error = `Entry saved, but linking the task failed: ${
+      e instanceof Error ? e.message : String(e)
+    }`;
+  }
+  await refresh();
+  return error;
+}
 
 interface Props {
   density: Density;
@@ -89,6 +119,7 @@ export function TodayView({
 }: Props) {
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
+  const { connectors } = useConnectors();
   const today = useToday();
   const upcoming = useUpcoming(3);
   const calendars = useCalendars();
@@ -262,6 +293,10 @@ export function TodayView({
     | { open: false }
     | { open: true; mode: "create" | "edit"; draft: ManualEntryDraft }
   >({ open: false });
+  // The entry saved but the remote-task link failed (#110). Surfaced as a
+  // dismissible banner — the time entry persists, so we don't reopen the
+  // modal (which would re-create it); the user can re-link from edit.
+  const [attributeError, setAttributeError] = useState<string | null>(null);
 
   const openCreate = useCallback(() => {
     const now = new Date();
@@ -306,25 +341,32 @@ export function TodayView({
 
   const handleSubmit = useCallback(
     async (payload: ManualEntrySubmit) => {
-      if (payload.id) {
-        await today.update({
-          id: payload.id,
-          projectId: payload.projectId,
-          taskId: payload.taskId,
-          description: payload.description,
-          startedAt: payload.startedAt,
-          endedAt: payload.endedAt,
-        });
-      } else {
-        await today.create({
-          projectId: payload.projectId,
-          taskId: payload.taskId,
-          description: payload.description,
-          startedAt: payload.startedAt,
-          endedAt: payload.endedAt,
-          source: "manual",
-        });
-      }
+      setAttributeError(null);
+      const entry = payload.id
+        ? await today.update({
+            id: payload.id,
+            projectId: payload.projectId,
+            taskId: payload.taskId,
+            description: payload.description,
+            startedAt: payload.startedAt,
+            endedAt: payload.endedAt,
+          })
+        : await today.create({
+            projectId: payload.projectId,
+            taskId: payload.taskId,
+            description: payload.description,
+            startedAt: payload.startedAt,
+            endedAt: payload.endedAt,
+            source: "manual",
+          });
+      // Attribute to a connector task once the entry exists, so the intern +
+      // link land on a real entry id (#110).
+      const linkError = await linkRemoteTask(
+        payload.remoteTask,
+        entry.id,
+        today.refresh,
+      );
+      if (linkError) setAttributeError(linkError);
       void timer.refresh();
     },
     [today, timer],
@@ -531,6 +573,8 @@ export function TodayView({
           onRetry={() => timer.refresh()}
         />
       )}
+
+      {attributeError && <ErrorBanner message={attributeError} />}
 
       <section
         className="now"
@@ -788,6 +832,7 @@ export function TodayView({
           onCreateProject={createProject}
           loadTasks={listTasks}
           onCreateTask={(projectId, name) => saveTask({ projectId, name })}
+          connectors={connectors}
           onDelete={modalState.mode === "edit" ? handleDelete : undefined}
           onClose={closeModal}
         />

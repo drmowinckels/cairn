@@ -4045,6 +4045,58 @@ select.rule-conf {
   gap: 6px;
 }
 
+/* Remote-task attribution (#110): the connector→project→task picker and the
+   linked-task chip inside the manual entry modal. */
+.remote-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+}
+
+.remote-picker-empty {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+.remote-picker-stale {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+  font-weight: 400;
+}
+
+.remote-picker-error {
+  color: #8a3a23;
+  font-size: var(--font-tiny);
+  margin: 0;
+}
+
+[data-theme="dark"] .remote-picker-error {
+  color: #f5b4a0;
+}
+
+.remote-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  color: var(--accent-ink);
+}
+
+.remote-link-label {
+  flex: 1;
+  font-size: var(--font-small);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .field-error {
   color: #8a3a23;
   font-size: var(--font-tiny);

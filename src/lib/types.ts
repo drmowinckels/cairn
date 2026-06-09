@@ -31,9 +31,17 @@ export interface ProjectBudgetStatus {
 
 export interface Task {
   id: TaskId;
-  projectId: ProjectId;
+  /** `null` for a remote task with no local-project mapping (direct
+   *  attribution); a local task always has one. */
+  projectId: ProjectId | null;
   name: string;
   archived: boolean;
+  /** The remote identity, all `null`/absent for a pure-local task. Mirror of
+   *  the Rust `Task` (#110). */
+  connectorId?: string | null;
+  remoteId?: string | null;
+  remoteUrl?: string | null;
+  remoteProjectName?: string | null;
 }
 
 export type EntrySource = "manual" | "calendar" | `rule:${string}`;

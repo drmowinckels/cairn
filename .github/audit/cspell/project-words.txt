@@ -157,6 +157,7 @@ specta
 sqlite
 sqlx
 stapler
+stringifying
 swaymsg
 sysinfo
 systempreferences
