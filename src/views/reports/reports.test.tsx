@@ -268,6 +268,38 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     );
   });
 
+  it("names remote-task project groups in the breakdown, with distinct rows (#110)", async () => {
+    const summary: ReportSummary = {
+      totalSeconds: 5400,
+      prevTotalSeconds: 0,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [
+            { projectId: null, remoteProjectName: "Acme", seconds: 3600 },
+            { projectId: null, remoteProjectName: "Beta", seconds: 1800 },
+          ],
+        },
+      ],
+      byProject: [
+        { projectId: null, remoteProjectName: "Acme", seconds: 3600 },
+        { projectId: null, remoteProjectName: "Beta", seconds: 1800 },
+      ],
+      bySource: { rule: 0, calendar: 0, manual: 5400 },
+    };
+    const { container } = await renderWithSummary(summary);
+    const names = await waitFor(() => {
+      const rows = container.querySelectorAll(".bd-row .bd-name");
+      expect(rows.length).toBe(2);
+      return Array.from(rows).map((n) => n.textContent);
+    });
+    // Each remote project is named (not lumped under "No project") and the
+    // two remote slices render as separate rows (distinct React keys).
+    expect(names).toContain("Acme");
+    expect(names).toContain("Beta");
+    expect(names).not.toContain("No project");
+  });
+
   it("Copy summary writes to clipboard and resets the Copied state after 2s", async () => {
     writeText.mockResolvedValue(undefined);
     const summary: ReportSummary = {
@@ -305,6 +337,37 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("Copy summary names remote-task project groups (#110)", async () => {
+    writeText.mockResolvedValue(undefined);
+    const summary: ReportSummary = {
+      totalSeconds: 3600,
+      prevTotalSeconds: 0,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [
+            { projectId: null, remoteProjectName: "Acme", seconds: 3600 },
+          ],
+        },
+      ],
+      byProject: [
+        { projectId: null, remoteProjectName: "Acme", seconds: 3600 },
+      ],
+      bySource: { rule: 0, calendar: 0, manual: 3600 },
+    };
+    await renderWithSummary(summary);
+    await waitFor(() => {
+      const btn = screen.getByRole("button", {
+        name: /copy summary/i,
+      }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /copy summary/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    // The clipboard text labels the remote group by name, not its raw key.
+    expect(writeText.mock.calls[0][0]).toContain("Acme");
   });
 
   it("Copy summary handles >7-day ranges and null project slices", async () => {
