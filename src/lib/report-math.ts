@@ -143,7 +143,11 @@ export function formatRangeLabel(summary: ReportSummary): string {
 export interface StackedDay {
   isoDate: string;
   weekday: string;
-  segments: Array<{ projectId: string | null; seconds: number }>;
+  segments: Array<{
+    projectId: string | null;
+    remoteProjectName: string | null;
+    seconds: number;
+  }>;
   totalSeconds: number;
   isToday: boolean;
   isFuture: boolean;
@@ -160,6 +164,7 @@ export function buildStackedDays(
       weekday: weekdayLabel(d.date),
       segments: d.byProject.map((s) => ({
         projectId: s.projectId,
+        remoteProjectName: s.remoteProjectName ?? null,
         seconds: s.seconds,
       })),
       totalSeconds,

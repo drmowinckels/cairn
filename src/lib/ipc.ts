@@ -128,6 +128,10 @@ export type ReportRange = "day" | "week" | "month";
 
 export interface ReportProjectSlice {
   projectId: string | null;
+  /** The remote project a connector task belongs to (#110), set only when the
+   *  slice groups project-less entries attributed to a remote task; `null`
+   *  whenever `projectId` is set (the backend always sends it). */
+  remoteProjectName?: string | null;
   seconds: number;
 }
 

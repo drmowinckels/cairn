@@ -704,6 +704,10 @@ pub async fn list_week(state: State<'_, AppState>) -> Result<Vec<WeekDayAgg>, St
 #[serde(rename_all = "camelCase")]
 pub struct ReportProjectSlice {
     pub project_id: Option<String>,
+    /// The remote project a connector task belongs to (#110), set only when
+    /// the slice groups entries that have no local project but are attributed
+    /// to a remote task. `project_id` is `None` whenever this is `Some`.
+    pub remote_project_name: Option<String>,
     pub seconds: i64,
 }
 
@@ -738,10 +742,50 @@ pub struct ReportSummary {
 #[derive(Debug, Clone)]
 struct ReportRow {
     project_id: Option<String>,
+    /// The entry's remote-task project (#110), present only for an entry with
+    /// no local project that is attributed to a connector task. Used as the
+    /// grouping key in place of `project_id` when set.
+    remote_project_name: Option<String>,
     project_rounding: Option<Rounding>,
     source: String,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
+}
+
+/// How a report row is grouped: the local project when present, else the
+/// remote-task project NAME (#110), else the no-project bucket. Grouping by
+/// name means entries attributed to the same remote project name merge even if
+/// they came from different connectors — intended: reports are organized by
+/// project, and the name is the user-facing identity (the design groups by
+/// `remote_project_name`, not by connector).
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ReportGroup {
+    Local(String),
+    Remote(String),
+    NoProject,
+}
+
+impl ReportGroup {
+    fn of(r: &ReportRow) -> Self {
+        match (&r.project_id, &r.remote_project_name) {
+            (Some(id), _) => ReportGroup::Local(id.clone()),
+            (None, Some(name)) => ReportGroup::Remote(name.clone()),
+            (None, None) => ReportGroup::NoProject,
+        }
+    }
+
+    fn into_slice(self, seconds: i64) -> ReportProjectSlice {
+        let (project_id, remote_project_name) = match self {
+            ReportGroup::Local(id) => (Some(id), None),
+            ReportGroup::Remote(name) => (None, Some(name)),
+            ReportGroup::NoProject => (None, None),
+        };
+        ReportProjectSlice {
+            project_id,
+            remote_project_name,
+            seconds,
+        }
+    }
 }
 
 /// Local-date half-open window [start, end) for `range`, anchored on
@@ -823,8 +867,8 @@ fn aggregate_report(
     ReportSourceSplit,
 ) {
     use std::collections::BTreeMap;
-    let mut by_project: BTreeMap<Option<String>, i64> = BTreeMap::new();
-    let mut by_day: BTreeMap<NaiveDate, BTreeMap<Option<String>, i64>> = BTreeMap::new();
+    let mut by_project: BTreeMap<ReportGroup, i64> = BTreeMap::new();
+    let mut by_day: BTreeMap<NaiveDate, BTreeMap<ReportGroup, i64>> = BTreeMap::new();
     let mut by_source = ReportSourceSplit::default();
     let mut total = 0i64;
 
@@ -834,23 +878,17 @@ fn aggregate_report(
         if secs <= 0 {
             continue;
         }
+        let group = ReportGroup::of(r);
         total += secs;
-        *by_project.entry(r.project_id.clone()).or_insert(0) += secs;
+        *by_project.entry(group.clone()).or_insert(0) += secs;
         let date = r.start.with_timezone(&Local).date_naive();
-        *by_day
-            .entry(date)
-            .or_default()
-            .entry(r.project_id.clone())
-            .or_insert(0) += secs;
+        *by_day.entry(date).or_default().entry(group).or_insert(0) += secs;
         *source_bucket(&mut by_source, &r.source) += secs;
     }
 
     let by_project_vec = by_project
         .into_iter()
-        .map(|(project_id, seconds)| ReportProjectSlice {
-            project_id,
-            seconds,
-        })
+        .map(|(group, seconds)| group.into_slice(seconds))
         .collect();
 
     let mut day_buckets = Vec::new();
@@ -858,14 +896,7 @@ fn aggregate_report(
     while d < end_day {
         let slices = by_day
             .get(&d)
-            .map(|m| {
-                m.iter()
-                    .map(|(p, s)| ReportProjectSlice {
-                        project_id: p.clone(),
-                        seconds: *s,
-                    })
-                    .collect()
-            })
+            .map(|m| m.iter().map(|(g, s)| g.clone().into_slice(*s)).collect())
             .unwrap_or_default();
         day_buckets.push(ReportDayBucket {
             date: d.to_string(),
@@ -892,9 +923,11 @@ async fn fetch_report_rows(
                e.started_at,
                e.ended_at,
                p.rounding_interval_minutes,
-               p.rounding_mode
+               p.rounding_mode,
+               t.remote_project_name
           FROM entries e
           LEFT JOIN projects p ON p.id = e.project_id
+          LEFT JOIN tasks t ON t.id = e.task_id
          WHERE e.started_at >= ?1 AND e.started_at < ?2
         "#,
     )
@@ -913,6 +946,7 @@ async fn fetch_report_rows(
         };
         rows.push(ReportRow {
             project_id: row.get("project_id"),
+            remote_project_name: row.get("remote_project_name"),
             project_rounding: project_rounding_from_row(&row),
             source: row.get("source"),
             start,
@@ -2176,10 +2210,19 @@ mod report_pure_tests {
             .unwrap();
         ReportRow {
             project_id: project.map(str::to_string),
+            remote_project_name: None,
             project_rounding: None,
             source: source.to_string(),
             start: s,
             end: s + Duration::seconds(dur),
+        }
+    }
+
+    /// Like `row`, but with no local project and a remote-task project (#110).
+    fn row_remote(remote_project: &str, ymdh: (i32, u32, u32, u32), dur: i64) -> ReportRow {
+        ReportRow {
+            remote_project_name: Some(remote_project.to_string()),
+            ..row(None, "manual", ymdh, dur)
         }
     }
 
@@ -2277,11 +2320,56 @@ mod report_pure_tests {
     }
 
     #[test]
+    fn aggregate_groups_no_project_entries_by_remote_project() {
+        let start_day = NaiveDate::from_ymd_opt(2026, 5, 25).unwrap();
+        let end_day = start_day + Duration::days(7);
+        let rows = vec![
+            row_remote("Acme", (2026, 5, 25, 9), 3600),
+            row_remote("Acme", (2026, 5, 26, 9), 1800), // same remote project → merged
+            row_remote("Beta", (2026, 5, 27, 9), 1200), // different → its own slice
+            row(None, "manual", (2026, 5, 28, 9), 600), // no project, no remote → own bucket
+            row(Some("local"), "manual", (2026, 5, 29, 9), 900), // local project unaffected
+        ];
+        let (total, by_project, _, _) =
+            aggregate_report(&rows, start_day, end_day, Rounding::off());
+
+        assert_eq!(total, 3600 + 1800 + 1200 + 600 + 900);
+
+        let acme = by_project
+            .iter()
+            .find(|s| s.remote_project_name.as_deref() == Some("Acme"))
+            .unwrap();
+        assert_eq!(acme.seconds, 5400);
+        assert!(acme.project_id.is_none());
+
+        let beta = by_project
+            .iter()
+            .find(|s| s.remote_project_name.as_deref() == Some("Beta"))
+            .unwrap();
+        assert_eq!(beta.seconds, 1200);
+
+        // The "no project, no remote" bucket stays distinct from the remote ones.
+        let none = by_project
+            .iter()
+            .find(|s| s.project_id.is_none() && s.remote_project_name.is_none())
+            .unwrap();
+        assert_eq!(none.seconds, 600);
+
+        let local = by_project
+            .iter()
+            .find(|s| s.project_id.as_deref() == Some("local"))
+            .unwrap();
+        assert_eq!(local.seconds, 900);
+        assert!(local.remote_project_name.is_none());
+    }
+
+    #[test]
     fn total_seconds_ignores_negative_spans() {
         let s = Utc.with_ymd_and_hms(2026, 5, 25, 9, 0, 0).unwrap();
         let rows = vec![
             ReportRow {
                 project_id: None,
+                remote_project_name: None,
                 project_rounding: None,
                 source: "manual".into(),
                 start: s,
@@ -2289,6 +2377,7 @@ mod report_pure_tests {
             },
             ReportRow {
                 project_id: None,
+                remote_project_name: None,
                 project_rounding: None,
                 source: "manual".into(),
                 start: s,
@@ -2426,6 +2515,43 @@ mod tests {
             "the seeded ~1h entry is counted (got {})",
             summary.total_seconds
         );
+    }
+
+    #[tokio::test]
+    async fn report_summary_groups_a_project_less_entry_by_its_remote_task() {
+        // An entry with no local project, attributed to a remote task, groups
+        // under the task's remote project name via fetch_report_rows' JOIN.
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, name, connector_id, remote_id, remote_project_name, archived, created_at, updated_at) \
+             VALUES ('t-r', NULL, 'Fix bug', 'gh', '42', 'Acme', 0, ?1, ?1)",
+        )
+        .bind(&now)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let start = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        let end = (Utc::now() - Duration::hours(1)).to_rfc3339();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, created_at, updated_at) \
+             VALUES ('e-r', NULL, 't-r', '', ?1, ?2, 'manual', ?1, ?1)",
+        )
+        .bind(&start)
+        .bind(&end)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        let summary = report_summary(state, "week".into(), None).await.unwrap();
+        let slice = summary
+            .by_project
+            .iter()
+            .find(|s| s.remote_project_name.as_deref() == Some("Acme"))
+            .expect("a slice grouped by the remote project name");
+        assert!(slice.project_id.is_none());
+        assert!(slice.seconds >= 3595, "the ~1h entry is counted");
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ import {
   secondsToHours,
   weekdayLabel,
 } from "../../lib/report-math";
-import type { ReportRange } from "../../lib/ipc";
+import type { ReportProjectSlice, ReportRange } from "../../lib/ipc";
 import type { Density, Project, WeekDay } from "../../lib/types";
 
 interface Props {
@@ -73,6 +73,15 @@ export function ReportsView({ density }: Props) {
     if (!projectId) return "No project";
     return projectsById[projectId]?.name ?? projectId;
   };
+  // A slice groups by local project, else by remote-task project (#110), else
+  // the no-project bucket. Its key must be unique across remote slices (which
+  // all have a null projectId).
+  const sliceKey = (s: ReportProjectSlice): string =>
+    s.projectId ?? s.remoteProjectName ?? "_none";
+  const sliceName = (s: ReportProjectSlice): string =>
+    s.projectId
+      ? projectName(s.projectId)
+      : (s.remoteProjectName ?? "No project");
 
   const onCopySummary = async () => {
     // The button is `disabled={!hasData}` and `hasData` is false whenever
@@ -80,7 +89,7 @@ export function ReportsView({ density }: Props) {
     const summaryData = data!;
     const week: WeekDay[] = summaryData.byDay.map((d) => {
       const segments: Array<[string, number]> = d.byProject.map((s) => [
-        s.projectId ?? "_none",
+        sliceKey(s),
         secondsToHours(s.seconds),
       ]);
       const hours = segments.reduce((a, [, h]) => a + h, 0);
@@ -90,11 +99,29 @@ export function ReportsView({ density }: Props) {
         segments,
       };
     });
+    // Remote-task projects (#110) aren't in `projectsById`; synthesize a label
+    // entry per remote group so the summary names them instead of their key.
+    const remoteProjects = Object.fromEntries(
+      summaryData.byProject
+        .filter((s) => s.remoteProjectName)
+        .map((s) => [
+          s.remoteProjectName as string,
+          {
+            id: s.remoteProjectName as string,
+            name: s.remoteProjectName as string,
+            clientId: null,
+            color: "#999",
+            archived: false,
+            estimateHours: null,
+          },
+        ]),
+    );
     const summary = buildWeekSummary({
       weekLabel: formatRangeLabel(summaryData),
       week,
       projectsById: {
         ...projectsById,
+        ...remoteProjects,
         _none: {
           id: "_none",
           name: "No project",
@@ -235,13 +262,13 @@ export function ReportsView({ density }: Props) {
                   >
                     {d.segments.map((s) => (
                       <div
-                        key={s.projectId ?? "_none"}
+                        key={sliceKey(s)}
                         className="bar-seg"
                         style={{
                           flex: s.seconds,
                           background: projectColor(s.projectId),
                         }}
-                        title={`${projectName(s.projectId)}: ${secondsToHours(s.seconds).toFixed(1)}h`}
+                        title={`${sliceName(s)}: ${secondsToHours(s.seconds).toFixed(1)}h`}
                       />
                     ))}
                   </div>
@@ -268,12 +295,12 @@ export function ReportsView({ density }: Props) {
             const pct = percentOf(slice.seconds, totalSeconds);
             const color = projectColor(slice.projectId);
             return (
-              <li key={slice.projectId ?? "_none"} className="bd-row">
+              <li key={sliceKey(slice)} className="bd-row">
                 <span
                   className="proj-dot"
                   style={{ background: color, width: 8, height: 8 }}
                 />
-                <span className="bd-name">{projectName(slice.projectId)}</span>
+                <span className="bd-name">{sliceName(slice)}</span>
                 <div className="bd-bar">
                   <div
                     className="bd-bar-fill"
