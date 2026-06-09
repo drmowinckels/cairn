@@ -15,7 +15,8 @@
           "membership": "true",
           "simple": "true",
           "order_by": "last_activity_at",
-          "per_page": "100"
+          "per_page": "100",
+          "page": "{{page}}"
         }
       },
       "response": {
@@ -25,13 +26,14 @@
           "name": "name_with_namespace",
           "description": "description"
         }
-      }
+      },
+      "pagination": { "type": "page", "size": 100 }
     },
     "listTasks": {
       "request": {
         "method": "GET",
         "path": "/api/v4/projects/{{project.id}}/issues",
-        "query": { "scope": "all", "per_page": "100" }
+        "query": { "scope": "all", "per_page": "100", "page": "{{page}}" }
       },
       "response": {
         "items": "",
@@ -42,7 +44,8 @@
           "status": "state",
           "done": "closed_at"
         }
-      }
+      },
+      "pagination": { "type": "page", "size": 100 }
     }
   }
 }

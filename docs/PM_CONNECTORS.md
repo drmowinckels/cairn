@@ -165,12 +165,14 @@ Request templates are filled by **value substitution only**, escaped for
 where they land (URL-encoded in `query`, JSON-escaped in `body`), so a
 value can never inject request _structure_.
 
-| Variable                             | Available in                  | Is                                                                                                                                                                                      |
-| ------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <code v-pre>{{project.id}}</code>    | `listTasks`                   | the id of the project being listed                                                                                                                                                      |
-| <code v-pre>{{project.name}}</code>  | `listTasks`                   | its name                                                                                                                                                                                |
-| <code v-pre>{{cursor}}</code>        | any, with `pagination`        | the current page cursor (empty on the first request)                                                                                                                                    |
-| <code v-pre>{{cursorLiteral}}</code> | any, with cursor `pagination` | the cursor as a JSON/GraphQL value — `null` on the first request, else a quoted, escaped string. Use it inside a GraphQL body (`after:{{cursorLiteral}}`) where `after:""` is rejected. |
+| Variable                             | Available in                    | Is                                                                                                                                                                                      |
+| ------------------------------------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <code v-pre>{{project.id}}</code>    | `listTasks`                     | the id of the project being listed                                                                                                                                                      |
+| <code v-pre>{{project.name}}</code>  | `listTasks`                     | its name                                                                                                                                                                                |
+| <code v-pre>{{cursor}}</code>        | any, with `pagination`          | the current page cursor (empty on the first request)                                                                                                                                    |
+| <code v-pre>{{cursorLiteral}}</code> | any, with cursor `pagination`   | the cursor as a JSON/GraphQL value — `null` on the first request, else a quoted, escaped string. Use it inside a GraphQL body (`after:{{cursorLiteral}}`) where `after:""` is rejected. |
+| <code v-pre>{{offset}}</code>        | any, with `offset` `pagination` | the running item offset, advanced by `limit` each page (starts at 0)                                                                                                                    |
+| <code v-pre>{{page}}</code>          | any, with `page` `pagination`   | the 1-indexed page number, advanced by 1 each page (starts at 1)                                                                                                                        |
 
 ### Pagination (optional)
 
@@ -189,11 +191,21 @@ loops, capped (see Limits).
 }
 ```
 
-Two strategies: `cursor` (above) and `offset` (`{ "type": "offset",
-"limit": 100 }`, the interpreter advances the <code v-pre>{{offset}}</code>
-template variable by `limit` until a page returns fewer than `limit`
-items — reference it in a request `query` value, e.g.
-`"query": { "offset": "{{offset}}" }`).
+Three strategies:
+
+- **`cursor`** (above) — follow `hasMorePath`/`cursorPath`; reference the
+  cursor with <code v-pre>{{cursor}}</code> (or
+  <code v-pre>{{cursorLiteral}}</code> in a GraphQL body).
+- **`offset`** (`{ "type": "offset", "limit": 100 }`) — advances
+  <code v-pre>{{offset}}</code> by `limit` (from 0) until a page returns fewer
+  than `limit` items, e.g. `"query": { "offset": "{{offset}}" }`.
+- **`page`** (`{ "type": "page", "size": 100 }`) — advances the 1-indexed
+  <code v-pre>{{page}}</code> by 1 until a page returns fewer than `size`
+  items, e.g. `"query": { "page": "{{page}}", "per_page": "100" }`. For
+  page-number REST APIs like GitLab. `size` must equal the server's effective
+  page size (the `per_page` you request, capped by the server's own max) — if
+  `size` is larger, a full page looks short and the walk stops early. `size`
+  (and `offset`'s `limit`) must be ≥ 1.
 
 ## `kind: "file"` — local-file connectors
 
@@ -503,7 +515,9 @@ check yours (it is published at `/schemas/pm-connector.json`).
 4. ✅ Bundled manifests as both features and worked references. **GitHub
    Projects** (GraphQL) and **GitLab** (REST issues) ship compiled in
    (`connectors/manifests/*.json`, registered by `ConnectorHost::load`,
-   listed in `builtin::ALL`). Both read the first page only (see #193).
+   listed in `builtin::ALL`). Both paginate to completion — GitHub via
+   GraphQL cursor (`after:{{cursorLiteral}}`), GitLab via page number
+   (`page={{page}}`) — capped by the usual page/item limits (#193).
    Trello needs an app key per install, so it stays a doc example.
 5. ✅ Offline cache (`connector_cache`) so attribution survives a dropped
    network — a failed read falls back to the last snapshot, marked stale.
