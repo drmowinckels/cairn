@@ -197,6 +197,10 @@ pub enum Pagination {
     /// Page size; the interpreter advances the `{{offset}}` template
     /// variable by `limit` until a page returns fewer than `limit` items.
     Offset { limit: u32 },
+    /// Page size; the interpreter advances the `{{page}}` template variable
+    /// (1-indexed) by 1 until a page returns fewer than `size` items. For
+    /// page-number REST APIs like GitLab (`?page=N&per_page=size`).
+    Page { size: u32 },
 }
 
 /// Why a manifest was rejected. Library-level, so callers (the host's
@@ -236,6 +240,8 @@ pub enum ManifestError {
     UnusedSecretsCapability,
     #[error("connector kind {0:?} is not supported in this version yet")]
     UnsupportedKind(String),
+    #[error("http operation {0:?} has a pagination page size of 0 — it must be ≥ 1")]
+    ZeroPageSize(String),
 }
 
 /// The wire shape of a manifest: flat top-level fields plus one sibling
@@ -381,6 +387,15 @@ fn validate_http(
                     path: path.clone(),
                 });
             }
+        }
+        // A zero page size never makes progress (every page looks "full"), so
+        // the loop runs to the page cap doing wasted work. Reject it.
+        let zero = matches!(
+            operation.pagination,
+            Some(Pagination::Offset { limit: 0 }) | Some(Pagination::Page { size: 0 })
+        );
+        if zero {
+            return Err(ManifestError::ZeroPageSize(op.clone()));
         }
     }
 
@@ -717,6 +732,35 @@ mod tests {
                 has_more_path: "meta.more".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn parses_page_pagination() {
+        let json = HTTP_JSON.replace(
+            "{ \"type\": \"offset\", \"limit\": 100 }",
+            "{ \"type\": \"page\", \"size\": 100 }",
+        );
+        let m = ConnectorManifest::from_json(&json).unwrap();
+        let s = m.kind.as_http().expect("http kind");
+        assert_eq!(
+            s.operations["listTasks"].pagination,
+            Some(Pagination::Page { size: 100 })
+        );
+    }
+
+    #[test]
+    fn rejects_a_zero_page_size() {
+        for zero in [
+            "{ \"type\": \"page\", \"size\": 0 }",
+            "{ \"type\": \"offset\", \"limit\": 0 }",
+        ] {
+            let json = HTTP_JSON.replace("{ \"type\": \"offset\", \"limit\": 100 }", zero);
+            let err = ConnectorManifest::from_json(&json).unwrap_err();
+            assert!(
+                matches!(&err, ManifestError::ZeroPageSize(op) if op == "listTasks"),
+                "expected ZeroPageSize, got {err:?}"
+            );
+        }
     }
 
     #[test]

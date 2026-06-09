@@ -134,9 +134,11 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
         let mut collected: Vec<Value> = Vec::new();
         let mut cursor = String::new();
         let mut offset: u32 = 0;
+        let mut page_number: u32 = 1;
 
-        for page in 0..MAX_PAGES {
+        for page_index in 0..MAX_PAGES {
             ctx.set("cursor", cursor.clone());
+            ctx.set("page", page_number.to_string());
             // `cursorLiteral` is the cursor as a JSON/GraphQL value — `null`
             // on the first page, else a quoted+escaped string — for GraphQL
             // bodies where `after:""` is rejected (GitHub) but `after:null`
@@ -201,11 +203,15 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
                     offset = offset.saturating_add(*limit);
                     page_len as u32 >= *limit
                 }
+                Some(Pagination::Page { size }) => {
+                    page_number = page_number.saturating_add(1);
+                    page_len as u32 >= *size
+                }
             };
             if !more {
                 return Ok(collected);
             }
-            if page + 1 == MAX_PAGES {
+            if page_index + 1 == MAX_PAGES {
                 log::warn!(
                     "connector '{}' hit the {MAX_PAGES}-page cap; results truncated",
                     self.manifest.id
@@ -624,6 +630,42 @@ mod tests {
         let seen = fetcher.seen.lock().unwrap();
         assert!(seen[0].url.contains("offset=0"));
         assert!(seen[1].url.contains("offset=2"));
+    }
+
+    const PAGE: &str = r#"{
+        "manifest": 1, "id": "pg", "name": "Pg", "kind": "http",
+        "capabilities": ["network"],
+        "auth": { "type": "none" },
+        "baseUrl": "https://gitlab.example.com",
+        "operations": {
+            "listProjects": {
+                "request": { "method": "GET", "path": "/p", "query": { "per_page": "2", "page": "{{page}}" } },
+                "response": { "items": "", "map": { "id": "id", "name": "n" } },
+                "pagination": { "type": "page", "size": 2 }
+            },
+            "listTasks": {
+                "request": { "method": "GET", "path": "/t" },
+                "response": { "items": "", "map": { "id": "id", "label": "n" } }
+            }
+        }
+    }"#;
+
+    #[tokio::test]
+    async fn follows_page_number_pagination_until_a_short_page() {
+        let fetcher = FakeFetcher::with(&[
+            r#"[{"id":"1","n":"a"},{"id":"2","n":"b"}]"#, // full page (== size) → continue
+            r#"[{"id":"3","n":"c"}]"#,                    // short page → stop
+        ]);
+        let c = connector(PAGE, fetcher, no_secrets());
+        let projects = c.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 3);
+
+        let DeclarativeConnector { fetcher, .. } = &c;
+        let seen = fetcher.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "stopped on the short second page");
+        // `{{page}}` is 1-indexed (GitLab's first page is 1, not 0).
+        assert!(seen[0].url.contains("page=1"), "{}", seen[0].url);
+        assert!(seen[1].url.contains("page=2"), "{}", seen[1].url);
     }
 
     #[tokio::test]
