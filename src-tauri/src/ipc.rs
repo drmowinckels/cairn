@@ -79,9 +79,20 @@ pub struct ProjectBudgetStatus {
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
-    pub project_id: String,
+    /// `None` for a remote task with no local-project mapping (direct
+    /// attribution); a local task always has one.
+    pub project_id: Option<String>,
     pub name: String,
     pub archived: bool,
+    /// The remote identity, all `None` for a pure-local task. `connector_id`
+    /// is the manifest id the task was pulled from; `remote_id` its id in that
+    /// planner; `remote_url` a deep link; `remote_project_name` the remote
+    /// project the task belongs to (used to group reports when `project_id` is
+    /// `None`).
+    pub connector_id: Option<String>,
+    pub remote_id: Option<String>,
+    pub remote_url: Option<String>,
+    pub remote_project_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -106,6 +117,36 @@ pub struct Entry {
     pub ended_at: Option<DateTime<Utc>>,
     pub source: String,
     pub rule_id: Option<String>,
+}
+
+/// Attribute an entry to a task pulled from a PM connector (#110). Carries the
+/// remote task's identity (already fetched by the UI from
+/// `list_connector_tasks`) so the backend can intern it into `tasks` and point
+/// the entry at it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttributeRemoteTaskInput {
+    pub entry_id: String,
+    pub connector_id: String,
+    /// The task's id in the remote planner.
+    pub remote_id: String,
+    /// The task's title at attribution time (refreshed on re-attribution).
+    pub label: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    /// The remote project the task belongs to — groups reports when the entry
+    /// has no local project.
+    #[serde(default)]
+    pub remote_project_name: Option<String>,
+}
+
+/// The result of attributing an entry: the updated entry plus the interned
+/// task it now points at, so the UI can render the link without a refetch.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttributedEntry {
+    pub entry: Entry,
+    pub task: Task,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -459,6 +500,40 @@ pub async fn project_budget_status(
     budget_status_for(&state.db.pool, &project_id, Utc::now()).await
 }
 
+/// Map a `tasks` row to a [`Task`]. Expects the full column set (id,
+/// project_id, name, archived, connector_id, remote_id, remote_url,
+/// remote_project_name).
+fn task_from_row(r: sqlx::sqlite::SqliteRow) -> Task {
+    Task {
+        id: r.get("id"),
+        project_id: r.get("project_id"),
+        name: r.get("name"),
+        archived: r.get::<i64, _>("archived") != 0,
+        connector_id: r.get("connector_id"),
+        remote_id: r.get("remote_id"),
+        remote_url: r.get("remote_url"),
+        remote_project_name: r.get("remote_project_name"),
+    }
+}
+
+/// Map an `entries` row to an [`Entry`]. Expects the column set (id,
+/// project_id, task_id, description, started_at, ended_at, source, rule_id).
+fn entry_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Entry, String> {
+    Ok(Entry {
+        id: r.get("id"),
+        project_id: r.get("project_id"),
+        task_id: r.get("task_id"),
+        description: r.get("description"),
+        started_at: parse_ts(r.get::<String, _>("started_at"))?,
+        ended_at: r
+            .get::<Option<String>, _>("ended_at")
+            .map(parse_ts)
+            .transpose()?,
+        source: r.get("source"),
+        rule_id: r.get("rule_id"),
+    })
+}
+
 #[tauri::command]
 pub async fn list_tasks(
     state: State<'_, AppState>,
@@ -467,7 +542,7 @@ pub async fn list_tasks(
     let rows = match project_id {
         Some(pid) => {
             sqlx::query(
-                "SELECT id, project_id, name, archived FROM tasks WHERE project_id = ?1 AND archived = 0 ORDER BY name",
+                "SELECT id, project_id, name, archived, connector_id, remote_id, remote_url, remote_project_name FROM tasks WHERE project_id = ?1 AND archived = 0 ORDER BY name",
             )
             .bind(&pid)
             .fetch_all(&state.db.pool)
@@ -475,22 +550,14 @@ pub async fn list_tasks(
         }
         None => {
             sqlx::query(
-                "SELECT id, project_id, name, archived FROM tasks WHERE archived = 0 ORDER BY project_id, name",
+                "SELECT id, project_id, name, archived, connector_id, remote_id, remote_url, remote_project_name FROM tasks WHERE archived = 0 ORDER BY project_id, name",
             )
             .fetch_all(&state.db.pool)
             .await
         }
     }
     .map_err(err)?;
-    Ok(rows
-        .into_iter()
-        .map(|r| Task {
-            id: r.get("id"),
-            project_id: r.get("project_id"),
-            name: r.get("name"),
-            archived: r.get::<i64, _>("archived") != 0,
-        })
-        .collect())
+    Ok(rows.into_iter().map(task_from_row).collect())
 }
 
 #[tauri::command]
@@ -518,9 +585,13 @@ pub async fn save_task(state: State<'_, AppState>, task: TaskInput) -> Result<Ta
     .map_err(err)?;
     Ok(Task {
         id,
-        project_id: task.project_id,
+        project_id: Some(task.project_id),
         name: task.name,
         archived: task.archived,
+        connector_id: None,
+        remote_id: None,
+        remote_url: None,
+        remote_project_name: None,
     })
 }
 
@@ -555,23 +626,7 @@ pub async fn list_today(state: State<'_, AppState>) -> Result<Vec<Entry>, String
     .await
     .map_err(err)?;
 
-    let mut entries = Vec::with_capacity(rows.len());
-    for row in rows {
-        entries.push(Entry {
-            id: row.get("id"),
-            project_id: row.get("project_id"),
-            task_id: row.get("task_id"),
-            description: row.get("description"),
-            started_at: parse_ts(row.get::<String, _>("started_at"))?,
-            ended_at: row
-                .get::<Option<String>, _>("ended_at")
-                .map(parse_ts)
-                .transpose()?,
-            source: row.get("source"),
-            rule_id: row.get("rule_id"),
-        });
-    }
-    Ok(entries)
+    rows.into_iter().map(entry_from_row).collect()
 }
 
 #[tauri::command]
@@ -1302,20 +1357,7 @@ pub async fn current_running(state: State<'_, AppState>) -> Result<Option<Entry>
     .await
     .map_err(err)?;
 
-    let Some(row) = row else { return Ok(None) };
-    Ok(Some(Entry {
-        id: row.get("id"),
-        project_id: row.get("project_id"),
-        task_id: row.get("task_id"),
-        description: row.get("description"),
-        started_at: parse_ts(row.get::<String, _>("started_at"))?,
-        ended_at: row
-            .get::<Option<String>, _>("ended_at")
-            .map(parse_ts)
-            .transpose()?,
-        source: row.get("source"),
-        rule_id: row.get("rule_id"),
-    }))
+    row.map(entry_from_row).transpose()
 }
 
 #[tauri::command]
@@ -1414,19 +1456,7 @@ pub async fn stop_entry<R: tauri::Runtime>(
     .await
     .map_err(err)?;
 
-    Ok(Entry {
-        id,
-        project_id: row.get("project_id"),
-        task_id: row.get("task_id"),
-        description: row.get("description"),
-        started_at: parse_ts(row.get::<String, _>("started_at"))?,
-        ended_at: row
-            .get::<Option<String>, _>("ended_at")
-            .map(parse_ts)
-            .transpose()?,
-        source: row.get("source"),
-        rule_id: row.get("rule_id"),
-    })
+    entry_from_row(row)
 }
 
 #[tauri::command]
@@ -1620,19 +1650,7 @@ pub async fn update_entry(
     .fetch_one(&state.db.pool)
     .await
     .map_err(err)?;
-    Ok(Entry {
-        id: input.id,
-        project_id: row.get("project_id"),
-        task_id: row.get("task_id"),
-        description: row.get("description"),
-        started_at: parse_ts(row.get::<String, _>("started_at"))?,
-        ended_at: row
-            .get::<Option<String>, _>("ended_at")
-            .map(parse_ts)
-            .transpose()?,
-        source: row.get("source"),
-        rule_id: row.get("rule_id"),
-    })
+    entry_from_row(row)
 }
 
 #[tauri::command]
@@ -3414,7 +3432,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(just_cairn.len(), 2);
-        assert!(just_cairn.iter().all(|t| t.project_id == "cairn"));
+        assert!(just_cairn
+            .iter()
+            .all(|t| t.project_id.as_deref() == Some("cairn")));
         let just_site = list_tasks(state, Some("site".into())).await.unwrap();
         assert_eq!(just_site.len(), 1);
         assert_eq!(just_site[0].name, "Blog post");
@@ -6336,6 +6356,88 @@ pub async fn list_connector_tasks_impl(
     .await
 }
 
+/// Attribute an entry to a remote PM task (#110). Interns the task into the
+/// `tasks` table keyed by `(connector_id, remote_id)` — inserting on first
+/// sight, refreshing the label/url/project on re-attribution so the same
+/// issue never duplicates — then points the entry's `task_id` at it. The
+/// intern and the link share one transaction, so an entry can never reference
+/// a half-written task. The connector must exist and be enabled: you can only
+/// attribute a task you could have browsed.
+pub async fn attribute_entry_to_remote_task_impl(
+    state: State<'_, AppState>,
+    input: AttributeRemoteTaskInput,
+) -> Result<AttributedEntry, String> {
+    let host = connector_host(&state);
+    host.get(&input.connector_id)
+        .ok_or_else(|| format!("unknown connector '{}'", input.connector_id))?;
+    ensure_connector_enabled(&state, &input.connector_id).await?;
+
+    let now = Utc::now().to_rfc3339();
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let mut tx = state.db.pool.begin().await.map_err(err)?;
+
+    // Intern the remote task in one statement: insert on first sight, refresh
+    // on re-attribution. The conflict target is the partial unique index
+    // `tasks_remote_idx` (connector_id, remote_id), so its WHERE predicate is
+    // repeated. The minted `new_id` is discarded on conflict; RETURNING yields
+    // the row either way. Re-attributing is an explicit "this is active again"
+    // signal, so clear `archived`.
+    let task = task_from_row(
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, project_id, name, connector_id, remote_id, remote_url, remote_project_name, archived, created_at, updated_at)
+            VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7)
+            ON CONFLICT(connector_id, remote_id) WHERE connector_id IS NOT NULL
+            DO UPDATE SET name = excluded.name,
+                          remote_url = excluded.remote_url,
+                          remote_project_name = excluded.remote_project_name,
+                          archived = 0,
+                          updated_at = excluded.updated_at
+            RETURNING id, project_id, name, archived, connector_id, remote_id, remote_url, remote_project_name
+            "#,
+        )
+        .bind(&new_id)
+        .bind(&input.label)
+        .bind(&input.connector_id)
+        .bind(&input.remote_id)
+        .bind(&input.url)
+        .bind(&input.remote_project_name)
+        .bind(&now)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(err)?,
+    );
+
+    // Point the entry at the interned task. A missing entry is a caller bug
+    // (the UI attributes an entry it already holds), not user input.
+    let affected = sqlx::query("UPDATE entries SET task_id = ?1, updated_at = ?2 WHERE id = ?3")
+        .bind(&task.id)
+        .bind(&now)
+        .bind(&input.entry_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?
+        .rows_affected();
+    if affected == 0 {
+        return Err(format!("unknown entry '{}'", input.entry_id));
+    }
+
+    let entry_row = sqlx::query(
+        "SELECT id, project_id, task_id, description, started_at, ended_at, source, rule_id FROM entries WHERE id = ?1",
+    )
+    .bind(&input.entry_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(err)?;
+
+    tx.commit().await.map_err(err)?;
+
+    Ok(AttributedEntry {
+        task,
+        entry: entry_from_row(entry_row)?,
+    })
+}
+
 #[cfg(test)]
 #[cfg(not(target_os = "windows"))]
 mod connector_tests {
@@ -6819,6 +6921,183 @@ mod connector_tests {
         .unwrap();
         assert!(!got.stale);
         assert_eq!(got.items, sample_projects());
+    }
+
+    async fn closed_entry(state: State<'_, AppState>) -> String {
+        create_entry(
+            state,
+            CreateEntryInput {
+                project_id: None,
+                task_id: None,
+                description: "work".into(),
+                started_at: "2026-05-23T08:00:00+00:00".into(),
+                ended_at: Some("2026-05-23T09:00:00+00:00".into()),
+                source: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    fn attr_input(entry_id: &str, remote_id: &str, label: &str) -> AttributeRemoteTaskInput {
+        AttributeRemoteTaskInput {
+            entry_id: entry_id.into(),
+            connector_id: FIXTURE_CONNECTOR_ID.into(),
+            remote_id: remote_id.into(),
+            label: label.into(),
+            url: Some(format!("https://example.test/{remote_id}")),
+            remote_project_name: Some("Acme".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn attribute_interns_a_remote_task_and_links_the_entry() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry_id = closed_entry(state.clone()).await;
+
+        let result = attribute_entry_to_remote_task_impl(
+            state.clone(),
+            attr_input(&entry_id, "42", "Fix bug"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.task.name, "Fix bug");
+        assert!(
+            result.task.project_id.is_none(),
+            "remote task has no local project"
+        );
+        assert_eq!(
+            result.task.connector_id.as_deref(),
+            Some(FIXTURE_CONNECTOR_ID)
+        );
+        assert_eq!(result.task.remote_id.as_deref(), Some("42"));
+        assert_eq!(
+            result.task.remote_url.as_deref(),
+            Some("https://example.test/42")
+        );
+        assert_eq!(result.task.remote_project_name.as_deref(), Some("Acme"));
+        assert_eq!(
+            result.entry.task_id.as_deref(),
+            Some(result.task.id.as_str())
+        );
+
+        // The interned task is listable with its remote fields populated.
+        let all = list_tasks(state, None).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].remote_id.as_deref(), Some("42"));
+    }
+
+    #[tokio::test]
+    async fn re_attributing_the_same_remote_task_reuses_the_row_and_refreshes_it() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry_a = closed_entry(state.clone()).await;
+        let entry_b = closed_entry(state.clone()).await;
+
+        let first = attribute_entry_to_remote_task_impl(
+            state.clone(),
+            attr_input(&entry_a, "42", "Old title"),
+        )
+        .await
+        .unwrap();
+
+        // Re-attribute the same remote id from another entry, with a fresh
+        // label — the row is reused (same id) and its name refreshed.
+        let mut second_input = attr_input(&entry_b, "42", "New title");
+        second_input.url = Some("https://example.test/42-moved".into());
+        let second = attribute_entry_to_remote_task_impl(state.clone(), second_input)
+            .await
+            .unwrap();
+
+        assert_eq!(second.task.id, first.task.id, "same row reused");
+        assert_eq!(second.task.name, "New title", "label refreshed");
+        assert_eq!(
+            second.task.remote_url.as_deref(),
+            Some("https://example.test/42-moved")
+        );
+
+        // Exactly one task row exists, and both entries point at it.
+        let all = list_tasks(state, None).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(second.entry.task_id, first.entry.task_id);
+    }
+
+    #[tokio::test]
+    async fn a_remote_task_may_share_a_name_with_a_local_one() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        save_task(
+            state.clone(),
+            TaskInput {
+                id: None,
+                project_id: "cairn".into(),
+                name: "Fix bug".into(),
+                archived: false,
+            },
+        )
+        .await
+        .unwrap();
+        let entry_id = closed_entry(state.clone()).await;
+
+        // The partial unique indexes scope (project_id, name) to local rows
+        // only, so a remote task with the same label does not collide.
+        attribute_entry_to_remote_task_impl(state.clone(), attr_input(&entry_id, "42", "Fix bug"))
+            .await
+            .unwrap();
+
+        let all = list_tasks(state, None).await.unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn attribute_rejects_an_unknown_connector() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry_id = closed_entry(state.clone()).await;
+        let mut input = attr_input(&entry_id, "42", "Fix bug");
+        input.connector_id = "nope".into();
+        let err = attribute_entry_to_remote_task_impl(state, input)
+            .await
+            .unwrap_err();
+        assert!(err.contains("nope"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn attribute_rejects_a_disabled_connector() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let entry_id = closed_entry(state.clone()).await;
+        set_connector_enabled_impl(state.clone(), FIXTURE_CONNECTOR_ID.into(), false)
+            .await
+            .unwrap();
+        let err =
+            attribute_entry_to_remote_task_impl(state, attr_input(&entry_id, "42", "Fix bug"))
+                .await
+                .unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn attribute_rejects_an_unknown_entry_without_interning() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = attribute_entry_to_remote_task_impl(
+            state.clone(),
+            attr_input("ghost-entry", "42", "Fix bug"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("ghost-entry"), "{err}");
+
+        // The failed link rolled the transaction back — no orphan task remains.
+        let all = list_tasks(state, None).await.unwrap();
+        assert!(
+            all.is_empty(),
+            "interned task must roll back with the failed link"
+        );
     }
 }
 

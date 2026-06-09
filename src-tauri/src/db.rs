@@ -106,6 +106,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn migration_0012_preserves_entry_task_links() {
+        use sqlx::sqlite::SqliteConnectOptions;
+        use sqlx::SqlitePool;
+
+        let dir = crate::test_support::temp_dir();
+        let path = dir.path().join("m.sqlite");
+        // Foreign keys ON, exactly as production opens the pool — this is what
+        // makes `DROP TABLE tasks` cascade into `entries.task_id`.
+        let opts = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePool::connect_with(opts).await.unwrap();
+
+        // The pre-0012 shape: a local task an entry is attributed to, with the
+        // same ON DELETE actions production declares.
+        for ddl in [
+            "CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)",
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(project_id, name))",
+            "CREATE TABLE entries (id TEXT PRIMARY KEY NOT NULL, task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL)",
+            "INSERT INTO projects VALUES ('p', 'P')",
+            "INSERT INTO tasks (id, project_id, name, created_at, updated_at) VALUES ('t', 'p', 'Task', 'x', 'x')",
+            "INSERT INTO entries VALUES ('e', 't')",
+        ] {
+            sqlx::query(ddl).execute(&pool).await.unwrap();
+        }
+
+        // Apply exactly the migration that ships.
+        let migration = include_str!("../migrations/0012_remote_tasks.sql");
+        sqlx::raw_sql(migration).execute(&pool).await.unwrap();
+
+        let task_id: Option<String> = sqlx::query("SELECT task_id FROM entries WHERE id = 'e'")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("task_id");
+        assert_eq!(
+            task_id.as_deref(),
+            Some("t"),
+            "0012 must preserve the entry→task link across the table rebuild"
+        );
+
+        // The rebuilt table has the remote columns and a nullable project_id.
+        sqlx::query("INSERT INTO tasks (id, project_id, name, connector_id, remote_id, archived, created_at, updated_at) VALUES ('r', NULL, 'Task', 'gh', '9', 0, 'x', 'x')")
+            .execute(&pool)
+            .await
+            .expect("a remote task with a NULL project and a duplicate name must be accepted");
+    }
+
+    #[tokio::test]
     async fn open_seeds_default_clients() {
         let (_dir, db) = test_db().await;
         let count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM clients")
