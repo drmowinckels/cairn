@@ -137,6 +137,18 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
 
         for page in 0..MAX_PAGES {
             ctx.set("cursor", cursor.clone());
+            // `cursorLiteral` is the cursor as a JSON/GraphQL value — `null`
+            // on the first page, else a quoted+escaped string — for GraphQL
+            // bodies where `after:""` is rejected (GitHub) but `after:null`
+            // and `after:"<cursor>"` are accepted. Built via serde so the
+            // string is correctly escaped; the body's `Escape::Json` fill then
+            // nests it inside the query string. (#193)
+            let cursor_literal = if cursor.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(cursor.clone())
+            };
+            ctx.set("cursorLiteral", cursor_literal.to_string());
             ctx.set("offset", offset.to_string());
 
             let req = request::build(&self.base, op, ctx, &spec.auth, token.as_deref())?;
@@ -519,6 +531,67 @@ mod tests {
         );
     }
 
+    const GRAPHQL_BODY_CURSOR: &str = r#"{
+        "manifest": 1, "id": "ghb", "name": "GHB", "kind": "http",
+        "capabilities": ["network", "secrets"],
+        "auth": { "type": "bearer", "secret": "gh" },
+        "baseUrl": "https://api.github.com",
+        "operations": {
+            "listProjects": {
+                "request": { "method": "GET", "path": "/p" },
+                "response": { "items": "data.nodes", "map": { "id": "id", "name": "title" } }
+            },
+            "listTasks": {
+                "request": { "method": "POST", "path": "/graphql",
+                    "body": "{\"query\":\"items(after:{{cursorLiteral}})\"}" },
+                "response": { "items": "data.nodes", "map": { "id": "id", "label": "title" } },
+                "pagination": { "type": "cursor", "cursorPath": "data.page.end", "hasMorePath": "data.page.more" }
+            }
+        }
+    }"#;
+
+    #[tokio::test]
+    async fn cursor_literal_is_null_then_a_quoted_string_in_a_graphql_body() {
+        // GitHub GraphQL rejects `after:""`, so the first page must send
+        // `after:null` and later pages `after:"<endCursor>"` (#193).
+        let gh = FakeSecrets(BTreeMap::from([("gh".into(), "t".into())]));
+        let fetcher = FakeFetcher::with(&[
+            r#"{"data":{"nodes":[{"id":"1","title":"a"}],"page":{"end":"C2","more":true}}}"#,
+            r#"{"data":{"nodes":[{"id":"2","title":"b"}],"page":{"end":"","more":false}}}"#,
+        ]);
+        let c = connector(GRAPHQL_BODY_CURSOR, fetcher, gh);
+        let tasks = c.list_tasks(&RemoteProjectRef::new("x")).await.unwrap();
+        assert_eq!(tasks.len(), 2, "both pages collected");
+
+        let DeclarativeConnector { fetcher, .. } = &c;
+        let seen = fetcher.seen.lock().unwrap();
+        let page1 = seen[0].body.as_deref().unwrap();
+        let page2 = seen[1].body.as_deref().unwrap();
+        assert!(
+            page1.contains("after:null"),
+            "page 1 omits the cursor: {page1}"
+        );
+        // The endCursor is a quoted GraphQL string, JSON-escaped in the body.
+        assert!(
+            page2.contains(r#"after:\"C2\""#),
+            "page 2 quotes the cursor: {page2}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_when_has_more_is_true_but_the_cursor_is_empty() {
+        // A malformed server (hasNextPage:true but a null/empty endCursor)
+        // must not loop: only ONE response is seeded, so a second fetch would
+        // error "ran out of responses". The no-forward-progress guard stops it.
+        let gh = FakeSecrets(BTreeMap::from([("gh".into(), "t".into())]));
+        let fetcher = FakeFetcher::with(&[
+            r#"{"data":{"nodes":[{"id":"1","title":"a"}],"page":{"end":"","more":true}}}"#,
+        ]);
+        let c = connector(GRAPHQL_BODY_CURSOR, fetcher, gh);
+        let tasks = c.list_tasks(&RemoteProjectRef::new("x")).await.unwrap();
+        assert_eq!(tasks.len(), 1, "stopped after the single page");
+    }
+
     const OFFSET: &str = r#"{
         "manifest": 1, "id": "off", "name": "Off", "kind": "http",
         "capabilities": ["network"],
@@ -636,6 +709,37 @@ mod tests {
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.url, "https://api.github.com/graphql");
         assert_eq!(req.headers["Authorization"], "Bearer ghp_x");
+    }
+
+    #[tokio::test]
+    async fn bundled_github_projects_walks_pages_via_pageinfo() {
+        // Verifies the bundled manifest's real cursorPath/hasMorePath against
+        // GitHub's `pageInfo { hasNextPage endCursor }` shape (#193).
+        let fetcher = FakeFetcher::with(&[
+            r#"{"data":{"viewer":{"projectsV2":{
+                "pageInfo":{"hasNextPage":true,"endCursor":"CUR2"},
+                "nodes":[{"id":"PVT_1","title":"Roadmap"}]}}}}"#,
+            r#"{"data":{"viewer":{"projectsV2":{
+                "pageInfo":{"hasNextPage":false,"endCursor":null},
+                "nodes":[{"id":"PVT_2","title":"Bugs"}]}}}}"#,
+        ]);
+        let c = connector(
+            crate::connectors::builtin::GITHUB_PROJECTS,
+            fetcher,
+            github_secrets(),
+        );
+        let projects = c.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 2, "both pages collected");
+
+        let DeclarativeConnector { fetcher, .. } = &c;
+        let seen = fetcher.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[0].body.as_deref().unwrap().contains("after:null"));
+        assert!(seen[1]
+            .body
+            .as_deref()
+            .unwrap()
+            .contains(r#"after:\"CUR2\""#));
     }
 
     #[tokio::test]

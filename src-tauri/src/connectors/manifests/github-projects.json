@@ -11,22 +11,32 @@
       "request": {
         "method": "POST",
         "path": "/graphql",
-        "body": "{\"query\":\"{ viewer { projectsV2(first:20){nodes{id title}} } }\"}"
+        "body": "{\"query\":\"{ viewer { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } }\"}"
       },
       "response": {
         "items": "data.viewer.projectsV2.nodes",
         "map": { "id": "id", "name": "title" }
+      },
+      "pagination": {
+        "type": "cursor",
+        "cursorPath": "data.viewer.projectsV2.pageInfo.endCursor",
+        "hasMorePath": "data.viewer.projectsV2.pageInfo.hasNextPage"
       }
     },
     "listTasks": {
       "request": {
         "method": "POST",
         "path": "/graphql",
-        "body": "{\"query\":\"{ node(id:\\\"{{project.id}}\\\"){ ... on ProjectV2 { items(first:50){nodes{id content{... on DraftIssue{title} ... on Issue{title url} ... on PullRequest{title url}}}} } } }\"}"
+        "body": "{\"query\":\"{ node(id:\\\"{{project.id}}\\\"){ ... on ProjectV2 { items(first:50, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id content{... on DraftIssue{title} ... on Issue{title url} ... on PullRequest{title url}}}} } } }\"}"
       },
       "response": {
         "items": "data.node.items.nodes",
         "map": { "id": "id", "label": "content.title", "url": "content.url" }
+      },
+      "pagination": {
+        "type": "cursor",
+        "cursorPath": "data.node.items.pageInfo.endCursor",
+        "hasMorePath": "data.node.items.pageInfo.hasNextPage"
       }
     }
   }

@@ -165,11 +165,12 @@ Request templates are filled by **value substitution only**, escaped for
 where they land (URL-encoded in `query`, JSON-escaped in `body`), so a
 value can never inject request _structure_.
 
-| Variable                            | Available in           | Is                                                   |
-| ----------------------------------- | ---------------------- | ---------------------------------------------------- |
-| <code v-pre>{{project.id}}</code>   | `listTasks`            | the id of the project being listed                   |
-| <code v-pre>{{project.name}}</code> | `listTasks`            | its name                                             |
-| <code v-pre>{{cursor}}</code>       | any, with `pagination` | the current page cursor (empty on the first request) |
+| Variable                             | Available in                  | Is                                                                                                                                                                                      |
+| ------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <code v-pre>{{project.id}}</code>    | `listTasks`                   | the id of the project being listed                                                                                                                                                      |
+| <code v-pre>{{project.name}}</code>  | `listTasks`                   | its name                                                                                                                                                                                |
+| <code v-pre>{{cursor}}</code>        | any, with `pagination`        | the current page cursor (empty on the first request)                                                                                                                                    |
+| <code v-pre>{{cursorLiteral}}</code> | any, with cursor `pagination` | the cursor as a JSON/GraphQL value — `null` on the first request, else a quoted, escaped string. Use it inside a GraphQL body (`after:{{cursorLiteral}}`) where `after:""` is rejected. |
 
 ### Pagination (optional)
 
@@ -233,22 +234,32 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
       "request": {
         "method": "POST",
         "path": "/graphql",
-        "body": "{\"query\":\"{ viewer { projectsV2(first:20){nodes{id title}} } }\"}"
+        "body": "{\"query\":\"{ viewer { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } }\"}"
       },
       "response": {
         "items": "data.viewer.projectsV2.nodes",
         "map": { "id": "id", "name": "title" }
+      },
+      "pagination": {
+        "type": "cursor",
+        "cursorPath": "data.viewer.projectsV2.pageInfo.endCursor",
+        "hasMorePath": "data.viewer.projectsV2.pageInfo.hasNextPage"
       }
     },
     "listTasks": {
       "request": {
         "method": "POST",
         "path": "/graphql",
-        "body": "{\"query\":\"{ node(id:\\\"{{project.id}}\\\"){ ... on ProjectV2 { items(first:50){nodes{id content{... on Issue{title url}}}} } } }\"}"
+        "body": "{\"query\":\"{ node(id:\\\"{{project.id}}\\\"){ ... on ProjectV2 { items(first:50, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id content{... on Issue{title url}}}} } } }\"}"
       },
       "response": {
         "items": "data.node.items.nodes",
         "map": { "id": "id", "label": "content.title", "url": "content.url" }
+      },
+      "pagination": {
+        "type": "cursor",
+        "cursorPath": "data.node.items.pageInfo.endCursor",
+        "hasMorePath": "data.node.items.pageInfo.hasNextPage"
       }
     }
   }
@@ -258,12 +269,14 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
 > **Bundled version notes.** The shipped `github-projects` manifest spreads
 > all three `ProjectV2ItemContent` members (`DraftIssue`/`Issue`/`PullRequest`)
 > so every card yields a `label` — covering only `Issue` makes one draft or PR
-> fail the whole list (`label` is required, mapping fails fast). It reads the
-> first page only (`first:20` projects / `first:50` items); cursor pagination
-> is a tracked follow-up. Values templated into a GraphQL **string literal**
-> (`id:"{{project.id}}"`) are JSON-escaped but not GraphQL-string-escaped —
-> safe here because the id is an opaque GitHub node id from `listProjects`, and
-> the host is pinned, so the worst case is a malformed read-only query.
+> fail the whole list (`label` is required, mapping fails fast). It follows
+> cursor pagination via `pageInfo { hasNextPage endCursor }` and
+> <code v-pre>after:{{cursorLiteral}}</code> (#193) — `after:null` on the first
+> page, then `after:"<endCursor>"` — capped by the usual page/item limits.
+> Values templated into a GraphQL **string literal** (`id:"{{project.id}}"`)
+> are JSON-escaped but not GraphQL-string-escaped — safe here because the id is
+> an opaque GitHub node id from `listProjects`, and the host is pinned, so the
+> worst case is a malformed read-only query.
 
 **Trello (REST, token in query):**
 
