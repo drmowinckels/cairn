@@ -154,6 +154,14 @@ async fn install_connector_manifest(
 }
 
 #[tauri::command]
+async fn attribute_entry_to_remote_task(
+    state: tauri::State<'_, AppState>,
+    input: ipc::AttributeRemoteTaskInput,
+) -> Result<ipc::AttributedEntry, String> {
+    ipc::attribute_entry_to_remote_task_impl(state, input).await
+}
+
+#[tauri::command]
 async fn list_connector_projects(
     state: tauri::State<'_, AppState>,
     connector_id: String,
@@ -436,6 +444,7 @@ pub fn run() {
             install_connector_manifest,
             list_connector_projects,
             list_connector_tasks,
+            attribute_entry_to_remote_task,
             ipc::dry_run_rules,
             ipc::snooze_rule,
             ipc::snooze_all,
