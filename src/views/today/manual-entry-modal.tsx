@@ -37,6 +37,9 @@ export interface ManualEntryDraft {
   startedLocal: string;
   /** Local-datetime form value or empty string for "running". */
   endedLocal: string;
+  /** Pre-existing connector-task link (#110), seeded on edit so the chip shows
+   *  the current attribution. `null`/absent ⇒ not linked. */
+  remoteTask?: PickedRemoteTask | null;
 }
 
 export interface ManualEntrySubmit {
@@ -87,6 +90,16 @@ interface Props {
   connectors?: Connector[];
   onDelete?: (id: string) => Promise<void>;
   onClose: () => void;
+}
+
+/** Whether two connector-task links refer to the same remote task (#110) —
+ *  used to skip a needless re-attribution on an untouched edit-save. Both
+ *  `null` counts as same. */
+export function sameRemoteLink(
+  a: PickedRemoteTask | null,
+  b: PickedRemoteTask | null,
+): boolean {
+  return a?.connectorId === b?.connectorId && a?.remoteId === b?.remoteId;
 }
 
 const EMPTY_DRAFT: ManualEntryDraft = {
@@ -185,7 +198,7 @@ export function ManualEntryModal({
       setCreatingTaskBusy(false);
       setNewTaskName("");
       setCreateTaskError(null);
-      setRemoteTask(null);
+      setRemoteTask(initial.remoteTask ?? null);
       setShowRemotePicker(false);
       // Drop the previous project's tasks so a reopen for a different
       // project can't flash a stale list before loadTasks resolves.
@@ -213,21 +226,26 @@ export function ManualEntryModal({
     if (!validation.ok) return;
     setSubmitting(true);
     setError(null);
+    // Only (re)attribute when the connector-task link actually changed this
+    // session. An unchanged seeded link is already on `draft.taskId`, so
+    // re-nulling + re-linking it would be wasteful and — because the null and
+    // the re-link are separate transactions — would PERMANENTLY drop the link
+    // if the connector is now disabled (the null commits, the re-link fails).
+    // #110
+    const linkChanged = !sameRemoteLink(remoteTask, initial.remoteTask ?? null);
     try {
       await onSubmit({
         id: draft.id,
         projectId: draft.projectId,
-        // A linked remote task supersedes the local one (both resolve to
-        // entries.task_id). Otherwise keep the current task id: clearing the
-        // project already nulls a local task selection (see the Project
-        // onChange), so a non-null id here is a valid local OR remote task —
-        // nulling it on a missing project would silently drop a remote link
-        // when editing a project-less attributed entry.
-        taskId: remoteTask ? null : draft.taskId,
+        // When the link changed we null the task id and let attribution (or an
+        // unlink) set it. Otherwise keep the current id — a non-null value is a
+        // valid local OR unchanged remote task; clearing the project already
+        // nulls a local selection (see the Project onChange).
+        taskId: linkChanged ? null : draft.taskId,
         description: draft.description.trim(),
         startedAt: localToIso(draft.startedLocal),
         endedAt: draft.endedLocal ? localToIso(draft.endedLocal) : null,
-        remoteTask,
+        remoteTask: linkChanged ? remoteTask : null,
       });
       onClose();
     } catch (err) {

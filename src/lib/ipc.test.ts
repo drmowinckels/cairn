@@ -224,6 +224,21 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
+  it("listTasks forwards the project id and coerces a null result to []", async () => {
+    invokeMock.mockResolvedValue([{ id: "t1" }]);
+    const { listTasks } = await import("./ipc");
+    expect(await listTasks("p1")).toEqual([{ id: "t1" }]);
+    expect(invokeMock).toHaveBeenCalledWith("list_tasks", { projectId: "p1" });
+    // A null projectId is forwarded as null (all tasks).
+    await listTasks();
+    expect(invokeMock).toHaveBeenLastCalledWith("list_tasks", {
+      projectId: null,
+    });
+    // The a11y-audit stub returns null → guard to [].
+    invokeMock.mockResolvedValue(null);
+    expect(await listTasks(null)).toEqual([]);
+  });
+
   it("attributeEntryToRemoteTask forwards the input under an `input` key", async () => {
     const result = { entry: { id: "e1" }, task: { id: "t1" } };
     invokeMock.mockResolvedValue(result);

@@ -1534,6 +1534,17 @@ body {
   white-space: nowrap;
 }
 
+.entry-remote {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--accent-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .entry-dur {
   font-family: var(--mono);
   font-size: 12.5px;

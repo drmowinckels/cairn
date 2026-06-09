@@ -28,6 +28,7 @@ import {
   type BackendEntry,
 } from "../../lib/ipc";
 import { useConnectors } from "../../lib/use-connectors";
+import { useTaskMap } from "../../lib/use-tasks";
 import {
   WORKING_HOURS_OFF,
   type WorkingHours,
@@ -46,6 +47,7 @@ import type {
   DetectionPrompts,
   LayoutVariant,
   Project,
+  Task,
 } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
 import { SuggestWhy } from "./suggest-why";
@@ -64,6 +66,38 @@ import {
   type RequiredFieldsPrefs,
 } from "../../lib/required-fields";
 import type { PickedRemoteTask } from "./remote-task-picker";
+
+/** Build the editor's connector-task link from a resolved task, or null when
+ *  the task is local / absent (#110). */
+export function remoteTaskOf(task: Task | undefined): PickedRemoteTask | null {
+  if (!task?.connectorId || !task.remoteId) return null;
+  return {
+    connectorId: task.connectorId,
+    remoteId: task.remoteId,
+    label: task.name,
+    url: task.remoteUrl ?? null,
+    remoteProjectName: task.remoteProjectName ?? null,
+  };
+}
+
+/** Seed a manual-entry edit draft from a saved entry, resolving its task id to
+ *  the connector-task link so the chip shows on open (#110). */
+export function draftFromEntry(
+  entry: BackendEntry,
+  tasksById: Record<string, Task>,
+): ManualEntryDraft {
+  return {
+    id: entry.id,
+    projectId: entry.projectId,
+    taskId: entry.taskId,
+    description: entry.description,
+    startedLocal: isoToLocal(entry.startedAt),
+    endedLocal: isoToLocal(entry.endedAt ?? ""),
+    remoteTask: remoteTaskOf(
+      entry.taskId ? tasksById[entry.taskId] : undefined,
+    ),
+  };
+}
 
 /** Attribute a just-saved entry to a picked connector task (#110). Returns a
  *  user-facing message if linking failed — the entry is already saved, so we
@@ -120,6 +154,7 @@ export function TodayView({
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
   const { connectors } = useConnectors();
+  const { byId: tasksById, refresh: refreshTasks } = useTaskMap();
   const today = useToday();
   const upcoming = useUpcoming(3);
   const calendars = useCalendars();
@@ -314,20 +349,16 @@ export function TodayView({
     });
   }, []);
 
-  const openEdit = useCallback((entry: BackendEntry) => {
-    setModalState({
-      open: true,
-      mode: "edit",
-      draft: {
-        id: entry.id,
-        projectId: entry.projectId,
-        taskId: entry.taskId,
-        description: entry.description,
-        startedLocal: isoToLocal(entry.startedAt),
-        endedLocal: isoToLocal(entry.endedAt ?? ""),
-      },
-    });
-  }, []);
+  const openEdit = useCallback(
+    (entry: BackendEntry) => {
+      setModalState({
+        open: true,
+        mode: "edit",
+        draft: draftFromEntry(entry, tasksById),
+      });
+    },
+    [tasksById],
+  );
 
   const closeModal = useCallback(() => {
     setModalState({ open: false });
@@ -361,15 +392,16 @@ export function TodayView({
           });
       // Attribute to a connector task once the entry exists, so the intern +
       // link land on a real entry id (#110).
-      const linkError = await linkRemoteTask(
-        payload.remoteTask,
-        entry.id,
-        today.refresh,
+      // A successful attribution interns a task and changes the entry, so the
+      // helper's refresh reloads both the entries and the task map (the latter
+      // feeds the row chip). It only refreshes when a task was picked.
+      const linkError = await linkRemoteTask(payload.remoteTask, entry.id, () =>
+        Promise.all([today.refresh(), refreshTasks()]).then(() => undefined),
       );
       if (linkError) setAttributeError(linkError);
       void timer.refresh();
     },
-    [today, timer],
+    [today, timer, refreshTasks],
   );
 
   const handleDelete = useCallback(
@@ -413,15 +445,21 @@ export function TodayView({
     return [...closed]
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
       .slice(0, 4)
-      .map((e) => ({
-        id: e.id,
-        projectId: e.projectId,
-        description: e.description,
-        startedAt: e.startedAt,
-        endedAt: e.endedAt,
-        source: e.source,
-      }));
-  }, [todayEntries]);
+      .map((e) => {
+        const task = e.taskId ? tasksById[e.taskId] : undefined;
+        return {
+          id: e.id,
+          projectId: e.projectId,
+          description: e.description,
+          startedAt: e.startedAt,
+          endedAt: e.endedAt,
+          source: e.source,
+          // Only remote (connector) tasks get the chip; local task names
+          // aren't surfaced on the row.
+          remoteTaskLabel: task?.connectorId ? task.name : null,
+        };
+      });
+  }, [todayEntries, tasksById]);
 
   const findEntryById = useCallback(
     (id: string): BackendEntry | undefined =>

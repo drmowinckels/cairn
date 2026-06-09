@@ -51,6 +51,52 @@ describe("useTasks (browser-dev)", () => {
   });
 });
 
+describe("useTaskMap", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("is empty outside Tauri", async () => {
+    delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    const { useTaskMap } = await import("./use-tasks");
+    const { result } = renderHook(() => useTaskMap());
+    expect(result.current.byId).toEqual({});
+  });
+
+  it("keys all tasks by id inside Tauri", async () => {
+    (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
+    invokeMock.mockResolvedValue([
+      { id: "t1", projectId: "p1", name: "Local", archived: false },
+      {
+        id: "t2",
+        projectId: null,
+        name: "Fix bug",
+        archived: false,
+        connectorId: "gh",
+        remoteId: "42",
+      },
+    ]);
+    const { useTaskMap } = await import("./use-tasks");
+    const { result } = renderHook(() => useTaskMap());
+    await waitFor(() => expect(result.current.byId.t2).toBeTruthy());
+    expect(invokeMock).toHaveBeenCalledWith("list_tasks", { projectId: null });
+    expect(result.current.byId.t2.connectorId).toBe("gh");
+    delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+  });
+
+  it("falls back to an empty map when the list call throws", async () => {
+    (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
+    invokeMock.mockRejectedValue(new Error("boom"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { useTaskMap } = await import("./use-tasks");
+    const { result } = renderHook(() => useTaskMap());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(result.current.byId).toEqual({});
+    spy.mockRestore();
+    delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+  });
+});
+
 describe("useTasks (inside Tauri)", () => {
   let original: unknown;
   beforeEach(() => {

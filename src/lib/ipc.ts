@@ -82,7 +82,11 @@ export async function projectBudgetStatus(
 
 export async function listTasks(projectId?: string | null): Promise<Task[]> {
   if (!inTauri) return [];
-  return invoke<Task[]>("list_tasks", { projectId: projectId ?? null });
+  // `?? []` guards the a11y audit's stubbed `invoke` (returns null), mirroring
+  // `listConnectors`; a real backend always returns an array.
+  return (
+    (await invoke<Task[]>("list_tasks", { projectId: projectId ?? null })) ?? []
+  );
 }
 
 export interface SaveTaskInput {
