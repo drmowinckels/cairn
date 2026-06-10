@@ -66,6 +66,27 @@ describe("useIdleWindow", () => {
     );
   });
 
+  it("logs and leaves tracking null if the lookup rejects", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderHook(() =>
+      useIdleWindow({
+        enabled: true,
+        listen: noopListen(),
+        pendingIdle: vi.fn().mockResolvedValue(RESUME) as never,
+        currentRunning: vi.fn().mockRejectedValue(new Error("boom")) as never,
+        listProjects: vi.fn().mockResolvedValue([PROJECT]) as never,
+      }),
+    );
+    await waitFor(() =>
+      expect(err).toHaveBeenCalledWith(
+        "idle tracking lookup failed",
+        expect.any(Error),
+      ),
+    );
+    expect(result.current.tracking).toBeNull();
+    err.mockRestore();
+  });
+
   it("leaves tracking null when nothing is running", async () => {
     const { result } = renderHook(() =>
       useIdleWindow({

@@ -1826,7 +1826,7 @@ body {
   background: var(--bg-soft);
 }
 
-@media (min-width: 620px) {
+@media (width >= 620px) {
   .rep-digest {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -2258,6 +2258,7 @@ body {
 
 .rule-disclose {
   display: grid;
+
   /* Name keeps a readable floor; the summary (a nowrap project chip) gets a
      `minmax(0, …)` track so it clips instead of squeezing the name to a few
      characters. */
@@ -3343,6 +3344,7 @@ select.rule-conf {
   100% {
     opacity: 0.4;
   }
+
   50% {
     opacity: 1;
   }
