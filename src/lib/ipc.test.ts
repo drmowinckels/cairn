@@ -261,14 +261,16 @@ describe("ipc helpers (inside Tauri)", () => {
   it("setConnectorSecret / clearConnectorSecret forward their args", async () => {
     invokeMock.mockResolvedValue([]);
     const { setConnectorSecret, clearConnectorSecret } = await import("./ipc");
-    await setConnectorSecret("remote", "ghp_x");
+    await setConnectorSecret("remote", "trello_key", "ghp_x");
     expect(invokeMock).toHaveBeenCalledWith("set_connector_secret", {
       connectorId: "remote",
+      secretKey: "trello_key",
       token: "ghp_x",
     });
-    await clearConnectorSecret("remote");
+    await clearConnectorSecret("remote", null);
     expect(invokeMock).toHaveBeenCalledWith("clear_connector_secret", {
       connectorId: "remote",
+      secretKey: null,
     });
   });
 
@@ -316,8 +318,8 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(await listConnectors()).toEqual([]);
     expect(await listConnectorProjects("x")).toEqual(emptyList);
     expect(await listConnectorTasks("x", "y")).toEqual(emptyList);
-    expect(await setConnectorSecret("x", "t")).toEqual([]);
-    expect(await clearConnectorSecret("x")).toEqual([]);
+    expect(await setConnectorSecret("x", null, "t")).toEqual([]);
+    expect(await clearConnectorSecret("x", null)).toEqual([]);
   });
 });
 
@@ -363,8 +365,8 @@ describe("ipc helpers (outside Tauri)", () => {
   it("connector secret commands short-circuit to [] without the backend", async () => {
     const { setConnectorSecret, clearConnectorSecret, setConnectorEnabled } =
       await import("./ipc");
-    expect(await setConnectorSecret("x", "t")).toEqual([]);
-    expect(await clearConnectorSecret("x")).toEqual([]);
+    expect(await setConnectorSecret("x", null, "t")).toEqual([]);
+    expect(await clearConnectorSecret("x", null)).toEqual([]);
     expect(await setConnectorEnabled("x", false)).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });

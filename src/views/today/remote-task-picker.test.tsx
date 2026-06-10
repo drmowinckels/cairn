@@ -23,7 +23,7 @@ const CONNECTORS: Connector[] = [
     name: "GitHub Projects",
     capabilities: ["network", "secrets"],
     kind: { http: { baseUrl: "https://api.github.com" } },
-    secret: "set",
+    secrets: [],
     enabled: true,
   },
 ];
@@ -35,7 +35,7 @@ const TWO_CONNECTORS: Connector[] = [
     name: "GitLab",
     capabilities: ["network", "secrets"],
     kind: { http: { baseUrl: "https://gitlab.com" } },
-    secret: "set",
+    secrets: [],
     enabled: true,
   },
 ];

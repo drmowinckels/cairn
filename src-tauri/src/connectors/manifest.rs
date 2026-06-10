@@ -171,6 +171,37 @@ impl Auth {
     pub fn secret_key(&self) -> Option<&str> {
         self.secret_keys().into_iter().next()
     }
+
+    /// Each secret this auth needs paired with a human label for the settings
+    /// card. Single-credential variants use a generic label; `Multi` uses each
+    /// param's `name` (e.g. Trello's "key"/"token").
+    pub fn secret_refs(&self) -> Vec<SecretRef<'_>> {
+        match self {
+            Auth::None => Vec::new(),
+            Auth::Bearer { secret }
+            | Auth::Header { secret, .. }
+            | Auth::Query { secret, .. }
+            | Auth::Basic { secret, .. } => vec![SecretRef {
+                key: secret,
+                label: "API token",
+            }],
+            Auth::Multi { secrets } => secrets
+                .iter()
+                .map(|s| SecretRef {
+                    key: &s.secret,
+                    label: &s.name,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A secret a connector needs: its keychain `key` and a human `label` for the
+/// settings card. Borrowed from the [`Auth`]; not serialized itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecretRef<'a> {
+    pub key: &'a str,
+    pub label: &'a str,
 }
 
 /// One operation: a request template + how to read its response.
@@ -310,6 +341,16 @@ impl ConnectorManifest {
     /// apart from "fully local" without re-walking the kind.
     pub fn secret_key(&self) -> Option<&str> {
         self.kind.as_http().and_then(|spec| spec.auth.secret_key())
+    }
+
+    /// Every secret this connector needs (key + label), in declaration order;
+    /// empty for a connector that needs none. The settings card renders one
+    /// field per entry.
+    pub fn secret_refs(&self) -> Vec<SecretRef<'_>> {
+        self.kind
+            .as_http()
+            .map(|spec| spec.auth.secret_refs())
+            .unwrap_or_default()
     }
 
     /// Parse and validate a manifest from JSON.

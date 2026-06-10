@@ -30,7 +30,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub use manifest::{ConnectorKind, ConnectorManifest};
+pub use manifest::{ConnectorKind, ConnectorManifest, SecretRef};
 
 /// A project as seen in the remote planner. `Deserialize` so it round-trips
 /// through the offline [`cache`].
@@ -101,40 +101,63 @@ impl From<&RemoteProject> for RemoteProjectRef {
     }
 }
 
-/// Whether a connector's auth token is present, for the settings UI. The
-/// token itself never crosses this boundary — only its state does.
+/// Whether one of a connector's secrets is present, for the settings UI. The
+/// token itself never crosses this boundary — only its state does. (A
+/// connector that needs no secret has an empty `secrets` list, so there is no
+/// "not required" state per secret.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SecretState {
-    /// The connector needs no token (a local file, or `auth.type == none`).
-    NotRequired,
     /// A token is required but none is stored yet.
     Missing,
     /// A token is stored in the keychain.
     Set,
 }
 
-/// A connector manifest plus its current secret state — what
-/// `list_connectors` hands the settings card so it can render a "needs
-/// token" affordance without the token ever leaving the backend.
+/// One secret a connector needs, with its current presence — what the
+/// settings card renders a field for. The token never crosses this boundary,
+/// only whether it is `Set`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretView {
+    /// The keychain key, passed back to set/clear this specific secret.
+    pub key: String,
+    /// Human label for the field (e.g. "API token", or a Trello param name).
+    pub label: String,
+    /// `Set` if a token is stored, else `Missing`. Never `NotRequired` — a
+    /// connector with no secrets simply has an empty `secrets` list.
+    pub state: SecretState,
+}
+
+/// A connector manifest plus the state of each secret it needs — what
+/// `list_connectors` hands the settings card so it can render a "needs token"
+/// affordance per secret without any token leaving the backend. An empty
+/// `secrets` means the connector needs none (a local file, or `auth: none`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConnectorView {
     #[serde(flatten)]
     pub manifest: ConnectorManifest,
-    pub secret: SecretState,
+    pub secrets: Vec<SecretView>,
     /// Whether the user has this connector enabled. A disabled connector is
     /// listed (with its toggle) but makes no requests — browsing is refused.
     pub enabled: bool,
 }
 
-/// Resolve a connector's [`SecretState`] from its secret key (if any) and
-/// the keychain. Pure over the store so it is unit-tested with a fake.
-pub fn secret_state(secret_key: Option<&str>, store: &dyn http::SecretStore) -> SecretState {
-    match secret_key {
-        None => SecretState::NotRequired,
-        Some(key) if store.token(key).is_some() => SecretState::Set,
-        Some(_) => SecretState::Missing,
-    }
+/// Resolve a [`SecretView`] per secret a connector declares (key + label),
+/// reading presence from the keychain. Pure over the store so it is
+/// unit-tested with a fake.
+pub fn secret_views(refs: &[SecretRef<'_>], store: &dyn http::SecretStore) -> Vec<SecretView> {
+    refs.iter()
+        .map(|r| SecretView {
+            key: r.key.to_string(),
+            label: r.label.to_string(),
+            state: if store.token(r.key).is_some() {
+                SecretState::Set
+            } else {
+                SecretState::Missing
+            },
+        })
+        .collect()
 }
 
 /// Validate then store a connector's token. Rejects a connector that takes
@@ -489,15 +512,30 @@ mod tests {
     }
 
     #[test]
-    fn secret_state_reflects_need_and_presence() {
+    fn secret_views_reflect_need_and_presence_per_secret() {
         let kc = FakeKeychain::default();
-        assert_eq!(secret_state(None, &kc), SecretState::NotRequired);
-        assert_eq!(
-            secret_state(Some("github_token"), &kc),
-            SecretState::Missing
-        );
-        kc.set("github_token", "ghp_x").unwrap();
-        assert_eq!(secret_state(Some("github_token"), &kc), SecretState::Set);
+        // No declared secrets → empty (the connector needs none).
+        assert!(secret_views(&[], &kc).is_empty());
+
+        let refs = [
+            SecretRef {
+                key: "trello_key",
+                label: "key",
+            },
+            SecretRef {
+                key: "trello_token",
+                label: "token",
+            },
+        ];
+        kc.set("trello_key", "APPKEY").unwrap();
+        let views = secret_views(&refs, &kc);
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].key, "trello_key");
+        assert_eq!(views[0].label, "key");
+        assert_eq!(views[0].state, SecretState::Set);
+        // The second is declared but not yet stored.
+        assert_eq!(views[1].key, "trello_token");
+        assert_eq!(views[1].state, SecretState::Missing);
     }
 
     #[test]

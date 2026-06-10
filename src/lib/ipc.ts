@@ -825,11 +825,20 @@ export type ConnectorKind =
   | { file: { format: ConnectorFileFormat; path: string } }
   | { http: { baseUrl: string } };
 
-/** Whether a connector's auth token is present (mirrors Rust `SecretState`).
- *  `notRequired` — local, or `auth.type == none`; `missing` — a token is
- *  needed but none is stored; `set` — a token is in the keychain. The token
- *  itself never crosses IPC, only this state. */
-export type ConnectorSecretState = "notRequired" | "missing" | "set";
+/** Whether one of a connector's secrets is present (mirrors Rust
+ *  `SecretState`). `missing` — needed but not stored; `set` — in the keychain.
+ *  A connector needing no secret has an empty `secrets` list (there is no
+ *  "not required" per secret). The token itself never crosses IPC. */
+export type ConnectorSecretState = "missing" | "set";
+
+/** One secret a connector needs (mirrors Rust `SecretView`): its keychain
+ *  `key` (passed back to set/clear it), a human `label` for the field, and
+ *  whether a token is stored. */
+export interface ConnectorSecret {
+  key: string;
+  label: string;
+  state: ConnectorSecretState;
+}
 
 /** A connector manifest as validated by the backend (mirrors Rust
  *  `ConnectorManifest`) — what `previewConnectorManifest` returns so the
@@ -846,7 +855,9 @@ export interface Connector {
   name: string;
   capabilities: ConnectorCapability[];
   kind: ConnectorKind;
-  secret: ConnectorSecretState;
+  /** The secrets this connector needs, one card field each. Empty ⇒ none
+   *  (a local file, or `auth: none`). */
+  secrets: ConnectorSecret[];
   /** Whether the user has this connector enabled. A disabled connector is
    *  listed but makes no requests — browsing it is refused. */
   enabled: boolean;
@@ -881,24 +892,31 @@ export async function listConnectors(): Promise<Connector[]> {
  *  token is write-only — it is never read back. No-ops outside Tauri. */
 export async function setConnectorSecret(
   connectorId: string,
+  secretKey: string | null,
   token: string,
 ): Promise<Connector[]> {
   if (!inTauri) return [];
   return (
     (await invoke<Connector[]>("set_connector_secret", {
       connectorId,
+      secretKey,
       token,
     })) ?? []
   );
 }
 
-/** Clear a connector's stored auth token, returning the refreshed list. */
+/** Clear a connector's stored auth token, returning the refreshed list.
+ *  `secretKey` names which one for a multi-secret connector. */
 export async function clearConnectorSecret(
   connectorId: string,
+  secretKey: string | null,
 ): Promise<Connector[]> {
   if (!inTauri) return [];
   return (
-    (await invoke<Connector[]>("clear_connector_secret", { connectorId })) ?? []
+    (await invoke<Connector[]>("clear_connector_secret", {
+      connectorId,
+      secretKey,
+    })) ?? []
   );
 }
 

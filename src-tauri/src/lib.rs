@@ -118,17 +118,19 @@ async fn list_connectors(
 async fn set_connector_secret(
     state: tauri::State<'_, AppState>,
     connector_id: String,
+    secret_key: Option<String>,
     token: String,
 ) -> Result<Vec<connectors::ConnectorView>, String> {
-    ipc::set_connector_secret_impl(state, connector_id, token).await
+    ipc::set_connector_secret_impl(state, connector_id, secret_key, token).await
 }
 
 #[tauri::command]
 async fn clear_connector_secret(
     state: tauri::State<'_, AppState>,
     connector_id: String,
+    secret_key: Option<String>,
 ) -> Result<Vec<connectors::ConnectorView>, String> {
-    ipc::clear_connector_secret_impl(state, connector_id).await
+    ipc::clear_connector_secret_impl(state, connector_id, secret_key).await
 }
 
 #[tauri::command]

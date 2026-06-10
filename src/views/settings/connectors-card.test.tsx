@@ -45,12 +45,17 @@ vi.mock("../../lib/use-backup", async () => {
 
 import { ConnectorsCard } from "./connectors-card";
 
+/** The single keychain secret of `httpConnector`, in the given state. */
+const ghSecret = (state: "missing" | "set") => [
+  { key: "github_token", label: "API token", state },
+];
+
 const fileConnector = {
   id: "sample-tasks",
   name: "Sample tasks",
   capabilities: [] as const,
   kind: { file: { format: "todotxt" as const, path: "~/TODO.txt" } },
-  secret: "notRequired" as const,
+  secrets: [],
   enabled: true,
 };
 
@@ -59,7 +64,20 @@ const httpConnector = {
   name: "Remote",
   capabilities: ["network", "secrets"] as const,
   kind: { http: { baseUrl: "https://api.github.com" } },
-  secret: "missing" as const,
+  secrets: ghSecret("missing"),
+  enabled: true,
+};
+
+/** A two-secret connector (Trello-style: a `key` set, a `token` not). */
+const trelloConnector = {
+  id: "trello",
+  name: "Trello",
+  capabilities: ["network", "secrets"] as const,
+  kind: { http: { baseUrl: "https://api.trello.com" } },
+  secrets: [
+    { key: "trello_key", label: "key", state: "set" as const },
+    { key: "trello_token", label: "token", state: "missing" as const },
+  ],
   enabled: true,
 };
 
@@ -99,7 +117,7 @@ describe("ConnectorsCard", () => {
         name: "Todoist",
         capabilities: ["network", "secrets"],
         kind: { file: { format: "markdown", path: "/x.md" } },
-        secret: "notRequired",
+        secrets: [],
         enabled: true,
       },
     ]);
@@ -121,7 +139,7 @@ describe("ConnectorsCard", () => {
         name: "Broken",
         capabilities: ["network"],
         kind: { http: { baseUrl: "not a url" } },
-        secret: "notRequired",
+        secrets: [],
         enabled: true,
       },
     ]);
@@ -136,7 +154,7 @@ describe("ConnectorsCard", () => {
         name: "X",
         capabilities: [],
         kind: {},
-        secret: "notRequired",
+        secrets: [],
         enabled: true,
       },
     ]);
@@ -386,7 +404,9 @@ describe("ConnectorsCard", () => {
 
   it("stores a typed token and reflects the refreshed state", async () => {
     listConnectors.mockResolvedValue([httpConnector]);
-    setConnectorSecret.mockResolvedValue([{ ...httpConnector, secret: "set" }]);
+    setConnectorSecret.mockResolvedValue([
+      { ...httpConnector, secrets: ghSecret("set") },
+    ]);
     render(<ConnectorsCard />);
 
     expect(await screen.findByText("Needs token")).toBeTruthy();
@@ -397,7 +417,11 @@ describe("ConnectorsCard", () => {
     await userEvent.type(input, "  ghp_secret  ");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(setConnectorSecret).toHaveBeenCalledWith("remote", "ghp_secret");
+    expect(setConnectorSecret).toHaveBeenCalledWith(
+      "remote",
+      "github_token",
+      "ghp_secret",
+    );
     expect(await screen.findByText("Token saved")).toBeTruthy();
     expect(screen.queryByText("Needs token")).toBeNull();
   });
@@ -431,7 +455,9 @@ describe("ConnectorsCard", () => {
   });
 
   it("surfaces a clear failure", async () => {
-    listConnectors.mockResolvedValue([{ ...httpConnector, secret: "set" }]);
+    listConnectors.mockResolvedValue([
+      { ...httpConnector, secrets: ghSecret("set") },
+    ]);
     clearConnectorSecret.mockRejectedValue(new Error("keychain locked"));
     render(<ConnectorsCard />);
 
@@ -442,17 +468,42 @@ describe("ConnectorsCard", () => {
   });
 
   it("clears a stored token", async () => {
-    listConnectors.mockResolvedValue([{ ...httpConnector, secret: "set" }]);
+    listConnectors.mockResolvedValue([
+      { ...httpConnector, secrets: ghSecret("set") },
+    ]);
     clearConnectorSecret.mockResolvedValue([
-      { ...httpConnector, secret: "missing" },
+      { ...httpConnector, secrets: ghSecret("missing") },
     ]);
     render(<ConnectorsCard />);
 
     expect(await screen.findByText("Token saved")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
 
-    expect(clearConnectorSecret).toHaveBeenCalledWith("remote");
+    expect(clearConnectorSecret).toHaveBeenCalledWith("remote", "github_token");
     expect(await screen.findByText("Needs token")).toBeTruthy();
+  });
+
+  it("renders and manages a field per secret for a multi-secret connector (#110)", async () => {
+    listConnectors.mockResolvedValue([trelloConnector]);
+    setConnectorSecret.mockResolvedValue([trelloConnector]);
+    const { container } = render(<ConnectorsCard />);
+    await screen.findByRole("button", { name: "Trello" });
+
+    // One field per secret; the set one shows "Token saved", the other "Needs token".
+    expect(container.querySelectorAll(".connector-secret").length).toBe(2);
+    expect(screen.getByText("Token saved")).toBeTruthy();
+    expect(screen.getByText("Needs token")).toBeTruthy();
+
+    // The missing secret's "Set token" opens a field labeled by its name, and
+    // saving routes to THAT secret's key.
+    await userEvent.click(screen.getByRole("button", { name: "Set token" }));
+    await userEvent.type(screen.getByLabelText("token"), "TOK");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(setConnectorSecret).toHaveBeenCalledWith(
+      "trello",
+      "trello_token",
+      "TOK",
+    );
   });
 
   it("surfaces a token-write failure without losing the form", async () => {
@@ -594,7 +645,7 @@ describe("ConnectorsCard", () => {
     previewConnectorManifest.mockResolvedValue(remoteManifest);
     installConnectorManifest.mockResolvedValue([
       fileConnector,
-      { ...remoteManifest, secret: "missing", enabled: true },
+      { ...remoteManifest, secrets: ghSecret("missing"), enabled: true },
     ]);
     render(<ConnectorsCard />);
 

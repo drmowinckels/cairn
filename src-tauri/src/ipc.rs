@@ -6208,11 +6208,11 @@ fn connector_views_with(
         .manifests()
         .into_iter()
         .map(|manifest| {
-            let secret = crate::connectors::secret_state(manifest.secret_key(), store);
+            let secrets = crate::connectors::secret_views(&manifest.secret_refs(), store);
             let is_enabled = crate::connectors::state::is_enabled(enabled, &manifest.id);
             crate::connectors::ConnectorView {
                 manifest,
-                secret,
+                secrets,
                 enabled: is_enabled,
             }
         })
@@ -6228,6 +6228,7 @@ fn connector_views_with(
 fn apply_connector_secret<K>(
     state: &State<'_, AppState>,
     connector_id: &str,
+    secret_key: Option<&str>,
     token: Option<&str>,
     keychain: &K,
     enabled: &std::collections::HashMap<String, bool>,
@@ -6239,12 +6240,31 @@ where
     let connector = host
         .get(connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
-    // `None` here means the connector takes no token (a local file, or
-    // `auth.type == none`); `store_secret`/`remove_secret` reject that.
-    let secret_key = connector.manifest().secret_key().map(str::to_owned);
+    let keys: Vec<&str> = connector
+        .manifest()
+        .secret_refs()
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    // Pick which secret to write: the named one (must be declared), or — for a
+    // single-secret connector — its sole key. Reject a connector that takes
+    // none, or a multi-secret one with no key named.
+    let target = match secret_key {
+        Some(k) if keys.contains(&k) => k,
+        Some(k) => return Err(format!("connector '{connector_id}' has no secret '{k}'")),
+        None => match keys.as_slice() {
+            [only] => only,
+            [] => return Err("this connector does not take a token".to_string()),
+            _ => {
+                return Err(format!(
+                    "connector '{connector_id}' has multiple secrets; specify which to set"
+                ))
+            }
+        },
+    };
     match token {
-        Some(token) => crate::connectors::store_secret(secret_key.as_deref(), token, keychain)?,
-        None => crate::connectors::remove_secret(secret_key.as_deref(), keychain)?,
+        Some(token) => crate::connectors::store_secret(Some(target), token, keychain)?,
+        None => crate::connectors::remove_secret(Some(target), keychain)?,
     }
     Ok(connector_views_with(state, keychain, enabled))
 }
@@ -6272,28 +6292,33 @@ pub async fn list_connectors_impl(
 pub async fn set_connector_secret_impl(
     state: State<'_, AppState>,
     connector_id: String,
+    secret_key: Option<String>,
     token: String,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
     let enabled = crate::connectors::state::load_enabled(&state.db.pool).await;
     apply_connector_secret(
         &state,
         &connector_id,
+        secret_key.as_deref(),
         Some(&token),
         &crate::connectors::http::KeychainStore::new(),
         &enabled,
     )
 }
 
-/// Clear a connector's stored auth token from the keychain (#110). Returns
-/// the refreshed connector list. Invoke shim in `lib.rs`.
+/// Clear a connector's stored auth token from the keychain (#110). `secret_key`
+/// names which one for a multi-secret connector (optional for single-secret).
+/// Returns the refreshed connector list. Invoke shim in `lib.rs`.
 pub async fn clear_connector_secret_impl(
     state: State<'_, AppState>,
     connector_id: String,
+    secret_key: Option<String>,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
     let enabled = crate::connectors::state::load_enabled(&state.db.pool).await;
     apply_connector_secret(
         &state,
         &connector_id,
+        secret_key.as_deref(),
         None,
         &crate::connectors::http::KeychainStore::new(),
         &enabled,
@@ -6585,9 +6610,8 @@ mod connector_tests {
             .iter()
             .find(|c| c.manifest.id == FIXTURE_CONNECTOR_ID)
             .expect("the seeded file connector is listed");
-        assert_eq!(
-            file.secret,
-            SecretState::NotRequired,
+        assert!(
+            file.secrets.is_empty(),
             "a local file connector needs no token"
         );
 
@@ -6595,8 +6619,9 @@ mod connector_tests {
             .iter()
             .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
             .expect("the seeded http connector is listed");
+        assert_eq!(http.secrets.len(), 1);
         assert_eq!(
-            http.secret,
+            http.secrets[0].state,
             SecretState::Missing,
             "a token-bearing connector with nothing stored reports Missing"
         );
@@ -6606,7 +6631,7 @@ mod connector_tests {
     async fn set_secret_rejects_a_connector_that_takes_no_token() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let err = set_connector_secret_impl(state, FIXTURE_CONNECTOR_ID.into(), "tok".into())
+        let err = set_connector_secret_impl(state, FIXTURE_CONNECTOR_ID.into(), None, "tok".into())
             .await
             .unwrap_err();
         assert!(err.contains("does not take a token"), "{err}");
@@ -6616,11 +6641,11 @@ mod connector_tests {
     async fn secret_commands_reject_an_unknown_connector_id() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let set_err = set_connector_secret_impl(state.clone(), "nope".into(), "tok".into())
+        let set_err = set_connector_secret_impl(state.clone(), "nope".into(), None, "tok".into())
             .await
             .unwrap_err();
         assert!(set_err.contains("nope"));
-        let clear_err = clear_connector_secret_impl(state, "nope".into())
+        let clear_err = clear_connector_secret_impl(state, "nope".into(), None)
             .await
             .unwrap_err();
         assert!(clear_err.contains("nope"));
@@ -6637,6 +6662,7 @@ mod connector_tests {
         let after_set = apply_connector_secret(
             &state,
             FIXTURE_HTTP_CONNECTOR_ID,
+            None,
             Some("ghp_x"),
             &kc,
             &enabled,
@@ -6646,20 +6672,25 @@ mod connector_tests {
             .iter()
             .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
             .unwrap();
-        assert_eq!(http.secret, SecretState::Set, "stored token reads as Set");
+        assert_eq!(
+            http.secrets[0].state,
+            SecretState::Set,
+            "stored token reads as Set"
+        );
         assert!(
             http.enabled,
             "a connector with no state row defaults enabled"
         );
 
         let after_clear =
-            apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, None, &kc, &enabled).unwrap();
+            apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, None, None, &kc, &enabled)
+                .unwrap();
         let http = after_clear
             .iter()
             .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
             .unwrap();
         assert_eq!(
-            http.secret,
+            http.secrets[0].state,
             SecretState::Missing,
             "cleared token reads as Missing"
         );
@@ -6678,6 +6709,7 @@ mod connector_tests {
         let after_set = set_connector_secret_impl(
             state.clone(),
             FIXTURE_HTTP_CONNECTOR_ID.into(),
+            None,
             "ghp_x".into(),
         )
         .await
@@ -6687,20 +6719,21 @@ mod connector_tests {
             .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
             .unwrap();
         assert_eq!(
-            http.secret,
+            http.secrets[0].state,
             SecretState::Set,
             "stored token reads back as Set"
         );
 
-        let after_clear = clear_connector_secret_impl(state, FIXTURE_HTTP_CONNECTOR_ID.into())
-            .await
-            .unwrap();
+        let after_clear =
+            clear_connector_secret_impl(state, FIXTURE_HTTP_CONNECTOR_ID.into(), None)
+                .await
+                .unwrap();
         let http = after_clear
             .iter()
             .find(|c| c.manifest.id == FIXTURE_HTTP_CONNECTOR_ID)
             .unwrap();
         assert_eq!(
-            http.secret,
+            http.secrets[0].state,
             SecretState::Missing,
             "cleared token reads as Missing"
         );
@@ -6902,6 +6935,77 @@ mod connector_tests {
         let state = app.state::<crate::AppState>();
         let (_src, bad) = write_temp_manifest(r#"{ "manifest": 99, "id": "x" }"#);
         assert!(install_connector_manifest_impl(state, bad).await.is_err());
+    }
+
+    const MULTI_MANIFEST: &str = r#"{ "manifest": 1, "id": "trello",
+        "name": "Trello", "kind": "http", "capabilities": ["network", "secrets"],
+        "auth": { "type": "multi", "secrets": [
+            { "in": "query", "name": "key", "secret": "trello_key" },
+            { "in": "query", "name": "token", "secret": "trello_token" } ] },
+        "baseUrl": "https://api.trello.com",
+        "operations": {
+            "listProjects": { "request": { "method": "GET", "path": "/p" },
+                "response": { "items": "", "map": { "id": "id", "name": "name" } } },
+            "listTasks": { "request": { "method": "GET", "path": "/t" },
+                "response": { "items": "", "map": { "id": "id", "label": "name" } } }
+        } }"#;
+
+    #[tokio::test]
+    async fn multi_secret_connector_is_managed_per_key() {
+        use crate::test_support::FakeKeychain;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let (_src, path) = write_temp_manifest(MULTI_MANIFEST);
+        install_connector_manifest_impl(state.clone(), path)
+            .await
+            .unwrap();
+
+        let kc = FakeKeychain::default();
+        let enabled = std::collections::HashMap::new();
+
+        // Two declared secrets, both Missing initially.
+        let before = connector_views_with(&state, &kc, &enabled);
+        let trello = before.iter().find(|c| c.manifest.id == "trello").unwrap();
+        assert_eq!(trello.secrets.len(), 2);
+        assert!(trello
+            .secrets
+            .iter()
+            .all(|s| s.state == SecretState::Missing));
+
+        // No key named on a 2-secret connector → must say which.
+        let err =
+            apply_connector_secret(&state, "trello", None, Some("X"), &kc, &enabled).unwrap_err();
+        assert!(err.contains("specify which"), "{err}");
+
+        // An undeclared key is rejected.
+        let err = apply_connector_secret(&state, "trello", Some("nope"), Some("X"), &kc, &enabled)
+            .unwrap_err();
+        assert!(err.contains("no secret 'nope'"), "{err}");
+
+        // Setting one key flips only that secret to Set.
+        let after = apply_connector_secret(
+            &state,
+            "trello",
+            Some("trello_key"),
+            Some("APPKEY"),
+            &kc,
+            &enabled,
+        )
+        .unwrap();
+        let trello = after.iter().find(|c| c.manifest.id == "trello").unwrap();
+        let key = trello
+            .secrets
+            .iter()
+            .find(|s| s.key == "trello_key")
+            .unwrap();
+        let token = trello
+            .secrets
+            .iter()
+            .find(|s| s.key == "trello_token")
+            .unwrap();
+        assert_eq!(key.state, SecretState::Set);
+        assert_eq!(key.label, "key");
+        assert_eq!(token.state, SecretState::Missing);
     }
 
     #[tokio::test]
