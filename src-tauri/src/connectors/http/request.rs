@@ -9,18 +9,23 @@ use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 use url::Url;
 
-use super::super::manifest::{Auth, Operation};
+use super::super::manifest::{Auth, Operation, SecretLocation};
 use super::template::{fill, Context, Escape};
 use super::PreparedRequest;
 
+/// Resolved keychain secrets for this request, keyed by the auth's `secret`
+/// key. The interpreter fills this from the connector's [`SecretStore`].
+pub(super) type Secrets = BTreeMap<String, String>;
+
 /// Build the request for one operation. `base` is the connector's
-/// (validated) base URL; `token` is the resolved keychain secret, if any.
+/// (validated) base URL; `secrets` holds the resolved keychain tokens keyed
+/// by their `secret` key.
 pub(super) fn build(
     base: &Url,
     op: &Operation,
     ctx: &Context,
     auth: &Auth,
-    token: Option<&str>,
+    secrets: &Secrets,
 ) -> Result<PreparedRequest> {
     let spec = &op.request;
 
@@ -53,7 +58,7 @@ pub(super) fn build(
         None => None,
     };
 
-    apply_auth(auth, token, &mut url, &mut headers)?;
+    apply_auth(auth, secrets, &mut url, &mut headers)?;
 
     Ok(PreparedRequest {
         method: spec.method,
@@ -65,35 +70,52 @@ pub(super) fn build(
 
 fn apply_auth(
     auth: &Auth,
-    token: Option<&str>,
+    secrets: &Secrets,
     url: &mut Url,
     headers: &mut BTreeMap<String, String>,
 ) -> Result<()> {
     match auth {
         Auth::None => {}
-        Auth::Bearer { .. } => {
+        Auth::Bearer { secret } => {
             headers.insert(
                 "Authorization".into(),
-                format!("Bearer {}", require(token)?),
+                format!("Bearer {}", require(secrets, secret)?),
             );
         }
-        Auth::Header { name, .. } => {
-            headers.insert(name.clone(), require(token)?.to_string());
+        Auth::Header { name, secret } => {
+            headers.insert(name.clone(), require(secrets, secret)?.to_string());
         }
-        Auth::Query { name, .. } => {
-            url.query_pairs_mut().append_pair(name, require(token)?);
+        Auth::Query { name, secret } => {
+            url.query_pairs_mut()
+                .append_pair(name, require(secrets, secret)?);
         }
-        Auth::Basic { username, .. } => {
+        Auth::Basic { username, secret } => {
             let creds = base64::engine::general_purpose::STANDARD
-                .encode(format!("{username}:{}", require(token)?));
+                .encode(format!("{username}:{}", require(secrets, secret)?));
             headers.insert("Authorization".into(), format!("Basic {creds}"));
+        }
+        Auth::Multi { secrets: params } => {
+            for p in params {
+                let token = require(secrets, &p.secret)?;
+                match p.location {
+                    SecretLocation::Query => {
+                        url.query_pairs_mut().append_pair(&p.name, token);
+                    }
+                    SecretLocation::Header => {
+                        headers.insert(p.name.clone(), token.to_string());
+                    }
+                }
+            }
         }
     }
     Ok(())
 }
 
-fn require(token: Option<&str>) -> Result<&str> {
-    let token = token.ok_or_else(|| anyhow!("connector needs a token but none is stored"))?;
+fn require<'a>(secrets: &'a Secrets, key: &str) -> Result<&'a str> {
+    let token = secrets
+        .get(key)
+        .map(String::as_str)
+        .ok_or_else(|| anyhow!("connector needs a token but none is stored"))?;
     // The token is user-entered into the keychain, not remote-controlled,
     // but reject control bytes here so the interpreter — not a downstream
     // HTTP client — is the thing that prevents header injection.
@@ -134,6 +156,14 @@ mod tests {
         }
     }
 
+    fn no_secrets() -> Secrets {
+        Secrets::new()
+    }
+
+    fn secret(key: &str, token: &str) -> Secrets {
+        Secrets::from([(key.to_string(), token.to_string())])
+    }
+
     fn ctx_with_project(id: &str) -> Context {
         let mut c = Context::new();
         c.set("project.id", id.to_string());
@@ -149,7 +179,7 @@ mod tests {
             &op(request),
             &ctx_with_project("a/b"),
             &Auth::None,
-            None,
+            &no_secrets(),
         )
         .unwrap();
         assert_eq!(
@@ -167,7 +197,7 @@ mod tests {
             &op(req(HttpMethod::Get, "/me")),
             &Context::new(),
             &Auth::Bearer { secret: "k".into() },
-            Some("tok"),
+            &secret("k", "tok"),
         )
         .unwrap();
         assert_eq!(prepared.headers["Authorization"], "Bearer tok");
@@ -183,7 +213,7 @@ mod tests {
                 name: "X-Api-Key".into(),
                 secret: "k".into(),
             },
-            Some("tok"),
+            &secret("k", "tok"),
         )
         .unwrap();
         assert_eq!(prepared.headers["X-Api-Key"], "tok");
@@ -199,7 +229,7 @@ mod tests {
                 name: "token".into(),
                 secret: "k".into(),
             },
-            Some("a b"),
+            &secret("k", "a b"),
         )
         .unwrap();
         assert!(
@@ -219,11 +249,65 @@ mod tests {
                 username: "user".into(),
                 secret: "k".into(),
             },
-            Some("pass"),
+            &secret("k", "pass"),
         )
         .unwrap();
         // base64("user:pass") == "dXNlcjpwYXNz"
         assert_eq!(prepared.headers["Authorization"], "Basic dXNlcjpwYXNz");
+    }
+
+    #[test]
+    fn multi_auth_applies_each_secret_to_its_query_or_header() {
+        use super::super::super::manifest::SecretParam;
+        let auth = Auth::Multi {
+            secrets: vec![
+                SecretParam {
+                    location: SecretLocation::Query,
+                    name: "key".into(),
+                    secret: "app".into(),
+                },
+                SecretParam {
+                    location: SecretLocation::Header,
+                    name: "X-Token".into(),
+                    secret: "tok".into(),
+                },
+            ],
+        };
+        let resolved = Secrets::from([
+            ("app".into(), "APPKEY".into()),
+            ("tok".into(), "T0K".into()),
+        ]);
+        let prepared = build(
+            &base(),
+            &op(req(HttpMethod::Get, "/boards")),
+            &Context::new(),
+            &auth,
+            &resolved,
+        )
+        .unwrap();
+        assert!(prepared.url.contains("key=APPKEY"), "{}", prepared.url);
+        assert_eq!(prepared.headers["X-Token"], "T0K");
+    }
+
+    #[test]
+    fn multi_auth_errors_when_a_declared_secret_is_missing() {
+        use super::super::super::manifest::SecretParam;
+        let auth = Auth::Multi {
+            secrets: vec![SecretParam {
+                location: SecretLocation::Query,
+                name: "key".into(),
+                secret: "app".into(),
+            }],
+        };
+        let err = build(
+            &base(),
+            &op(req(HttpMethod::Get, "/b")),
+            &Context::new(),
+            &auth,
+            &no_secrets(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("token"), "{err}");
     }
 
     #[test]
@@ -233,7 +317,7 @@ mod tests {
             &op(req(HttpMethod::Get, "/me")),
             &Context::new(),
             &Auth::Bearer { secret: "k".into() },
-            None,
+            &no_secrets(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("token"));
@@ -246,7 +330,7 @@ mod tests {
             &op(req(HttpMethod::Get, "/me")),
             &Context::new(),
             &Auth::Bearer { secret: "k".into() },
-            Some("tok\nen"),
+            &secret("k", "tok\nen"),
         )
         .unwrap_err();
         assert!(err.to_string().contains("control"));
@@ -261,7 +345,7 @@ mod tests {
             &op(request),
             &ctx_with_project("x\"y"),
             &Auth::None,
-            None,
+            &no_secrets(),
         )
         .unwrap();
         assert_eq!(prepared.body.unwrap(), "{\"q\":\"x\\\"y\"}");
@@ -274,7 +358,14 @@ mod tests {
         request
             .headers
             .insert("Accept".into(), "application/json".into());
-        let prepared = build(&base(), &op(request), &Context::new(), &Auth::None, None).unwrap();
+        let prepared = build(
+            &base(),
+            &op(request),
+            &Context::new(),
+            &Auth::None,
+            &no_secrets(),
+        )
+        .unwrap();
         assert_eq!(prepared.headers["Accept"], "application/json");
     }
 
@@ -287,7 +378,7 @@ mod tests {
             &op(req(HttpMethod::Get, "//evil.example/x")),
             &Context::new(),
             &Auth::None,
-            None,
+            &no_secrets(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("escaped"));
@@ -302,7 +393,7 @@ mod tests {
             &op(req(HttpMethod::Get, "/boards/{{project.id}}")),
             &ctx_with_project("//evil.example/x"),
             &Auth::None,
-            None,
+            &no_secrets(),
         )
         .unwrap();
         assert!(

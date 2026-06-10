@@ -126,10 +126,16 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
             .operations
             .get(op_name)
             .ok_or_else(|| anyhow!("connector has no {op_name:?} operation"))?;
-        let token = spec
+        // Resolve every keychain secret this auth declares (one for the
+        // single-credential variants, several for `Multi`). A missing one is
+        // simply absent from the map; `request::build` surfaces it as
+        // "needs a token" when the auth tries to apply it.
+        let secrets: request::Secrets = spec
             .auth
-            .secret_key()
-            .and_then(|key| self.secrets.token(key));
+            .secret_keys()
+            .into_iter()
+            .filter_map(|key| self.secrets.token(key).map(|tok| (key.to_string(), tok)))
+            .collect();
 
         let mut collected: Vec<Value> = Vec::new();
         let mut cursor = String::new();
@@ -153,7 +159,7 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
             ctx.set("cursorLiteral", cursor_literal.to_string());
             ctx.set("offset", offset.to_string());
 
-            let req = request::build(&self.base, op, ctx, &spec.auth, token.as_deref())?;
+            let req = request::build(&self.base, op, ctx, &spec.auth, &secrets)?;
             let resp = self.fetcher.fetch(&req).await?;
             if !(200..300).contains(&resp.status) {
                 // The remote answered — so these are NOT `Unreachable` and
@@ -884,5 +890,45 @@ mod tests {
             "{}",
             fetcher.last().url
         );
+    }
+
+    const MULTI_AUTH: &str = r#"{
+        "manifest": 1, "id": "ml", "name": "ML", "kind": "http",
+        "capabilities": ["network", "secrets"],
+        "auth": { "type": "multi", "secrets": [
+            { "in": "query", "name": "key", "secret": "trello_key" },
+            { "in": "query", "name": "token", "secret": "trello_token" }
+        ] },
+        "baseUrl": "https://api.trello.com",
+        "operations": {
+            "listProjects": {
+                "request": { "method": "GET", "path": "/p" },
+                "response": { "items": "", "map": { "id": "id", "name": "name" } }
+            },
+            "listTasks": {
+                "request": { "method": "GET", "path": "/t" },
+                "response": { "items": "", "map": { "id": "id", "label": "name" } }
+            }
+        }
+    }"#;
+
+    #[tokio::test]
+    async fn multi_auth_resolves_and_applies_both_secrets() {
+        let secrets = FakeSecrets(BTreeMap::from([
+            ("trello_key".into(), "APPKEY".into()),
+            ("trello_token".into(), "USERTOK".into()),
+        ]));
+        let c = connector(
+            MULTI_AUTH,
+            FakeFetcher::with(&[r#"[{"id":"1","name":"Board"}]"#]),
+            secrets,
+        );
+        let projects = c.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 1);
+
+        let DeclarativeConnector { fetcher, .. } = &c;
+        let url = fetcher.last().url;
+        assert!(url.contains("key=APPKEY"), "{url}");
+        assert!(url.contains("token=USERTOK"), "{url}");
     }
 }
