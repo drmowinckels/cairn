@@ -290,7 +290,11 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
 > an opaque GitHub node id from `listProjects`, and the host is pinned, so the
 > worst case is a malformed read-only query.
 
-**Trello (REST, token in query):**
+**Trello (REST, two query secrets — `multi` auth):** Trello needs _two_
+credentials: an app `key` and a `token`, both passed as query params. Cairn
+ships no app key (no Cairn-controlled service), so the user supplies their own
+`key` + `token` from `trello.com/app-key`; `multi` auth stores each under its
+own keychain key. This manifest is **bundled** (`builtin::TRELLO`).
 
 ```json
 {
@@ -299,15 +303,33 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
   "name": "Trello",
   "kind": "http",
   "capabilities": ["network", "secrets"],
-  "auth": { "type": "query", "name": "token", "secret": "trello_token" },
-  "baseUrl": "https://api.trello.com/1",
+  "auth": {
+    "type": "multi",
+    "secrets": [
+      { "in": "query", "name": "key", "secret": "trello_key" },
+      { "in": "query", "name": "token", "secret": "trello_token" }
+    ]
+  },
+  "baseUrl": "https://api.trello.com",
   "operations": {
     "listProjects": {
-      "request": { "method": "GET", "path": "/members/me/boards" },
+      "request": {
+        "method": "GET",
+        "path": "/1/members/me/boards",
+        "query": { "filter": "open", "fields": "name" }
+      },
       "response": { "items": "", "map": { "id": "id", "name": "name" } }
     },
     "listTasks": {
-      "request": { "method": "GET", "path": "/boards/{{project.id}}/cards" },
+      "request": {
+        "method": "GET",
+        "path": "/1/boards/{{project.id}}/cards",
+        "query": {
+          "filter": "visible",
+          "fields": "name,url,dueComplete",
+          "limit": "1000"
+        }
+      },
       "response": {
         "items": "",
         "map": {
@@ -321,6 +343,13 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
   }
 }
 ```
+
+> Trello's REST paging is `before`-cursor by card id, which doesn't map to the
+> three pagination strategies; the bundled manifest reads up to `limit:1000`
+> cards per board (Trello's max) in one request, which covers normal boards.
+> `done` ← `dueComplete` reflects only a card whose **due date** is marked
+> complete — Trello has no list-based "done", so a card finished by moving it
+> to a "Done" list still reads as not done.
 
 ## The internal trait
 
@@ -513,12 +542,13 @@ check yours (it is published at `/schemas/pm-connector.json`).
 3. ✅ The `DeclarativeConnector` (`kind: "http"`) + schema validation +
    the Settings → Connectors card + keychain-backed token management.
 4. ✅ Bundled manifests as both features and worked references. **GitHub
-   Projects** (GraphQL) and **GitLab** (REST issues) ship compiled in
-   (`connectors/manifests/*.json`, registered by `ConnectorHost::load`,
-   listed in `builtin::ALL`). Both paginate to completion — GitHub via
-   GraphQL cursor (`after:{{cursorLiteral}}`), GitLab via page number
-   (`page={{page}}`) — capped by the usual page/item limits (#193).
-   Trello needs an app key per install, so it stays a doc example.
+   Projects** (GraphQL), **GitLab** (REST issues), and **Trello** (REST
+   boards/cards) ship compiled in (`connectors/manifests/*.json`, registered
+   by `ConnectorHost::load`, listed in `builtin::ALL`). GitHub/GitLab paginate
+   to completion — GitHub via GraphQL cursor (`after:{{cursorLiteral}}`),
+   GitLab via page number (`page={{page}}`) — capped by the usual page/item
+   limits (#193). Trello uses `multi` auth (the user's own `key` + `token`,
+   no Cairn-shipped app key) and reads up to `limit:1000` cards/board.
 5. ✅ Offline cache (`connector_cache`) so attribution survives a dropped
    network — a failed read falls back to the last snapshot, marked stale.
 6. `pushTime` (v2): a per-connector write grant, with the outbound
