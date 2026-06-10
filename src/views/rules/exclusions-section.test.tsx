@@ -65,6 +65,25 @@ describe("ExclusionsSection", () => {
     );
   });
 
+  it("ignores a blank submit and a non-Enter keypress", async () => {
+    render(<ExclusionsSection />);
+    const input = screen.getByLabelText(/add exclusion/i);
+    // Whitespace-only → trimmed to empty → no save.
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    // A non-Enter key never submits.
+    fireEvent.change(input, { target: { value: "github.com" } });
+    fireEvent.keyDown(input, { key: "a" });
+    await Promise.resolve();
+    expect(saveExclusion).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error from the exclusions hook", async () => {
+    listExclusions.mockRejectedValue(new Error("db locked"));
+    render(<ExclusionsSection />);
+    expect(await screen.findByText(/db locked/i)).toBeTruthy();
+  });
+
   it("the incognito pause toggle persists its state to localStorage", () => {
     window.localStorage.removeItem("cairn:pause-on-incognito:v1");
     render(<ExclusionsSection />);

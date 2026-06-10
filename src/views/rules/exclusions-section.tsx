@@ -19,10 +19,9 @@ const INCOGNITO_PREF_KEY = "cairn:pause-on-incognito:v1";
 export function ExclusionsSection() {
   const excl = useExclusions();
   const [draft, setDraft] = useState("");
-  const [pauseIncognito, setPauseIncognito] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem(INCOGNITO_PREF_KEY) !== "false";
-  });
+  const [pauseIncognito, setPauseIncognito] = useState(
+    () => window.localStorage.getItem(INCOGNITO_PREF_KEY) !== "false",
+  );
 
   useEffect(() => {
     try {

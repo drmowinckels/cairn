@@ -199,8 +199,11 @@ function bucketIdOf(
 ): { key: string; label: string } {
   if (gran === "day") return { key: isoDate, label: weekdayLabel(isoDate) };
   if (gran === "month") {
-    const [y, m] = isoDate.split("-").map(Number);
-    return { key: `${y}-${m}`, label: MONTH_LABELS[(m ?? 1) - 1] ?? "" };
+    // `isoDate` is a real calendar day from `summary.byDay`, so its month is
+    // always 1–12 — index straight into the labels (no defensive fallback,
+    // which would be an untestable dead branch).
+    const m = Number(isoDate.slice(5, 7));
+    return { key: isoDate.slice(0, 7), label: MONTH_LABELS[m - 1]! };
   }
   const monday = mondayOfIso(isoDate);
   return { key: monday, label: dayMonthLabel(monday) };
