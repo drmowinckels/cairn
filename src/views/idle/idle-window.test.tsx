@@ -8,9 +8,10 @@ let prompt: unknown = {
   until: "2026-05-30T10:12:00Z",
   durationSeconds: 720,
 };
+let tracking: unknown = null;
 
 vi.mock("../../lib/use-idle-window", () => ({
-  useIdleWindow: () => ({ prompt, resolve, dismiss }),
+  useIdleWindow: () => ({ prompt, tracking, resolve, dismiss }),
 }));
 
 let useNullTrapRef = false;
@@ -48,6 +49,7 @@ afterEach(() => {
     until: "2026-05-30T10:12:00Z",
     durationSeconds: 720,
   };
+  tracking = null;
 });
 
 describe("IdleWindow", () => {
@@ -92,6 +94,19 @@ describe("IdleWindow", () => {
     expect(dismiss).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(dismiss).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the tracking project and description when known", () => {
+    tracking = { projectName: "Aurora", description: "writing tests" };
+    render(<IdleWindow />);
+    expect(screen.getByText(/Aurora/)).toBeTruthy();
+    expect(screen.getByText(/writing tests/)).toBeTruthy();
+  });
+
+  it("labels a tracked entry with no project as 'No project'", () => {
+    tracking = { projectName: null, description: "" };
+    render(<IdleWindow />);
+    expect(screen.getByText(/No project/)).toBeTruthy();
   });
 
   it("disables the choices until a prompt is loaded", () => {

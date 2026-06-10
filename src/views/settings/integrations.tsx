@@ -19,6 +19,10 @@ const EXTENSION_INSTALL_URL =
 
 export function IntegrationsCard() {
   const [calendarOpen, setCalendarOpen] = useState(false);
+  // The status line and the manager each own a `useCalendars()`; remounting
+  // the status line when the manager closes re-fetches it so a source added
+  // (or removed) in the manager is reflected here instead of going stale.
+  const [calendarNonce, setCalendarNonce] = useState(0);
   return (
     <section
       className="settings-block"
@@ -27,13 +31,21 @@ export function IntegrationsCard() {
     >
       <h3 className="settings-h">Integrations</h3>
       <ul className="intg-list">
-        <CalendarStatusLine onManage={() => setCalendarOpen(true)} />
+        <CalendarStatusLine
+          key={calendarNonce}
+          onManage={() => setCalendarOpen(true)}
+        />
         <GitStatusLine />
         <BrowserStatusLine installHref={EXTENSION_INSTALL_URL} />
         <AutostartStatusLine />
       </ul>
       {calendarOpen && (
-        <CalendarManager onClose={() => setCalendarOpen(false)} />
+        <CalendarManager
+          onClose={() => {
+            setCalendarOpen(false);
+            setCalendarNonce((n) => n + 1);
+          }}
+        />
       )}
     </section>
   );
@@ -133,11 +145,14 @@ export function BrowserStatusLine({ installHref }: BrowserStatusLineProps) {
 
   const connected = status?.connected ?? false;
   const label = status?.browserLabel?.trim();
+  // The browser extension isn't published yet (#37); until it is, there's
+  // nowhere to install from, so the install action is disabled rather than
+  // sending the user to the source repo.
   const text = connected
     ? `Connected${label ? ` (${label})` : ""}`
-    : "Not installed";
+    : "Coming soon";
 
-  const onInstall = () => {
+  const onManage = () => {
     openUrl(installHref).catch(() => {
       window.open(installHref, "_blank", "noopener");
     });
@@ -148,9 +163,20 @@ export function BrowserStatusLine({ installHref }: BrowserStatusLineProps) {
       <Icon name="globe" size={14} />
       <span className="intg-name">Browsers</span>
       <span className="intg-status">{text}</span>
-      <button type="button" className="link-btn" onClick={onInstall}>
-        {connected ? "Manage…" : "Install…"}
-      </button>
+      {connected ? (
+        <button type="button" className="link-btn" onClick={onManage}>
+          Manage…
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="link-btn"
+          disabled
+          title="The browser extension isn't published yet (#37)."
+        >
+          Install…
+        </button>
+      )}
     </li>
   );
 }

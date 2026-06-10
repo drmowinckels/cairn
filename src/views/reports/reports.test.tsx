@@ -60,27 +60,34 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
     expect(screen.getByRole("heading", { name: /this week/i })).toBeTruthy();
     const seg = screen.getByRole("radiogroup", { name: /period/i });
     const buttons = seg.querySelectorAll("button");
-    expect(buttons).toHaveLength(3);
+    expect(buttons).toHaveLength(4);
     const week = Array.from(buttons).find(
       (b) => b.textContent?.trim() === "Week",
     )!;
     expect(week.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("switching range to Day re-renders the chart and updates the title", () => {
+  it("switching range re-buckets the chart and updates the title", () => {
     const { container } = render(<ReportsView density="comfy" />);
-    const initialBarCount = container.querySelectorAll(".bar-col").length;
-    expect(initialBarCount).toBe(7);
+    // Week → 7 daily bars.
+    expect(container.querySelectorAll(".bar-col").length).toBe(7);
 
-    fireEvent.click(screen.getByRole("radio", { name: /^day$/i }));
-    expect(screen.getByRole("heading", { name: /today/i })).toBeTruthy();
-    expect(container.querySelectorAll(".bar-col").length).toBe(1);
-
+    // Month → weekly bars (4–6, never 28+ daily bars).
     fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
     expect(screen.getByRole("heading", { name: /this month/i })).toBeTruthy();
-    expect(
-      container.querySelectorAll(".bar-col").length,
-    ).toBeGreaterThanOrEqual(28);
+    const monthBars = container.querySelectorAll(".bar-col").length;
+    expect(monthBars).toBeGreaterThanOrEqual(4);
+    expect(monthBars).toBeLessThanOrEqual(6);
+
+    // Quarter → ~3 monthly bars.
+    fireEvent.click(screen.getByRole("radio", { name: /^quarter$/i }));
+    expect(screen.getByRole("heading", { name: /this quarter/i })).toBeTruthy();
+    expect(container.querySelectorAll(".bar-col").length).toBe(3);
+
+    // Year → 12 monthly bars.
+    fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
+    expect(screen.getByRole("heading", { name: /this year/i })).toBeTruthy();
+    expect(container.querySelectorAll(".bar-col").length).toBe(12);
   });
 
   it("renders horizontal gridlines with mono hour labels (#148, spec §3.2)", () => {
@@ -266,6 +273,34 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
     await waitFor(() =>
       expect(screen.getByText(/no hours tracked/i)).toBeTruthy(),
     );
+    // The digest still renders (consistent with totals/chart), with the
+    // busiest / top-project highlights dashed out.
+    const digest = screen.getByRole("region", { name: /digest/i });
+    expect(digest.textContent).toContain("average");
+    expect(digest.textContent).toContain("—");
+  });
+
+  it("surfaces the digest highlights for a range with data", async () => {
+    const summary: ReportSummary = {
+      totalSeconds: 7200,
+      prevTotalSeconds: 0,
+      byDay: [
+        {
+          date: formatIso(new Date()),
+          byProject: [{ projectId: "cairn", seconds: 7200 }],
+        },
+      ],
+      byProject: [{ projectId: "cairn", seconds: 7200 }],
+      bySource: { rule: 0, calendar: 0, manual: 7200 },
+    };
+    await renderWithSummary(summary);
+    const digest = await waitFor(() =>
+      screen.getByRole("region", { name: /digest/i }),
+    );
+    expect(digest.textContent).toMatch(/average/i);
+    expect(digest.textContent).toMatch(/busiest/i);
+    expect(digest.textContent).toMatch(/top ·/i);
+    expect(digest.textContent).toMatch(/days tracked/i);
   });
 
   it("names remote-task project groups in the breakdown, with distinct rows (#110)", async () => {
@@ -567,7 +602,11 @@ describe("ReportsView (with mocked backend data via prop-driven fetch)", () => {
       bySource: { rule: 0, calendar: 0, manual: 7200 },
     };
     await renderWithSummary(summary);
-    await waitFor(() => expect(screen.getByText(/no project/i)).toBeTruthy());
+    // "No project" appears in the breakdown row (and may also surface as the
+    // digest's top-project label), so match at least one occurrence.
+    await waitFor(() =>
+      expect(screen.getAllByText(/no project/i).length).toBeGreaterThan(0),
+    );
   });
 
   it("logs to console.error when clipboard write rejects", async () => {

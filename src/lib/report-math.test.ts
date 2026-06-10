@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildStackedDays,
+  averageUnitLabel,
+  bucketGranularity,
+  buildBuckets,
   chartAxis,
   computeDelta,
   dayMonthLabel,
@@ -9,8 +11,10 @@ import {
   isFuture,
   isoLocalDate,
   isToday,
+  mondayOfIso,
   percentOf,
   rangeTitle,
+  reportDigest,
   secondsToHours,
   weekdayLabel,
 } from "./report-math";
@@ -135,13 +139,15 @@ describe("isToday / isFuture", () => {
 });
 
 describe("rangeTitle / deltaComparisonLabel", () => {
-  it("uses the day / week / month labels", () => {
-    expect(rangeTitle("day")).toBe("Today");
+  it("uses week / month / quarter / year labels", () => {
     expect(rangeTitle("week")).toBe("This week");
     expect(rangeTitle("month")).toBe("This month");
-    expect(deltaComparisonLabel("day")).toMatch(/yesterday/);
+    expect(rangeTitle("quarter")).toBe("This quarter");
+    expect(rangeTitle("year")).toBe("This year");
     expect(deltaComparisonLabel("week")).toMatch(/last week/);
     expect(deltaComparisonLabel("month")).toMatch(/last month/);
+    expect(deltaComparisonLabel("quarter")).toMatch(/last quarter/);
+    expect(deltaComparisonLabel("year")).toMatch(/last year/);
   });
 });
 
@@ -187,8 +193,28 @@ describe("weekdayLabel / dayMonthLabel / formatRangeLabel", () => {
   });
 });
 
-describe("buildStackedDays", () => {
-  it("totals segments per day and flags today + future", () => {
+describe("bucketGranularity / averageUnitLabel / mondayOfIso", () => {
+  it("maps each range to its bucket granularity", () => {
+    expect(bucketGranularity("week")).toBe("day");
+    expect(bucketGranularity("month")).toBe("week");
+    expect(bucketGranularity("quarter")).toBe("month");
+    expect(bucketGranularity("year")).toBe("month");
+  });
+  it("labels the average unit", () => {
+    expect(averageUnitLabel("day")).toBe("/day");
+    expect(averageUnitLabel("week")).toBe("/wk");
+    expect(averageUnitLabel("month")).toBe("/mo");
+  });
+  it("finds the Monday of a week", () => {
+    expect(mondayOfIso("2026-05-21")).toBe("2026-05-18"); // Thu → Mon
+    expect(mondayOfIso("2026-05-18")).toBe("2026-05-18"); // Mon → itself
+    expect(mondayOfIso("2026-05-24")).toBe("2026-05-18"); // Sun → that Mon
+    expect(mondayOfIso("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("buildBuckets", () => {
+  it("for a week keeps one daily bucket each, flagging current + future", () => {
     const now = new Date(2026, 4, 21); // Thu May 21 2026
     const s = summaryStub({
       byDay: [
@@ -202,12 +228,88 @@ describe("buildStackedDays", () => {
         { date: "2026-05-22", byProject: [] },
       ],
     });
-    const days = buildStackedDays(s, now);
-    expect(days).toHaveLength(2);
-    expect(days[0]!.totalSeconds).toBe(5400);
-    expect(days[0]!.isToday).toBe(true);
-    expect(days[0]!.isFuture).toBe(false);
-    expect(days[1]!.isFuture).toBe(true);
-    expect(days[0]!.weekday).toBe("Thu");
+    const b = buildBuckets(s, "week", now);
+    expect(b).toHaveLength(2);
+    expect(b[0]!.label).toBe("Thu");
+    expect(b[0]!.totalSeconds).toBe(5400);
+    // segments sorted largest-first
+    expect(b[0]!.segments[0]!.projectId).toBe("cairn");
+    expect(b[0]!.isCurrent).toBe(true);
+    expect(b[0]!.isFuture).toBe(false);
+    expect(b[1]!.isFuture).toBe(true);
+  });
+
+  it("for a month rolls days up into weekly buckets, summing per project", () => {
+    const now = new Date(2026, 5, 30);
+    const s = summaryStub({
+      byDay: [
+        { date: "2026-06-01", byProject: [{ projectId: "a", seconds: 100 }] }, // Mon wk1
+        { date: "2026-06-03", byProject: [{ projectId: "a", seconds: 200 }] }, // Wed wk1
+        { date: "2026-06-08", byProject: [{ projectId: "a", seconds: 50 }] }, // Mon wk2
+      ],
+    });
+    const b = buildBuckets(s, "month", now);
+    expect(b).toHaveLength(2);
+    expect(b[0]!.key).toBe("2026-06-01");
+    expect(b[0]!.totalSeconds).toBe(300);
+    expect(b[1]!.key).toBe("2026-06-08");
+    expect(b[1]!.totalSeconds).toBe(50);
+  });
+
+  it("for a quarter/year rolls days up into monthly buckets", () => {
+    const now = new Date(2026, 2, 31);
+    const s = summaryStub({
+      byDay: [
+        { date: "2026-01-10", byProject: [{ projectId: "a", seconds: 60 }] },
+        { date: "2026-01-20", byProject: [{ projectId: "a", seconds: 40 }] },
+        { date: "2026-02-05", byProject: [{ projectId: "a", seconds: 30 }] },
+      ],
+    });
+    const b = buildBuckets(s, "quarter", now);
+    expect(b.map((x) => x.label)).toEqual(["Jan", "Feb"]);
+    expect(b[0]!.totalSeconds).toBe(100);
+  });
+});
+
+describe("reportDigest", () => {
+  const now = new Date(2026, 5, 10); // Wed Jun 10 2026
+  const s = summaryStub({
+    totalSeconds: 360,
+    byProject: [
+      { projectId: "a", seconds: 240 },
+      { projectId: "b", seconds: 120 },
+    ],
+    byDay: [
+      { date: "2026-06-08", byProject: [{ projectId: "a", seconds: 240 }] },
+      { date: "2026-06-09", byProject: [{ projectId: "b", seconds: 120 }] },
+      { date: "2026-06-10", byProject: [] },
+      { date: "2026-06-11", byProject: [] }, // future
+    ],
+  });
+
+  it("averages over elapsed buckets and names the busiest + top project", () => {
+    const buckets = buildBuckets(s, "week", now);
+    const d = reportDigest(s, buckets, "week", now);
+    // 3 elapsed daily buckets (08, 09, 10); 11 is future
+    expect(d.averageSeconds).toBe(120);
+    expect(d.averageUnit).toBe("day");
+    expect(d.busiest).toEqual({ label: "Mon", seconds: 240 });
+    expect(d.topProject!.slice.projectId).toBe("a");
+    expect(d.topProject!.percent).toBeCloseTo(66.67, 1);
+    expect(d.daysTracked).toBe(2);
+    expect(d.daysElapsed).toBe(3);
+  });
+
+  it("is empty-safe with no data", () => {
+    const empty = summaryStub();
+    const d = reportDigest(
+      empty,
+      buildBuckets(empty, "week", now),
+      "week",
+      now,
+    );
+    expect(d.averageSeconds).toBe(0);
+    expect(d.busiest).toBeNull();
+    expect(d.topProject).toBeNull();
   });
 });

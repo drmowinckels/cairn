@@ -124,7 +124,7 @@ export async function listWeek(): Promise<BackendWeekDay[]> {
   return invoke<BackendWeekDay[]>("list_week");
 }
 
-export type ReportRange = "day" | "week" | "month";
+export type ReportRange = "week" | "month" | "quarter" | "year";
 
 export interface ReportProjectSlice {
   projectId: string | null;

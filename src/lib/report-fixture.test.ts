@@ -23,13 +23,31 @@ describe("fixtureReportSummary", () => {
     );
   });
 
-  it("day range returns a single bucket sized to today's seconds", async () => {
+  it("quarter range fans out to one bucket per day across the quarter", async () => {
     const { fixtureReportSummary } = await import("./report-fixture");
-    const day = fixtureReportSummary("day");
-    expect(day.byDay).toHaveLength(1);
-    const dayTotal = day.byDay[0]!.byProject.reduce((a, b) => a + b.seconds, 0);
-    expect(day.totalSeconds).toBe(dayTotal);
-    expect(day.prevTotalSeconds).toBe(0);
+    const q = fixtureReportSummary("quarter");
+    const today = new Date();
+    const qStartMonth = Math.floor(today.getMonth() / 3) * 3;
+    const start = new Date(today.getFullYear(), qStartMonth, 1);
+    const end = new Date(today.getFullYear(), qStartMonth + 3, 1);
+    const days = Math.round(
+      (end.getTime() - start.getTime()) / (24 * 3600 * 1000),
+    );
+    expect(q.byDay).toHaveLength(days);
+    expect(q.byDay[0]!.date).toBe(
+      `${start.getFullYear()}-${String(qStartMonth + 1).padStart(2, "0")}-01`,
+    );
+    expect(q.prevTotalSeconds).toBe(Math.round(q.totalSeconds * 0.95));
+  });
+
+  it("year range fans out to every day of the calendar year", async () => {
+    const { fixtureReportSummary } = await import("./report-fixture");
+    const y = fixtureReportSummary("year");
+    const year = new Date().getFullYear();
+    const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    expect(y.byDay).toHaveLength(isLeap ? 366 : 365);
+    expect(y.byDay[0]!.date).toBe(`${year}-01-01`);
+    expect(y.prevTotalSeconds).toBe(Math.round(y.totalSeconds * 0.97));
   });
 
   it("month range fans out to one bucket per day in the current month", async () => {

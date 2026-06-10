@@ -43,7 +43,7 @@ vi.mock("../../lib/use-backup", async () => {
   return { ...actual, withPopoverPinned: (fn: () => unknown) => fn() };
 });
 
-import { ConnectorsCard } from "./connectors-card";
+import { ConnectorsCard, connectorStatus } from "./connectors-card";
 
 /** The single keychain secret of `httpConnector`, in the given state. */
 const ghSecret = (state: "missing" | "set") => [
@@ -96,6 +96,53 @@ beforeEach(() => {
   previewConnectorManifest.mockReset();
   installConnectorManifest.mockReset();
   openDialog.mockReset();
+  // Expanding a row to reach its token field also browses projects; default
+  // to an empty list so the secret-field tests don't trip the fetch path.
+  listConnectorProjects.mockResolvedValue(list([]));
+});
+
+/** Expand a connector row (its name is the disclosure button) — the token
+ *  fields and projects live inside the collapsible panel. */
+async function expandRow(name: string) {
+  await userEvent.click(await screen.findByRole("button", { name }));
+}
+
+describe("connectorStatus", () => {
+  const base = {
+    enabled: true,
+    needsToken: false,
+    loading: false,
+    errored: false,
+    stale: false,
+    loaded: false,
+  };
+  it("is off when disabled (regardless of everything else)", () => {
+    expect(connectorStatus({ ...base, enabled: false, loaded: true })).toBe(
+      "off",
+    );
+  });
+  it("flags a missing token before any fetch state", () => {
+    expect(connectorStatus({ ...base, needsToken: true, errored: true })).toBe(
+      "needs-token",
+    );
+  });
+  it("is checking while loading", () => {
+    expect(connectorStatus({ ...base, loading: true })).toBe("checking");
+  });
+  it("is error when the last read failed", () => {
+    expect(connectorStatus({ ...base, errored: true })).toBe("error");
+  });
+  it("is offline when serving stale cache", () => {
+    expect(connectorStatus({ ...base, stale: true, loaded: true })).toBe(
+      "offline",
+    );
+  });
+  it("is connected after a fresh successful read", () => {
+    expect(connectorStatus({ ...base, loaded: true })).toBe("connected");
+  });
+  it("is ready when enabled and configured but unchecked", () => {
+    expect(connectorStatus(base)).toBe("ready");
+  });
 });
 
 describe("ConnectorsCard", () => {
@@ -409,6 +456,7 @@ describe("ConnectorsCard", () => {
     ]);
     render(<ConnectorsCard />);
 
+    await expandRow("Remote");
     expect(await screen.findByText("Needs token")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Set token" }));
 
@@ -429,6 +477,7 @@ describe("ConnectorsCard", () => {
   it("disables Save until a non-empty token is typed", async () => {
     listConnectors.mockResolvedValue([httpConnector]);
     render(<ConnectorsCard />);
+    await expandRow("Remote");
     await userEvent.click(
       await screen.findByRole("button", { name: "Set token" }),
     );
@@ -441,6 +490,7 @@ describe("ConnectorsCard", () => {
   it("cancels the token form without calling the backend", async () => {
     listConnectors.mockResolvedValue([httpConnector]);
     render(<ConnectorsCard />);
+    await expandRow("Remote");
     await userEvent.click(
       await screen.findByRole("button", { name: "Set token" }),
     );
@@ -461,6 +511,7 @@ describe("ConnectorsCard", () => {
     clearConnectorSecret.mockRejectedValue(new Error("keychain locked"));
     render(<ConnectorsCard />);
 
+    await expandRow("Remote");
     await userEvent.click(await screen.findByRole("button", { name: "Clear" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn’t update token");
@@ -476,6 +527,7 @@ describe("ConnectorsCard", () => {
     ]);
     render(<ConnectorsCard />);
 
+    await expandRow("Remote");
     expect(await screen.findByText("Token saved")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
 
@@ -487,7 +539,7 @@ describe("ConnectorsCard", () => {
     listConnectors.mockResolvedValue([trelloConnector]);
     setConnectorSecret.mockResolvedValue([trelloConnector]);
     const { container } = render(<ConnectorsCard />);
-    await screen.findByRole("button", { name: "Trello" });
+    await expandRow("Trello");
 
     // One field per secret; the set one shows "Token saved", the other "Needs token".
     expect(container.querySelectorAll(".connector-secret").length).toBe(2);
@@ -510,6 +562,7 @@ describe("ConnectorsCard", () => {
     listConnectors.mockResolvedValue([httpConnector]);
     setConnectorSecret.mockRejectedValue(new Error("keychain locked"));
     render(<ConnectorsCard />);
+    await expandRow("Remote");
     await userEvent.click(
       await screen.findByRole("button", { name: "Set token" }),
     );
@@ -622,13 +675,53 @@ describe("ConnectorsCard", () => {
     expect(alert.textContent).toContain("db locked");
   });
 
-  it("does not browse a disabled connector", async () => {
+  it("shows a 'needs a token' status dot for an unconfigured connector", async () => {
+    listConnectors.mockResolvedValue([httpConnector]);
+    render(<ConnectorsCard />);
+    expect(
+      await screen.findByRole("img", { name: /Status: Needs a token/i }),
+    ).toBeTruthy();
+  });
+
+  it("shows a 'ready' dot when configured, flipping to 'connected' on a successful read", async () => {
+    listConnectors.mockResolvedValue([
+      { ...httpConnector, secrets: ghSecret("set") },
+    ]);
+    listConnectorProjects.mockResolvedValue(
+      list([{ id: "p", name: "P", description: null }]),
+    );
+    render(<ConnectorsCard />);
+    expect(
+      await screen.findByRole("img", { name: /Status: Ready/i }),
+    ).toBeTruthy();
+    await expandRow("Remote");
+    expect(
+      await screen.findByRole("img", { name: /Status: Connected/i }),
+    ).toBeTruthy();
+  });
+
+  it("flips the dot to 'can't connect' when a read fails", async () => {
+    listConnectors.mockResolvedValue([
+      { ...httpConnector, secrets: ghSecret("set") },
+    ]);
+    listConnectorProjects.mockRejectedValue(new Error("401"));
+    render(<ConnectorsCard />);
+    await expandRow("Remote");
+    expect(
+      await screen.findByRole("img", { name: /Status: Can't connect/i }),
+    ).toBeTruthy();
+  });
+
+  it("expands a disabled connector to reach its token but does not browse it", async () => {
     listConnectors.mockResolvedValue([{ ...fileConnector, enabled: false }]);
     render(<ConnectorsCard />);
 
+    // The row still expands (so a disabled connector's token field is
+    // reachable), but a disabled connector is never browsed for projects.
     const expand = await screen.findByRole("button", { name: "Sample tasks" });
-    expect(expand.hasAttribute("disabled")).toBe(true);
+    expect(expand.hasAttribute("disabled")).toBe(false);
     await userEvent.click(expand);
+    expect(expand.getAttribute("aria-expanded")).toBe("true");
     expect(listConnectorProjects).not.toHaveBeenCalled();
   });
 

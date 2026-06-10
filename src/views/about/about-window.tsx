@@ -52,8 +52,12 @@ export function AboutWindow({ onClose = hideAboutWindow }: Props) {
       ref={trap.ref}
       onKeyDown={trap.onKeyDown}
     >
-      <header className="about-win-head" data-tauri-drag-region>
-        <span className="about-win-title">About</span>
+      <header className="about-win-head">
+        {/* Only the title is the drag handle — a `data-tauri-drag-region` on
+            the whole header makes macOS swallow the close button's click. */}
+        <span className="about-win-title" data-tauri-drag-region>
+          About
+        </span>
         <button
           className="about-win-close"
           aria-label="Close"

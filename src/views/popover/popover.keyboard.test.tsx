@@ -73,11 +73,11 @@ describe("Popover · keyboard navigation (#27)", () => {
     expect(dismissMock).toHaveBeenCalledTimes(1);
   });
 
-  it("the five tabs are focusable via Tab and report aria-selected", async () => {
+  it("the six tabs are focusable via Tab and report aria-selected", async () => {
     const user = userEvent.setup();
     render(<Popover />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(5);
+    expect(tabs).toHaveLength(6);
     // Walk Tab forward until we land on the first tab (after the
     // header's icon buttons). Bound the search to avoid a runaway
     // loop on regression.

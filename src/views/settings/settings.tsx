@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../../lib/icon";
 import { Kbd } from "../../lib/components";
-import { useExclusions, guessExclusionKind } from "../../lib/use-exclusions";
 import { SHORTCUTS } from "../../lib/shortcuts";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UsePopoverSize, PopoverSize } from "../../lib/use-popover-size";
@@ -32,10 +31,6 @@ import {
   PRIVACY_REPO_LABEL,
   PRIVACY_REPO_URL,
 } from "../../lib/privacy-copy";
-import { IntegrationsCard } from "./integrations";
-import { PluginsCard } from "./plugins-card";
-import { ConnectorsCard } from "./connectors-card";
-import { AboutCard } from "./about-card";
 
 /**
  * Anchors the command palette's "Open settings: X" commands can
@@ -45,13 +40,10 @@ import { AboutCard } from "./about-card";
  */
 export type SettingsSectionId =
   | "privacy"
-  | "exclusions"
   | "accessibility"
   | "shortcuts"
-  | "integrations"
-  | "calendar"
   | "updates"
-  | "about";
+  | "diagnostics";
 
 interface Props {
   density: Density;
@@ -252,15 +244,6 @@ export function SettingsView({
           </a>{" "}
           · {PRIVACY_LICENSE_LABEL}
         </p>
-      </section>
-
-      <section className="settings-block" data-section="exclusions">
-        <h3 className="settings-h">Never track these</h3>
-        <p className="settings-sub">
-          Cairn won't observe these apps, URLs, or windows — not even to count
-          idle time.
-        </p>
-        <ExclusionsSection />
       </section>
 
       <section className="settings-block" data-section="accessibility">
@@ -528,12 +511,6 @@ export function SettingsView({
         </ul>
       </section>
 
-      <IntegrationsCard />
-
-      <PluginsCard />
-
-      <ConnectorsCard />
-
       <section className="settings-block" aria-label="Onboarding">
         <h3 className="settings-h">Onboarding</h3>
         <p className="settings-sub">
@@ -574,13 +551,14 @@ export function SettingsView({
 
       <section
         className="settings-block"
-        aria-label="About"
-        data-section="about"
+        aria-label="Diagnostics"
+        data-section="diagnostics"
       >
-        <h3 className="settings-h">About</h3>
-        <AboutCard />
+        <h3 className="settings-h">Diagnostics</h3>
         <p className="settings-sub">
-          Diagnostics. Off by default and never persisted across launches.
+          For troubleshooting detection. Off by default and never persisted
+          across launches. Cairn's version and links live in the tray's “About
+          Cairn” window.
         </p>
 
         <SetRow
@@ -942,82 +920,5 @@ function RequiredFieldsSection({ requiredFields }: RequiredFieldsSectionProps) {
         />
       </SetRow>
     </section>
-  );
-}
-
-const INCOGNITO_PREF_KEY = "cairn:pause-on-incognito:v1";
-
-/**
- * The "Never track these" list, wired to the exclusion commands
- * (list/save/delete). The add field infers the kind from the input
- * (see `guessExclusionKind`). The incognito toggle has no backend yet —
- * the browser extension will read this preference — so it persists to
- * localStorage rather than the DB.
- */
-function ExclusionsSection() {
-  const excl = useExclusions();
-  const [draft, setDraft] = useState("");
-  const [pauseIncognito, setPauseIncognito] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem(INCOGNITO_PREF_KEY) !== "false";
-  });
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(INCOGNITO_PREF_KEY, String(pauseIncognito));
-    } catch {
-      /* ignore quota errors */
-    }
-  }, [pauseIncognito]);
-
-  const submit = () => {
-    const value = draft.trim();
-    if (!value) return;
-    void excl.add(guessExclusionKind(value), value).then(() => setDraft(""));
-  };
-
-  return (
-    <>
-      <ul className="excl-list">
-        {excl.exclusions.map((e) => (
-          <li className="excl-row" key={e.id}>
-            <Icon name="lock" size={12} />
-            <code>{e.value}</code>
-            <span className="excl-kind">{e.kind}</span>
-            <button
-              className="excl-x"
-              aria-label={`Remove ${e.value}`}
-              onClick={() => void excl.remove(e.id)}
-            >
-              <Icon name="x" size={11} />
-            </button>
-          </li>
-        ))}
-        <li className="excl-row excl-add">
-          <Icon name="plus" size={12} />
-          <input
-            placeholder="Add an app, domain, or window title pattern…"
-            aria-label="Add exclusion"
-            value={draft}
-            onChange={(e) => setDraft(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                submit();
-              }
-            }}
-          />
-        </li>
-      </ul>
-      {excl.error && <p className="field-error">{excl.error}</p>}
-      <label className="settings-check">
-        <input
-          type="checkbox"
-          checked={pauseIncognito}
-          onChange={(e) => setPauseIncognito(e.currentTarget.checked)}
-        />
-        <span>Pause tracking on private/incognito browser windows</span>
-      </label>
-    </>
   );
 }

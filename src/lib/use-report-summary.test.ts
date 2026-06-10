@@ -109,17 +109,17 @@ describe("useReportSummary", () => {
       .fn()
       .mockResolvedValueOnce(sample(10))
       .mockResolvedValueOnce(sample(20));
-    type R = "day" | "week" | "month";
+    type R = "week" | "month" | "quarter" | "year";
     const { result, rerender } = renderHook(
       ({ r }: { r: R }) =>
         useReportSummary(r, { enabled: true, fetch: fetchFn }),
       { initialProps: { r: "week" as R } },
     );
     await waitFor(() => expect(result.current.data?.totalSeconds).toBe(10));
-    rerender({ r: "day" as R });
+    rerender({ r: "month" as R });
     await waitFor(() => expect(result.current.data?.totalSeconds).toBe(20));
     expect(fetchFn).toHaveBeenNthCalledWith(1, "week", ROUNDING_OFF);
-    expect(fetchFn).toHaveBeenNthCalledWith(2, "day", ROUNDING_OFF);
+    expect(fetchFn).toHaveBeenNthCalledWith(2, "month", ROUNDING_OFF);
   });
 
   it("forwards the rounding preference to the fetch (#107)", async () => {

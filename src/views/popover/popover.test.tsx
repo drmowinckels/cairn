@@ -56,10 +56,10 @@ describe("Popover shell", () => {
     expect(screen.getByRole("tabpanel")).toBeTruthy();
   });
 
-  it("renders all five tabs with the right active state", () => {
+  it("renders all six tabs with the right active state", () => {
     render(<Popover initialView="reports" />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(5);
+    expect(tabs).toHaveLength(6);
     const labels = tabs.map((t) => t.textContent?.trim());
     expect(labels).toEqual([
       expect.stringMatching(/today/i),
@@ -67,6 +67,7 @@ describe("Popover shell", () => {
       expect.stringMatching(/rules/i),
       expect.stringMatching(/data/i),
       expect.stringMatching(/settings/i),
+      expect.stringMatching(/extensions/i),
     ]);
     const reportsTab = tabs.find((t) => /reports/i.test(t.textContent ?? ""))!;
     expect(reportsTab.getAttribute("aria-selected")).toBe("true");
@@ -83,7 +84,7 @@ describe("Popover shell", () => {
     expect(screen.getByRole("heading", { name: /^rules$/i })).toBeTruthy();
   });
 
-  it("keyboard shortcuts 1-5 switch views (outside input/textarea)", () => {
+  it("keyboard shortcuts 1-6 switch views (outside input/textarea)", () => {
     render(<Popover />);
     fireEvent.keyDown(window, { key: "2" });
     expect(screen.getByRole("heading", { name: /this week/i })).toBeTruthy();
@@ -96,6 +97,8 @@ describe("Popover shell", () => {
     expect(
       screen.getByRole("heading", { name: /local-first & open source/i }),
     ).toBeTruthy();
+    fireEvent.keyDown(window, { key: "6" });
+    expect(screen.getByRole("heading", { name: /^extensions$/i })).toBeTruthy();
     fireEvent.keyDown(window, { key: "1" });
     // Today view doesn't have a heading-level title, so check the timeline label.
     expect(screen.getByText(/today's path/i)).toBeTruthy();
