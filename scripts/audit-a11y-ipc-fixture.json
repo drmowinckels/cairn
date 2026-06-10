@@ -21,7 +21,7 @@
           "path": "~/TODO.txt"
         }
       },
-      "secret": "notRequired",
+      "secrets": [],
       "enabled": true
     }
   ],

@@ -49,7 +49,7 @@ const GH_CONNECTOR: Connector = {
   name: "GitHub Projects",
   capabilities: [],
   kind: { http: { baseUrl: "https://api.github.com" } },
-  secret: "set",
+  secrets: [],
   enabled: true,
 };
 

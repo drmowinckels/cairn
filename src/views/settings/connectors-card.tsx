@@ -16,6 +16,7 @@ import {
   type Connector,
   type ConnectorKind,
   type ConnectorManifest,
+  type ConnectorSecret,
   type RemoteProject,
   type RemoteTask,
 } from "../../lib/ipc";
@@ -356,14 +357,40 @@ function ConnectorSecret({
   connector: Connector;
   onChange: (next: Connector[]) => void;
 }) {
+  // Empty ⇒ the connector needs no token (a local file, or `auth: none`).
+  if (connector.secrets.length === 0) return null;
+  return (
+    <div className="connector-secrets">
+      {connector.secrets.map((secret) => (
+        <SecretField
+          key={secret.key}
+          connectorId={connector.id}
+          secret={secret}
+          onChange={onChange}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One keychain-secret field. The token is write-only — typed into a masked
+ *  field, sent once with its `key`, and never read back; the command returns
+ *  the refreshed list so the badge flips without re-reading the secret. */
+function SecretField({
+  connectorId,
+  secret,
+  onChange,
+}: {
+  connectorId: string;
+  secret: ConnectorSecret;
+  onChange: (next: Connector[]) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (connector.secret === "notRequired") return null;
-
-  const inputId = `connector-${connector.id}-token`;
+  const inputId = `connector-${connectorId}-${secret.key}`;
 
   function cancel() {
     setEditing(false);
@@ -378,7 +405,7 @@ function ConnectorSecret({
     setBusy(true);
     setError(null);
     try {
-      onChange(await setConnectorSecret(connector.id, trimmed));
+      onChange(await setConnectorSecret(connectorId, secret.key, trimmed));
       setToken("");
       setEditing(false);
     } catch (e) {
@@ -392,7 +419,7 @@ function ConnectorSecret({
     setBusy(true);
     setError(null);
     try {
-      onChange(await clearConnectorSecret(connector.id));
+      onChange(await clearConnectorSecret(connectorId, secret.key));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -401,7 +428,7 @@ function ConnectorSecret({
   }
 
   return (
-    <div className="connector-secret" data-state={connector.secret}>
+    <div className="connector-secret" data-state={secret.state}>
       {editing ? (
         <form
           className="connector-secret-form"
@@ -411,7 +438,7 @@ function ConnectorSecret({
           }}
         >
           <label htmlFor={inputId} className="connector-secret-label">
-            API token
+            {secret.label}
           </label>
           <input
             id={inputId}
@@ -442,10 +469,11 @@ function ConnectorSecret({
         </form>
       ) : (
         <div className="connector-secret-status">
+          <span className="connector-secret-name">{secret.label}</span>
           <span
-            className={`connector-secret-badge connector-secret-badge--${connector.secret}`}
+            className={`connector-secret-badge connector-secret-badge--${secret.state}`}
           >
-            {connector.secret === "missing" ? "Needs token" : "Token saved"}
+            {secret.state === "missing" ? "Needs token" : "Token saved"}
           </span>
           <button
             type="button"
@@ -453,9 +481,9 @@ function ConnectorSecret({
             onClick={() => setEditing(true)}
             disabled={busy}
           >
-            {connector.secret === "missing" ? "Set token" : "Replace"}
+            {secret.state === "missing" ? "Set token" : "Replace"}
           </button>
-          {connector.secret === "set" && (
+          {secret.state === "set" && (
             <button
               type="button"
               className="connector-secret-action connector-secret-action--ghost"
