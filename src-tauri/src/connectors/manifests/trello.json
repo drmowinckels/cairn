@@ -1,0 +1,44 @@
+{
+  "manifest": 1,
+  "id": "trello",
+  "name": "Trello",
+  "kind": "http",
+  "capabilities": ["network", "secrets"],
+  "auth": {
+    "type": "multi",
+    "secrets": [
+      { "in": "query", "name": "key", "secret": "trello_key" },
+      { "in": "query", "name": "token", "secret": "trello_token" }
+    ]
+  },
+  "baseUrl": "https://api.trello.com",
+  "operations": {
+    "listProjects": {
+      "request": {
+        "method": "GET",
+        "path": "/1/members/me/boards",
+        "query": { "filter": "open", "fields": "name" }
+      },
+      "response": {
+        "items": "",
+        "map": { "id": "id", "name": "name" }
+      }
+    },
+    "listTasks": {
+      "request": {
+        "method": "GET",
+        "path": "/1/boards/{{project.id}}/cards",
+        "query": { "filter": "visible", "fields": "name,url,dueComplete", "limit": "1000" }
+      },
+      "response": {
+        "items": "",
+        "map": {
+          "id": "id",
+          "label": "name",
+          "url": "url",
+          "done": "dueComplete"
+        }
+      }
+    }
+  }
+}

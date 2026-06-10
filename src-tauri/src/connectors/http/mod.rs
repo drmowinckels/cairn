@@ -826,6 +826,59 @@ mod tests {
         assert!(fetcher.last().body.as_deref().unwrap().contains("PVT_1"));
     }
 
+    fn trello_secrets() -> FakeSecrets {
+        FakeSecrets(BTreeMap::from([
+            ("trello_key".into(), "APPKEY".into()),
+            ("trello_token".into(), "USERTOK".into()),
+        ]))
+    }
+
+    #[tokio::test]
+    async fn bundled_trello_lists_boards_and_cards_with_both_secrets() {
+        let boards = r#"[{"id":"b1","name":"Acme"}]"#;
+        let cards = r#"[
+            {"id":"c1","name":"Open card","url":"https://trello.com/c/aaa","dueComplete":false},
+            {"id":"c2","name":"Done card","url":"https://trello.com/c/bbb","dueComplete":true}
+        ]"#;
+        let c = connector(
+            crate::connectors::builtin::TRELLO,
+            FakeFetcher::with(&[boards, cards]),
+            trello_secrets(),
+        );
+
+        let projects = c.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "b1");
+        assert_eq!(projects[0].name, "Acme");
+        {
+            // Both credentials are applied as query params, on the boards path.
+            let DeclarativeConnector { fetcher, .. } = &c;
+            let url = fetcher.last().url;
+            assert!(url.contains("key=APPKEY"), "{url}");
+            assert!(url.contains("token=USERTOK"), "{url}");
+            assert!(
+                url.starts_with("https://api.trello.com/1/members/me/boards?"),
+                "{url}"
+            );
+        }
+
+        let tasks = c.list_tasks(&RemoteProjectRef::new("b1")).await.unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert!(!tasks[0].done, "an incomplete card is not done");
+        assert!(tasks[1].done, "dueComplete maps to done");
+        assert_eq!(tasks[1].url.as_deref(), Some("https://trello.com/c/bbb"));
+
+        let DeclarativeConnector { fetcher, .. } = &c;
+        let cards_url = fetcher.last().url;
+        assert!(
+            cards_url.starts_with("https://api.trello.com/1/boards/b1/cards?"),
+            "{cards_url}"
+        );
+        // Lock the single-page contract the docs promise (#110).
+        assert!(cards_url.contains("limit=1000"), "{cards_url}");
+        assert!(cards_url.contains("filter=visible"), "{cards_url}");
+    }
+
     fn gitlab_secrets() -> FakeSecrets {
         FakeSecrets(BTreeMap::from([("gitlab_token".into(), "glpat".into())]))
     }

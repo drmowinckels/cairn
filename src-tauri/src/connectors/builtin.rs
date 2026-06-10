@@ -20,9 +20,18 @@ pub const GITHUB_PROJECTS: &str = include_str!("manifests/github-projects.json")
 /// user's member projects and each project's issues (`done` ← `closed_at`).
 pub const GITLAB: &str = include_str!("manifests/gitlab.json");
 
+/// Trello boards + cards (REST). Needs TWO credentials (multi auth): an API
+/// `key` under `trello_key` and a `token` under `trello_token` — both the
+/// user's own (from trello.com/app-key), since Cairn ships no app key. Lists
+/// open boards as projects and each board's visible cards as tasks. `done` ←
+/// `dueComplete`, which reflects only a *due-date* marked complete — Trello
+/// has no list-based "done" field, so a card finished by moving it to a
+/// "Done" list still reads as not done.
+pub const TRELLO: &str = include_str!("manifests/trello.json");
+
 /// Every compiled-in manifest, as raw JSON. A manifest that fails to parse
 /// is a build-time authoring bug, not a user error — `builtins_all_parse`
 /// guards that so a broken one never ships, and `every_bundled_manifest_
 /// file_is_listed_in_all` guards that a `manifests/*.json` isn't forgotten
 /// here.
-pub const ALL: &[&str] = &[GITHUB_PROJECTS, GITLAB];
+pub const ALL: &[&str] = &[GITHUB_PROJECTS, GITLAB, TRELLO];
