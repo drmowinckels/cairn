@@ -54,11 +54,17 @@ pub struct SyncStatus {
 #[derive(Default)]
 struct State {
     events: HashMap<String, Vec<ParsedEvent>>,
+    /// Per-source URL secret, read from the keychain at most once per launch
+    /// and reused thereafter — so periodic syncs don't re-read the keychain
+    /// (which re-prompts for access on every macOS rebuild). Seeded on
+    /// `add_source`, cleared on `remove_source`.
+    credentials: HashMap<String, String>,
 }
 
 pub struct CalendarRegistry {
     pool: SqlitePool,
     fetcher: Arc<Fetcher>,
+    secrets: Arc<dyn secrets::Secrets>,
     state: RwLock<State>,
     sync_lock: Mutex<()>,
 }
@@ -68,18 +74,50 @@ impl CalendarRegistry {
         Ok(Self::with_fetcher(pool, Fetcher::new()?))
     }
 
-    /// Build a registry around an already-constructed [`Fetcher`].
-    /// Infallible: the only fallible step is `Fetcher::new` (TLS-backend
-    /// init), which the caller owns. The Tauri `.setup()` path uses this
-    /// so it can inject a failing builder and exercise the startup-error
-    /// branch from a `--lib` test (see #160).
+    /// Build a registry around an already-constructed [`Fetcher`], using the
+    /// OS keychain for secrets. Infallible: the only fallible step is
+    /// `Fetcher::new` (TLS-backend init), which the caller owns. The Tauri
+    /// `.setup()` path uses this so it can inject a failing builder and
+    /// exercise the startup-error branch from a `--lib` test (see #160).
     pub fn with_fetcher(pool: SqlitePool, fetcher: Fetcher) -> Self {
+        Self::with_fetcher_and_secrets(pool, fetcher, Arc::new(secrets::Keychain))
+    }
+
+    /// Build a registry with both the fetcher and the secret store injected —
+    /// tests pass an in-memory fake so they exercise the credential cache
+    /// without touching the real keychain.
+    pub fn with_fetcher_and_secrets(
+        pool: SqlitePool,
+        fetcher: Fetcher,
+        secrets: Arc<dyn secrets::Secrets>,
+    ) -> Self {
         Self {
             pool,
             fetcher: Arc::new(fetcher),
+            secrets,
             state: RwLock::new(State::default()),
             sync_lock: Mutex::new(()),
         }
+    }
+
+    /// A source's URL secret, read from the keychain at most once per launch
+    /// and cached in memory thereafter. The cache is seeded on `add_source`
+    /// and dropped on `remove_source`, so the only keychain read is the first
+    /// sync after a launch (or never, for a source added this session).
+    async fn url_secret(&self, id: &str) -> Result<String> {
+        if let Some(s) = self.state.read().await.credentials.get(id).cloned() {
+            return Ok(s);
+        }
+        let secret = self
+            .secrets
+            .load(id)?
+            .ok_or_else(|| anyhow!("calendar URL secret missing from keychain"))?;
+        self.state
+            .write()
+            .await
+            .credentials
+            .insert(id.to_string(), secret.clone());
+        Ok(secret)
     }
 
     pub async fn list_sources(&self) -> Result<Vec<CalendarSource>> {
@@ -123,7 +161,12 @@ impl CalendarRegistry {
             last_error: None,
         };
         if matches!(kind, CalendarKind::Url) {
-            secrets::store(&id, &raw).context("write calendar URL to keychain")?;
+            self.secrets
+                .store(&id, &raw)
+                .context("write calendar URL to keychain")?;
+            // Seed the in-memory cache so the immediate sync below — and every
+            // periodic one after — reuses it instead of reading the keychain.
+            self.state.write().await.credentials.insert(id.clone(), raw);
         }
         store::insert(&self.pool, &src).await?;
         // Kick off an immediate sync but don't block the add.
@@ -132,10 +175,11 @@ impl CalendarRegistry {
     }
 
     pub async fn remove_source(&self, id: &str) -> Result<()> {
-        let _ = secrets::remove(id);
+        let _ = self.secrets.remove(id);
         store::delete(&self.pool, id).await?;
         let mut st = self.state.write().await;
         st.events.remove(id);
+        st.credentials.remove(id);
         Ok(())
     }
 
@@ -285,8 +329,7 @@ impl CalendarRegistry {
 
         let outcome = match src.kind {
             CalendarKind::Url => {
-                let secret = secrets::load(id)?
-                    .ok_or_else(|| anyhow!("calendar URL secret missing from keychain"))?;
+                let secret = self.url_secret(id).await?;
                 self.fetcher
                     .fetch(
                         &secret,
@@ -378,7 +421,108 @@ impl CalendarRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::calendar::secrets::{SecretError, Secrets};
     use crate::test_support::test_db;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
+
+    /// In-memory [`Secrets`] that counts reads, so a test can prove the
+    /// registry reads the keychain at most once per source per launch.
+    #[derive(Default)]
+    struct CountingSecrets {
+        store: StdMutex<HashMap<String, String>>,
+        loads: AtomicUsize,
+    }
+    impl CountingSecrets {
+        fn with(id: &str, secret: &str) -> Self {
+            let s = Self::default();
+            s.store.lock().unwrap().insert(id.into(), secret.into());
+            s
+        }
+        fn loads(&self) -> usize {
+            self.loads.load(Ordering::SeqCst)
+        }
+    }
+    impl Secrets for CountingSecrets {
+        fn load(&self, id: &str) -> Result<Option<String>, SecretError> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            Ok(self.store.lock().unwrap().get(id).cloned())
+        }
+        fn store(&self, id: &str, secret: &str) -> Result<(), SecretError> {
+            self.store.lock().unwrap().insert(id.into(), secret.into());
+            Ok(())
+        }
+        fn remove(&self, id: &str) -> Result<(), SecretError> {
+            self.store.lock().unwrap().remove(id);
+            Ok(())
+        }
+    }
+
+    /// A URL source whose credential lives only in the (fake) keychain, not
+    /// the registry's in-memory cache — i.e. one that predates this launch.
+    fn url_source(id: &str) -> CalendarSource {
+        CalendarSource {
+            id: id.into(),
+            kind: CalendarKind::Url,
+            label: "Work".into(),
+            location: "https://example.com/…".into(),
+            poll_seconds: 900,
+            enabled: true,
+            last_synced_at: None,
+            last_etag: None,
+            last_modified: None,
+            last_error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn url_secret_is_read_from_keychain_once_then_cached() {
+        let (_dir, db) = test_db().await;
+        let fake = Arc::new(CountingSecrets::with("s1", "http://127.0.0.1:9/cal.ics"));
+        let reg = CalendarRegistry::with_fetcher_and_secrets(
+            db.pool.clone(),
+            Fetcher::new().unwrap(),
+            fake.clone(),
+        );
+        store::insert(&db.pool, &url_source("s1")).await.unwrap();
+
+        // The fetch fails (unreachable host) — but the credential read happens
+        // first, and that is what we count. The first sync reads the keychain.
+        let _ = reg.refresh("s1").await;
+        assert_eq!(fake.loads(), 1);
+        // Subsequent syncs reuse the cached credential, never re-reading.
+        let _ = reg.refresh("s1").await;
+        let _ = reg.refresh("s1").await;
+        assert_eq!(fake.loads(), 1, "credential is cached after the first read");
+    }
+
+    #[tokio::test]
+    async fn add_source_seeds_the_cache_and_remove_clears_it() {
+        let (_dir, db) = test_db().await;
+        let fake = Arc::new(CountingSecrets::default());
+        let reg = CalendarRegistry::with_fetcher_and_secrets(
+            db.pool.clone(),
+            Fetcher::new().unwrap(),
+            fake.clone(),
+        );
+        // add_source stores the secret AND seeds the cache, so its immediate
+        // sync (and any later one) reuses it without a keychain read.
+        let src = reg
+            .add_source(
+                CalendarKind::Url,
+                "Cal".into(),
+                "http://127.0.0.1:9/x.ics".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(fake.loads(), 0, "add seeds the cache; no keychain read");
+        let _ = reg.refresh(&src.id).await;
+        assert_eq!(fake.loads(), 0, "the seeded credential is reused");
+
+        // Removing the source clears its cached credential (and best-effort
+        // deletes the keychain entry).
+        reg.remove_source(&src.id).await.unwrap();
+    }
 
     fn make_parsed(uid: &str, start: DateTime<Utc>, dur_minutes: i64) -> ParsedEvent {
         ParsedEvent {

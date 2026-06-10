@@ -24,6 +24,7 @@ pub mod cache;
 pub mod file;
 pub mod http;
 pub mod manifest;
+pub mod secret_state;
 pub mod state;
 
 use std::path::Path;
@@ -144,14 +145,18 @@ pub struct ConnectorView {
 }
 
 /// Resolve a [`SecretView`] per secret a connector declares (key + label),
-/// reading presence from the keychain. Pure over the store so it is
-/// unit-tested with a fake.
-pub fn secret_views(refs: &[SecretRef<'_>], store: &dyn http::SecretStore) -> Vec<SecretView> {
+/// reading presence from the DB-backed flags ([`secret_state`]) — NOT the
+/// keychain, which would re-prompt for access on every macOS dev rebuild.
+/// Pure over the flags map so it is unit-tested without any store.
+pub fn secret_views(
+    refs: &[SecretRef<'_>],
+    present: &std::collections::HashMap<String, bool>,
+) -> Vec<SecretView> {
     refs.iter()
         .map(|r| SecretView {
             key: r.key.to_string(),
             label: r.label.to_string(),
-            state: if store.token(r.key).is_some() {
+            state: if secret_state::is_present(present, r.key) {
                 SecretState::Set
             } else {
                 SecretState::Missing
@@ -513,9 +518,9 @@ mod tests {
 
     #[test]
     fn secret_views_reflect_need_and_presence_per_secret() {
-        let kc = FakeKeychain::default();
+        use std::collections::HashMap;
         // No declared secrets → empty (the connector needs none).
-        assert!(secret_views(&[], &kc).is_empty());
+        assert!(secret_views(&[], &HashMap::new()).is_empty());
 
         let refs = [
             SecretRef {
@@ -527,8 +532,10 @@ mod tests {
                 label: "token",
             },
         ];
-        kc.set("trello_key", "APPKEY").unwrap();
-        let views = secret_views(&refs, &kc);
+        // Presence comes from the DB-backed flags, not the keychain: the key
+        // is recorded present, the token is not.
+        let present = HashMap::from([("trello_key".to_string(), true)]);
+        let views = secret_views(&refs, &present);
         assert_eq!(views.len(), 2);
         assert_eq!(views[0].key, "trello_key");
         assert_eq!(views[0].label, "key");

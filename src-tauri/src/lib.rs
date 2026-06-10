@@ -694,6 +694,30 @@ pub fn run() {
                 connectors::ConnectorHost::load(&data_dir.join("connectors")),
             )));
 
+            // One-time reconcile of connector-secret presence so listing
+            // connectors never reads the keychain (which re-prompts for access
+            // on every macOS rebuild). Reads the keychain at most once per key,
+            // ever — only for keys that have no recorded flag yet.
+            {
+                let keys: Vec<String> = connector_host
+                    .read()
+                    .expect("connector host lock poisoned")
+                    .manifests()
+                    .iter()
+                    .flat_map(|m| m.secret_refs().into_iter().map(|r| r.key.to_string()))
+                    .collect();
+                let pool = db.pool.clone();
+                tauri::async_runtime::block_on(async {
+                    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+                    connectors::secret_state::backfill_missing(
+                        &pool,
+                        &key_refs,
+                        &connectors::http::KeychainStore::new(),
+                    )
+                    .await;
+                });
+            }
+
             app.manage(AppState {
                 db,
                 pinned: AtomicBool::new(false),

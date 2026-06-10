@@ -792,10 +792,17 @@ impl ReportGroup {
 /// `anchor` (today, normally). Unknown ranges fall back to the week.
 fn report_window(range: &str, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
     match range {
-        "day" => (anchor, anchor + Duration::days(1)),
         "month" => {
             let first = first_of_month(anchor);
             (first, first_of_next_month(first))
+        }
+        "quarter" => {
+            let first = first_of_quarter(anchor);
+            (first, first_of_next_quarter(first))
+        }
+        "year" => {
+            let first = first_of_year(anchor);
+            (first, first_of_year_after(first))
         }
         _ => {
             let monday = monday_of(anchor);
@@ -809,10 +816,37 @@ fn report_window(range: &str, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
 fn prev_report_window(range: &str, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
     let (start, _) = report_window(range, anchor);
     match range {
-        "day" => (start - Duration::days(1), start),
         "month" => (first_of_month(start - Duration::days(1)), start),
+        "quarter" => (first_of_quarter(start - Duration::days(1)), start),
+        "year" => (first_of_year(start - Duration::days(1)), start),
         _ => (start - Duration::days(7), start),
     }
+}
+
+fn first_of_quarter(d: NaiveDate) -> NaiveDate {
+    let q_start_month = ((d.month() - 1) / 3) * 3 + 1; // 1, 4, 7, or 10
+    NaiveDate::from_ymd_opt(d.year(), q_start_month, 1).expect("quarter start is valid")
+}
+
+fn first_of_next_quarter(first: NaiveDate) -> NaiveDate {
+    // `first` is a quarter start (month 1/4/7/10); the next quarter starts
+    // three months on, rolling into January of the next year past October.
+    if first.month() >= 10 {
+        NaiveDate::from_ymd_opt(first.year() + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(first.year(), first.month() + 3, 1)
+    }
+    .expect("next quarter start is valid")
+}
+
+fn first_of_year(d: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(d.year(), 1, 1).expect("Jan 1 is valid")
+}
+
+/// Jan 1 of the year after the one `first` (a Jan 1) belongs to — the
+/// half-open end of the year window. Leap-year-correct by construction.
+fn first_of_year_after(first: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(first.year() + 1, 1, 1).expect("next Jan 1 is valid")
 }
 
 fn first_of_month(d: NaiveDate) -> NaiveDate {
@@ -2240,12 +2274,8 @@ mod report_pure_tests {
     }
 
     #[test]
-    fn report_window_day_week_month() {
-        let anchor = NaiveDate::from_ymd_opt(2026, 5, 30).unwrap(); // Saturday
-        assert_eq!(
-            report_window("day", anchor),
-            (anchor, NaiveDate::from_ymd_opt(2026, 5, 31).unwrap())
-        );
+    fn report_window_week_month_quarter_year() {
+        let anchor = NaiveDate::from_ymd_opt(2026, 5, 30).unwrap(); // Saturday, Q2
         let (ws, we) = report_window("week", anchor);
         assert_eq!(ws.weekday(), Weekday::Mon);
         assert_eq!((we - ws).num_days(), 7);
@@ -2256,12 +2286,48 @@ mod report_pure_tests {
                 NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()
             )
         );
+        // May is in Q2 (Apr–Jun).
+        assert_eq!(
+            report_window("quarter", anchor),
+            (
+                NaiveDate::from_ymd_opt(2026, 4, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()
+            )
+        );
+        assert_eq!(
+            report_window("year", anchor),
+            (
+                NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+            )
+        );
         // Unknown range falls back to the current week (matches the
         // command's lenient deserialization of the `range` arg).
         assert_eq!(
             report_window("bogus", anchor),
             report_window("week", anchor)
         );
+    }
+
+    #[test]
+    fn quarter_window_rolls_into_january_from_q4() {
+        let nov = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap(); // Q4
+        assert_eq!(
+            report_window("quarter", nov),
+            (
+                NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn year_window_spans_a_leap_year() {
+        let anchor = NaiveDate::from_ymd_opt(2028, 6, 1).unwrap(); // 2028 is a leap year
+        let (ys, ye) = report_window("year", anchor);
+        assert_eq!(ys, NaiveDate::from_ymd_opt(2028, 1, 1).unwrap());
+        assert_eq!(ye, NaiveDate::from_ymd_opt(2029, 1, 1).unwrap());
+        assert_eq!((ye - ys).num_days(), 366);
     }
 
     #[test]
@@ -2279,15 +2345,27 @@ mod report_pure_tests {
     #[test]
     fn prev_window_precedes_current() {
         let anchor = NaiveDate::from_ymd_opt(2026, 5, 30).unwrap();
-        let (cs, _) = report_window("day", anchor);
-        let (ps, pe) = prev_report_window("day", anchor);
-        assert_eq!(pe, cs);
-        assert_eq!(ps, cs - Duration::days(1));
+        let (ws, _) = report_window("week", anchor);
+        let (pws, pwe) = prev_report_window("week", anchor);
+        assert_eq!(pwe, ws);
+        assert_eq!(pws, ws - Duration::days(7));
 
         let (ms, _) = report_window("month", anchor);
         let (pms, pme) = prev_report_window("month", anchor);
         assert_eq!(pme, ms);
         assert_eq!(pms, NaiveDate::from_ymd_opt(2026, 4, 1).unwrap());
+
+        // Q2 → previous quarter is Q1 (Jan–Mar).
+        let (qs, _) = report_window("quarter", anchor);
+        let (pqs, pqe) = prev_report_window("quarter", anchor);
+        assert_eq!(pqe, qs);
+        assert_eq!(pqs, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+
+        // 2026 → previous year is 2025.
+        let (ys, _) = report_window("year", anchor);
+        let (pys, pye) = prev_report_window("year", anchor);
+        assert_eq!(pye, ys);
+        assert_eq!(pys, NaiveDate::from_ymd_opt(2025, 1, 1).unwrap());
     }
 
     #[test]
@@ -6191,24 +6269,21 @@ fn store_connector_host(state: &State<'_, AppState>, host: crate::connectors::Co
     }
 }
 
-/// Each loaded connector's manifest paired with its secret state (read
-/// against `store`) and enabled flag (from `enabled`; absent = enabled). The
-/// token never crosses this boundary, only its presence. Generic over the
-/// store so the secret logic is unit-tested with a fake keychain rather than
-/// only the OS one (which is platform-gated); production callers pass
-/// [`KeychainStore`].
-///
-/// [`KeychainStore`]: crate::connectors::http::KeychainStore
+/// Each loaded connector's manifest paired with its secret state (from the
+/// DB-backed `present` flags — NOT the keychain, which would re-prompt on
+/// every macOS rebuild) and enabled flag (from `enabled`; absent = enabled).
+/// The token never crosses this boundary, only its presence. Takes both maps
+/// pre-loaded so the view logic is unit-tested without any keychain.
 fn connector_views_with(
     state: &State<'_, AppState>,
-    store: &dyn crate::connectors::http::SecretStore,
+    present: &std::collections::HashMap<String, bool>,
     enabled: &std::collections::HashMap<String, bool>,
 ) -> Vec<crate::connectors::ConnectorView> {
     connector_host(state)
         .manifests()
         .into_iter()
         .map(|manifest| {
-            let secrets = crate::connectors::secret_views(&manifest.secret_refs(), store);
+            let secrets = crate::connectors::secret_views(&manifest.secret_refs(), present);
             let is_enabled = crate::connectors::state::is_enabled(enabled, &manifest.id);
             crate::connectors::ConnectorView {
                 manifest,
@@ -6225,48 +6300,57 @@ fn connector_views_with(
 /// exercised cross-platform with a fake — the OS keychain only enters
 /// through the thin `*_impl` wrappers. Errors if the id is unknown (the UI
 /// only ever passes ids from `list_connectors`, so that is a bug, not input).
-fn apply_connector_secret<K>(
+async fn apply_connector_secret<W>(
     state: &State<'_, AppState>,
     connector_id: &str,
     secret_key: Option<&str>,
     token: Option<&str>,
-    keychain: &K,
+    keychain: &W,
     enabled: &std::collections::HashMap<String, bool>,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String>
 where
-    K: crate::connectors::http::SecretStore + crate::connectors::http::SecretWriter,
+    W: crate::connectors::http::SecretWriter,
 {
-    let host = connector_host(state);
-    let connector = host
-        .get(connector_id)
-        .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
-    let keys: Vec<&str> = connector
-        .manifest()
-        .secret_refs()
-        .into_iter()
-        .map(|r| r.key)
-        .collect();
-    // Pick which secret to write: the named one (must be declared), or — for a
-    // single-secret connector — its sole key. Reject a connector that takes
-    // none, or a multi-secret one with no key named.
-    let target = match secret_key {
-        Some(k) if keys.contains(&k) => k,
-        Some(k) => return Err(format!("connector '{connector_id}' has no secret '{k}'")),
-        None => match keys.as_slice() {
-            [only] => only,
-            [] => return Err("this connector does not take a token".to_string()),
-            _ => {
-                return Err(format!(
-                    "connector '{connector_id}' has multiple secrets; specify which to set"
-                ))
-            }
-        },
+    // Resolve the target key up front (a sync borrow of the host) and drop the
+    // host before the awaits below — `&dyn PmConnector` is not Send.
+    let target = {
+        let host = connector_host(state);
+        let connector = host
+            .get(connector_id)
+            .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+        let keys: Vec<String> = connector
+            .manifest()
+            .secret_refs()
+            .into_iter()
+            .map(|r| r.key.to_string())
+            .collect();
+        // Pick which secret to write: the named one (must be declared), or —
+        // for a single-secret connector — its sole key. Reject a connector that
+        // takes none, or a multi-secret one with no key named.
+        match secret_key {
+            Some(k) if keys.iter().any(|x| x == k) => k.to_string(),
+            Some(k) => return Err(format!("connector '{connector_id}' has no secret '{k}'")),
+            None => match keys.as_slice() {
+                [only] => only.clone(),
+                [] => return Err("this connector does not take a token".to_string()),
+                _ => {
+                    return Err(format!(
+                        "connector '{connector_id}' has multiple secrets; specify which to set"
+                    ))
+                }
+            },
+        }
     };
     match token {
-        Some(token) => crate::connectors::store_secret(Some(target), token, keychain)?,
-        None => crate::connectors::remove_secret(Some(target), keychain)?,
+        Some(token) => crate::connectors::store_secret(Some(&target), token, keychain)?,
+        None => crate::connectors::remove_secret(Some(&target), keychain)?,
     }
-    Ok(connector_views_with(state, keychain, enabled))
+    // Mirror presence to the DB so listing connectors never reads the keychain
+    // (which would re-prompt on every macOS dev rebuild). Only after the
+    // keychain write succeeds, so the flag can't claim a token that isn't there.
+    crate::connectors::secret_state::set_present(&state.db.pool, &target, token.is_some()).await?;
+    let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
+    Ok(connector_views_with(state, &present, enabled))
 }
 
 /// List every loaded PM connector with its secret + enabled state, for
@@ -6277,11 +6361,10 @@ pub async fn list_connectors_impl(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
     let enabled = crate::connectors::state::load_enabled(&state.db.pool).await;
-    Ok(connector_views_with(
-        &state,
-        &crate::connectors::http::KeychainStore::new(),
-        &enabled,
-    ))
+    // Secret presence comes from the DB, NOT the keychain — listing connectors
+    // must not touch the keychain (it would re-prompt on every macOS rebuild).
+    let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
+    Ok(connector_views_with(&state, &present, &enabled))
 }
 
 /// Store a connector's auth token in the OS keychain (#110). Validates the
@@ -6304,6 +6387,7 @@ pub async fn set_connector_secret_impl(
         &crate::connectors::http::KeychainStore::new(),
         &enabled,
     )
+    .await
 }
 
 /// Clear a connector's stored auth token from the keychain (#110). `secret_key`
@@ -6323,6 +6407,7 @@ pub async fn clear_connector_secret_impl(
         &crate::connectors::http::KeychainStore::new(),
         &enabled,
     )
+    .await
 }
 
 /// Enable or disable a connector (#110), persisting the flag so a disabled
@@ -6339,11 +6424,8 @@ pub async fn set_connector_enabled_impl(
     }
     crate::connectors::state::set_enabled(&state.db.pool, &connector_id, enabled).await?;
     let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
-    Ok(connector_views_with(
-        &state,
-        &crate::connectors::http::KeychainStore::new(),
-        &flags,
-    ))
+    let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
+    Ok(connector_views_with(&state, &present, &flags))
 }
 
 /// Validate a connector manifest file the user picked, WITHOUT installing it
@@ -6386,11 +6468,8 @@ pub async fn install_connector_manifest_impl(
 
     store_connector_host(&state, crate::connectors::ConnectorHost::load(&dir));
     let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
-    Ok(connector_views_with(
-        &state,
-        &crate::connectors::http::KeychainStore::new(),
-        &flags,
-    ))
+    let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
+    Ok(connector_views_with(&state, &present, &flags))
 }
 
 /// Run a connector read through the offline cache (#110): on success, cache
@@ -6667,6 +6746,7 @@ mod connector_tests {
             &kc,
             &enabled,
         )
+        .await
         .unwrap();
         let http = after_set
             .iter()
@@ -6684,6 +6764,7 @@ mod connector_tests {
 
         let after_clear =
             apply_connector_secret(&state, FIXTURE_HTTP_CONNECTOR_ID, None, None, &kc, &enabled)
+                .await
                 .unwrap();
         let http = after_clear
             .iter()
@@ -6963,8 +7044,8 @@ mod connector_tests {
         let kc = FakeKeychain::default();
         let enabled = std::collections::HashMap::new();
 
-        // Two declared secrets, both Missing initially.
-        let before = connector_views_with(&state, &kc, &enabled);
+        // Two declared secrets, both Missing initially (no presence rows yet).
+        let before = connector_views_with(&state, &std::collections::HashMap::new(), &enabled);
         let trello = before.iter().find(|c| c.manifest.id == "trello").unwrap();
         assert_eq!(trello.secrets.len(), 2);
         assert!(trello
@@ -6973,12 +7054,14 @@ mod connector_tests {
             .all(|s| s.state == SecretState::Missing));
 
         // No key named on a 2-secret connector → must say which.
-        let err =
-            apply_connector_secret(&state, "trello", None, Some("X"), &kc, &enabled).unwrap_err();
+        let err = apply_connector_secret(&state, "trello", None, Some("X"), &kc, &enabled)
+            .await
+            .unwrap_err();
         assert!(err.contains("specify which"), "{err}");
 
         // An undeclared key is rejected.
         let err = apply_connector_secret(&state, "trello", Some("nope"), Some("X"), &kc, &enabled)
+            .await
             .unwrap_err();
         assert!(err.contains("no secret 'nope'"), "{err}");
 
@@ -6991,6 +7074,7 @@ mod connector_tests {
             &kc,
             &enabled,
         )
+        .await
         .unwrap();
         let trello = after.iter().find(|c| c.manifest.id == "trello").unwrap();
         let key = trello
