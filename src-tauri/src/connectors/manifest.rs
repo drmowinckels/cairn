@@ -125,19 +125,51 @@ pub enum Auth {
     Query { name: String, secret: String },
     /// `Authorization: Basic base64(<username>:<token>)`.
     Basic { username: String, secret: String },
+    /// Several credentials at once (e.g. Trello's `key` + `token`), each its
+    /// own keychain secret, applied to a query param or header. For APIs that
+    /// need more than one user-supplied credential.
+    Multi { secrets: Vec<SecretParam> },
+}
+
+/// Where a [`SecretParam`] places its credential on the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SecretLocation {
+    Query,
+    Header,
+}
+
+/// One credential of a multi-secret auth: its keychain key (`secret`), where
+/// it goes (`location`), and the param/header `name`. The `name` doubles as
+/// the human label in the settings card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretParam {
+    #[serde(rename = "in")]
+    pub location: SecretLocation,
+    pub name: String,
+    pub secret: String,
 }
 
 impl Auth {
-    /// The keychain key holding this connector's token, or `None` when no
-    /// secret is involved (`Auth::None`).
-    pub fn secret_key(&self) -> Option<&str> {
+    /// Every keychain key this auth needs, in declaration order. Empty for
+    /// `Auth::None`; one for the single-credential variants; one per
+    /// [`SecretParam`] for `Multi`.
+    pub fn secret_keys(&self) -> Vec<&str> {
         match self {
-            Auth::None => None,
+            Auth::None => Vec::new(),
             Auth::Bearer { secret }
             | Auth::Header { secret, .. }
             | Auth::Query { secret, .. }
-            | Auth::Basic { secret, .. } => Some(secret),
+            | Auth::Basic { secret, .. } => vec![secret],
+            Auth::Multi { secrets } => secrets.iter().map(|s| s.secret.as_str()).collect(),
         }
+    }
+
+    /// The first keychain key, or `None` when the auth needs none. A
+    /// convenience for single-credential call sites; multi-secret callers use
+    /// [`Auth::secret_keys`].
+    pub fn secret_key(&self) -> Option<&str> {
+        self.secret_keys().into_iter().next()
     }
 }
 
@@ -242,6 +274,10 @@ pub enum ManifestError {
     UnsupportedKind(String),
     #[error("http operation {0:?} has a pagination page size of 0 — it must be ≥ 1")]
     ZeroPageSize(String),
+    #[error("http \"multi\" auth must declare at least one secret")]
+    EmptyMultiAuth,
+    #[error("http \"multi\" auth places two credentials at the same {location} name {name:?}")]
+    DuplicateSecretName { location: String, name: String },
 }
 
 /// The wire shape of a manifest: flat top-level fields plus one sibling
@@ -396,6 +432,30 @@ fn validate_http(
         );
         if zero {
             return Err(ManifestError::ZeroPageSize(op.clone()));
+        }
+    }
+
+    if let Auth::Multi { secrets } = auth {
+        // An empty `multi` is incoherent: with no secrets it would otherwise
+        // look like `Auth::None` and silently ship an auth-less connector.
+        if secrets.is_empty() {
+            return Err(ManifestError::EmptyMultiAuth);
+        }
+        // Two credentials at the same (location, name) would silently overwrite
+        // each other; reject so the conflict surfaces at load.
+        let mut seen: Vec<(&SecretLocation, &str)> = Vec::new();
+        for p in secrets {
+            let here = (&p.location, p.name.as_str());
+            if seen.contains(&here) {
+                return Err(ManifestError::DuplicateSecretName {
+                    location: match p.location {
+                        SecretLocation::Query => "query".into(),
+                        SecretLocation::Header => "header".into(),
+                    },
+                    name: p.name.clone(),
+                });
+            }
+            seen.push(here);
         }
     }
 
@@ -587,6 +647,72 @@ mod tests {
             .secret_key(),
             Some("p")
         );
+    }
+
+    #[test]
+    fn multi_auth_exposes_all_its_secret_keys() {
+        let auth = Auth::Multi {
+            secrets: vec![
+                SecretParam {
+                    location: SecretLocation::Query,
+                    name: "key".into(),
+                    secret: "trello_key".into(),
+                },
+                SecretParam {
+                    location: SecretLocation::Query,
+                    name: "token".into(),
+                    secret: "trello_token".into(),
+                },
+            ],
+        };
+        assert_eq!(auth.secret_keys(), vec!["trello_key", "trello_token"]);
+        // `secret_key` is the first, for single-credential call sites.
+        assert_eq!(auth.secret_key(), Some("trello_key"));
+        assert!(Auth::None.secret_keys().is_empty());
+    }
+
+    #[test]
+    fn parses_multi_auth() {
+        let json = HTTP_JSON.replace(
+            "{ \"type\": \"bearer\", \"secret\": \"todoist_token\" }",
+            "{ \"type\": \"multi\", \"secrets\": [\
+               { \"in\": \"query\", \"name\": \"key\", \"secret\": \"trello_key\" },\
+               { \"in\": \"query\", \"name\": \"token\", \"secret\": \"trello_token\" }] }",
+        );
+        let m = ConnectorManifest::from_json(&json).unwrap();
+        let s = m.kind.as_http().expect("http kind");
+        assert_eq!(s.auth.secret_keys(), vec!["trello_key", "trello_token"]);
+    }
+
+    #[test]
+    fn rejects_an_empty_multi_auth() {
+        let json = HTTP_JSON.replace(
+            "{ \"type\": \"bearer\", \"secret\": \"todoist_token\" }",
+            "{ \"type\": \"multi\", \"secrets\": [] }",
+        );
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::EmptyMultiAuth), "{err:?}");
+    }
+
+    #[test]
+    fn rejects_multi_auth_with_a_duplicate_secret_placement() {
+        for (loc, label) in [("query", "query"), ("header", "header")] {
+            let multi = format!(
+                "{{ \"type\": \"multi\", \"secrets\": [\
+                   {{ \"in\": \"{loc}\", \"name\": \"token\", \"secret\": \"a\" }},\
+                   {{ \"in\": \"{loc}\", \"name\": \"token\", \"secret\": \"b\" }}] }}"
+            );
+            let json = HTTP_JSON.replace(
+                "{ \"type\": \"bearer\", \"secret\": \"todoist_token\" }",
+                &multi,
+            );
+            let err = ConnectorManifest::from_json(&json).unwrap_err();
+            assert!(
+                matches!(&err, ManifestError::DuplicateSecretName { name, location }
+                    if name == "token" && location == label),
+                "{err:?}"
+            );
+        }
     }
 
     #[test]
