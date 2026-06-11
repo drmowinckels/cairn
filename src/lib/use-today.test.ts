@@ -24,7 +24,7 @@ describe("useToday", () => {
     const { result } = renderHook(() =>
       useToday({
         enabled: false,
-        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+        fetcher: fetcher as unknown as typeof import("./ipc").listDay,
       }),
     );
     expect(result.current.entries).toEqual([]);
@@ -37,7 +37,7 @@ describe("useToday", () => {
     const { result } = renderHook(() =>
       useToday({
         enabled: true,
-        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+        fetcher: fetcher as unknown as typeof import("./ipc").listDay,
       }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -52,7 +52,7 @@ describe("useToday", () => {
     const { result } = renderHook(() =>
       useToday({
         enabled: true,
-        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+        fetcher: fetcher as unknown as typeof import("./ipc").listDay,
       }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -66,10 +66,22 @@ describe("useToday", () => {
     const { result } = renderHook(() =>
       useToday({
         enabled: true,
-        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+        fetcher: fetcher as unknown as typeof import("./ipc").listDay,
       }),
     );
     await waitFor(() => expect(result.current.error).toBe("string-rejection"));
+  });
+
+  it("passes the requested day to the fetcher", async () => {
+    const fetcher = vi.fn(async () => [ENTRY]);
+    renderHook(() =>
+      useToday({
+        enabled: true,
+        date: "2026-05-23",
+        fetcher: fetcher as unknown as typeof import("./ipc").listDay,
+      }),
+    );
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("2026-05-23"));
   });
 
   it("refresh() refetches on demand", async () => {
@@ -77,7 +89,7 @@ describe("useToday", () => {
     const { result } = renderHook(() =>
       useToday({
         enabled: true,
-        fetcher: fetcher as unknown as typeof import("./ipc").listToday,
+        fetcher: fetcher as unknown as typeof import("./ipc").listDay,
       }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));

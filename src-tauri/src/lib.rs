@@ -402,6 +402,7 @@ pub fn run() {
             ipc::save_task,
             ipc::delete_task,
             ipc::list_today,
+            ipc::list_day,
             ipc::list_week,
             ipc::report_summary,
             ipc::list_rules,

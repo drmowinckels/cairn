@@ -18,6 +18,7 @@ export type IconName =
   | "plus"
   | "edit"
   | "chevron-right"
+  | "chevron-left"
   | "chevron-down"
   | "lock"
   | "branch"
@@ -127,6 +128,12 @@ export function Icon({ name, size = 16, stroke = 1.5, className }: Props) {
       return (
         <svg {...props}>
           <path d="M9 6l6 6-6 6" />
+        </svg>
+      );
+    case "chevron-left":
+      return (
+        <svg {...props}>
+          <path d="M15 6l-6 6 6 6" />
         </svg>
       );
     case "chevron-down":

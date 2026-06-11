@@ -102,7 +102,7 @@ async function mountPopover(backend: Backend) {
       switch (cmd) {
         case "get_onboarding_state":
           return { completedAt: "2026-01-01T00:00:00Z" };
-        case "list_today":
+        case "list_day":
           return backend.today ?? [];
         case "list_rules":
           return backend.rules ?? [];
@@ -263,7 +263,7 @@ describe("Popover footer — live totals (#142)", () => {
   });
 
   it("omits the today total until entries have loaded (no fake zero flash)", async () => {
-    // Hold `list_today` open so the popover renders with the timer
+    // Hold `list_day` open so the popover renders with the timer
     // resolved but today still loading.
     let releaseToday!: (rows: BackendEntry[]) => void;
     const pending = new Promise<BackendEntry[]>((r) => {
@@ -275,7 +275,7 @@ describe("Popover footer — live totals (#142)", () => {
         switch (cmd) {
           case "get_onboarding_state":
             return { completedAt: "2026-01-01T00:00:00Z" };
-          case "list_today":
+          case "list_day":
             return pending;
           case "list_rules":
             return [ruleRow({ id: "r1", enabled: true })];

@@ -3,10 +3,18 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   currentRunning,
   inTauri,
-  listToday,
+  listDay,
   startEntry,
   stopEntry,
+  type BackendEntry,
 } from "./ipc";
+import { isoLocalDate } from "./report-math";
+
+/** Today's entries, newest-relevant first — the shortcut uses this to find
+ *  the last project to resume. */
+function listTodayEntries(): Promise<BackendEntry[]> {
+  return listDay(isoLocalDate(new Date()));
+}
 import {
   SHORTCUT_TOGGLE_TIMER_EVENT,
   emitToast,
@@ -17,7 +25,7 @@ interface ToggleTimerOpts {
   enabled?: boolean;
   listenFn?: typeof listen;
   fetchCurrent?: typeof currentRunning;
-  fetchToday?: typeof listToday;
+  fetchToday?: typeof listTodayEntries;
   startFn?: typeof startEntry;
   stopFn?: typeof stopEntry;
   announce?: (message: string) => void;
@@ -26,7 +34,7 @@ interface ToggleTimerOpts {
 
 export async function handleToggleTimer(opts: {
   fetchCurrent: typeof currentRunning;
-  fetchToday: typeof listToday;
+  fetchToday: typeof listTodayEntries;
   startFn: typeof startEntry;
   stopFn: typeof stopEntry;
 }): Promise<{ kind: "started" | "stopped" | "no-project"; message: string }> {
@@ -59,7 +67,7 @@ export function useToggleTimerShortcut(opts: ToggleTimerOpts = {}): void {
   const enabled = opts.enabled ?? inTauri;
   const listenFn = opts.listenFn ?? listen;
   const fetchCurrent = opts.fetchCurrent ?? currentRunning;
-  const fetchToday = opts.fetchToday ?? listToday;
+  const fetchToday = opts.fetchToday ?? listTodayEntries;
   const startFn = opts.startFn ?? startEntry;
   const stopFn = opts.stopFn ?? stopEntry;
   const announce = opts.announce;

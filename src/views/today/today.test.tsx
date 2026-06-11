@@ -266,7 +266,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string, _args?: unknown) => {
       if (cmd === "current_running") return running;
-      if (cmd === "list_today") return [closed, running];
+      if (cmd === "list_day") return [closed, running];
       if (cmd === "list_projects")
         return [
           {
@@ -328,7 +328,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       expect(invoke).toHaveBeenCalledWith("stop_entry", { id: "e1" }),
     );
     await waitFor(() => {
-      const todayCalls = invoke.mock.calls.filter(([c]) => c === "list_today");
+      const todayCalls = invoke.mock.calls.filter(([c]) => c === "list_day");
       expect(todayCalls.length).toBeGreaterThanOrEqual(2);
     });
   });
@@ -458,7 +458,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       };
       const invoke = vi.fn(async (cmd: string) => {
         if (cmd === "current_running") return running;
-        if (cmd === "list_today") return [running];
+        if (cmd === "list_day") return [running];
         if (cmd === "list_projects")
           return [
             {
@@ -517,7 +517,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       };
       const invoke = vi.fn(async (cmd: string) => {
         if (cmd === "current_running") return running;
-        if (cmd === "list_today") return [running];
+        if (cmd === "list_day") return [running];
         if (cmd === "list_projects")
           return [
             {
@@ -569,7 +569,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     try {
       const invoke = vi.fn(async (cmd: string) => {
         if (cmd === "current_running") return null;
-        if (cmd === "list_today") return [];
+        if (cmd === "list_day") return [];
         if (cmd === "list_projects")
           return [
             {
@@ -616,7 +616,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
   it("idle Start button invokes start_entry (default layout, no Quick start)", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
-      if (cmd === "list_today") return [];
+      if (cmd === "list_day") return [];
       if (cmd === "list_projects")
         return [
           {
@@ -673,7 +673,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return running;
-      if (cmd === "list_today") return [running];
+      if (cmd === "list_day") return [running];
       if (cmd === "list_projects")
         return [
           {
@@ -715,7 +715,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
-      if (cmd === "list_today") return [orphan];
+      if (cmd === "list_day") return [orphan];
       if (cmd === "list_projects")
         return [
           {
@@ -763,7 +763,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
-      if (cmd === "list_today") return [ruleEntry, calEntry];
+      if (cmd === "list_day") return [ruleEntry, calEntry];
       if (cmd === "list_projects")
         return [
           {
@@ -804,7 +804,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return running;
-      if (cmd === "list_today") return [running];
+      if (cmd === "list_day") return [running];
       if (cmd === "list_projects")
         return [
           {
@@ -849,7 +849,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
-      if (cmd === "list_today") return [entry];
+      if (cmd === "list_day") return [entry];
       // live projects deliberately empty — useProjects falls back to fixture.
       if (cmd === "list_projects") return [];
       return null;
@@ -885,7 +885,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return orphan;
-      if (cmd === "list_today") return [orphan];
+      if (cmd === "list_day") return [orphan];
       if (cmd === "list_projects")
         return [
           {
@@ -940,7 +940,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return running;
-      if (cmd === "list_today") return [running];
+      if (cmd === "list_day") return [running];
       if (cmd === "list_projects") return [];
       return null;
     });
@@ -971,7 +971,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
   it("quick-start grid renders an empty state when useProjects yields []", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
-      if (cmd === "list_today") return [];
+      if (cmd === "list_day") return [];
       if (cmd === "list_projects") return [];
       return null;
     });
@@ -1037,7 +1037,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         }
         return null;
       }
-      if (cmd === "list_today") return [];
+      if (cmd === "list_day") return [];
       if (cmd === "list_projects") return [];
       return null;
     });

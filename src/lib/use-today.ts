@@ -3,18 +3,23 @@ import {
   createEntry,
   deleteEntry,
   inTauri,
-  listToday,
+  listDay,
   updateEntry,
   type BackendEntry,
   type CreateEntryInput,
   type UpdateEntryInput,
 } from "./ipc";
+import { isoLocalDate } from "./report-math";
 
 export interface UseTodayOpts {
   /** Override for tests. Defaults to module-level `inTauri`. */
   enabled?: boolean;
+  /** Local `YYYY-MM-DD` day to load. Defaults to today, so the popover footer
+   *  and a fresh Today view see today; the Today view steps it back to view and
+   *  edit a past day. */
+  date?: string;
   /** Override for tests. */
-  fetcher?: typeof listToday;
+  fetcher?: (date: string) => Promise<BackendEntry[]>;
 }
 
 export interface UseTodayState {
@@ -29,7 +34,8 @@ export interface UseTodayState {
 
 export function useToday(opts: UseTodayOpts = {}): UseTodayState {
   const enabled = opts.enabled ?? inTauri;
-  const fetcher = opts.fetcher ?? listToday;
+  const date = opts.date ?? isoLocalDate(new Date());
+  const fetcher = opts.fetcher ?? listDay;
   const [entries, setEntries] = useState<BackendEntry[]>([]);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +46,7 @@ export function useToday(opts: UseTodayOpts = {}): UseTodayState {
       return;
     }
     try {
-      const rows = await fetcher();
+      const rows = await fetcher(date);
       setEntries(rows);
       setError(null);
     } catch (e) {
@@ -48,7 +54,7 @@ export function useToday(opts: UseTodayOpts = {}): UseTodayState {
     } finally {
       setLoading(false);
     }
-  }, [enabled, fetcher]);
+  }, [enabled, fetcher, date]);
 
   useEffect(() => {
     void refresh();
