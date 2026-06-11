@@ -22,7 +22,9 @@ use anyhow::Context;
 use async_trait::async_trait;
 
 use super::manifest::FileFormat;
-use super::{ConnectorManifest, PmConnector, RemoteProject, RemoteProjectRef, RemoteTask};
+use super::{
+    ConnectorManifest, ConnectorParams, PmConnector, RemoteProject, RemoteProjectRef, RemoteTask,
+};
 
 /// A connector backed by a local file.
 pub struct FileConnector {
@@ -60,11 +62,16 @@ impl PmConnector for FileConnector {
         &self.manifest
     }
 
-    async fn list_projects(&self) -> anyhow::Result<Vec<RemoteProject>> {
+    /// A local file takes no configuration params, so `_params` is ignored.
+    async fn list_projects(&self, _params: &ConnectorParams) -> anyhow::Result<Vec<RemoteProject>> {
         Ok(self.read_and_parse()?.projects)
     }
 
-    async fn list_tasks(&self, project: &RemoteProjectRef) -> anyhow::Result<Vec<RemoteTask>> {
+    async fn list_tasks(
+        &self,
+        project: &RemoteProjectRef,
+        _params: &ConnectorParams,
+    ) -> anyhow::Result<Vec<RemoteTask>> {
         let mut parsed = self.read_and_parse()?;
         Ok(parsed.tasks.remove(&project.id).unwrap_or_default())
     }
@@ -240,12 +247,15 @@ mod tests {
         ];
         for (format, body, project_id) in cases {
             let (_dir, connector) = connector_over(format, body);
-            let projects = connector.list_projects().await.unwrap();
+            let projects = connector
+                .list_projects(&ConnectorParams::new())
+                .await
+                .unwrap();
             assert_eq!(projects.len(), 1, "{format}: one project");
             assert_eq!(projects[0].id, project_id, "{format}: project id");
 
             let tasks = connector
-                .list_tasks(&RemoteProjectRef::new(project_id))
+                .list_tasks(&RemoteProjectRef::new(project_id), &ConnectorParams::new())
                 .await
                 .unwrap();
             assert_eq!(tasks.len(), 1, "{format}: one task");
@@ -260,7 +270,10 @@ mod tests {
                            "file": { "format": "todotxt", "path": "/no/such/file.txt" } }"#;
             FileConnector::new(ConnectorManifest::from_json(json).unwrap())
         };
-        let err = connector.list_projects().await.unwrap_err();
+        let err = connector
+            .list_projects(&ConnectorParams::new())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("/no/such/file.txt"));
     }
 

@@ -31,7 +31,9 @@ use serde_json::Value;
 use url::Url;
 
 use super::manifest::{HttpMethod, HttpSpec, Pagination, OP_LIST_PROJECTS, OP_LIST_TASKS};
-use super::{ConnectorManifest, PmConnector, RemoteProject, RemoteProjectRef, RemoteTask};
+use super::{
+    ConnectorManifest, ConnectorParams, PmConnector, RemoteProject, RemoteProjectRef, RemoteTask,
+};
 use template::Context;
 
 /// Hard caps the interpreter enforces regardless of the manifest, so a
@@ -116,6 +118,16 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
             .kind
             .as_http()
             .expect("declarative connector holds an http manifest")
+    }
+
+    /// Bind every declared param into `ctx` (stored value, or the empty string
+    /// when unset) so a request template's `{{key}}` always resolves and variant
+    /// selection sees the param. A connector that declares no params is a no-op.
+    fn inject_params(&self, ctx: &mut Context, params: &ConnectorParams) {
+        for spec in self.manifest.param_specs() {
+            let value = params.get(&spec.key).cloned().unwrap_or_default();
+            ctx.set(spec.key.clone(), value);
+        }
     }
 
     /// Run one operation to completion (following pagination, capped) and
@@ -234,16 +246,22 @@ impl<F: HttpFetcher, S: SecretStore> PmConnector for DeclarativeConnector<F, S> 
         &self.manifest
     }
 
-    async fn list_projects(&self) -> Result<Vec<RemoteProject>> {
+    async fn list_projects(&self, params: &ConnectorParams) -> Result<Vec<RemoteProject>> {
         let mut ctx = Context::new();
+        self.inject_params(&mut ctx, params);
         let items = self.collect(OP_LIST_PROJECTS, &mut ctx).await?;
         let map = &self.spec().operations[OP_LIST_PROJECTS].response.map;
         items.iter().map(|item| map_project(item, map)).collect()
     }
 
-    async fn list_tasks(&self, project: &RemoteProjectRef) -> Result<Vec<RemoteTask>> {
+    async fn list_tasks(
+        &self,
+        project: &RemoteProjectRef,
+        params: &ConnectorParams,
+    ) -> Result<Vec<RemoteTask>> {
         let mut ctx = Context::new();
         ctx.set("project.id", project.id.clone());
+        self.inject_params(&mut ctx, params);
         let items = self.collect(OP_LIST_TASKS, &mut ctx).await?;
         let map = &self.spec().operations[OP_LIST_TASKS].response.map;
         items.iter().map(|item| map_task(item, map)).collect()
@@ -397,7 +415,7 @@ mod tests {
             FakeFetcher::with(&[r#"[{"id":"p1","name":"Inbox"},{"id":"p2","name":"Work"}]"#]);
         let c = connector(TODOIST, fetcher, todoist_secrets());
         assert_eq!(c.manifest().id, "todoist");
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 2);
         assert_eq!(projects[0].id, "p1");
         assert_eq!(projects[1].name, "Work");
@@ -417,7 +435,10 @@ mod tests {
                 {"id":"t2","content":"B","is_completed":true}]"#,
         ]);
         let c = connector(TODOIST, fetcher, todoist_secrets());
-        let tasks = c.list_tasks(&RemoteProjectRef::new("p1")).await.unwrap();
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new("p1"), &ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].label, "A");
         assert_eq!(tasks[0].url.as_deref(), Some("u"));
@@ -437,7 +458,7 @@ mod tests {
     async fn missing_token_for_authed_connector_errors() {
         let fetcher = FakeFetcher::with(&[r#"[]"#]);
         let c = connector(TODOIST, fetcher, no_secrets());
-        let err = c.list_projects().await.unwrap_err();
+        let err = c.list_projects(&ConnectorParams::new()).await.unwrap_err();
         assert!(err.to_string().contains("token"));
     }
 
@@ -459,7 +480,7 @@ mod tests {
     async fn rejected_token_status_gives_an_actionable_non_unreachable_error() {
         for status in [401, 403] {
             let err = connector_returning_status(status)
-                .list_projects()
+                .list_projects(&ConnectorParams::new())
                 .await
                 .unwrap_err();
             assert!(err.to_string().contains("rejected the token"), "{err}");
@@ -476,7 +497,7 @@ mod tests {
     #[tokio::test]
     async fn other_non_2xx_status_errors_generically_and_is_not_unreachable() {
         let err = connector_returning_status(500)
-            .list_projects()
+            .list_projects(&ConnectorParams::new())
             .await
             .unwrap_err();
         assert!(err.to_string().contains("HTTP 500"), "{err}");
@@ -486,7 +507,7 @@ mod tests {
     #[tokio::test]
     async fn non_json_response_errors() {
         let c = connector(TODOIST, FakeFetcher::with(&["not json"]), todoist_secrets());
-        assert!(c.list_projects().await.is_err());
+        assert!(c.list_projects(&ConnectorParams::new()).await.is_err());
     }
 
     #[tokio::test]
@@ -497,7 +518,7 @@ mod tests {
             FakeFetcher::with(&[r#"[{"id":"p1"}]"#]),
             todoist_secrets(),
         );
-        let err = c.list_projects().await.unwrap_err();
+        let err = c.list_projects(&ConnectorParams::new()).await.unwrap_err();
         assert!(err.to_string().contains("name"));
     }
 
@@ -527,7 +548,10 @@ mod tests {
             r#"{"data":{"nodes":[{"id":"2","title":"b"}],"page":{"end":"","more":false}}}"#,
         ]);
         let c = connector(GRAPHQL_CURSOR, fetcher, gh_secrets);
-        let tasks = c.list_tasks(&RemoteProjectRef::new("x")).await.unwrap();
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new("x"), &ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 2, "both pages collected");
 
         let DeclarativeConnector { fetcher, .. } = &c;
@@ -572,7 +596,10 @@ mod tests {
             r#"{"data":{"nodes":[{"id":"2","title":"b"}],"page":{"end":"","more":false}}}"#,
         ]);
         let c = connector(GRAPHQL_BODY_CURSOR, fetcher, gh);
-        let tasks = c.list_tasks(&RemoteProjectRef::new("x")).await.unwrap();
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new("x"), &ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 2, "both pages collected");
 
         let DeclarativeConnector { fetcher, .. } = &c;
@@ -600,7 +627,10 @@ mod tests {
             r#"{"data":{"nodes":[{"id":"1","title":"a"}],"page":{"end":"","more":true}}}"#,
         ]);
         let c = connector(GRAPHQL_BODY_CURSOR, fetcher, gh);
-        let tasks = c.list_tasks(&RemoteProjectRef::new("x")).await.unwrap();
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new("x"), &ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1, "stopped after the single page");
     }
 
@@ -629,7 +659,7 @@ mod tests {
             r#"[{"id":"3","n":"c"}]"#,                    // short page → stop
         ]);
         let c = connector(OFFSET, fetcher, no_secrets());
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 3);
 
         let DeclarativeConnector { fetcher, .. } = &c;
@@ -663,7 +693,7 @@ mod tests {
             r#"[{"id":"3","n":"c"}]"#,                    // short page → stop
         ]);
         let c = connector(PAGE, fetcher, no_secrets());
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 3);
 
         let DeclarativeConnector { fetcher, .. } = &c;
@@ -683,7 +713,7 @@ mod tests {
             calls: Mutex::new(0),
         };
         let c = connector(OFFSET, fetcher, no_secrets());
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), MAX_PAGES * 2);
         let DeclarativeConnector { fetcher, .. } = &c;
         assert_eq!(*fetcher.calls.lock().unwrap(), MAX_PAGES);
@@ -701,7 +731,7 @@ mod tests {
         }
         items.push(']');
         let c = connector(OFFSET, FakeFetcher::with(&[&items]), no_secrets());
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), MAX_ITEMS);
     }
 
@@ -717,7 +747,10 @@ mod tests {
             FakeFetcher::with(&[body, body, body]),
             gh_secrets,
         );
-        let tasks = c.list_tasks(&RemoteProjectRef::new("x")).await.unwrap();
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new("x"), &ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 2, "two pages before the cursor repeats");
         let DeclarativeConnector { fetcher, .. } = &c;
         assert_eq!(fetcher.seen.lock().unwrap().len(), 2);
@@ -728,7 +761,7 @@ mod tests {
         // OFFSET has no auth, so the request builds and the fetcher (empty)
         // is reached, exercising its exhaustion path.
         let c = connector(OFFSET, FakeFetcher::with(&[]), no_secrets());
-        let err = c.list_projects().await.unwrap_err();
+        let err = c.list_projects(&ConnectorParams::new()).await.unwrap_err();
         assert!(err.to_string().contains("ran out"));
     }
 
@@ -738,7 +771,9 @@ mod tests {
 
     #[tokio::test]
     async fn bundled_github_projects_maps_a_graphql_project_list() {
-        let body = r#"{"data":{"viewer":{"projectsV2":{"nodes":[
+        // The query aliases its top field to `owner`, so both the viewer and
+        // repositoryOwner forms return under `data.owner.projectsV2`.
+        let body = r#"{"data":{"owner":{"projectsV2":{"nodes":[
             {"id":"PVT_1","title":"Roadmap"},
             {"id":"PVT_2","title":"Bugs"}
         ]}}}}"#;
@@ -747,7 +782,8 @@ mod tests {
             FakeFetcher::with(&[body]),
             github_secrets(),
         );
-        let projects = c.list_projects().await.unwrap();
+        // Blank owner → the viewer (your own projects) base request.
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 2);
         assert_eq!(projects[0].id, "PVT_1");
         assert_eq!(projects[1].name, "Bugs");
@@ -757,6 +793,48 @@ mod tests {
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.url, "https://api.github.com/graphql");
         assert_eq!(req.headers["Authorization"], "Bearer ghp_x");
+        let sent = req.body.as_deref().unwrap();
+        assert!(
+            sent.contains("owner: viewer"),
+            "blank owner queries viewer: {sent}"
+        );
+        assert!(
+            !sent.contains("repositoryOwner"),
+            "blank owner must not use the org variant: {sent}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bundled_github_projects_queries_an_org_when_owner_is_set() {
+        // A set `owner` selects the repositoryOwner variant, injecting the login
+        // (works for a user or an organisation like ggsegverse).
+        let body = r#"{"data":{"owner":{"projectsV2":{"nodes":[
+            {"id":"PVT_9","title":"ggseg roadmap"}
+        ]}}}}"#;
+        let c = connector(
+            crate::connectors::builtin::GITHUB_PROJECTS,
+            FakeFetcher::with(&[body]),
+            github_secrets(),
+        );
+        let params = ConnectorParams::from([("owner".to_string(), "ggsegverse".to_string())]);
+        let projects = c.list_projects(&params).await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "ggseg roadmap");
+
+        let DeclarativeConnector { fetcher, .. } = &c;
+        let sent = fetcher.last().body.as_deref().unwrap().to_string();
+        assert!(
+            sent.contains("repositoryOwner"),
+            "a set owner uses the org variant: {sent}"
+        );
+        assert!(
+            sent.contains(r#"login:\"ggsegverse\""#),
+            "the owner login is injected, JSON-escaped: {sent}"
+        );
+        assert!(
+            !sent.contains("owner: viewer"),
+            "the viewer base request is not used when owner is set: {sent}"
+        );
     }
 
     #[tokio::test]
@@ -764,10 +842,10 @@ mod tests {
         // Verifies the bundled manifest's real cursorPath/hasMorePath against
         // GitHub's `pageInfo { hasNextPage endCursor }` shape (#193).
         let fetcher = FakeFetcher::with(&[
-            r#"{"data":{"viewer":{"projectsV2":{
+            r#"{"data":{"owner":{"projectsV2":{
                 "pageInfo":{"hasNextPage":true,"endCursor":"CUR2"},
                 "nodes":[{"id":"PVT_1","title":"Roadmap"}]}}}}"#,
-            r#"{"data":{"viewer":{"projectsV2":{
+            r#"{"data":{"owner":{"projectsV2":{
                 "pageInfo":{"hasNextPage":false,"endCursor":null},
                 "nodes":[{"id":"PVT_2","title":"Bugs"}]}}}}"#,
         ]);
@@ -776,7 +854,7 @@ mod tests {
             fetcher,
             github_secrets(),
         );
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 2, "both pages collected");
 
         let DeclarativeConnector { fetcher, .. } = &c;
@@ -806,7 +884,10 @@ mod tests {
             FakeFetcher::with(&[body]),
             github_secrets(),
         );
-        let tasks = c.list_tasks(&RemoteProjectRef::new("PVT_1")).await.unwrap();
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new("PVT_1"), &ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(
             tasks.len(),
             3,
@@ -846,7 +927,7 @@ mod tests {
             trello_secrets(),
         );
 
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].id, "b1");
         assert_eq!(projects[0].name, "Acme");
@@ -862,7 +943,10 @@ mod tests {
             );
         }
 
-        let tasks = c.list_tasks(&RemoteProjectRef::new("b1")).await.unwrap();
+        let tasks = c
+            .list_tasks(&RemoteProjectRef::new("b1"), &ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 2);
         assert!(!tasks[0].done, "an incomplete card is not done");
         assert!(tasks[1].done, "dueComplete maps to done");
@@ -898,7 +982,7 @@ mod tests {
             gitlab_secrets(),
         );
 
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].id, "42", "a numeric id is stringified");
         assert_eq!(projects[0].name, "acme / web");
@@ -918,7 +1002,10 @@ mod tests {
         }
 
         let tasks = c
-            .list_tasks(&RemoteProjectRef::new(projects[0].id.clone()))
+            .list_tasks(
+                &RemoteProjectRef::new(projects[0].id.clone()),
+                &ConnectorParams::new(),
+            )
             .await
             .unwrap();
         assert_eq!(tasks.len(), 2);
@@ -976,7 +1063,7 @@ mod tests {
             FakeFetcher::with(&[r#"[{"id":"1","name":"Board"}]"#]),
             secrets,
         );
-        let projects = c.list_projects().await.unwrap();
+        let projects = c.list_projects(&ConnectorParams::new()).await.unwrap();
         assert_eq!(projects.len(), 1);
 
         let DeclarativeConnector { fetcher, .. } = &c;

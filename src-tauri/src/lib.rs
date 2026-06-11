@@ -143,6 +143,16 @@ async fn set_connector_enabled(
 }
 
 #[tauri::command]
+async fn set_connector_param(
+    state: tauri::State<'_, AppState>,
+    connector_id: String,
+    key: String,
+    value: String,
+) -> Result<Vec<connectors::ConnectorView>, String> {
+    ipc::set_connector_param_impl(state, connector_id, key, value).await
+}
+
+#[tauri::command]
 async fn preview_connector_manifest(path: String) -> Result<connectors::ConnectorManifest, String> {
     ipc::preview_connector_manifest_impl(path).await
 }
@@ -442,6 +452,7 @@ pub fn run() {
             set_connector_secret,
             clear_connector_secret,
             set_connector_enabled,
+            set_connector_param,
             preview_connector_manifest,
             install_connector_manifest,
             list_connector_projects,

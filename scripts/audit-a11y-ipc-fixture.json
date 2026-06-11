@@ -3,10 +3,7 @@
     {
       "id": "calendar",
       "name": "Calendar",
-      "capabilities": [
-        "network",
-        "secrets"
-      ],
+      "capabilities": ["network", "secrets"],
       "enabled": true
     }
   ],
@@ -22,6 +19,7 @@
         }
       },
       "secrets": [],
+      "params": [],
       "enabled": true
     }
   ],

@@ -24,6 +24,7 @@ const CONNECTORS: Connector[] = [
     capabilities: ["network", "secrets"],
     kind: { http: { baseUrl: "https://api.github.com" } },
     secrets: [],
+    params: [],
     enabled: true,
   },
 ];
@@ -36,6 +37,7 @@ const TWO_CONNECTORS: Connector[] = [
     capabilities: ["network", "secrets"],
     kind: { http: { baseUrl: "https://gitlab.com" } },
     secrets: [],
+    params: [],
     enabled: true,
   },
 ];

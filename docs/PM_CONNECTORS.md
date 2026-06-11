@@ -207,6 +207,58 @@ Three strategies:
   `size` is larger, a full page looks short and the walk stops early. `size`
   (and `offset`'s `limit`) must be ≥ 1.
 
+### `params` (optional) — user-entered configuration
+
+Some connectors need a non-secret value the user supplies — the GitHub
+connector's `owner` (a user or organisation login that scopes which
+Projects v2 board it lists). Declare these as `params`; each becomes a
+<code v-pre>{{key}}</code> template variable and an editable text field in
+Settings → Connectors.
+
+```json
+"params": [
+  { "key": "owner", "label": "GitHub user or organisation (blank = your own projects)", "placeholder": "e.g. ggsegverse" }
+]
+```
+
+| Field         | Notes                                                                        |
+| ------------- | ---------------------------------------------------------------------------- |
+| `key`         | Stable kebab-case key (`^[a-z0-9-]+$`); the `{{key}}` a template references. |
+| `label`       | Field label in the settings card.                                            |
+| `placeholder` | Optional hint shown in the empty input.                                      |
+
+Unlike a secret, a param value is **not sensitive**: it is stored in the
+local DB (not the keychain), shown back in the card, and editable in
+place. An unset param substitutes to the empty string. Declared param keys
+must be unique.
+
+### Request `variants` (optional) — switch the request on a param
+
+An operation can swap its **request** (only) on whether a param is set,
+while sharing one `response` + `pagination`. The GitHub connector uses this
+so a blank `owner` queries `viewer` (your own projects) and a set `owner`
+queries `repositoryOwner(login:…)` (that user/org). Alias the GraphQL top
+field (here to `owner`) so both forms return under the same response path —
+that's what lets `response`/`pagination` stay shared.
+
+```json
+"listProjects": {
+  "request": { "method": "POST", "path": "/graphql",
+    "body": "{\"query\":\"{ owner: viewer { … } }\"}" },
+  "variants": [
+    { "when": "owner", "request": { "method": "POST", "path": "/graphql",
+      "body": "{\"query\":\"{ owner: repositoryOwner(login:\\\"{{owner}}\\\"){ … } }\"}" } }
+  ],
+  "response": { "items": "data.owner.projectsV2.nodes", "map": { … } },
+  "pagination": { "type": "cursor", "cursorPath": "data.owner.projectsV2.pageInfo.endCursor", "hasMorePath": "data.owner.projectsV2.pageInfo.hasNextPage" }
+}
+```
+
+The first variant whose `when` param is non-empty wins; none matching falls
+back to the base `request`. A variant's `when` must name a declared param,
+and its `path` is validated on-host exactly like a base request — a variant
+can no more reach another host than the base can.
+
 ## `kind: "file"` — local-file connectors
 
 For the zero-network case. No `auth`/`baseUrl`/network; a built-in parser
@@ -241,21 +293,38 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
   "capabilities": ["network", "secrets"],
   "auth": { "type": "bearer", "secret": "github_token" },
   "baseUrl": "https://api.github.com",
+  "params": [
+    {
+      "key": "owner",
+      "label": "GitHub user or organisation (blank = your own projects)",
+      "placeholder": "e.g. ggsegverse"
+    }
+  ],
   "operations": {
     "listProjects": {
       "request": {
         "method": "POST",
         "path": "/graphql",
-        "body": "{\"query\":\"{ viewer { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } }\"}"
+        "body": "{\"query\":\"{ owner: viewer { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } }\"}"
       },
+      "variants": [
+        {
+          "when": "owner",
+          "request": {
+            "method": "POST",
+            "path": "/graphql",
+            "body": "{\"query\":\"{ owner: repositoryOwner(login:\\\"{{owner}}\\\"){ ... on ProjectV2Owner { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } } }\"}"
+          }
+        }
+      ],
       "response": {
-        "items": "data.viewer.projectsV2.nodes",
+        "items": "data.owner.projectsV2.nodes",
         "map": { "id": "id", "name": "title" }
       },
       "pagination": {
         "type": "cursor",
-        "cursorPath": "data.viewer.projectsV2.pageInfo.endCursor",
-        "hasMorePath": "data.viewer.projectsV2.pageInfo.hasNextPage"
+        "cursorPath": "data.owner.projectsV2.pageInfo.endCursor",
+        "hasMorePath": "data.owner.projectsV2.pageInfo.hasNextPage"
       }
     },
     "listTasks": {
@@ -278,17 +347,26 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
 }
 ```
 
-> **Bundled version notes.** The shipped `github-projects` manifest spreads
-> all three `ProjectV2ItemContent` members (`DraftIssue`/`Issue`/`PullRequest`)
-> so every card yields a `label` — covering only `Issue` makes one draft or PR
-> fail the whole list (`label` is required, mapping fails fast). It follows
-> cursor pagination via `pageInfo { hasNextPage endCursor }` and
-> <code v-pre>after:{{cursorLiteral}}</code> (#193) — `after:null` on the first
-> page, then `after:"<endCursor>"` — capped by the usual page/item limits.
-> Values templated into a GraphQL **string literal** (`id:"{{project.id}}"`)
-> are JSON-escaped but not GraphQL-string-escaped — safe here because the id is
-> an opaque GitHub node id from `listProjects`, and the host is pinned, so the
-> worst case is a malformed read-only query.
+> **Bundled version notes.** The shipped `github-projects` manifest declares an
+> `owner` param: blank lists **your own** projects (`viewer`), and a value lists
+> that **user or organisation**'s projects via the `repositoryOwner(login:…)`
+> request variant — so an org board like `ggsegverse` is reachable. Both query
+> forms alias their top field to `owner`, so they share one `response` +
+> `pagination`. It spreads all three `ProjectV2ItemContent` members
+> (`DraftIssue`/`Issue`/`PullRequest`) so every card yields a `label` — covering
+> only `Issue` makes one draft or PR fail the whole list (`label` is required,
+> mapping fails fast). It follows cursor pagination via
+> `pageInfo { hasNextPage endCursor }` and <code v-pre>after:{{cursorLiteral}}</code>
+> (#193) — `after:null` on the first page, then `after:"<endCursor>"` — capped by
+> the usual page/item limits. Values templated into a GraphQL **string literal**
+> (`id:"{{project.id}}"`, `login:"{{owner}}"`) are JSON-escaped but not
+> GraphQL-string-escaped — safe here because the host is pinned and the read is
+> read-only, so the worst case is a malformed query.
+>
+> **Token scope.** Listing **org** Projects v2 needs a PAT with `read:project`
+> (and `read:org`); a classic PAT for a **SAML-SSO** org must additionally be
+> authorised for that org or the API returns nothing. Your own projects need
+> only `read:project`.
 
 **Trello (REST, two query secrets — `multi` auth):** Trello needs _two_
 credentials: an app `key` and a `token`, both passed as query params. Cairn
@@ -359,8 +437,10 @@ the results locally so attribution works offline.
 ```rust
 pub trait PmConnector: Send + Sync {
     fn manifest(&self) -> &ConnectorManifest;            // id, name, capabilities
-    async fn list_projects(&self) -> Result<Vec<RemoteProject>>;
-    async fn list_tasks(&self, project: &RemoteProjectRef) -> Result<Vec<RemoteTask>>;
+    // `params` are the connector's stored config values (e.g. the GitHub
+    // `owner`); a connector that declares none ignores the map.
+    async fn list_projects(&self, params: &ConnectorParams) -> Result<Vec<RemoteProject>>;
+    async fn list_tasks(&self, project: &RemoteProjectRef, params: &ConnectorParams) -> Result<Vec<RemoteTask>>;
     // v2, behind an explicit per-connector write grant:
     // async fn push_time(&self, task: &RemoteTaskRef, dur: Duration) -> Result<()>;
 }
@@ -506,7 +586,33 @@ check yours (it is published at `/schemas/pm-connector.json`).
                     "hasMorePath": { "type": "string" },
                     "limit": { "type": "integer" }
                   }
+                },
+                "variants": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["when", "request"],
+                    "properties": {
+                      "when": { "type": "string" },
+                      "request": {
+                        "type": "object",
+                        "required": ["method", "path"]
+                      }
+                    }
+                  }
                 }
+              }
+            }
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["key", "label"],
+              "properties": {
+                "key": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+                "label": { "type": "string" },
+                "placeholder": { "type": "string" }
               }
             }
           }

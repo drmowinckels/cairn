@@ -840,6 +840,17 @@ export interface ConnectorSecret {
   state: ConnectorSecretState;
 }
 
+/** One configuration param a connector declares (mirrors Rust `ParamView`):
+ *  its `key` (passed back to set/clear it), a human `label`, an optional
+ *  `placeholder` hint, and the stored `value` (empty ⇒ unset). Unlike a
+ *  secret, the value is not sensitive and round-trips so the field shows it. */
+export interface ConnectorParam {
+  key: string;
+  label: string;
+  placeholder: string | null;
+  value: string;
+}
+
 /** A connector manifest as validated by the backend (mirrors Rust
  *  `ConnectorManifest`) — what `previewConnectorManifest` returns so the
  *  import UI can show what would be installed before committing. */
@@ -858,6 +869,9 @@ export interface Connector {
   /** The secrets this connector needs, one card field each. Empty ⇒ none
    *  (a local file, or `auth: none`). */
   secrets: ConnectorSecret[];
+  /** The configuration params this connector declares, one editable field
+   *  each (e.g. the GitHub `owner`). Empty ⇒ none. */
+  params: ConnectorParam[];
   /** Whether the user has this connector enabled. A disabled connector is
    *  listed but makes no requests — browsing it is refused. */
   enabled: boolean;
@@ -931,6 +945,24 @@ export async function setConnectorEnabled(
     (await invoke<Connector[]>("set_connector_enabled", {
       connectorId,
       enabled,
+    })) ?? []
+  );
+}
+
+/** Set or clear a connector's configuration param (#110), returning the
+ *  refreshed list so the card reflects the new value. An empty `value` clears
+ *  it. Unlike a token, the value is not secret and is shown back. */
+export async function setConnectorParam(
+  connectorId: string,
+  key: string,
+  value: string,
+): Promise<Connector[]> {
+  if (!inTauri) return [];
+  return (
+    (await invoke<Connector[]>("set_connector_param", {
+      connectorId,
+      key,
+      value,
     })) ?? []
   );
 }

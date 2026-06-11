@@ -106,6 +106,30 @@ pub struct HttpSpec {
     /// Named operations. Guaranteed to contain [`OP_LIST_PROJECTS`] and
     /// [`OP_LIST_TASKS`]; extra entries are permitted but unused in v1.
     pub operations: BTreeMap<String, Operation>,
+    /// User-entered configuration the connector references as `{{key}}`
+    /// template variables (e.g. the GitHub `owner`). Non-secret — values are
+    /// stored in the DB (not the keychain) and shown back in the settings card.
+    /// Each declared key is unique; a manifest with none has an empty list.
+    pub params: Vec<ParamSpec>,
+}
+
+/// One configuration param a connector declares. The interpreter injects its
+/// stored value into the request [`Context`] under [`key`], so a request
+/// template can reference it as `{{key}}` and an [`Operation`] variant can be
+/// selected on whether it is set. Non-secret: the value round-trips to the UI.
+///
+/// [`key`]: ParamSpec::key
+/// [`Context`]: crate::connectors::http
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamSpec {
+    /// Stable param key, kebab-case (`^[a-z0-9-]+$`) — the `{{key}}` a template
+    /// references and the storage key.
+    pub key: String,
+    /// Human label for the settings-card field.
+    pub label: String,
+    /// Optional placeholder hint shown in the empty input.
+    #[serde(default)]
+    pub placeholder: Option<String>,
 }
 
 /// How the interpreter authenticates. Declarative — the token itself is
@@ -205,12 +229,33 @@ pub struct SecretRef<'a> {
 }
 
 /// One operation: a request template + how to read its response.
+///
+/// `variants` let one operation switch its **request** (only) on whether a
+/// declared param is set — e.g. GitHub's `listProjects` uses a `viewer` query
+/// when `owner` is blank and a `repositoryOwner(login:…)` query when it is set.
+/// The `response` + `pagination` are shared across the base and every variant
+/// (aliasing the response shape keeps them identical), so this stays a tiny,
+/// request-only switch. The first variant whose `when` param is non-empty wins;
+/// none matching falls back to `request`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operation {
     pub request: RequestSpec,
     pub response: ResponseSpec,
     #[serde(default)]
     pub pagination: Option<Pagination>,
+    #[serde(default)]
+    pub variants: Vec<Variant>,
+}
+
+/// An alternate request body for an [`Operation`], selected when the param named
+/// by `when` is set (non-empty) for the connector. Only the request differs from
+/// the base operation; the response projection and pagination are shared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Variant {
+    /// The declared param key that selects this variant when it is non-empty.
+    pub when: String,
+    /// The request to use instead of the operation's base request.
+    pub request: RequestSpec,
 }
 
 /// HTTP method. v1 reads only; `POST` is for GraphQL queries.
@@ -309,6 +354,12 @@ pub enum ManifestError {
     EmptyMultiAuth,
     #[error("http \"multi\" auth places two credentials at the same {location} name {name:?}")]
     DuplicateSecretName { location: String, name: String },
+    #[error("connector param key {0:?} must be non-empty and kebab-case ([a-z0-9-])")]
+    ParamKey(String),
+    #[error("connector declares the param key {0:?} more than once")]
+    DuplicateParamKey(String),
+    #[error("http operation {op:?} has a variant whose {when:?} is not a declared param key")]
+    VariantUnknownParam { op: String, when: String },
 }
 
 /// The wire shape of a manifest: flat top-level fields plus one sibling
@@ -332,6 +383,8 @@ struct RawManifest {
     base_url: Option<String>,
     #[serde(default)]
     operations: Option<BTreeMap<String, Operation>>,
+    #[serde(default)]
+    params: Vec<ParamSpec>,
 }
 
 impl ConnectorManifest {
@@ -350,6 +403,16 @@ impl ConnectorManifest {
         self.kind
             .as_http()
             .map(|spec| spec.auth.secret_refs())
+            .unwrap_or_default()
+    }
+
+    /// Every configuration param this connector declares, in order; empty for a
+    /// connector that declares none (a file connector, or an http one with no
+    /// `params`). The settings card renders one editable field per entry.
+    pub fn param_specs(&self) -> &[ParamSpec] {
+        self.kind
+            .as_http()
+            .map(|spec| spec.params.as_slice())
             .unwrap_or_default()
     }
 
@@ -393,11 +456,18 @@ impl ConnectorManifest {
                 let operations = raw.operations.ok_or(ManifestError::MissingSection {
                     section: "operations",
                 })?;
-                validate_http(&base_url, &auth, &operations, &raw.capabilities)?;
+                validate_http(
+                    &base_url,
+                    &auth,
+                    &operations,
+                    &raw.capabilities,
+                    &raw.params,
+                )?;
                 ConnectorKind::Http(HttpSpec {
                     auth,
                     base_url,
                     operations,
+                    params: raw.params,
                 })
             }
             other => return Err(ManifestError::UnsupportedKind(other.to_string())),
@@ -429,6 +499,7 @@ fn validate_http(
     auth: &Auth,
     operations: &BTreeMap<String, Operation>,
     capabilities: &[Capability],
+    params: &[ParamSpec],
 ) -> Result<(), ManifestError> {
     let base = url::Url::parse(base_url)
         .map_err(|_| ManifestError::InsecureBaseUrl(base_url.to_string()))?;
@@ -436,13 +507,29 @@ fn validate_http(
         return Err(ManifestError::InsecureBaseUrl(base_url.to_string()));
     }
 
+    // Validate declared params: a kebab-case, unique key per param (the key is a
+    // template variable name and a storage key). Collect them so a variant's
+    // `when` can be checked against the declared set below.
+    let mut declared: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for p in params {
+        if !is_valid_id(&p.key) {
+            return Err(ManifestError::ParamKey(p.key.clone()));
+        }
+        if !declared.insert(p.key.as_str()) {
+            return Err(ManifestError::DuplicateParamKey(p.key.clone()));
+        }
+    }
+
     for required in [OP_LIST_PROJECTS, OP_LIST_TASKS] {
         if !operations.contains_key(required) {
             return Err(ManifestError::MissingOperation(required));
         }
     }
-    for (op, operation) in operations {
-        let path = &operation.request.path;
+    // Resolve a request path against the base and confirm it stays on-host and
+    // keeps the base path prefix — applied to each operation's base request and
+    // every variant request, so a variant can no more reach another host than a
+    // base request can.
+    let check_path = |op: &str, path: &str| -> Result<(), ManifestError> {
         match base.join(path) {
             Ok(u) if u.scheme() == "https" && u.host_str() == base.host_str() => {
                 // `join` *replaces* the path for an absolute reference, so a
@@ -453,15 +540,30 @@ fn validate_http(
                 // path (and `baseUrl` stays host-only).
                 if !u.path().starts_with(base.path()) {
                     return Err(ManifestError::OperationPathDropsBase {
-                        op: op.clone(),
-                        path: path.clone(),
+                        op: op.to_string(),
+                        path: path.to_string(),
                     });
                 }
+                Ok(())
             }
-            _ => {
-                return Err(ManifestError::OperationPath {
+            _ => Err(ManifestError::OperationPath {
+                op: op.to_string(),
+                path: path.to_string(),
+            }),
+        }
+    };
+    for (op, operation) in operations {
+        check_path(op, &operation.request.path)?;
+        // A variant only swaps the request body, but its path is still a request
+        // onto the host — validate it the same way, and require its `when` to
+        // name a declared param (else the variant could never be selected, or
+        // worse, silently never fire).
+        for variant in &operation.variants {
+            check_path(op, &variant.request.path)?;
+            if !declared.contains(variant.when.as_str()) {
+                return Err(ManifestError::VariantUnknownParam {
                     op: op.clone(),
-                    path: path.clone(),
+                    when: variant.when.clone(),
                 });
             }
         }
@@ -942,5 +1044,122 @@ mod tests {
         let s = m.kind.as_http().expect("http kind");
         assert_eq!(s.auth, Auth::None);
         assert_eq!(s.auth.secret_key(), None);
+    }
+
+    /// HTTP manifest with a declared param and a request variant selected by it.
+    const PARAMS_JSON: &str = r#"{
+        "manifest": 1, "id": "gh", "name": "GH", "kind": "http",
+        "capabilities": ["network", "secrets"],
+        "auth": { "type": "bearer", "secret": "github_token" },
+        "baseUrl": "https://api.github.com",
+        "params": [
+            { "key": "owner", "label": "Owner", "placeholder": "e.g. ggsegverse" }
+        ],
+        "operations": {
+            "listProjects": {
+                "request": { "method": "POST", "path": "/graphql", "body": "{\"q\":\"viewer\"}" },
+                "variants": [
+                    { "when": "owner", "request": { "method": "POST", "path": "/graphql-org", "body": "{\"q\":\"{{owner}}\"}" } }
+                ],
+                "response": { "items": "data.owner.nodes", "map": { "id": "id", "name": "title" } }
+            },
+            "listTasks": {
+                "request": { "method": "GET", "path": "/t" },
+                "response": { "items": "", "map": { "id": "id", "label": "title" } }
+            }
+        }
+    }"#;
+
+    #[test]
+    fn parses_params_and_a_request_variant() {
+        let m = ConnectorManifest::from_json(PARAMS_JSON).unwrap();
+        let specs = m.param_specs();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].key, "owner");
+        assert_eq!(specs[0].label, "Owner");
+        assert_eq!(specs[0].placeholder.as_deref(), Some("e.g. ggsegverse"));
+        let s = m.kind.as_http().expect("http kind");
+        let variants = &s.operations["listProjects"].variants;
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].when, "owner");
+    }
+
+    #[test]
+    fn a_connector_without_params_exposes_an_empty_list() {
+        // A file connector declares no params, and an http one need not either.
+        let file = ConnectorManifest::from_json(FILE_JSON).unwrap();
+        assert!(file.param_specs().is_empty());
+        let http = ConnectorManifest::from_json(HTTP_JSON).unwrap();
+        assert!(http.param_specs().is_empty());
+    }
+
+    #[test]
+    fn rejects_a_non_kebab_param_key() {
+        let json = PARAMS_JSON.replace("\"key\": \"owner\"", "\"key\": \"Owner_Name\"");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::ParamKey(_)), "{err:?}");
+    }
+
+    #[test]
+    fn rejects_a_duplicate_param_key() {
+        let json = PARAMS_JSON.replace(
+            "{ \"key\": \"owner\", \"label\": \"Owner\", \"placeholder\": \"e.g. ggsegverse\" }",
+            "{ \"key\": \"owner\", \"label\": \"A\" }, { \"key\": \"owner\", \"label\": \"B\" }",
+        );
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::DuplicateParamKey(_)),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_variant_whose_when_is_not_a_declared_param() {
+        let json = PARAMS_JSON.replace("\"when\": \"owner\"", "\"when\": \"nope\"");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(&err, ManifestError::VariantUnknownParam { op, when }
+                if op == "listProjects" && when == "nope"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_variant_request_that_escapes_the_host() {
+        // A variant only swaps the request body, but its path is still validated
+        // on-host — a manifest can't smuggle an off-host call through a variant.
+        // Only the variant's path is off-host; the base `/graphql` stays valid,
+        // so the error must come from validating the variant.
+        let json = PARAMS_JSON.replace("/graphql-org", "//evil.example/x");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::OperationPath { .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn bundled_github_declares_the_owner_param_and_org_variant() {
+        let gh = ConnectorManifest::from_json(crate::connectors::builtin::GITHUB_PROJECTS).unwrap();
+        let specs = gh.param_specs();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].key, "owner");
+        let s = gh.kind.as_http().expect("http kind");
+        let variants = &s.operations["listProjects"].variants;
+        assert_eq!(
+            variants.len(),
+            1,
+            "the owner-scoped org variant is declared"
+        );
+        assert_eq!(variants[0].when, "owner");
+        assert!(
+            variants[0]
+                .request
+                .body
+                .as_deref()
+                .unwrap()
+                .contains("repositoryOwner"),
+            "the variant queries repositoryOwner"
+        );
     }
 }

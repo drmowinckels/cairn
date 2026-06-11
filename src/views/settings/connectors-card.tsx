@@ -12,10 +12,12 @@ import {
   listConnectorProjects,
   listConnectorTasks,
   previewConnectorManifest,
+  setConnectorParam,
   setConnectorSecret,
   type Connector,
   type ConnectorKind,
   type ConnectorManifest,
+  type ConnectorParam,
   type ConnectorSecret,
   type RemoteProject,
   type RemoteTask,
@@ -381,6 +383,7 @@ function ConnectorRow({
       {expanded && (
         <div id={panelId} className="connector-panel">
           <ConnectorSecret connector={connector} onChange={onSecretChange} />
+          <ConnectorParams connector={connector} onChange={onSecretChange} />
           {connector.enabled && (
             <>
               {loading && <p className="connector-muted">Loading…</p>}
@@ -569,6 +572,131 @@ function SecretField({
       {error && (
         <p className="privacy-banner privacy-banner--error" role="alert">
           Couldn’t update token: {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The configuration-param fields for a connector that declares any (e.g. the
+ *  GitHub `owner`). Renders nothing for a connector with no params. */
+function ConnectorParams({
+  connector,
+  onChange,
+}: {
+  connector: Connector;
+  onChange: (next: Connector[]) => void;
+}) {
+  if (connector.params.length === 0) return null;
+  return (
+    <div className="connector-params">
+      {connector.params.map((param) => (
+        <ParamField
+          key={param.key}
+          connectorId={connector.id}
+          param={param}
+          onChange={onChange}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One configuration-param field. Unlike a secret, the value is not sensitive:
+ *  it is shown in a plain text input pre-filled with the stored value, and
+ *  saving sends it with its `key`. Saving an empty value clears the param. The
+ *  command returns the refreshed list so the field reflects the new value. */
+function ParamField({
+  connectorId,
+  param,
+  onChange,
+}: {
+  connectorId: string;
+  param: ConnectorParam;
+  onChange: (next: Connector[]) => void;
+}) {
+  const [value, setValue] = useState(param.value);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputId = `connector-${connectorId}-param-${param.key}`;
+  const dirty = value.trim() !== param.value;
+
+  async function save() {
+    const trimmed = value.trim();
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await setConnectorParam(connectorId, param.key, trimmed));
+      // Reflect the stored (trimmed) value so the field matches the backend
+      // and Save disables again — the refreshed list re-renders the row, but
+      // this local input state is what the user sees.
+      setValue(trimmed);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clear() {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await setConnectorParam(connectorId, param.key, ""));
+      setValue("");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="connector-param" data-param={param.key}>
+      <form
+        className="connector-param-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <label htmlFor={inputId} className="connector-param-label">
+          {param.label}
+        </label>
+        <input
+          id={inputId}
+          type="text"
+          className="field-input connector-param-input"
+          value={value}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={param.placeholder ?? ""}
+          disabled={busy}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <button
+          type="submit"
+          className="connector-param-action"
+          aria-label={`Save ${param.label}`}
+          disabled={busy || !dirty}
+        >
+          Save
+        </button>
+        {param.value !== "" && (
+          <button
+            type="button"
+            className="connector-param-action connector-param-action--ghost"
+            aria-label={`Clear ${param.label}`}
+            onClick={() => void clear()}
+            disabled={busy}
+          >
+            Clear
+          </button>
+        )}
+      </form>
+      {error && (
+        <p className="privacy-banner privacy-banner--error" role="alert">
+          Couldn’t update {param.label}: {error}
         </p>
       )}
     </div>
