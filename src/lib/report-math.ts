@@ -300,7 +300,12 @@ export function reportDigest(
     }
   }
 
-  const top = summary.byProject[0];
+  // `byProject` arrives grouped by project id, not by size, so pick the
+  // largest slice explicitly rather than trusting position 0.
+  const top = summary.byProject.reduce<ReportProjectSlice | null>(
+    (max, s) => (max && max.seconds >= s.seconds ? max : s),
+    null,
+  );
   const topProject =
     top && summary.totalSeconds > 0
       ? { slice: top, percent: percentOf(top.seconds, summary.totalSeconds) }

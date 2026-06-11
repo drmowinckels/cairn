@@ -300,6 +300,25 @@ describe("reportDigest", () => {
     expect(d.daysElapsed).toBe(3);
   });
 
+  it("picks the largest project even when byProject isn't sorted by size", () => {
+    // The backend groups byProject by project id, not by seconds, so the
+    // digest must find the max itself rather than take index 0.
+    const unsorted = summaryStub({
+      totalSeconds: 360,
+      byProject: [
+        { projectId: "b", seconds: 120 },
+        { projectId: "a", seconds: 240 },
+      ],
+    });
+    const d = reportDigest(
+      unsorted,
+      buildBuckets(unsorted, "week", now),
+      "week",
+      now,
+    );
+    expect(d.topProject!.slice.projectId).toBe("a");
+  });
+
   it("is empty-safe with no data", () => {
     const empty = summaryStub();
     const d = reportDigest(

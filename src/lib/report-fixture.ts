@@ -1,4 +1,5 @@
 import { WEEK } from "../test-fixtures/data";
+import { isoLocalDate } from "./report-math";
 import type {
   ReportDayBucket,
   ReportProjectSlice,
@@ -31,7 +32,7 @@ export function fixtureReportSummary(range: ReportRange): ReportSummary {
   const weekByDate = new Map<string, ReportProjectSlice[]>();
   WEEK.forEach((w, i) => {
     weekByDate.set(
-      isoDate(addDays(monday, i)),
+      isoLocalDate(addDays(monday, i)),
       w.segments.map(([projectId, hours]) => ({
         projectId,
         seconds: Math.round(hours * HOUR),
@@ -42,7 +43,7 @@ export function fixtureReportSummary(range: ReportRange): ReportSummary {
   const [start, end] = fixtureWindow(range, today);
   const byDay: ReportDayBucket[] = [];
   for (let d = new Date(start); d < end; d = addDays(d, 1)) {
-    const iso = isoDate(d);
+    const iso = isoLocalDate(d);
     byDay.push({ date: iso, byProject: weekByDate.get(iso) ?? [] });
   }
 
@@ -113,11 +114,4 @@ function addDays(d: Date, n: number): Date {
   const out = new Date(d);
   out.setDate(out.getDate() + n);
   return out;
-}
-
-function isoDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
 }
