@@ -9,13 +9,15 @@ import { useReportSummary } from "../../lib/use-report-summary";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { isRoundingActive, roundingLabel } from "../../lib/rounding";
 import {
-  buildStackedDays,
+  averageUnitLabel,
+  buildBuckets,
   chartAxis,
   computeDelta,
   deltaComparisonLabel,
   formatRangeLabel,
   percentOf,
   rangeTitle,
+  reportDigest,
   secondsToHours,
   weekdayLabel,
 } from "../../lib/report-math";
@@ -26,12 +28,13 @@ interface Props {
   density: Density;
 }
 
-const RANGES: ReportRange[] = ["day", "week", "month"];
+const RANGES: ReportRange[] = ["week", "month", "quarter", "year"];
 
 const RANGE_LABEL: Record<ReportRange, string> = {
-  day: "Day",
   week: "Week",
   month: "Month",
+  quarter: "Quarter",
+  year: "Year",
 };
 
 export function ReportsView({ density }: Props) {
@@ -48,14 +51,17 @@ export function ReportsView({ density }: Props) {
     rounding,
   });
 
-  const stackedDays = useMemo(
-    () => (data ? buildStackedDays(data) : []),
-    [data],
+  const buckets = useMemo(
+    () => (data ? buildBuckets(data, range) : []),
+    [data, range],
+  );
+  const digest = useMemo(
+    () => (data ? reportDigest(data, buckets, range) : null),
+    [data, buckets, range],
   );
   const axis = useMemo(
-    () =>
-      chartAxis(stackedDays.reduce((m, d) => Math.max(m, d.totalSeconds), 0)),
-    [stackedDays],
+    () => chartAxis(buckets.reduce((m, b) => Math.max(m, b.totalSeconds), 0)),
+    [buckets],
   );
   const axisMaxHours = axis.maxSeconds / 3600;
   const totalSeconds = data?.totalSeconds ?? 0;
@@ -234,7 +240,10 @@ export function ReportsView({ density }: Props) {
         </div>
       </section>
 
-      <section className="chart" aria-label="Hours per day">
+      <section
+        className="chart"
+        aria-label={`Hours per ${digest?.averageUnit ?? "day"}`}
+      >
         <div className="chart-grid">
           {axis.ticks.map((h) => (
             <div
@@ -247,20 +256,20 @@ export function ReportsView({ density }: Props) {
             </div>
           ))}
           <div className="chart-bars">
-            {stackedDays.map((d) => {
-              const heightPct = (d.totalSeconds / axis.maxSeconds) * 100;
-              const hours = secondsToHours(d.totalSeconds);
+            {buckets.map((b) => {
+              const heightPct = (b.totalSeconds / axis.maxSeconds) * 100;
+              const hours = secondsToHours(b.totalSeconds);
               return (
                 <div
-                  key={d.isoDate}
-                  className={`bar-col${d.isToday ? " is-today" : ""}${d.isFuture ? " is-future" : ""}`}
-                  aria-label={`${d.weekday}: ${hours.toFixed(1)} hours${d.isToday ? " (today)" : ""}`}
+                  key={b.key}
+                  className={`bar-col${b.isCurrent ? " is-today" : ""}${b.isFuture ? " is-future" : ""}`}
+                  aria-label={`${b.label}: ${hours.toFixed(1)} hours${b.isCurrent ? " (current)" : ""}`}
                 >
                   <div
                     className="bar-stack"
                     style={{ height: `${heightPct}%` }}
                   >
-                    {d.segments.map((s) => (
+                    {b.segments.map((s) => (
                       <div
                         key={sliceKey(s)}
                         className="bar-seg"
@@ -274,9 +283,9 @@ export function ReportsView({ density }: Props) {
                   </div>
                   <div className="bar-meta">
                     <span className="bar-h">
-                      {d.totalSeconds > 0 ? hours.toFixed(1) : "·"}
+                      {b.totalSeconds > 0 ? hours.toFixed(1) : "·"}
                     </span>
-                    <span className="bar-d">{d.weekday}</span>
+                    <span className="bar-d">{b.label}</span>
                   </div>
                 </div>
               );
@@ -284,6 +293,60 @@ export function ReportsView({ density }: Props) {
           </div>
         </div>
       </section>
+
+      {digest && (
+        <section className="rep-digest" aria-label="Digest">
+          <div className="rep-stat">
+            <span className="rep-stat-num">
+              <Mono>{secondsToHours(digest.averageSeconds).toFixed(1)}</Mono>h
+              <span className="rep-stat-unit">
+                {averageUnitLabel(digest.averageUnit)}
+              </span>
+            </span>
+            <span className="rep-stat-lbl">average</span>
+          </div>
+          <div className="rep-stat">
+            <span className="rep-stat-num">
+              {digest.busiest ? (
+                <>
+                  <Mono>
+                    {secondsToHours(digest.busiest.seconds).toFixed(1)}
+                  </Mono>
+                  h
+                </>
+              ) : (
+                <Mono>—</Mono>
+              )}
+            </span>
+            <span className="rep-stat-lbl">
+              busiest{digest.busiest ? ` · ${digest.busiest.label}` : ""}
+            </span>
+          </div>
+          <div className="rep-stat">
+            <span className="rep-stat-num">
+              {digest.topProject ? (
+                <>
+                  <Mono>{digest.topProject.percent.toFixed(0)}</Mono>%
+                </>
+              ) : (
+                <Mono>—</Mono>
+              )}
+            </span>
+            <span className="rep-stat-lbl">
+              {digest.topProject
+                ? `top · ${sliceName(digest.topProject.slice)}`
+                : "top project"}
+            </span>
+          </div>
+          <div className="rep-stat">
+            <span className="rep-stat-num">
+              <Mono>{digest.daysTracked}</Mono>
+              <span className="rep-stat-unit">/{digest.daysElapsed}</span>
+            </span>
+            <span className="rep-stat-lbl">days tracked</span>
+          </div>
+        </section>
+      )}
 
       <section className="breakdown" aria-label="Project breakdown">
         <div className="sect-label">

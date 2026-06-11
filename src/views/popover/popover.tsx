@@ -43,6 +43,7 @@ import { ReportsView } from "../reports";
 import { RulesView } from "../rules";
 import { DataView } from "../data";
 import { SettingsView, type SettingsSectionId } from "../settings";
+import { ExtensionsView } from "../extensions/extensions-view";
 import { OnboardingView } from "../onboarding";
 import { CommandPalette, type PaletteContext } from "../palette/palette";
 
@@ -287,6 +288,7 @@ function PopoverShell({
       if (e.key === "3") setView("rules");
       if (e.key === "4") setView("data");
       if (e.key === "5") setView("settings");
+      if (e.key === "6") setView("extensions");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -408,6 +410,13 @@ function PopoverShell({
           icon="settings"
           label="Settings"
         />
+        <NavTab
+          view="extensions"
+          current={view}
+          onSelect={setView}
+          icon="grid"
+          label="Extensions"
+        />
         <span className="nav-spacer" />
         <span className="nav-meta">⌃⌥T</span>
       </div>
@@ -467,6 +476,11 @@ function PopoverShell({
                 await onboarding.reset();
               }}
             />
+          </ErrorBoundary>
+        )}
+        {view === "extensions" && (
+          <ErrorBoundary area="Extensions">
+            <ExtensionsView />
           </ErrorBoundary>
         )}
       </div>
@@ -529,7 +543,7 @@ interface NavTabProps {
   view: View;
   current: View;
   onSelect: (v: View) => void;
-  icon: "today" | "reports" | "rules" | "folder" | "settings";
+  icon: "today" | "reports" | "rules" | "folder" | "settings" | "grid";
   label: string;
 }
 

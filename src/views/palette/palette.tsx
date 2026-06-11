@@ -107,6 +107,7 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
     { id: "rules", label: "Rules", icon: "rules" },
     { id: "data", label: "Data", icon: "folder" },
     { id: "settings", label: "Settings", icon: "settings" },
+    { id: "extensions", label: "Extensions", icon: "grid" },
   ];
   for (const v of VIEWS) {
     if (v.id === ctx.view) continue;
@@ -125,13 +126,10 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
     icon: IconName;
   }> = [
     { id: "privacy", label: "Privacy", icon: "shield" },
-    { id: "exclusions", label: "Never track these", icon: "lock" },
     { id: "accessibility", label: "Accessibility", icon: "type" },
-    { id: "calendar", label: "Calendar", icon: "calendar" },
     { id: "shortcuts", label: "Shortcuts", icon: "keyboard" },
-    { id: "integrations", label: "Integrations", icon: "globe" },
     { id: "updates", label: "Updates", icon: "sparkle" },
-    { id: "about", label: "About", icon: "info" },
+    { id: "diagnostics", label: "Diagnostics", icon: "info" },
   ];
   for (const s of SECTIONS) {
     out.push({

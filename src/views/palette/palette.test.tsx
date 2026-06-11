@@ -119,6 +119,7 @@ describe("buildCommands — surfaced commands", () => {
     expect(labels).toContain("Switch view: Reports");
     expect(labels).toContain("Switch view: Rules");
     expect(labels).toContain("Switch view: Settings");
+    expect(labels).toContain("Switch view: Extensions");
     expect(labels).not.toContain("Switch view: Today");
   });
 
@@ -127,16 +128,18 @@ describe("buildCommands — surfaced commands", () => {
     const labels = cmds.map((c) => c.label);
     for (const s of [
       "Privacy",
-      "Never track these",
       "Accessibility",
-      "Calendar",
       "Shortcuts",
-      "Integrations",
       "Updates",
-      "About",
+      "Diagnostics",
     ]) {
       expect(labels).toContain(`Open settings: ${s}`);
     }
+    // Moved out of Settings: exclusions → Rules, integrations/calendar →
+    // Extensions, about → the tray window.
+    expect(labels).not.toContain("Open settings: Never track these");
+    expect(labels).not.toContain("Open settings: Integrations");
+    expect(labels).not.toContain("Open settings: About");
   });
 
   it("the Updates command opens the updates settings section", () => {

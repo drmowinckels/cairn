@@ -42,7 +42,7 @@ const CHOICES: ChoiceDef[] = [
  * they were away while a timer kept running.
  */
 export function IdleWindow() {
-  const { prompt, resolve, dismiss } = useIdleWindow();
+  const { prompt, tracking, resolve, dismiss } = useIdleWindow();
   useApplyA11yChrome();
   const trap = useFocusTrap(() => void dismiss());
 
@@ -108,6 +108,13 @@ export function IdleWindow() {
           "Checking what you were tracking…"
         )}
       </p>
+
+      {tracking ? (
+        <p className="idle-win-tracking">
+          Tracking <strong>{tracking.projectName ?? "No project"}</strong>
+          {tracking.description ? <> · {tracking.description}</> : null}
+        </p>
+      ) : null}
 
       <ul className="idle-win-choices">
         {CHOICES.map((c) => (

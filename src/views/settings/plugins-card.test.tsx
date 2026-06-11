@@ -18,9 +18,9 @@ vi.mock("../../lib/ipc", async () => {
 
 import { PluginsCard } from "./plugins-card";
 
-const calendar = {
-  id: "calendar",
-  name: "Calendar",
+const weather = {
+  id: "weather",
+  name: "Weather",
   capabilities: ["network", "secrets"] as const,
   enabled: true,
 };
@@ -41,14 +41,34 @@ beforeEach(() => {
 
 describe("PluginsCard", () => {
   it("lists each plugin with its capability badges and a switch", async () => {
-    listPlugins.mockResolvedValue([calendar]);
+    listPlugins.mockResolvedValue([weather]);
     render(<PluginsCard />);
 
-    const sw = await screen.findByRole("switch", { name: "Enable Calendar" });
+    const sw = await screen.findByRole("switch", { name: "Enable Weather" });
     expect(sw.getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByText("Calendar")).toBeTruthy();
+    expect(screen.getByText("Weather")).toBeTruthy();
     expect(screen.getByText("Network")).toBeTruthy();
     expect(screen.getByText("Secrets")).toBeTruthy();
+  });
+
+  it("hides the calendar plugin (it lives under Integrations)", async () => {
+    const calendarPlugin = {
+      id: "calendar",
+      name: "Calendar",
+      capabilities: ["network", "secrets"] as const,
+      enabled: true,
+    };
+    // Calendar alone ⇒ the filtered list is empty ⇒ the card renders nothing.
+    listPlugins.mockResolvedValue([calendarPlugin]);
+    const { container } = render(<PluginsCard />);
+    await waitFor(() => expect(listPlugins).toHaveBeenCalled());
+    expect(container.firstChild).toBeNull();
+
+    // Alongside another plugin, calendar is omitted but the other still shows.
+    listPlugins.mockResolvedValue([calendarPlugin, weather]);
+    render(<PluginsCard />);
+    expect(await screen.findByText("Weather")).toBeTruthy();
+    expect(screen.queryByText("Calendar")).toBeNull();
   });
 
   it("renders a Local badge when a plugin declares no capabilities", async () => {
@@ -67,17 +87,17 @@ describe("PluginsCard", () => {
   });
 
   it("toggles a plugin off and reflects the backend's updated list", async () => {
-    listPlugins.mockResolvedValue([calendar, browser]);
+    listPlugins.mockResolvedValue([weather, browser]);
     setPluginEnabled.mockResolvedValue([
-      { ...calendar, enabled: false },
+      { ...weather, enabled: false },
       browser,
     ]);
     render(<PluginsCard />);
 
-    const sw = await screen.findByRole("switch", { name: "Enable Calendar" });
+    const sw = await screen.findByRole("switch", { name: "Enable Weather" });
     await userEvent.click(sw);
 
-    expect(setPluginEnabled).toHaveBeenCalledWith("calendar", false);
+    expect(setPluginEnabled).toHaveBeenCalledWith("weather", false);
     await waitFor(() => expect(sw.getAttribute("aria-checked")).toBe("false"));
     // The other plugin is untouched.
     expect(
@@ -90,21 +110,21 @@ describe("PluginsCard", () => {
   it("keeps the optimistic state when the backend returns no list", async () => {
     // Outside Tauri `setPluginEnabled` resolves `[]`; the switch must
     // hold its optimistic flip rather than blanking the list.
-    listPlugins.mockResolvedValue([calendar]);
+    listPlugins.mockResolvedValue([weather]);
     setPluginEnabled.mockResolvedValue([]);
     render(<PluginsCard />);
 
-    const sw = await screen.findByRole("switch", { name: "Enable Calendar" });
+    const sw = await screen.findByRole("switch", { name: "Enable Weather" });
     await userEvent.click(sw);
     await waitFor(() => expect(sw.getAttribute("aria-checked")).toBe("false"));
   });
 
   it("reverts the switch and shows an error when the toggle fails", async () => {
-    listPlugins.mockResolvedValue([calendar, browser]);
+    listPlugins.mockResolvedValue([weather, browser]);
     setPluginEnabled.mockRejectedValue(new Error("keychain locked"));
     render(<PluginsCard />);
 
-    const sw = await screen.findByRole("switch", { name: "Enable Calendar" });
+    const sw = await screen.findByRole("switch", { name: "Enable Weather" });
     await userEvent.click(sw);
 
     const alert = await screen.findByRole("alert");
@@ -137,7 +157,7 @@ describe("PluginsCard", () => {
     );
     const { unmount } = render(<PluginsCard />);
     unmount();
-    resolve([calendar]);
+    resolve([weather]);
     await waitFor(() => expect(listPlugins).toHaveBeenCalled());
   });
 

@@ -1,4 +1,5 @@
 import { WEEK } from "../test-fixtures/data";
+import { isoLocalDate } from "./report-math";
 import type {
   ReportDayBucket,
   ReportProjectSlice,
@@ -9,25 +10,42 @@ import type {
 
 const HOUR = 3600;
 
+const PREV_FACTOR: Record<ReportRange, number> = {
+  week: 0.85,
+  month: 0.9,
+  quarter: 0.95,
+  year: 0.97,
+};
+
 /**
  * Synthesise a `ReportSummary` from the existing `WEEK` fixture so the
  * Reports view stays explorable in Vite dev / vitest with no Tauri
- * backend. Real data comes from `report_summary` IPC at runtime.
+ * backend. The current week's `WEEK` hours are mapped onto their real
+ * dates and the rest of the range is empty days — matching the real
+ * backend's shape (one bucket per calendar day in the window). Real data
+ * comes from `report_summary` IPC at runtime.
  */
 export function fixtureReportSummary(range: ReportRange): ReportSummary {
   const today = new Date();
   const monday = mondayOf(today);
 
-  const byDay: ReportDayBucket[] = WEEK.map((w, i) => {
-    const d = addDays(monday, i);
-    return {
-      date: isoDate(d),
-      byProject: w.segments.map(([projectId, hours]) => ({
+  const weekByDate = new Map<string, ReportProjectSlice[]>();
+  WEEK.forEach((w, i) => {
+    weekByDate.set(
+      isoLocalDate(addDays(monday, i)),
+      w.segments.map(([projectId, hours]) => ({
         projectId,
         seconds: Math.round(hours * HOUR),
       })),
-    };
+    );
   });
+
+  const [start, end] = fixtureWindow(range, today);
+  const byDay: ReportDayBucket[] = [];
+  for (let d = new Date(start); d < end; d = addDays(d, 1)) {
+    const iso = isoLocalDate(d);
+    byDay.push({ date: iso, byProject: weekByDate.get(iso) ?? [] });
+  }
 
   const projTotals = new Map<string, number>();
   for (const day of byDay) {
@@ -45,65 +63,42 @@ export function fixtureReportSummary(range: ReportRange): ReportSummary {
 
   const totalSeconds = byProject.reduce((a, b) => a + b.seconds, 0);
   // Plausible split for the prototype: 55% rule, 25% calendar, 20% manual.
+  const rule = Math.round(totalSeconds * 0.55);
+  const calendar = Math.round(totalSeconds * 0.25);
   const bySource: ReportSourceSplit = {
-    rule: Math.round(totalSeconds * 0.55),
-    calendar: Math.round(totalSeconds * 0.25),
-    manual:
-      totalSeconds -
-      Math.round(totalSeconds * 0.55) -
-      Math.round(totalSeconds * 0.25),
+    rule,
+    calendar,
+    manual: totalSeconds - rule - calendar,
   };
-
-  // Day / Month flatten the same data so the picker has something
-  // visible; the real backend differentiates.
-  if (range === "day") {
-    // `byDay` is monday..sunday for the current week, so today's offset is
-    // `(getDay() + 6) % 7` (Mon=0..Sun=6).
-    const todayOffset = (today.getDay() + 6) % 7;
-    const todayBucket = byDay[todayOffset]!;
-    return {
-      totalSeconds: todayBucket.byProject.reduce((a, b) => a + b.seconds, 0),
-      prevTotalSeconds: 0,
-      byDay: [todayBucket],
-      byProject,
-      bySource,
-    };
-  }
-
-  if (range === "month") {
-    // Synthesize one bucket per day for the full month so the chart
-    // matches the real backend's shape (`window_for(Month, today)`
-    // returns first..first).
-    const first = new Date(today.getFullYear(), today.getMonth(), 1);
-    const nextFirst = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    const daysInMonth = Math.round(
-      (nextFirst.getTime() - first.getTime()) / (24 * 3600 * 1000),
-    );
-    const monthDays: ReportDayBucket[] = [];
-    for (let i = 0; i < daysInMonth; i++) {
-      const d = addDays(first, i);
-      const day = byDay.find((b) => b.date === isoDate(d));
-      monthDays.push({
-        date: isoDate(d),
-        byProject: day?.byProject ?? [],
-      });
-    }
-    return {
-      totalSeconds,
-      prevTotalSeconds: Math.round(totalSeconds * 0.9),
-      byDay: monthDays,
-      byProject,
-      bySource,
-    };
-  }
 
   return {
     totalSeconds,
-    prevTotalSeconds: Math.round(totalSeconds * 0.85),
+    prevTotalSeconds: Math.round(totalSeconds * PREV_FACTOR[range]),
     byDay,
     byProject,
     bySource,
   };
+}
+
+/** Local half-open [start, end) window for the fixture range, mirroring the
+ *  Rust `report_window`. */
+function fixtureWindow(range: ReportRange, today: Date): [Date, Date] {
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  switch (range) {
+    case "month":
+      return [new Date(y, m, 1), new Date(y, m + 1, 1)];
+    case "quarter": {
+      const qm = Math.floor(m / 3) * 3;
+      return [new Date(y, qm, 1), new Date(y, qm + 3, 1)];
+    }
+    case "year":
+      return [new Date(y, 0, 1), new Date(y + 1, 0, 1)];
+    default: {
+      const monday = mondayOf(today);
+      return [monday, addDays(monday, 7)];
+    }
+  }
 }
 
 function mondayOf(d: Date): Date {
@@ -119,11 +114,4 @@ function addDays(d: Date, n: number): Date {
   const out = new Date(d);
   out.setDate(out.getDate() + n);
   return out;
-}
-
-function isoDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
 }

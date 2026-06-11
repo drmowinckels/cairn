@@ -214,44 +214,6 @@ describe("SettingsView (browser-dev mode)", () => {
     expect(a11y.setTheme).toHaveBeenCalledWith("dark");
   });
 
-  it("adding an exclusion infers the kind and calls save_exclusion", () => {
-    invokeMock.mockResolvedValue({
-      id: "n",
-      kind: "domain",
-      value: "mail.proton.me",
-    });
-    render(
-      <SettingsView
-        density="comfy"
-        a11y={stubA11y()}
-        capture={stubCapture()}
-      />,
-    );
-    const input = screen.getByLabelText(/add exclusion/i);
-    fireEvent.change(input, { target: { value: "mail.proton.me" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(invokeMock).toHaveBeenCalledWith("save_exclusion", {
-      input: { kind: "domain", value: "mail.proton.me" },
-    });
-  });
-
-  it("the incognito pause toggle persists its state to localStorage", () => {
-    window.localStorage.removeItem("cairn:pause-on-incognito:v1");
-    render(
-      <SettingsView
-        density="comfy"
-        a11y={stubA11y()}
-        capture={stubCapture()}
-      />,
-    );
-    const cb = screen.getByRole("checkbox", { name: /private\/incognito/i });
-    expect((cb as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(cb);
-    expect(window.localStorage.getItem("cairn:pause-on-incognito:v1")).toBe(
-      "false",
-    );
-  });
-
   it("renders the text-scale segmented control with the active option highlighted", () => {
     render(
       <SettingsView
@@ -452,8 +414,8 @@ describe("SettingsView (browser-dev mode)", () => {
   });
 });
 
-describe("SettingsView · About / Capture raw signals", () => {
-  it("renders the About section as the last block with version + diagnostics toggle", () => {
+describe("SettingsView · Diagnostics / Capture raw signals", () => {
+  it("renders a Diagnostics section with the capture toggle (no About card)", () => {
     render(
       <SettingsView
         density="comfy"
@@ -461,14 +423,14 @@ describe("SettingsView · About / Capture raw signals", () => {
         capture={stubCapture()}
       />,
     );
-    const about = screen.getByRole("region", { name: /about/i });
-    expect(about).toBeTruthy();
-    expect(about.textContent).toContain("Cairn");
-    expect(about.textContent).toContain("Capture raw signals");
-    // The diagnostics copy action lives here too.
+    const diagnostics = screen.getByRole("region", { name: /diagnostics/i });
+    expect(diagnostics).toBeTruthy();
+    expect(diagnostics.textContent).toContain("Capture raw signals");
+    // The version/maker/links card now lives only in the tray's About window,
+    // so its copy-diagnostics action is no longer in Settings.
     expect(
-      screen.getByRole("button", { name: /copy diagnostics/i }),
-    ).toBeTruthy();
+      screen.queryByRole("button", { name: /copy diagnostics/i }),
+    ).toBeNull();
   });
 
   it("opens the confirmation dialog instead of starting capture immediately", async () => {

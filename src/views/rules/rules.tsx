@@ -29,6 +29,7 @@ import { useDebouncedCallback } from "../../lib/use-debounced-callback";
 import { selectLiveSignals, useSnapshot } from "../../lib/use-snapshot";
 import { LiveSignalsCard } from "./live-signals-card";
 import { RuleTestBench } from "./test-bench";
+import { ExclusionsSection } from "./exclusions-section";
 import { LIVE_SIGNALS as FIXTURE_SIGNALS } from "../../test-fixtures/data";
 import { inTauri } from "../../lib/ipc";
 
@@ -269,6 +270,8 @@ export function RulesView({
       )}
 
       {complexity === "heavy" && <RuleTestBench />}
+
+      <ExclusionsSection />
     </div>
   );
 }

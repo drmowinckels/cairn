@@ -35,6 +35,53 @@ function describeKind(kind: ConnectorKind): string {
   return "Connector";
 }
 
+/** At-a-glance connection state shown as a status dot on each connector
+ *  row. `ready` is "enabled + configured but not yet checked this session" —
+ *  the live states (`connected` / `offline` / `error`) land once the row has
+ *  been expanded, since that is when Cairn actually reads from the remote. */
+export type ConnectorStatus =
+  | "off"
+  | "needs-token"
+  | "checking"
+  | "error"
+  | "offline"
+  | "connected"
+  | "ready";
+
+/** Label + dot modifier for each status. The label is the dot's accessible
+ *  name and hover title. */
+export const CONNECTOR_STATUS_META: Record<
+  ConnectorStatus,
+  { label: string; dot: string }
+> = {
+  off: { label: "Disabled", dot: "off" },
+  "needs-token": { label: "Needs a token", dot: "warn" },
+  checking: { label: "Checking…", dot: "checking" },
+  error: { label: "Can't connect", dot: "error" },
+  offline: { label: "Offline — showing cached data", dot: "warn" },
+  connected: { label: "Connected", dot: "ok" },
+  ready: { label: "Ready — expand to check", dot: "ready" },
+};
+
+/** Derive a connector's status dot from local + last-fetch state. Pure so it
+ *  is unit-tested directly; order matters (most-actionable state wins). */
+export function connectorStatus(s: {
+  enabled: boolean;
+  needsToken: boolean;
+  loading: boolean;
+  errored: boolean;
+  stale: boolean;
+  loaded: boolean;
+}): ConnectorStatus {
+  if (!s.enabled) return "off";
+  if (s.needsToken) return "needs-token";
+  if (s.loading) return "checking";
+  if (s.errored) return "error";
+  if (s.stale) return "offline";
+  if (s.loaded) return "connected";
+  return "ready";
+}
+
 /** Shown when a connector list came from the offline cache because the remote
  *  was unreachable — so the user knows the data may be out of date. The cache
  *  only falls back on genuine connectivity failures (a rejected token or bad
@@ -255,15 +302,26 @@ function ConnectorRow({
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const panelId = `connector-${connector.id}-projects`;
+  const panelId = `connector-${connector.id}-panel`;
+  const needsToken = connector.secrets.some((s) => s.state === "missing");
+  const status = connectorStatus({
+    enabled: connector.enabled,
+    needsToken,
+    loading,
+    errored: error !== null,
+    stale,
+    loaded: projects !== null,
+  });
+  const statusMeta = CONNECTOR_STATUS_META[status];
 
   async function toggle() {
     const next = !expanded;
     setExpanded(next);
     // Fetch on first expand. A failed load (null) or a stale cache hit both
     // re-fetch on re-expand so a recovered connector shows live data again;
-    // a fresh success does not re-fetch.
-    if (next && (projects === null || stale) && !loading) {
+    // a fresh success does not re-fetch. Only an enabled connector has
+    // projects to fetch — a disabled one expands just to reveal its token field.
+    if (next && connector.enabled && (projects === null || stale) && !loading) {
       setLoading(true);
       setError(null);
       try {
@@ -286,13 +344,19 @@ function ConnectorRow({
       data-enabled={connector.enabled}
     >
       <div className="connector-head">
+        <span
+          className={`conn-dot conn-dot--${statusMeta.dot}`}
+          role="img"
+          aria-label={`Status: ${statusMeta.label}`}
+          title={statusMeta.label}
+          data-status={status}
+        />
         <button
           type="button"
           className="connector-toggle"
           aria-expanded={expanded}
           aria-controls={expanded ? panelId : undefined}
           onClick={() => void toggle()}
-          disabled={!connector.enabled}
         >
           <Icon name={expanded ? "chevron-down" : "chevron-right"} size={14} />
           <Icon name="folder" size={14} />
@@ -314,29 +378,36 @@ function ConnectorRow({
           <span className="tgl-dot" />
         </button>
       </div>
-      <ConnectorSecret connector={connector} onChange={onSecretChange} />
-      {expanded && connector.enabled && (
+      {expanded && (
         <div id={panelId} className="connector-panel">
-          {loading && <p className="connector-muted">Loading…</p>}
-          {error && (
-            <p className="privacy-banner privacy-banner--error" role="alert">
-              Couldn’t load projects: {error}
-            </p>
-          )}
-          {stale && !loading && <StaleNote fetchedAt={fetchedAt} />}
-          {projects && projects.length === 0 && !loading && (
-            <p className="connector-muted">No projects.</p>
-          )}
-          {projects && projects.length > 0 && (
-            <ul className="connector-projects">
-              {projects.map((project) => (
-                <ProjectRow
-                  key={project.id}
-                  connectorId={connector.id}
-                  project={project}
-                />
-              ))}
-            </ul>
+          <ConnectorSecret connector={connector} onChange={onSecretChange} />
+          {connector.enabled && (
+            <>
+              {loading && <p className="connector-muted">Loading…</p>}
+              {error && (
+                <p
+                  className="privacy-banner privacy-banner--error"
+                  role="alert"
+                >
+                  Couldn’t load projects: {error}
+                </p>
+              )}
+              {stale && !loading && <StaleNote fetchedAt={fetchedAt} />}
+              {projects && projects.length === 0 && !loading && (
+                <p className="connector-muted">No projects.</p>
+              )}
+              {projects && projects.length > 0 && (
+                <ul className="connector-projects">
+                  {projects.map((project) => (
+                    <ProjectRow
+                      key={project.id}
+                      connectorId={connector.id}
+                      project={project}
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </div>
       )}

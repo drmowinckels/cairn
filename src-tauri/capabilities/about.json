@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "about",
+  "description": "Capabilities for the About window (`?win=about`): read diagnostics, listen for events, and hide itself when the user closes it. `core:window:allow-hide` is what lets the × button and Escape dismiss the window — without it the hide call is denied by the ACL.",
+  "windows": ["about"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-hide",
+    "log:default"
+  ]
+}

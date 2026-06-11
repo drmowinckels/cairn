@@ -53,6 +53,14 @@ describe("AboutWindow", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the close button outside the drag region", () => {
+    // A `data-tauri-drag-region` ancestor makes macOS swallow the button's
+    // click — the close button must not sit inside one.
+    render(<AboutWindow onClose={vi.fn()} />);
+    const close = screen.getByRole("button", { name: /^close$/i });
+    expect(close.closest("[data-tauri-drag-region]")).toBeNull();
+  });
+
   it("closes on Escape and ignores other keys", () => {
     const onClose = vi.fn();
     render(<AboutWindow onClose={onClose} />);

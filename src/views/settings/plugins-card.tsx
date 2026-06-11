@@ -2,13 +2,19 @@ import { CapabilityBadges } from "../../lib/components";
 import { Icon } from "../../lib/icon";
 import { usePlugins } from "../../lib/use-plugins";
 
+/** Plugins surfaced elsewhere in the UI, hidden from this list to avoid
+ *  listing them twice. Calendar has its own Integrations row (with the
+ *  source-management flow), so it is not also shown as a plugin toggle. */
+const HIDDEN_PLUGIN_IDS = new Set(["calendar"]);
+
 /** Settings → Plugins (#111). Lists each registered signal-source
  *  plugin with the capabilities it declared (so a networked /
  *  secrets-bearing plugin is never active silently — docs/PRIVACY.md)
  *  and a switch to turn it off. Renders nothing when there are no
  *  plugins (e.g. the browser dev harness, where the list is empty). */
 export function PluginsCard() {
-  const { plugins, busyId, error, toggle } = usePlugins();
+  const { plugins: allPlugins, busyId, error, toggle } = usePlugins();
+  const plugins = allPlugins.filter((p) => !HIDDEN_PLUGIN_IDS.has(p.id));
 
   // Hide only when there is genuinely nothing to show: no plugins AND no
   // error (still loading, the browser dev harness, or no plugins built

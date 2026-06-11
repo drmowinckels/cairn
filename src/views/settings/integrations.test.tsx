@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
@@ -373,7 +374,7 @@ describe("GitStatusLine", () => {
 });
 
 describe("BrowserStatusLine", () => {
-  it("shows 'Not installed' and an Install action when disconnected", async () => {
+  it("shows 'Coming soon' and a disabled Install action when disconnected", async () => {
     browserExtensionStatus.mockResolvedValue({
       connected: false,
       lastSeen: null,
@@ -384,8 +385,11 @@ describe("BrowserStatusLine", () => {
         <BrowserStatusLine installHref="https://example.com/install" />
       </ul>,
     );
-    await waitFor(() => expect(screen.getByText("Not installed")).toBeTruthy());
-    expect(screen.getByRole("button", { name: /Install…/ })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Coming soon")).toBeTruthy());
+    // The extension isn't published yet (#37) — the install action is
+    // present but disabled rather than sending the user to the repo.
+    const install = screen.getByRole("button", { name: /Install…/ });
+    expect(install.hasAttribute("disabled")).toBe(true);
   });
 
   it("shows the browser label when connected", async () => {
@@ -430,7 +434,7 @@ describe("BrowserStatusLine", () => {
         <BrowserStatusLine installHref="https://example.com/install" />
       </ul>,
     );
-    await waitFor(() => screen.getByText("Not installed"));
+    await waitFor(() => screen.getByText("Coming soon"));
     expect(
       container.querySelector('[data-integration="browser"]'),
     ).toMatchSnapshot();
@@ -515,6 +519,21 @@ describe("IntegrationsCard", () => {
         container.querySelector(`[data-integration="${id}"]`),
       ).toBeTruthy();
     }
+  });
+
+  it("refreshes the calendar status line after the manager closes", async () => {
+    render(<IntegrationsCard />);
+    await waitFor(() => expect(listCalendarSources).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: /Manage…/ }));
+    // Count after the manager (its own useCalendars) has mounted, so we
+    // isolate the refetch the close triggers via the status line's remount.
+    const afterOpen = listCalendarSources.mock.calls.length;
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^close$/i }),
+    );
+    await waitFor(() =>
+      expect(listCalendarSources.mock.calls.length).toBeGreaterThan(afterOpen),
+    );
   });
 });
 

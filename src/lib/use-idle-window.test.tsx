@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useIdleWindow } from "./use-idle-window";
-import type { IdleResumeEvent } from "./types";
+import { trackingOf, useIdleWindow } from "./use-idle-window";
+import type { BackendEntry } from "./ipc";
+import type { IdleResumeEvent, Project } from "./types";
 
 const RESUME: IdleResumeEvent = {
   since: "2026-05-30T10:00:00Z",
@@ -9,7 +10,7 @@ const RESUME: IdleResumeEvent = {
   durationSeconds: 720,
 };
 
-const RUNNING = {
+const RUNNING: BackendEntry = {
   id: "e1",
   projectId: "p1",
   taskId: null,
@@ -18,6 +19,15 @@ const RUNNING = {
   endedAt: null,
   source: "manual",
   ruleId: null,
+};
+
+const PROJECT: Project = {
+  id: "p1",
+  name: "Aurora",
+  clientId: null,
+  color: "#000",
+  archived: false,
+  estimateHours: null,
 };
 
 function noopListen() {
@@ -36,6 +46,59 @@ describe("useIdleWindow", () => {
       }),
     );
     await waitFor(() => expect(result.current.prompt).toEqual(RESUME));
+  });
+
+  it("exposes the tracking project once a prompt arrives", async () => {
+    const { result } = renderHook(() =>
+      useIdleWindow({
+        enabled: true,
+        listen: noopListen(),
+        pendingIdle: vi.fn().mockResolvedValue(RESUME) as never,
+        currentRunning: vi.fn().mockResolvedValue(RUNNING) as never,
+        listProjects: vi.fn().mockResolvedValue([PROJECT]) as never,
+      }),
+    );
+    await waitFor(() =>
+      expect(result.current.tracking).toEqual({
+        projectName: "Aurora",
+        description: "x",
+      }),
+    );
+  });
+
+  it("logs and leaves tracking null if the lookup rejects", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderHook(() =>
+      useIdleWindow({
+        enabled: true,
+        listen: noopListen(),
+        pendingIdle: vi.fn().mockResolvedValue(RESUME) as never,
+        currentRunning: vi.fn().mockRejectedValue(new Error("boom")) as never,
+        listProjects: vi.fn().mockResolvedValue([PROJECT]) as never,
+      }),
+    );
+    await waitFor(() =>
+      expect(err).toHaveBeenCalledWith(
+        "idle tracking lookup failed",
+        expect.any(Error),
+      ),
+    );
+    expect(result.current.tracking).toBeNull();
+    err.mockRestore();
+  });
+
+  it("leaves tracking null when nothing is running", async () => {
+    const { result } = renderHook(() =>
+      useIdleWindow({
+        enabled: true,
+        listen: noopListen(),
+        pendingIdle: vi.fn().mockResolvedValue(RESUME) as never,
+        currentRunning: vi.fn().mockResolvedValue(null) as never,
+        listProjects: vi.fn().mockResolvedValue([PROJECT]) as never,
+      }),
+    );
+    await waitFor(() => expect(result.current.prompt).toEqual(RESUME));
+    expect(result.current.tracking).toBeNull();
   });
 
   it("updates the prompt from a live idle-resume event", async () => {
@@ -138,5 +201,29 @@ describe("useIdleWindow", () => {
       }),
     );
     expect(pending).not.toHaveBeenCalled();
+  });
+});
+
+describe("trackingOf", () => {
+  it("resolves the project name when the entry has a known project", () => {
+    expect(trackingOf(RUNNING, [PROJECT])).toEqual({
+      projectName: "Aurora",
+      description: "x",
+    });
+  });
+
+  it("falls back to null when the project is not in the list", () => {
+    expect(trackingOf(RUNNING, [])).toEqual({
+      projectName: null,
+      description: "x",
+    });
+  });
+
+  it("reports no project when the entry has none", () => {
+    const noProject: BackendEntry = { ...RUNNING, projectId: null };
+    expect(trackingOf(noProject, [PROJECT])).toEqual({
+      projectName: null,
+      description: "x",
+    });
   });
 });

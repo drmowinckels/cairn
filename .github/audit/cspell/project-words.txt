@@ -80,6 +80,7 @@ codesigning
 crash-reporting
 crate
 cspell
+dataviz
 dplyr
 drmowinckels
 eggshell

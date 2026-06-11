@@ -4,20 +4,43 @@ import {
   currentRunning,
   dismissIdle,
   inTauri,
+  listProjects,
   pendingIdle,
   resolveIdle,
+  type BackendEntry,
   type IdleChoice,
 } from "./ipc";
-import type { IdleResumeEvent } from "./types";
+import type { IdleResumeEvent, Project } from "./types";
 
 /** Same event the fanout emits; the idle window listens for it too. */
 export const SIGNAL_IDLE_RESUME_EVENT = "signal:idle-resume";
+
+/** What the timer was on while the user was away — shown in the prompt so
+ *  the choice ("keep / discard") has context. */
+export interface IdleTracking {
+  /** The running entry's project name, or `null` when it has no project. */
+  projectName: string | null;
+  /** The running entry's description (may be empty). */
+  description: string;
+}
+
+/** Resolve the running entry's project name for display in the prompt. */
+export function trackingOf(
+  running: BackendEntry,
+  projects: Project[],
+): IdleTracking {
+  const projectName = running.projectId
+    ? (projects.find((p) => p.id === running.projectId)?.name ?? null)
+    : null;
+  return { projectName, description: running.description };
+}
 
 export interface UseIdleWindowOpts {
   enabled?: boolean;
   listen?: typeof listen;
   pendingIdle?: typeof pendingIdle;
   currentRunning?: typeof currentRunning;
+  listProjects?: typeof listProjects;
   resolveIdle?: typeof resolveIdle;
   dismissIdle?: typeof dismissIdle;
 }
@@ -25,6 +48,8 @@ export interface UseIdleWindowOpts {
 export interface UseIdleWindow {
   /** The pending idle period, or null when nothing to resolve. */
   prompt: IdleResumeEvent | null;
+  /** What the timer is tracking, or null while unknown / nothing running. */
+  tracking: IdleTracking | null;
   /** Apply one of the #93 choices to the entry that was running. */
   resolve: (choice: IdleChoice) => Promise<void>;
   /** Close the prompt without changing anything (idle stays as work). */
@@ -45,10 +70,12 @@ export function useIdleWindow(opts: UseIdleWindowOpts = {}): UseIdleWindow {
   const listenFn = opts.listen ?? listen;
   const fetchPending = opts.pendingIdle ?? pendingIdle;
   const fetchRunning = opts.currentRunning ?? currentRunning;
+  const fetchProjects = opts.listProjects ?? listProjects;
   const resolveFn = opts.resolveIdle ?? resolveIdle;
   const dismissFn = opts.dismissIdle ?? dismissIdle;
 
   const [prompt, setPrompt] = useState<IdleResumeEvent | null>(null);
+  const [tracking, setTracking] = useState<IdleTracking | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -73,6 +100,25 @@ export function useIdleWindow(opts: UseIdleWindowOpts = {}): UseIdleWindow {
       if (unlisten) unlisten();
     };
   }, [enabled, listenFn, fetchPending]);
+
+  // Look up what the timer is on whenever a prompt arrives, so the choices
+  // are anchored to a project the user recognizes.
+  useEffect(() => {
+    if (!enabled || !prompt) {
+      setTracking(null);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all([fetchRunning(), fetchProjects()])
+      .then(([running, projects]) => {
+        if (cancelled) return;
+        setTracking(running ? trackingOf(running, projects) : null);
+      })
+      .catch((e) => console.error("idle tracking lookup failed", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, prompt, fetchRunning, fetchProjects]);
 
   const dismiss = useCallback(async () => {
     setPrompt(null);
@@ -118,5 +164,5 @@ export function useIdleWindow(opts: UseIdleWindowOpts = {}): UseIdleWindow {
     [prompt, fetchRunning, resolveFn, dismissFn],
   );
 
-  return { prompt, resolve, dismiss };
+  return { prompt, tracking, resolve, dismiss };
 }
