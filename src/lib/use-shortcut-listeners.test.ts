@@ -241,6 +241,40 @@ describe("useToggleTimerShortcut", () => {
     );
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("db locked"));
   });
+
+  it("defaults fetchToday to today's entries (outside Tauri it resolves empty → no-project)", async () => {
+    let cb: (() => void) | null = null;
+    vi.mocked(listen).mockImplementation((_name, handler) => {
+      cb = handler as () => void;
+      return Promise.resolve(vi.fn());
+    });
+
+    const startFn = vi.fn();
+    const announce = vi.fn();
+    const toast = vi.fn();
+
+    renderHook(() =>
+      useToggleTimerShortcut({
+        enabled: true,
+        fetchCurrent: vi.fn().mockResolvedValue(null),
+        // fetchToday omitted → exercises the default listTodayEntries().
+        startFn,
+        stopFn: vi.fn(),
+        announce,
+        toast,
+      }),
+    );
+    await waitFor(() => expect(cb).not.toBeNull());
+    await act(async () => {
+      cb!();
+    });
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.stringContaining("No recent project"),
+      ),
+    );
+    expect(startFn).not.toHaveBeenCalled();
+  });
 });
 
 describe("usePaletteShortcut", () => {
