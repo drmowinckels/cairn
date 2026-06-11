@@ -1174,7 +1174,7 @@ body {
 /* ─── RUNNING TIMER ─────────────────────────────────────────────────── */
 
 /* ─── TODAY DATE NAV (#past-day editing) ────────────────────────────── */
-.today-datebar {
+.today-date-bar {
   display: flex;
   align-items: center;
   gap: 8px;

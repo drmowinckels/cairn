@@ -319,7 +319,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     });
   }
 
-  it("stop button is enabled when a backend entry is running and triggers stop_entry + list_today refetch", async () => {
+  it("stop button is enabled when a backend entry is running and triggers stop_entry + list_day refetch", async () => {
     const { invoke } = await freshRender("manual");
     const stop = await screen.findByRole("button", { name: /stop timer/i });
     await waitFor(() => expect(stop.hasAttribute("disabled")).toBe(false));

@@ -526,7 +526,7 @@ export function TodayView({
 
   return (
     <div className="view view-today" data-density={density}>
-      <header className="today-datebar">
+      <header className="today-date-bar">
         <button
           type="button"
           className="today-date-step"
