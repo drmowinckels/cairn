@@ -24,14 +24,23 @@ pub mod cache;
 pub mod file;
 pub mod http;
 pub mod manifest;
+pub mod params;
 pub mod secret_state;
 pub mod state;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub use manifest::{ConnectorKind, ConnectorManifest, SecretRef};
+pub use manifest::{ConnectorKind, ConnectorManifest, ParamSpec, SecretRef};
+
+/// A connector's stored configuration params, keyed by the manifest's declared
+/// param key (e.g. `owner` → `ggsegverse`). Passed to a connector's reads so the
+/// declarative interpreter can substitute them into request templates and pick
+/// request variants. Origin-agnostic: a connector that declares no params simply
+/// receives an empty map. See [`ParamSpec`] and `docs/PM_CONNECTORS.md`.
+pub type ConnectorParams = BTreeMap<String, String>;
 
 /// A project as seen in the remote planner. `Deserialize` so it round-trips
 /// through the offline [`cache`].
@@ -130,15 +139,36 @@ pub struct SecretView {
     pub state: SecretState,
 }
 
+/// One configuration param a connector declares, with its stored value — what
+/// the settings card renders an editable field for. Unlike a secret, the value
+/// is not sensitive, so it round-trips: shown back so the user can see and edit
+/// it. An empty `value` means unset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParamView {
+    /// The manifest's param key, passed back to set/clear this param.
+    pub key: String,
+    /// Human label for the field (e.g. "GitHub user or organisation").
+    pub label: String,
+    /// Optional placeholder hint for the input.
+    pub placeholder: Option<String>,
+    /// The stored value, or the empty string when unset.
+    pub value: String,
+}
+
 /// A connector manifest plus the state of each secret it needs — what
 /// `list_connectors` hands the settings card so it can render a "needs token"
 /// affordance per secret without any token leaving the backend. An empty
-/// `secrets` means the connector needs none (a local file, or `auth: none`).
+/// `secrets` means the connector needs none (a local file, or `auth: none`);
+/// an empty `params` means it declares no configuration fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConnectorView {
     #[serde(flatten)]
     pub manifest: ConnectorManifest,
     pub secrets: Vec<SecretView>,
+    /// The connector's declared configuration params, each with its stored
+    /// value. Editable in the settings card; unlike secrets, values round-trip.
+    pub params: Vec<ParamView>,
     /// Whether the user has this connector enabled. A disabled connector is
     /// listed (with its toggle) but makes no requests — browsing is refused.
     pub enabled: bool,
@@ -161,6 +191,21 @@ pub fn secret_views(
             } else {
                 SecretState::Missing
             },
+        })
+        .collect()
+}
+
+/// Resolve a [`ParamView`] per param a connector declares, filling each with its
+/// stored value (or the empty string when unset). Pure over the stored map so it
+/// is unit-tested without a store.
+pub fn param_views(specs: &[ParamSpec], stored: &ConnectorParams) -> Vec<ParamView> {
+    specs
+        .iter()
+        .map(|spec| ParamView {
+            key: spec.key.clone(),
+            label: spec.label.clone(),
+            placeholder: spec.placeholder.clone(),
+            value: stored.get(&spec.key).cloned().unwrap_or_default(),
         })
         .collect()
 }
@@ -201,11 +246,19 @@ pub trait PmConnector: Send + Sync {
     /// Identity + declared capabilities, for the settings UI.
     fn manifest(&self) -> &ConnectorManifest;
 
-    /// Every project the connector can see.
-    async fn list_projects(&self) -> anyhow::Result<Vec<RemoteProject>>;
+    /// Every project the connector can see. `params` are the connector's stored
+    /// configuration values (e.g. the GitHub `owner`); a connector that declares
+    /// none ignores the map.
+    async fn list_projects(&self, params: &ConnectorParams) -> anyhow::Result<Vec<RemoteProject>>;
 
-    /// Every task in one project.
-    async fn list_tasks(&self, project: &RemoteProjectRef) -> anyhow::Result<Vec<RemoteTask>>;
+    /// Every task in one project. `params` as for [`list_projects`].
+    ///
+    /// [`list_projects`]: PmConnector::list_projects
+    async fn list_tasks(
+        &self,
+        project: &RemoteProjectRef,
+        params: &ConnectorParams,
+    ) -> anyhow::Result<Vec<RemoteTask>>;
 }
 
 /// Registry of the connectors available this session. Sibling to the
@@ -412,7 +465,10 @@ mod tests {
         assert!(host.get("github-projects").is_some(), "builtins load too");
 
         let connector = host.get("good").expect("registered by id");
-        let projects = connector.list_projects().await.unwrap();
+        let projects = connector
+            .list_projects(&ConnectorParams::new())
+            .await
+            .unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].name, "groceries");
 
@@ -543,6 +599,36 @@ mod tests {
         // The second is declared but not yet stored.
         assert_eq!(views[1].key, "trello_token");
         assert_eq!(views[1].state, SecretState::Missing);
+    }
+
+    #[test]
+    fn param_views_fill_each_declared_param_with_its_stored_value() {
+        use manifest::ParamSpec;
+        // No declared params → empty.
+        assert!(param_views(&[], &ConnectorParams::new()).is_empty());
+
+        let specs = [
+            ParamSpec {
+                key: "owner".to_string(),
+                label: "Owner".to_string(),
+                placeholder: Some("e.g. ggsegverse".to_string()),
+            },
+            ParamSpec {
+                key: "repo".to_string(),
+                label: "Repo".to_string(),
+                placeholder: None,
+            },
+        ];
+        // Only `owner` is stored; `repo` falls back to the empty string.
+        let stored = ConnectorParams::from([("owner".to_string(), "ggsegverse".to_string())]);
+        let views = param_views(&specs, &stored);
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].key, "owner");
+        assert_eq!(views[0].label, "Owner");
+        assert_eq!(views[0].placeholder.as_deref(), Some("e.g. ggsegverse"));
+        assert_eq!(views[0].value, "ggsegverse");
+        assert_eq!(views[1].key, "repo");
+        assert_eq!(views[1].value, "", "an unset param reads as empty");
     }
 
     #[test]

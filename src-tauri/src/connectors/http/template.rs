@@ -10,10 +10,12 @@ use anyhow::{anyhow, bail, Result};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
 /// The values a request template may reference (`{{project.id}}`,
-/// `{{cursor}}`, `{{offset}}`).
+/// `{{cursor}}`, `{{offset}}`, and a connector's declared params like
+/// `{{owner}}`). Keys are owned because param keys come from the manifest at
+/// runtime, not a fixed set of literals.
 #[derive(Default)]
 pub(super) struct Context {
-    vars: BTreeMap<&'static str, String>,
+    vars: BTreeMap<String, String>,
 }
 
 impl Context {
@@ -21,12 +23,14 @@ impl Context {
         Self::default()
     }
 
-    pub(super) fn set(&mut self, key: &'static str, value: impl Into<String>) -> &mut Self {
-        self.vars.insert(key, value.into());
+    pub(super) fn set(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
+        self.vars.insert(key.into(), value.into());
         self
     }
 
-    fn get(&self, key: &str) -> Option<&str> {
+    /// The value bound to `key`, or `None` when unset. Used by template fill and
+    /// by request-variant selection (`request::select_request`).
+    pub(super) fn get(&self, key: &str) -> Option<&str> {
         self.vars.get(key).map(String::as_str)
     }
 }

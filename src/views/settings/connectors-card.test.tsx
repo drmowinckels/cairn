@@ -8,6 +8,7 @@ const listConnectorTasks = vi.fn();
 const setConnectorSecret = vi.fn();
 const clearConnectorSecret = vi.fn();
 const setConnectorEnabled = vi.fn();
+const setConnectorParam = vi.fn();
 const previewConnectorManifest = vi.fn();
 const installConnectorManifest = vi.fn();
 const openDialog = vi.fn();
@@ -24,6 +25,7 @@ vi.mock("../../lib/ipc", async () => {
     setConnectorSecret: (...a: unknown[]) => setConnectorSecret(...a),
     clearConnectorSecret: (...a: unknown[]) => clearConnectorSecret(...a),
     setConnectorEnabled: (...a: unknown[]) => setConnectorEnabled(...a),
+    setConnectorParam: (...a: unknown[]) => setConnectorParam(...a),
     previewConnectorManifest: (...a: unknown[]) =>
       previewConnectorManifest(...a),
     installConnectorManifest: (...a: unknown[]) =>
@@ -56,6 +58,7 @@ const fileConnector = {
   capabilities: [] as const,
   kind: { file: { format: "todotxt" as const, path: "~/TODO.txt" } },
   secrets: [],
+  params: [],
   enabled: true,
 };
 
@@ -65,6 +68,7 @@ const httpConnector = {
   capabilities: ["network", "secrets"] as const,
   kind: { http: { baseUrl: "https://api.github.com" } },
   secrets: ghSecret("missing"),
+  params: [],
   enabled: true,
 };
 
@@ -78,6 +82,27 @@ const trelloConnector = {
     { key: "trello_key", label: "key", state: "set" as const },
     { key: "trello_token", label: "token", state: "missing" as const },
   ],
+  params: [],
+  enabled: true,
+};
+
+/** The GitHub connector, which declares an `owner` config param (here unset).
+ *  `ownerParam(value)` builds the param row in a given state. */
+const ownerParam = (value: string) => [
+  {
+    key: "owner",
+    label: "GitHub user or organisation",
+    placeholder: "e.g. ggsegverse",
+    value,
+  },
+];
+const githubConnector = {
+  id: "github-projects",
+  name: "GitHub Projects",
+  capabilities: ["network", "secrets"] as const,
+  kind: { http: { baseUrl: "https://api.github.com" } },
+  secrets: ghSecret("set"),
+  params: ownerParam(""),
   enabled: true,
 };
 
@@ -93,6 +118,7 @@ beforeEach(() => {
   setConnectorSecret.mockReset();
   clearConnectorSecret.mockReset();
   setConnectorEnabled.mockReset();
+  setConnectorParam.mockReset();
   previewConnectorManifest.mockReset();
   installConnectorManifest.mockReset();
   openDialog.mockReset();
@@ -573,6 +599,174 @@ describe("ConnectorsCard", () => {
     expect(alert.textContent).toContain("Couldn’t update token");
     expect(alert.textContent).toContain("keychain locked");
     expect(screen.getByLabelText("API token")).toBeTruthy();
+  });
+
+  it("shows a connector's config param field with its label and placeholder", async () => {
+    // githubConnector has a *set* secret (so a secret "Clear" exists); the
+    // param's Save/Clear carry the field label so they never collide with it.
+    listConnectors.mockResolvedValue([githubConnector]);
+    render(<ConnectorsCard />);
+    await expandRow("GitHub Projects");
+
+    const input = (await screen.findByLabelText(
+      "GitHub user or organisation",
+    )) as HTMLInputElement;
+    expect(input.getAttribute("type")).toBe("text");
+    expect(input.value).toBe("");
+    expect(input.getAttribute("placeholder")).toBe("e.g. ggsegverse");
+    // Save is disabled until the value changes; an unset param shows no Clear.
+    expect(
+      screen
+        .getByRole("button", { name: "Save GitHub user or organisation" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen.queryByRole("button", {
+        name: "Clear GitHub user or organisation",
+      }),
+    ).toBeNull();
+    // The secret's own Clear is still present and distinctly named.
+    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
+  });
+
+  it("saves a typed owner and reflects the refreshed value", async () => {
+    listConnectors.mockResolvedValue([githubConnector]);
+    setConnectorParam.mockResolvedValue([
+      { ...githubConnector, params: ownerParam("ggsegverse") },
+    ]);
+    render(<ConnectorsCard />);
+    await expandRow("GitHub Projects");
+
+    const input = await screen.findByLabelText("GitHub user or organisation");
+    await userEvent.type(input, "  ggsegverse  ");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save GitHub user or organisation" }),
+    );
+
+    // The value is trimmed and routed to the connector's `owner` key.
+    expect(setConnectorParam).toHaveBeenCalledWith(
+      "github-projects",
+      "owner",
+      "ggsegverse",
+    );
+    // The refreshed value shows, and Save flips back to disabled (not dirty).
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByLabelText(
+            "GitHub user or organisation",
+          ) as HTMLInputElement
+        ).value,
+      ).toBe("ggsegverse"),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Save GitHub user or organisation" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("clears a set owner param even when the secret's Clear is also shown", async () => {
+    // The steady state for an org user: a saved token AND a set owner, so both
+    // a secret "Clear" and a param "Clear" render. The label-qualified name
+    // targets the param's unambiguously.
+    listConnectors.mockResolvedValue([
+      { ...githubConnector, params: ownerParam("ggsegverse") },
+    ]);
+    setConnectorParam.mockResolvedValue([
+      { ...githubConnector, params: ownerParam("") },
+    ]);
+    render(<ConnectorsCard />);
+    await expandRow("GitHub Projects");
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Clear GitHub user or organisation",
+      }),
+    );
+    expect(setConnectorParam).toHaveBeenCalledWith(
+      "github-projects",
+      "owner",
+      "",
+    );
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByLabelText(
+            "GitHub user or organisation",
+          ) as HTMLInputElement
+        ).value,
+      ).toBe(""),
+    );
+  });
+
+  it("surfaces a param-save failure", async () => {
+    listConnectors.mockResolvedValue([githubConnector]);
+    setConnectorParam.mockRejectedValue(new Error("db locked"));
+    render(<ConnectorsCard />);
+    await expandRow("GitHub Projects");
+
+    await userEvent.type(
+      await screen.findByLabelText("GitHub user or organisation"),
+      "ggsegverse",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save GitHub user or organisation" }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "Couldn’t update GitHub user or organisation",
+    );
+    expect(alert.textContent).toContain("db locked");
+  });
+
+  it("surfaces a param-clear failure", async () => {
+    listConnectors.mockResolvedValue([
+      { ...githubConnector, params: ownerParam("ggsegverse") },
+    ]);
+    setConnectorParam.mockRejectedValue(new Error("db locked"));
+    render(<ConnectorsCard />);
+    await expandRow("GitHub Projects");
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Clear GitHub user or organisation",
+      }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "Couldn’t update GitHub user or organisation",
+    );
+    expect(alert.textContent).toContain("db locked");
+  });
+
+  it("renders a param field with no placeholder when none is declared", async () => {
+    listConnectors.mockResolvedValue([
+      {
+        ...githubConnector,
+        params: [
+          {
+            key: "owner",
+            label: "GitHub user or organisation",
+            placeholder: null,
+            value: "",
+          },
+        ],
+      },
+    ]);
+    render(<ConnectorsCard />);
+    await expandRow("GitHub Projects");
+    const input = (await screen.findByLabelText(
+      "GitHub user or organisation",
+    )) as HTMLInputElement;
+    expect(input.getAttribute("placeholder")).toBe("");
+  });
+
+  it("shows no config field for a connector that declares none", async () => {
+    listConnectors.mockResolvedValue([fileConnector]);
+    render(<ConnectorsCard />);
+    await expandRow("Sample tasks");
+    expect(screen.queryByLabelText("GitHub user or organisation")).toBeNull();
   });
 
   it("ignores a connector load that resolves after unmount", async () => {

@@ -3514,6 +3514,65 @@ select.rule-conf {
   background: transparent;
 }
 
+.connector-params {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.connector-param {
+  margin-top: 8px;
+  padding-left: 22px;
+}
+
+.connector-param-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.connector-param-label {
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+}
+
+.connector-param-input {
+  min-width: 180px;
+  flex: 1 1 180px;
+}
+
+.connector-param-action {
+  appearance: none;
+  font: inherit;
+  font-size: var(--font-tiny);
+  color: var(--accent-ink);
+  background: var(--surface-2);
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.connector-param-action:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.connector-param-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.connector-param-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.connector-param-action--ghost {
+  color: var(--ink-soft);
+  background: transparent;
+}
+
 .modal-scrim {
   position: fixed;
   inset: 0;

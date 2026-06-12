@@ -6271,23 +6271,28 @@ fn store_connector_host(state: &State<'_, AppState>, host: crate::connectors::Co
 
 /// Each loaded connector's manifest paired with its secret state (from the
 /// DB-backed `present` flags — NOT the keychain, which would re-prompt on
-/// every macOS rebuild) and enabled flag (from `enabled`; absent = enabled).
-/// The token never crosses this boundary, only its presence. Takes both maps
+/// every macOS rebuild), its stored config params, and enabled flag (from
+/// `enabled`; absent = enabled). The token never crosses this boundary, only
+/// its presence; param values do (they are not secret). Takes the maps
 /// pre-loaded so the view logic is unit-tested without any keychain.
 fn connector_views_with(
     state: &State<'_, AppState>,
     present: &std::collections::HashMap<String, bool>,
     enabled: &std::collections::HashMap<String, bool>,
+    params: &std::collections::HashMap<String, std::collections::BTreeMap<String, String>>,
 ) -> Vec<crate::connectors::ConnectorView> {
     connector_host(state)
         .manifests()
         .into_iter()
         .map(|manifest| {
             let secrets = crate::connectors::secret_views(&manifest.secret_refs(), present);
+            let stored = crate::connectors::params::params_for(params, &manifest.id);
+            let param_views = crate::connectors::param_views(manifest.param_specs(), &stored);
             let is_enabled = crate::connectors::state::is_enabled(enabled, &manifest.id);
             crate::connectors::ConnectorView {
                 manifest,
                 secrets,
+                params: param_views,
                 enabled: is_enabled,
             }
         })
@@ -6350,7 +6355,8 @@ where
     // keychain write succeeds, so the flag can't claim a token that isn't there.
     crate::connectors::secret_state::set_present(&state.db.pool, &target, token.is_some()).await?;
     let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
-    Ok(connector_views_with(state, &present, enabled))
+    let params = crate::connectors::params::load_params(&state.db.pool).await;
+    Ok(connector_views_with(state, &present, enabled, &params))
 }
 
 /// List every loaded PM connector with its secret + enabled state, for
@@ -6364,7 +6370,8 @@ pub async fn list_connectors_impl(
     // Secret presence comes from the DB, NOT the keychain — listing connectors
     // must not touch the keychain (it would re-prompt on every macOS rebuild).
     let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
-    Ok(connector_views_with(&state, &present, &enabled))
+    let params = crate::connectors::params::load_params(&state.db.pool).await;
+    Ok(connector_views_with(&state, &present, &enabled, &params))
 }
 
 /// Store a connector's auth token in the OS keychain (#110). Validates the
@@ -6425,7 +6432,43 @@ pub async fn set_connector_enabled_impl(
     crate::connectors::state::set_enabled(&state.db.pool, &connector_id, enabled).await?;
     let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
     let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
-    Ok(connector_views_with(&state, &present, &flags))
+    let params = crate::connectors::params::load_params(&state.db.pool).await;
+    Ok(connector_views_with(&state, &present, &flags, &params))
+}
+
+/// Set or clear a connector's configuration param (#110): a non-secret,
+/// user-entered value the manifest references as `{{key}}` (e.g. the GitHub
+/// `owner`). An empty value clears it. Validates the connector exists and the
+/// key is one it declares (the UI only passes declared keys, so a mismatch is a
+/// bug, not input). Returns the refreshed connector list. Invoke shim in
+/// `lib.rs`.
+pub async fn set_connector_param_impl(
+    state: State<'_, AppState>,
+    connector_id: String,
+    key: String,
+    value: String,
+) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    // Validate inside a block so the host snapshot (and its non-Send
+    // `&dyn PmConnector` borrow) is dropped before the awaits below.
+    {
+        let host = connector_host(&state);
+        let connector = host
+            .get(&connector_id)
+            .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
+        if !connector
+            .manifest()
+            .param_specs()
+            .iter()
+            .any(|spec| spec.key == key)
+        {
+            return Err(format!("connector '{connector_id}' has no param '{key}'"));
+        }
+    }
+    crate::connectors::params::set_param(&state.db.pool, &connector_id, &key, &value).await?;
+    let enabled = crate::connectors::state::load_enabled(&state.db.pool).await;
+    let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
+    let params = crate::connectors::params::load_params(&state.db.pool).await;
+    Ok(connector_views_with(&state, &present, &enabled, &params))
 }
 
 /// Validate a connector manifest file the user picked, WITHOUT installing it
@@ -6467,9 +6510,18 @@ pub async fn install_connector_manifest_impl(
     std::fs::write(&dest, &json).map_err(|e| format!("could not save the connector: {e}"))?;
 
     store_connector_host(&state, crate::connectors::ConnectorHost::load(&dir));
+    // Re-importing a manifest that dropped a param leaves an unreachable stored
+    // value; prune any param this manifest no longer declares.
+    let declared: Vec<&str> = manifest
+        .param_specs()
+        .iter()
+        .map(|p| p.key.as_str())
+        .collect();
+    crate::connectors::params::prune(&state.db.pool, &manifest.id, &declared).await?;
     let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
     let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
-    Ok(connector_views_with(&state, &present, &flags))
+    let params = crate::connectors::params::load_params(&state.db.pool).await;
+    Ok(connector_views_with(&state, &present, &flags, &params))
 }
 
 /// Run a connector read through the offline cache (#110): on success, cache
@@ -6553,11 +6605,15 @@ pub async fn list_connector_projects_impl(
         .get(&connector_id)
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
     ensure_connector_enabled(&state, &connector_id).await?;
+    let params = crate::connectors::params::params_for(
+        &crate::connectors::params::load_params(&state.db.pool).await,
+        &connector_id,
+    );
     read_with_cache(
         &state.db.pool,
         &connector_id,
         crate::connectors::cache::PROJECTS_SCOPE,
-        connector.list_projects(),
+        connector.list_projects(&params),
     )
     .await
 }
@@ -6575,13 +6631,18 @@ pub async fn list_connector_tasks_impl(
         .ok_or_else(|| format!("unknown connector '{connector_id}'"))?;
     ensure_connector_enabled(&state, &connector_id).await?;
     let scope = crate::connectors::cache::tasks_scope(&project_id);
+    let params = crate::connectors::params::params_for(
+        &crate::connectors::params::load_params(&state.db.pool).await,
+        &connector_id,
+    );
     read_with_cache(
         &state.db.pool,
         &connector_id,
         &scope,
-        connector.list_tasks(&crate::connectors::RemoteProjectRef::new(
-            project_id.clone(),
-        )),
+        connector.list_tasks(
+            &crate::connectors::RemoteProjectRef::new(project_id.clone()),
+            &params,
+        ),
     )
     .await
 }
@@ -6936,6 +6997,67 @@ mod connector_tests {
         assert!(err.contains("nope"));
     }
 
+    fn github_owner(views: &[crate::connectors::ConnectorView]) -> &str {
+        views
+            .iter()
+            .find(|c| c.manifest.id == "github-projects")
+            .expect("the bundled GitHub connector is loaded")
+            .params
+            .iter()
+            .find(|p| p.key == "owner")
+            .expect("the GitHub connector declares an owner param")
+            .value
+            .as_str()
+    }
+
+    #[tokio::test]
+    async fn set_connector_param_persists_clears_and_validates() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        // Setting the GitHub `owner` param echoes it back in the view.
+        let after = set_connector_param_impl(
+            state.clone(),
+            "github-projects".into(),
+            "owner".into(),
+            "ggsegverse".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(github_owner(&after), "ggsegverse");
+
+        // It persists across a fresh list.
+        let listed = list_connectors_impl(state.clone()).await.unwrap();
+        assert_eq!(github_owner(&listed), "ggsegverse");
+
+        // An empty value clears it back to unset.
+        let cleared = set_connector_param_impl(
+            state.clone(),
+            "github-projects".into(),
+            "owner".into(),
+            "".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(github_owner(&cleared), "");
+
+        // An unknown connector and an undeclared key are both rejected.
+        let bad_conn =
+            set_connector_param_impl(state.clone(), "nope".into(), "owner".into(), "x".into())
+                .await
+                .unwrap_err();
+        assert!(bad_conn.contains("nope"), "{bad_conn}");
+        let bad_key = set_connector_param_impl(
+            state,
+            "github-projects".into(),
+            "not-a-param".into(),
+            "x".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(bad_key.contains("no param"), "{bad_key}");
+    }
+
     #[tokio::test]
     async fn a_disabled_connector_refuses_browsing() {
         let (_dir, app, _db) = mock_app_with_db().await;
@@ -7018,6 +7140,55 @@ mod connector_tests {
         assert!(install_connector_manifest_impl(state, bad).await.is_err());
     }
 
+    #[tokio::test]
+    async fn reinstalling_a_manifest_prunes_params_it_no_longer_declares() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let with_param = r#"{ "manifest": 1, "id": "my-pm", "name": "My PM", "kind": "http",
+            "capabilities": ["network"], "auth": { "type": "none" },
+            "baseUrl": "https://api.example.com",
+            "params": [{ "key": "owner", "label": "Owner" }],
+            "operations": {
+              "listProjects": { "request": { "method": "GET", "path": "/p" },
+                "response": { "items": "", "map": {} } },
+              "listTasks": { "request": { "method": "GET", "path": "/t" },
+                "response": { "items": "", "map": {} } } } }"#;
+
+        let (_a, path) = write_temp_manifest(with_param);
+        install_connector_manifest_impl(state.clone(), path)
+            .await
+            .unwrap();
+        set_connector_param_impl(
+            state.clone(),
+            "my-pm".into(),
+            "owner".into(),
+            "ggsegverse".into(),
+        )
+        .await
+        .unwrap();
+
+        // Re-install the same connector with the `owner` param removed.
+        let without_param = with_param.replace(
+            "\"params\": [{ \"key\": \"owner\", \"label\": \"Owner\" }],",
+            "",
+        );
+        let (_b, path2) = write_temp_manifest(&without_param);
+        let after = install_connector_manifest_impl(state.clone(), path2)
+            .await
+            .unwrap();
+
+        let pm = after.iter().find(|c| c.manifest.id == "my-pm").unwrap();
+        assert!(
+            pm.params.is_empty(),
+            "the dropped param is gone from the view"
+        );
+        let stored = crate::connectors::params::load_params(&state.db.pool).await;
+        assert!(
+            crate::connectors::params::params_for(&stored, "my-pm").is_empty(),
+            "the orphaned param row was pruned from the DB"
+        );
+    }
+
     const MULTI_MANIFEST: &str = r#"{ "manifest": 1, "id": "trello",
         "name": "Trello", "kind": "http", "capabilities": ["network", "secrets"],
         "auth": { "type": "multi", "secrets": [
@@ -7045,7 +7216,12 @@ mod connector_tests {
         let enabled = std::collections::HashMap::new();
 
         // Two declared secrets, both Missing initially (no presence rows yet).
-        let before = connector_views_with(&state, &std::collections::HashMap::new(), &enabled);
+        let before = connector_views_with(
+            &state,
+            &std::collections::HashMap::new(),
+            &enabled,
+            &std::collections::HashMap::new(),
+        );
         let trello = before.iter().find(|c| c.manifest.id == "trello").unwrap();
         assert_eq!(trello.secrets.len(), 2);
         assert!(trello

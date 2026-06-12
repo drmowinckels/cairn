@@ -284,6 +284,19 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
+  it("setConnectorParam forwards its args and coerces undefined to []", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { setConnectorParam } = await import("./ipc");
+    expect(
+      await setConnectorParam("github-projects", "owner", "ggsegverse"),
+    ).toEqual([]);
+    expect(invokeMock).toHaveBeenCalledWith("set_connector_param", {
+      connectorId: "github-projects",
+      key: "owner",
+      value: "ggsegverse",
+    });
+  });
+
   it("preview/install connector manifest forward the picked path", async () => {
     const manifest = {
       id: "todoist",
@@ -363,11 +376,16 @@ describe("ipc helpers (outside Tauri)", () => {
   });
 
   it("connector secret commands short-circuit to [] without the backend", async () => {
-    const { setConnectorSecret, clearConnectorSecret, setConnectorEnabled } =
-      await import("./ipc");
+    const {
+      setConnectorSecret,
+      clearConnectorSecret,
+      setConnectorEnabled,
+      setConnectorParam,
+    } = await import("./ipc");
     expect(await setConnectorSecret("x", null, "t")).toEqual([]);
     expect(await clearConnectorSecret("x", null)).toEqual([]);
     expect(await setConnectorEnabled("x", false)).toEqual([]);
+    expect(await setConnectorParam("x", "owner", "y")).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

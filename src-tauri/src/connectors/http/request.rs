@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 use url::Url;
 
-use super::super::manifest::{Auth, Operation, SecretLocation};
+use super::super::manifest::{Auth, Operation, RequestSpec, SecretLocation};
 use super::template::{fill, Context, Escape};
 use super::PreparedRequest;
 
@@ -17,9 +17,22 @@ use super::PreparedRequest;
 /// key. The interpreter fills this from the connector's [`SecretStore`].
 pub(super) type Secrets = BTreeMap<String, String>;
 
+/// The request to run for `op`: the first variant whose `when` param is set
+/// (non-empty) in `ctx`, else the operation's base request. Variants only swap
+/// the request body — `response` + `pagination` are shared — so selection is a
+/// pure lookup with no effect on how the response is read.
+fn select_request<'a>(op: &'a Operation, ctx: &Context) -> &'a RequestSpec {
+    op.variants
+        .iter()
+        .find(|v| ctx.get(&v.when).is_some_and(|value| !value.is_empty()))
+        .map(|v| &v.request)
+        .unwrap_or(&op.request)
+}
+
 /// Build the request for one operation. `base` is the connector's
 /// (validated) base URL; `secrets` holds the resolved keychain tokens keyed
-/// by their `secret` key.
+/// by their `secret` key. When `op` declares request variants, the one whose
+/// `when` param is set in `ctx` is used instead of the base request.
 pub(super) fn build(
     base: &Url,
     op: &Operation,
@@ -27,7 +40,7 @@ pub(super) fn build(
     auth: &Auth,
     secrets: &Secrets,
 ) -> Result<PreparedRequest> {
-    let spec = &op.request;
+    let spec = select_request(op, ctx);
 
     let path = fill(&spec.path, ctx, Escape::Url)?;
     let mut url = base
@@ -143,6 +156,7 @@ mod tests {
                 map: BTreeMap::new(),
             },
             pagination: None,
+            variants: Vec::new(),
         }
     }
 
@@ -402,5 +416,52 @@ mod tests {
             prepared.url
         );
         assert!(!prepared.url.contains("evil.example/x"));
+    }
+
+    fn op_with_owner_variant() -> Operation {
+        use super::super::super::manifest::Variant;
+        Operation {
+            request: req(HttpMethod::Get, "/base"),
+            response: ResponseSpec {
+                items: String::new(),
+                map: BTreeMap::new(),
+            },
+            pagination: None,
+            variants: vec![Variant {
+                when: "owner".to_string(),
+                request: req(HttpMethod::Get, "/org/{{owner}}"),
+            }],
+        }
+    }
+
+    #[test]
+    fn build_uses_the_base_request_when_the_when_param_is_unset() {
+        let op = op_with_owner_variant();
+        let prepared = build(&base(), &op, &Context::new(), &Auth::None, &no_secrets()).unwrap();
+        assert!(prepared.url.ends_with("/base"), "{}", prepared.url);
+    }
+
+    #[test]
+    fn build_selects_the_variant_and_substitutes_its_value_when_the_param_is_set() {
+        let op = op_with_owner_variant();
+        let mut ctx = Context::new();
+        ctx.set("owner", "ggsegverse");
+        let prepared = build(&base(), &op, &ctx, &Auth::None, &no_secrets()).unwrap();
+        assert!(
+            prepared.url.ends_with("/org/ggsegverse"),
+            "the variant request is used with the owner filled: {}",
+            prepared.url
+        );
+    }
+
+    #[test]
+    fn build_falls_back_to_base_when_the_when_param_is_empty() {
+        // An explicitly-empty value is "unset" — the base request, not the
+        // variant, so a blank GitHub owner queries `viewer`.
+        let op = op_with_owner_variant();
+        let mut ctx = Context::new();
+        ctx.set("owner", "");
+        let prepared = build(&base(), &op, &ctx, &Auth::None, &no_secrets()).unwrap();
+        assert!(prepared.url.ends_with("/base"), "{}", prepared.url);
     }
 }

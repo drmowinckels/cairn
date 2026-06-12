@@ -50,6 +50,7 @@ const GH_CONNECTOR: Connector = {
   capabilities: [],
   kind: { http: { baseUrl: "https://api.github.com" } },
   secrets: [],
+  params: [],
   enabled: true,
 };
 

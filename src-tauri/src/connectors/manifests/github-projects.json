@@ -6,21 +6,38 @@
   "capabilities": ["network", "secrets"],
   "auth": { "type": "bearer", "secret": "github_token" },
   "baseUrl": "https://api.github.com",
+  "params": [
+    {
+      "key": "owner",
+      "label": "GitHub user or organisation (blank = your own projects)",
+      "placeholder": "e.g. ggsegverse"
+    }
+  ],
   "operations": {
     "listProjects": {
       "request": {
         "method": "POST",
         "path": "/graphql",
-        "body": "{\"query\":\"{ viewer { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } }\"}"
+        "body": "{\"query\":\"{ owner: viewer { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } }\"}"
       },
+      "variants": [
+        {
+          "when": "owner",
+          "request": {
+            "method": "POST",
+            "path": "/graphql",
+            "body": "{\"query\":\"{ owner: repositoryOwner(login:\\\"{{owner}}\\\"){ ... on ProjectV2Owner { projectsV2(first:20, after:{{cursorLiteral}}){pageInfo{hasNextPage endCursor} nodes{id title}} } } }\"}"
+          }
+        }
+      ],
       "response": {
-        "items": "data.viewer.projectsV2.nodes",
+        "items": "data.owner.projectsV2.nodes",
         "map": { "id": "id", "name": "title" }
       },
       "pagination": {
         "type": "cursor",
-        "cursorPath": "data.viewer.projectsV2.pageInfo.endCursor",
-        "hasMorePath": "data.viewer.projectsV2.pageInfo.hasNextPage"
+        "cursorPath": "data.owner.projectsV2.pageInfo.endCursor",
+        "hasMorePath": "data.owner.projectsV2.pageInfo.hasNextPage"
       }
     },
     "listTasks": {
