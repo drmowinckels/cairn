@@ -24,7 +24,13 @@ pub(super) fn items<'a>(body: &'a Value, path: &str) -> anyhow::Result<&'a Vec<V
     match dotted(body, path) {
         Some(Value::Array(array)) => Ok(array),
         Some(_) => anyhow::bail!("response items at {path:?} is not an array"),
-        None => anyhow::bail!("response items path {path:?} not found"),
+        // A missing path usually means the queried resource didn't resolve —
+        // e.g. a GitHub `owner` that isn't a real user/org, or one the token
+        // can't see — rather than a true empty list (which is an empty array).
+        None => anyhow::bail!(
+            "the connector returned no data at {path:?} — the resource may not \
+             exist or your token may not have access to it"
+        ),
     }
 }
 

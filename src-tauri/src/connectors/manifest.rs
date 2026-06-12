@@ -360,6 +360,15 @@ pub enum ManifestError {
     DuplicateParamKey(String),
     #[error("http operation {op:?} has a variant whose {when:?} is not a declared param key")]
     VariantUnknownParam { op: String, when: String },
+    #[error(
+        "http operation {op:?} references the template variable {{{{{var}}}}}, which is neither \
+         a declared param nor a built-in ({builtins})"
+    )]
+    UnknownTemplateVar {
+        op: String,
+        var: String,
+        builtins: String,
+    },
 }
 
 /// The wire shape of a manifest: flat top-level fields plus one sibling
@@ -567,6 +576,26 @@ fn validate_http(
                 });
             }
         }
+        // Every `{{var}}` an operation's requests reference must resolve at fetch
+        // time — i.e. be a declared param or a built-in the interpreter provides
+        // for this op. Catch a typo or a param used in the wrong op here, at
+        // load, instead of as a runtime "unknown template variable".
+        let builtins = builtin_vars(op);
+        let requests = std::iter::once(&operation.request)
+            .chain(operation.variants.iter().map(|v| &v.request));
+        for req in requests {
+            for tmpl in request_templates(req) {
+                for var in template_vars(tmpl) {
+                    if !declared.contains(var) && !builtins.contains(&var) {
+                        return Err(ManifestError::UnknownTemplateVar {
+                            op: op.clone(),
+                            var: var.to_string(),
+                            builtins: builtins.join(", "),
+                        });
+                    }
+                }
+            }
+        }
         // A zero page size never makes progress (every page looks "full"), so
         // the loop runs to the page cap doing wasted work. Reject it.
         let zero = matches!(
@@ -622,6 +651,40 @@ fn is_valid_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// The template variables the interpreter always provides to an operation: the
+/// pagination vars (set on every page, regardless of the pagination type), plus
+/// `project.id` for `listTasks` — the only operation given a project. A manifest
+/// may additionally reference any param it declares. Kept in sync with the
+/// `ctx.set` calls in `http::mod` and `http::DeclarativeConnector`.
+fn builtin_vars(op_name: &str) -> &'static [&'static str] {
+    const COMMON: &[&str] = &["cursor", "cursorLiteral", "page", "offset"];
+    const TASKS: &[&str] = &["cursor", "cursorLiteral", "page", "offset", "project.id"];
+    if op_name == OP_LIST_TASKS {
+        TASKS
+    } else {
+        COMMON
+    }
+}
+
+/// Every `{{var}}` name referenced in a template string, in order. Mirrors the
+/// interpreter's fill (`http::template`): a `{{` with no closing `}}` yields no
+/// further names — an unterminated placeholder is the runtime's to reject.
+fn template_vars(template: &str) -> Vec<&str> {
+    template
+        .split("{{")
+        .skip(1)
+        .filter_map(|seg| seg.split_once("}}").map(|(var, _)| var.trim()))
+        .collect()
+}
+
+/// Every template string a request fills: its path, query + header values, body.
+fn request_templates(req: &RequestSpec) -> impl Iterator<Item = &str> {
+    std::iter::once(req.path.as_str())
+        .chain(req.query.values().map(String::as_str))
+        .chain(req.headers.values().map(String::as_str))
+        .chain(req.body.as_deref())
 }
 
 #[cfg(test)]
@@ -1160,6 +1223,56 @@ mod tests {
                 .unwrap()
                 .contains("repositoryOwner"),
             "the variant queries repositoryOwner"
+        );
+    }
+
+    #[test]
+    fn accepts_builtin_and_declared_template_vars() {
+        // `{{owner}}` (declared), `{{cursorLiteral}}`/`{{project.id}}` (built-ins)
+        // all resolve, so the bundled GitHub manifest validates.
+        assert!(ConnectorManifest::from_json(crate::connectors::builtin::GITHUB_PROJECTS).is_ok());
+        assert!(ConnectorManifest::from_json(PARAMS_JSON).is_ok());
+    }
+
+    #[test]
+    fn rejects_an_undeclared_template_var_in_a_request() {
+        // HTTP_JSON declares no params; `{{nope}}` is neither a param nor a
+        // built-in.
+        let json = HTTP_JSON.replace("{{project.id}}", "{{nope}}");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(&err, ManifestError::UnknownTemplateVar { op, var, .. }
+                if op == "listTasks" && var == "nope"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_project_id_referenced_outside_list_tasks() {
+        // `project.id` is only provided to listTasks; using it in listProjects
+        // would be an empty/error at fetch time, so reject it at load.
+        let json = HTTP_JSON.replace(
+            "\"path\": \"/rest/v2/projects\"",
+            "\"path\": \"/rest/v2/projects/{{project.id}}\"",
+        );
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(&err, ManifestError::UnknownTemplateVar { op, var, .. }
+                if op == "listProjects" && var == "project.id"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_undeclared_template_var_in_a_variant_request() {
+        // The `when` (owner) is declared, but the variant body references an
+        // undeclared `{{repo}}` — variant request templates are validated too.
+        let json = PARAMS_JSON.replace("{{owner}}", "{{repo}}");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(&err, ManifestError::UnknownTemplateVar { op, var, .. }
+                if op == "listProjects" && var == "repo"),
+            "{err:?}"
         );
     }
 }

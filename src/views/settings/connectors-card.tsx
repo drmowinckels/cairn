@@ -278,7 +278,7 @@ export function ConnectorsCard() {
             key={connector.id}
             connector={connector}
             busy={busyId === connector.id}
-            onSecretChange={replace}
+            onConnectorChange={replace}
             onToggleEnabled={toggleEnabled}
           />
         ))}
@@ -290,12 +290,12 @@ export function ConnectorsCard() {
 function ConnectorRow({
   connector,
   busy,
-  onSecretChange,
+  onConnectorChange,
   onToggleEnabled,
 }: {
   connector: Connector;
   busy: boolean;
-  onSecretChange: (next: Connector[]) => void;
+  onConnectorChange: (next: Connector[]) => void;
   onToggleEnabled: (id: string, next: boolean) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -382,8 +382,8 @@ function ConnectorRow({
       </div>
       {expanded && (
         <div id={panelId} className="connector-panel">
-          <ConnectorSecret connector={connector} onChange={onSecretChange} />
-          <ConnectorParams connector={connector} onChange={onSecretChange} />
+          <ConnectorSecret connector={connector} onChange={onConnectorChange} />
+          <ConnectorParams connector={connector} onChange={onConnectorChange} />
           {connector.enabled && (
             <>
               {loading && <p className="connector-muted">Loading…</p>}

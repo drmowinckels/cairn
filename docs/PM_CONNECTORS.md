@@ -165,14 +165,18 @@ Request templates are filled by **value substitution only**, escaped for
 where they land (URL-encoded in `query`, JSON-escaped in `body`), so a
 value can never inject request _structure_.
 
-| Variable                             | Available in                    | Is                                                                                                                                                                                      |
-| ------------------------------------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <code v-pre>{{project.id}}</code>    | `listTasks`                     | the id of the project being listed                                                                                                                                                      |
-| <code v-pre>{{project.name}}</code>  | `listTasks`                     | its name                                                                                                                                                                                |
-| <code v-pre>{{cursor}}</code>        | any, with `pagination`          | the current page cursor (empty on the first request)                                                                                                                                    |
-| <code v-pre>{{cursorLiteral}}</code> | any, with cursor `pagination`   | the cursor as a JSON/GraphQL value — `null` on the first request, else a quoted, escaped string. Use it inside a GraphQL body (`after:{{cursorLiteral}}`) where `after:""` is rejected. |
-| <code v-pre>{{offset}}</code>        | any, with `offset` `pagination` | the running item offset, advanced by `limit` each page (starts at 0)                                                                                                                    |
-| <code v-pre>{{page}}</code>          | any, with `page` `pagination`   | the 1-indexed page number, advanced by 1 each page (starts at 1)                                                                                                                        |
+| Variable                             | Available in | Is                                                                                                                                                                                      |
+| ------------------------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <code v-pre>{{project.id}}</code>    | `listTasks`  | the id of the project being listed                                                                                                                                                      |
+| <code v-pre>{{cursor}}</code>        | any          | the current page cursor (empty on the first request)                                                                                                                                    |
+| <code v-pre>{{cursorLiteral}}</code> | any          | the cursor as a JSON/GraphQL value — `null` on the first request, else a quoted, escaped string. Use it inside a GraphQL body (`after:{{cursorLiteral}}`) where `after:""` is rejected. |
+| <code v-pre>{{offset}}</code>        | any          | the running item offset, advanced by `limit` each page (starts at 0)                                                                                                                    |
+| <code v-pre>{{page}}</code>          | any          | the 1-indexed page number, advanced by 1 each page (starts at 1)                                                                                                                        |
+| <code v-pre>{{&lt;param&gt;}}</code> | any          | a value the connector declares under [`params`](#params-optional-user-entered-configuration) (e.g. <code v-pre>{{owner}}</code>)                                                        |
+
+A template may only reference these built-ins (plus the connector's declared
+params); an unknown variable — or `{{project.id}}` outside `listTasks` — is
+**rejected when the manifest loads**, not silently at fetch time.
 
 ### Pagination (optional)
 

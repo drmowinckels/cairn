@@ -81,6 +81,29 @@ pub async fn set_param(
     Ok(())
 }
 
+/// Drop stored params for a connector whose key it no longer declares — called
+/// when a manifest is (re-)installed, so re-importing a connector that removed a
+/// param doesn't leave an unreachable row behind. `declared` is the manifest's
+/// current param keys; an empty slice clears every stored param for the
+/// connector. A no-op for a connector with no stored params.
+pub async fn prune(pool: &SqlitePool, connector_id: &str, declared: &[&str]) -> Result<(), String> {
+    let mut qb = sqlx::QueryBuilder::new("DELETE FROM connector_params WHERE connector_id = ");
+    qb.push_bind(connector_id);
+    if !declared.is_empty() {
+        qb.push(" AND param_key NOT IN (");
+        let mut sep = qb.separated(", ");
+        for key in declared {
+            sep.push_bind(*key);
+        }
+        qb.push(")");
+    }
+    qb.build()
+        .execute(pool)
+        .await
+        .map_err(|e| format!("could not prune params for '{connector_id}': {e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +214,57 @@ mod tests {
         let (_dir, db) = test_db().await;
         db.pool.close().await;
         assert!(load_params(&db.pool).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prune_drops_undeclared_keys_and_keeps_declared_ones() {
+        let (_dir, db) = test_db().await;
+        set_param(&db.pool, "github-projects", "owner", "ggsegverse")
+            .await
+            .unwrap();
+        set_param(&db.pool, "github-projects", "stale", "x")
+            .await
+            .unwrap();
+        // A param for a different connector must be untouched.
+        set_param(&db.pool, "gitlab", "owner", "acme")
+            .await
+            .unwrap();
+
+        prune(&db.pool, "github-projects", &["owner"])
+            .await
+            .unwrap();
+
+        let loaded = load_params(&db.pool).await;
+        let gh = params_for(&loaded, "github-projects");
+        assert_eq!(gh.get("owner").map(String::as_str), Some("ggsegverse"));
+        assert!(!gh.contains_key("stale"), "the undeclared key is pruned");
+        assert_eq!(
+            params_for(&loaded, "gitlab")
+                .get("owner")
+                .map(String::as_str),
+            Some("acme"),
+            "another connector's params are left alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_with_no_declared_keys_clears_the_connector() {
+        let (_dir, db) = test_db().await;
+        set_param(&db.pool, "github-projects", "owner", "ggsegverse")
+            .await
+            .unwrap();
+        // A connector that now declares no params loses all its stored params.
+        prune(&db.pool, "github-projects", &[]).await.unwrap();
+        assert!(params_for(&load_params(&db.pool).await, "github-projects").is_empty());
+    }
+
+    #[tokio::test]
+    async fn prune_surfaces_a_dead_pool_error() {
+        let (_dir, db) = test_db().await;
+        db.pool.close().await;
+        let err = prune(&db.pool, "github-projects", &["owner"])
+            .await
+            .unwrap_err();
+        assert!(err.contains("could not prune"), "{err}");
     }
 }

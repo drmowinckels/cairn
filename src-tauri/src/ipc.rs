@@ -6508,6 +6508,14 @@ pub async fn install_connector_manifest_impl(
     std::fs::write(&dest, &json).map_err(|e| format!("could not save the connector: {e}"))?;
 
     store_connector_host(&state, crate::connectors::ConnectorHost::load(&dir));
+    // Re-importing a manifest that dropped a param leaves an unreachable stored
+    // value; prune any param this manifest no longer declares.
+    let declared: Vec<&str> = manifest
+        .param_specs()
+        .iter()
+        .map(|p| p.key.as_str())
+        .collect();
+    crate::connectors::params::prune(&state.db.pool, &manifest.id, &declared).await?;
     let flags = crate::connectors::state::load_enabled(&state.db.pool).await;
     let present = crate::connectors::secret_state::load_present(&state.db.pool).await;
     let params = crate::connectors::params::load_params(&state.db.pool).await;
@@ -7128,6 +7136,55 @@ mod connector_tests {
         let state = app.state::<crate::AppState>();
         let (_src, bad) = write_temp_manifest(r#"{ "manifest": 99, "id": "x" }"#);
         assert!(install_connector_manifest_impl(state, bad).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn reinstalling_a_manifest_prunes_params_it_no_longer_declares() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let with_param = r#"{ "manifest": 1, "id": "my-pm", "name": "My PM", "kind": "http",
+            "capabilities": ["network"], "auth": { "type": "none" },
+            "baseUrl": "https://api.example.com",
+            "params": [{ "key": "owner", "label": "Owner" }],
+            "operations": {
+              "listProjects": { "request": { "method": "GET", "path": "/p" },
+                "response": { "items": "", "map": {} } },
+              "listTasks": { "request": { "method": "GET", "path": "/t" },
+                "response": { "items": "", "map": {} } } } }"#;
+
+        let (_a, path) = write_temp_manifest(with_param);
+        install_connector_manifest_impl(state.clone(), path)
+            .await
+            .unwrap();
+        set_connector_param_impl(
+            state.clone(),
+            "my-pm".into(),
+            "owner".into(),
+            "ggsegverse".into(),
+        )
+        .await
+        .unwrap();
+
+        // Re-install the same connector with the `owner` param removed.
+        let without_param = with_param.replace(
+            "\"params\": [{ \"key\": \"owner\", \"label\": \"Owner\" }],",
+            "",
+        );
+        let (_b, path2) = write_temp_manifest(&without_param);
+        let after = install_connector_manifest_impl(state.clone(), path2)
+            .await
+            .unwrap();
+
+        let pm = after.iter().find(|c| c.manifest.id == "my-pm").unwrap();
+        assert!(
+            pm.params.is_empty(),
+            "the dropped param is gone from the view"
+        );
+        let stored = crate::connectors::params::load_params(&state.db.pool).await;
+        assert!(
+            crate::connectors::params::params_for(&stored, "my-pm").is_empty(),
+            "the orphaned param row was pruned from the DB"
+        );
     }
 
     const MULTI_MANIFEST: &str = r#"{ "manifest": 1, "id": "trello",
