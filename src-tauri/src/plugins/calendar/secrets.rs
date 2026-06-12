@@ -24,6 +24,30 @@ pub enum RedactError {
     NoHost,
 }
 
+/// The keychain operations the registry needs, behind a trait so an
+/// in-memory fake can stand in for the OS keychain in tests — and so the
+/// registry can cache reads without coupling to `keyring` directly.
+pub trait Secrets: Send + Sync {
+    fn load(&self, id: &str) -> Result<Option<String>, SecretError>;
+    fn store(&self, id: &str, secret: &str) -> Result<(), SecretError>;
+    fn remove(&self, id: &str) -> Result<(), SecretError>;
+}
+
+/// Production [`Secrets`] backed by the OS keychain.
+pub struct Keychain;
+
+impl Secrets for Keychain {
+    fn load(&self, id: &str) -> Result<Option<String>, SecretError> {
+        load(id)
+    }
+    fn store(&self, id: &str, secret: &str) -> Result<(), SecretError> {
+        store(id, secret)
+    }
+    fn remove(&self, id: &str) -> Result<(), SecretError> {
+        remove(id)
+    }
+}
+
 pub fn store(id: &str, secret: &str) -> Result<(), SecretError> {
     let entry = keyring::Entry::new(SERVICE, id)?;
     entry.set_password(secret)?;
@@ -69,6 +93,33 @@ pub fn redact_url(url: &str) -> Result<String, RedactError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Roundtrip the `Keychain` impl through the real keychain. Gated to Linux,
+    // where the `linux-native` backend is the kernel keyutils keyring (works
+    // headless in CI and is where coverage is collected); macOS/Windows
+    // keychains aren't reliably available in a headless runner. Mirrors the
+    // connectors' `KeychainStore` roundtrip test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn keychain_roundtrips_store_load_remove() {
+        let kc = Keychain;
+        let id = "cairn-test-calendar-secret-roundtrip";
+
+        kc.store(id, "https://example.com/secret/cal.ics").unwrap();
+        assert_eq!(
+            kc.load(id).unwrap().as_deref(),
+            Some("https://example.com/secret/cal.ics")
+        );
+
+        kc.remove(id).unwrap();
+        assert!(
+            kc.load(id).unwrap().is_none(),
+            "removed secret reads as None"
+        );
+
+        // Removing an already-absent secret is idempotent, not an error.
+        kc.remove(id).unwrap();
+    }
 
     #[test]
     fn redacts_google_calendar_url() {
