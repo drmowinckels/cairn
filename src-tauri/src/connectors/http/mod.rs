@@ -41,6 +41,36 @@ use template::Context;
 const MAX_PAGES: usize = 50;
 const MAX_ITEMS: usize = 5_000;
 
+/// The template variables the interpreter binds into a request [`Context`].
+/// Named once here, next to the `ctx.set` calls that provide them, so the
+/// manifest validator ([`builtin_template_vars`]) and the runtime can't drift.
+/// `CURSOR`/`PAGE`/`OFFSET`/`CURSOR_LITERAL` are set on every page of any
+/// operation; `PROJECT_ID` only for `listTasks` (the only op given a project).
+const VAR_CURSOR: &str = "cursor";
+const VAR_CURSOR_LITERAL: &str = "cursorLiteral";
+const VAR_PAGE: &str = "page";
+const VAR_OFFSET: &str = "offset";
+const VAR_PROJECT_ID: &str = "project.id";
+
+/// The built-in template variables an operation's requests may reference (in
+/// addition to the connector's declared params). The manifest validator reads
+/// this so a `{{var}}` that won't resolve at fetch time is rejected at load.
+pub(crate) fn builtin_template_vars(op_name: &str) -> &'static [&'static str] {
+    const COMMON: &[&str] = &[VAR_CURSOR, VAR_CURSOR_LITERAL, VAR_PAGE, VAR_OFFSET];
+    const WITH_PROJECT: &[&str] = &[
+        VAR_CURSOR,
+        VAR_CURSOR_LITERAL,
+        VAR_PAGE,
+        VAR_OFFSET,
+        VAR_PROJECT_ID,
+    ];
+    if op_name == OP_LIST_TASKS {
+        WITH_PROJECT
+    } else {
+        COMMON
+    }
+}
+
 /// A request the interpreter has fully prepared: everything a fetcher
 /// needs, with templates filled, host re-checked, and auth applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,8 +185,8 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
         let mut page_number: u32 = 1;
 
         for page_index in 0..MAX_PAGES {
-            ctx.set("cursor", cursor.clone());
-            ctx.set("page", page_number.to_string());
+            ctx.set(VAR_CURSOR, cursor.clone());
+            ctx.set(VAR_PAGE, page_number.to_string());
             // `cursorLiteral` is the cursor as a JSON/GraphQL value — `null`
             // on the first page, else a quoted+escaped string — for GraphQL
             // bodies where `after:""` is rejected (GitHub) but `after:null`
@@ -168,8 +198,8 @@ impl<F: HttpFetcher, S: SecretStore> DeclarativeConnector<F, S> {
             } else {
                 serde_json::Value::String(cursor.clone())
             };
-            ctx.set("cursorLiteral", cursor_literal.to_string());
-            ctx.set("offset", offset.to_string());
+            ctx.set(VAR_CURSOR_LITERAL, cursor_literal.to_string());
+            ctx.set(VAR_OFFSET, offset.to_string());
 
             let req = request::build(&self.base, op, ctx, &spec.auth, &secrets)?;
             let resp = self.fetcher.fetch(&req).await?;
@@ -260,7 +290,7 @@ impl<F: HttpFetcher, S: SecretStore> PmConnector for DeclarativeConnector<F, S> 
         params: &ConnectorParams,
     ) -> Result<Vec<RemoteTask>> {
         let mut ctx = Context::new();
-        ctx.set("project.id", project.id.clone());
+        ctx.set(VAR_PROJECT_ID, project.id.clone());
         self.inject_params(&mut ctx, params);
         let items = self.collect(OP_LIST_TASKS, &mut ctx).await?;
         let map = &self.spec().operations[OP_LIST_TASKS].response.map;

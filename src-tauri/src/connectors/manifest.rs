@@ -580,7 +580,7 @@ fn validate_http(
         // time — i.e. be a declared param or a built-in the interpreter provides
         // for this op. Catch a typo or a param used in the wrong op here, at
         // load, instead of as a runtime "unknown template variable".
-        let builtins = builtin_vars(op);
+        let builtins = crate::connectors::http::builtin_template_vars(op);
         let requests = std::iter::once(&operation.request)
             .chain(operation.variants.iter().map(|v| &v.request));
         for req in requests {
@@ -651,21 +651,6 @@ fn is_valid_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-/// The template variables the interpreter always provides to an operation: the
-/// pagination vars (set on every page, regardless of the pagination type), plus
-/// `project.id` for `listTasks` — the only operation given a project. A manifest
-/// may additionally reference any param it declares. Kept in sync with the
-/// `ctx.set` calls in `http::mod` and `http::DeclarativeConnector`.
-fn builtin_vars(op_name: &str) -> &'static [&'static str] {
-    const COMMON: &[&str] = &["cursor", "cursorLiteral", "page", "offset"];
-    const TASKS: &[&str] = &["cursor", "cursorLiteral", "page", "offset", "project.id"];
-    if op_name == OP_LIST_TASKS {
-        TASKS
-    } else {
-        COMMON
-    }
 }
 
 /// Every `{{var}}` name referenced in a template string, in order. Mirrors the

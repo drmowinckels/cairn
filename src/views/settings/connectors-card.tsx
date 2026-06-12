@@ -621,29 +621,16 @@ function ParamField({
   const inputId = `connector-${connectorId}-param-${param.key}`;
   const dirty = value.trim() !== param.value;
 
-  async function save() {
-    const trimmed = value.trim();
+  // Save and Clear are the same store-then-reflect dance with a different value
+  // (the trimmed input vs. `""`). `setValue(next)` syncs the field to what the
+  // backend now holds, so Save disables again and the input matches the row the
+  // refreshed list re-renders.
+  async function submit(next: string) {
     setBusy(true);
     setError(null);
     try {
-      onChange(await setConnectorParam(connectorId, param.key, trimmed));
-      // Reflect the stored (trimmed) value so the field matches the backend
-      // and Save disables again — the refreshed list re-renders the row, but
-      // this local input state is what the user sees.
-      setValue(trimmed);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function clear() {
-    setBusy(true);
-    setError(null);
-    try {
-      onChange(await setConnectorParam(connectorId, param.key, ""));
-      setValue("");
+      onChange(await setConnectorParam(connectorId, param.key, next));
+      setValue(next);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -657,7 +644,7 @@ function ParamField({
         className="connector-param-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void save();
+          void submit(value.trim());
         }}
       >
         <label htmlFor={inputId} className="connector-param-label">
@@ -687,7 +674,7 @@ function ParamField({
             type="button"
             className="connector-param-action connector-param-action--ghost"
             aria-label={`Clear ${param.label}`}
-            onClick={() => void clear()}
+            onClick={() => void submit("")}
             disabled={busy}
           >
             Clear

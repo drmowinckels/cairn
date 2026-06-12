@@ -6448,6 +6448,8 @@ pub async fn set_connector_param_impl(
     key: String,
     value: String,
 ) -> Result<Vec<crate::connectors::ConnectorView>, String> {
+    // Validate inside a block so the host snapshot (and its non-Send
+    // `&dyn PmConnector` borrow) is dropped before the awaits below.
     {
         let host = connector_host(&state);
         let connector = host
