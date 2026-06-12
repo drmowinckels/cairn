@@ -153,6 +153,14 @@ async fn set_connector_param(
 }
 
 #[tauri::command]
+async fn list_day(
+    state: tauri::State<'_, AppState>,
+    date: String,
+) -> Result<Vec<ipc::Entry>, String> {
+    ipc::list_day_impl(state, date).await
+}
+
+#[tauri::command]
 async fn preview_connector_manifest(path: String) -> Result<connectors::ConnectorManifest, String> {
     ipc::preview_connector_manifest_impl(path).await
 }
@@ -402,7 +410,7 @@ pub fn run() {
             ipc::save_task,
             ipc::delete_task,
             ipc::list_today,
-            ipc::list_day,
+            list_day,
             ipc::list_week,
             ipc::report_summary,
             ipc::list_rules,

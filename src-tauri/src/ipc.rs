@@ -633,9 +633,9 @@ pub async fn list_today(state: State<'_, AppState>) -> Result<Vec<Entry>, String
 /// day navigation — so a user can step back and edit a past day's entries.
 /// The window is local midnight to the next, matching `list_week`'s local-day
 /// boundaries (NOT the UTC boundary `list_today` uses), so "yesterday" lines
-/// up with the user's calendar day.
-#[tauri::command]
-pub async fn list_day(state: State<'_, AppState>, date: String) -> Result<Vec<Entry>, String> {
+/// up with the user's calendar day. Logic lives here (tested directly); the
+/// thin `#[tauri::command]` shim is in the codecov-ignored `lib.rs`.
+pub async fn list_day_impl(state: State<'_, AppState>, date: String) -> Result<Vec<Entry>, String> {
     let day = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|e| format!("invalid date '{date}': {e}"))?;
     let start = local_midnight_utc(day);
@@ -2701,16 +2701,18 @@ mod tests {
 
         // Today's local day includes the entry.
         let today = chrono::Local::now().date_naive().to_string();
-        let on_today = list_day(state.clone(), today).await.unwrap();
+        let on_today = list_day_impl(state.clone(), today).await.unwrap();
         assert_eq!(on_today.len(), 1);
         assert_eq!(on_today[0].description, "today work");
 
         // A far-off day has none of it.
-        let elsewhere = list_day(state.clone(), "2020-01-01".into()).await.unwrap();
+        let elsewhere = list_day_impl(state.clone(), "2020-01-01".into())
+            .await
+            .unwrap();
         assert!(elsewhere.is_empty());
 
         // A malformed date is rejected rather than silently returning nothing.
-        let err = list_day(state, "not-a-date".into()).await.unwrap_err();
+        let err = list_day_impl(state, "not-a-date".into()).await.unwrap_err();
         assert!(err.contains("invalid date"), "{err}");
     }
 
@@ -2720,7 +2722,7 @@ mod tests {
         let state = app.state::<crate::AppState>();
         // The date parses, but the entries query fails on the closed pool.
         state.db.pool.close().await;
-        let err = list_day(state, "2026-01-01".into()).await.unwrap_err();
+        let err = list_day_impl(state, "2026-01-01".into()).await.unwrap_err();
         assert!(!err.is_empty(), "a closed pool surfaces an error: {err}");
     }
 
