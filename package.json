@@ -38,7 +38,7 @@
     {
       "name": "CSS bundle",
       "path": "dist/assets/index-*.css",
-      "limit": "12 KB",
+      "limit": "13 KB",
       "gzip": true
     }
   ],

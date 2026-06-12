@@ -1172,6 +1172,55 @@ body {
 }
 
 /* ─── RUNNING TIMER ─────────────────────────────────────────────────── */
+
+/* ─── TODAY DATE NAV (#past-day editing) ────────────────────────────── */
+.today-date-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+
+.today-date-step {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.today-date-step:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.today-date-step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.today-date-step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.today-date-label {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.today-date-jump {
+  margin-left: auto;
+}
+
 .now {
   background: var(--bg-soft);
   border: 0.5px solid var(--hairline);
@@ -1659,15 +1708,11 @@ body {
   padding: 0;
 }
 
+/* The row content lives in a full-width `.up-btn` grid; keep the <li> a plain
+   block so the button fills the row instead of collapsing into the 48px first
+   track (same pattern as `.entry:has(> .entry-btn)`). */
 .up-item {
-  display: grid;
-  grid-template-columns: 48px 1fr auto;
-  align-items: baseline;
-  gap: 12px;
-  font-size: var(--font-small);
-  padding: 8px 0;
   border-top: 0.5px dashed var(--hairline);
-  color: var(--ink-soft);
 }
 
 .up-time {
@@ -3429,13 +3474,15 @@ select.rule-conf {
 /* Token affordance for a connector that authenticates (#110). The token is
    typed into a masked field and sent once; this only ever shows whether one
    is stored, never the value. */
-.connector-secrets {
+.connector-secrets,
+.connector-params {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.connector-secret {
+.connector-secret,
+.connector-param {
   margin-top: 8px;
   padding-left: 22px;
 }
@@ -3446,7 +3493,8 @@ select.rule-conf {
 }
 
 .connector-secret-status,
-.connector-secret-form {
+.connector-secret-form,
+.connector-param-form {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3473,75 +3521,19 @@ select.rule-conf {
   background: var(--surface-2);
 }
 
-.connector-secret-label {
-  font-size: var(--font-tiny);
-  color: var(--ink-mute);
-}
-
-.connector-secret-input {
-  min-width: 180px;
-  flex: 1 1 180px;
-}
-
-.connector-secret-action {
-  appearance: none;
-  font: inherit;
-  font-size: var(--font-tiny);
-  color: var(--accent-ink);
-  background: var(--surface-2);
-  border: 0.5px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  padding: 4px 9px;
-  cursor: pointer;
-}
-
-.connector-secret-action:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.connector-secret-action:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.connector-secret-action:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.connector-secret-action--ghost {
-  color: var(--ink-soft);
-  background: transparent;
-}
-
-.connector-params {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.connector-param {
-  margin-top: 8px;
-  padding-left: 22px;
-}
-
-.connector-param-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
+.connector-secret-label,
 .connector-param-label {
   font-size: var(--font-tiny);
   color: var(--ink-mute);
 }
 
+.connector-secret-input,
 .connector-param-input {
   min-width: 180px;
   flex: 1 1 180px;
 }
 
+.connector-secret-action,
 .connector-param-action {
   appearance: none;
   font: inherit;
@@ -3554,20 +3546,24 @@ select.rule-conf {
   cursor: pointer;
 }
 
+.connector-secret-action:hover:not(:disabled),
 .connector-param-action:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
+.connector-secret-action:focus-visible,
 .connector-param-action:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
+.connector-secret-action:disabled,
 .connector-param-action:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
+.connector-secret-action--ghost,
 .connector-param-action--ghost {
   color: var(--ink-soft);
   background: transparent;

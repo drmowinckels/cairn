@@ -44,7 +44,7 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
   ) {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return running;
-      if (cmd === "list_today") return [running];
+      if (cmd === "list_day") return [running];
       if (cmd === "list_projects")
         return [
           {

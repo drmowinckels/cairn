@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../lib/icon";
+import { isoLocalDate } from "../../lib/report-math";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
@@ -155,7 +156,25 @@ export function TodayView({
   const { projects, create: createProject } = useProjects();
   const { connectors } = useConnectors();
   const { byId: tasksById, refresh: refreshTasks } = useTaskMap();
-  const today = useToday();
+  // Day navigation (#editing-past-days): the view defaults to today but can
+  // step back to view + edit a past day's entries. Live affordances (timer,
+  // quick-start, suggestions, Up Next) only make sense for today and are
+  // hidden when viewing the past.
+  const todayIso = isoLocalDate(new Date());
+  const [viewDate, setViewDate] = useState(todayIso);
+  const isToday = viewDate === todayIso;
+  const today = useToday({ date: viewDate });
+  const stepDay = (delta: number) => {
+    const [y, m, d] = viewDate.split("-").map(Number);
+    setViewDate(isoLocalDate(new Date(y!, m! - 1, d! + delta)));
+  };
+  const dateLabel = isToday
+    ? "Today"
+    : new Date(viewDate + "T00:00:00").toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
   const upcoming = useUpcoming(3);
   const calendars = useCalendars();
   const timer = useTimer({ onStopped: () => void today.refresh() });
@@ -442,24 +461,26 @@ export function TodayView({
 
   const recentEntries = useMemo<RecentEntry[]>(() => {
     const closed = todayEntries.filter((e) => e.endedAt !== null);
-    return [...closed]
-      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
-      .slice(0, 4)
-      .map((e) => {
-        const task = e.taskId ? tasksById[e.taskId] : undefined;
-        return {
-          id: e.id,
-          projectId: e.projectId,
-          description: e.description,
-          startedAt: e.startedAt,
-          endedAt: e.endedAt,
-          source: e.source,
-          // Only remote (connector) tasks get the chip; local task names
-          // aren't surfaced on the row.
-          remoteTaskLabel: task?.connectorId ? task.name : null,
-        };
-      });
-  }, [todayEntries, tasksById]);
+    const sorted = [...closed].sort(
+      (a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt),
+    );
+    // Today shows just the latest few ("Recent"); a past day shows them all,
+    // since this list is the only way to reach and edit that day's entries.
+    return (isToday ? sorted.slice(0, 4) : sorted).map((e) => {
+      const task = e.taskId ? tasksById[e.taskId] : undefined;
+      return {
+        id: e.id,
+        projectId: e.projectId,
+        description: e.description,
+        startedAt: e.startedAt,
+        endedAt: e.endedAt,
+        source: e.source,
+        // Only remote (connector) tasks get the chip; local task names
+        // aren't surfaced on the row.
+        remoteTaskLabel: task?.connectorId ? task.name : null,
+      };
+    });
+  }, [todayEntries, tasksById, isToday]);
 
   const findEntryById = useCallback(
     (id: string): BackendEntry | undefined =>
@@ -505,83 +526,120 @@ export function TodayView({
 
   return (
     <div className="view view-today" data-density={density}>
-      {detectionPrompts !== "off" && suggestion && !switchCandidate && (
-        <section
-          className={`suggest suggest--${detectionPrompts}`}
-          aria-label="Auto-detected work"
-          // A non-blocking inline notification, not a dialog: announce via
-          // the live region (assertive for the heavier "modal" style,
-          // polite otherwise) rather than claiming an `alertdialog` role it
-          // doesn't honor (no focus trap / aria-modal / Escape).
-          aria-live={
-            announce
-              ? detectionPrompts === "modal"
-                ? "assertive"
-                : "polite"
-              : "off"
-          }
+      <header className="today-date-bar">
+        <button
+          type="button"
+          className="today-date-step"
+          aria-label="Previous day"
+          onClick={() => stepDay(-1)}
         >
-          <div className="suggest-head">
-            <Icon name="sparkle" size={13} />
-            <span>Detected</span>
-            <button
-              className="suggest-x"
-              onClick={() => dismiss()}
-              aria-label="Dismiss suggestion"
-            >
-              <Icon name="x" size={12} />
-            </button>
-          </div>
-          <div className="suggest-body">
-            {suggestion.project ? (
-              <>
-                Working on{" "}
-                <ProjectChip project={projectsById[suggestion.project]} />
-              </>
-            ) : (
-              <>Detected</>
-            )}{" "}
-            — <em>{suggestion.ruleName}</em>?
-            {suggestion.tags.length > 0 && (
-              <span className="suggest-tags">
-                {suggestion.tags.map((t) => (
-                  <Tag key={t}>{t}</Tag>
-                ))}
-              </span>
-            )}
-          </div>
-          <div className="suggest-why">
-            <SuggestWhy signals={suggestion.matchedSignals ?? []} />
-            <button
-              className="suggest-link"
-              onClick={() => {
-                const id = suggestion.ruleId;
-                dismiss();
-                onOpenRule(id);
-              }}
-            >
-              view rule
-            </button>
-          </div>
-          <div className="suggest-actions">
-            <button className="btn btn--primary" onClick={() => void confirm()}>
-              <Icon name="check" size={13} /> Confirm
-            </button>
-            <button
-              className="btn btn--ghost"
-              onClick={() => {
-                // "Change…" = don't accept the rule's project; dismiss the
-                // suggestion and open the idle project picker so the user
-                // can choose what to start instead.
-                dismiss();
-                setIdlePickerOpen(true);
-              }}
-            >
-              Change…
-            </button>
-          </div>
-        </section>
-      )}
+          <Icon name="chevron-left" size={16} />
+        </button>
+        <span className="today-date-label" aria-live="polite">
+          {dateLabel}
+        </span>
+        <button
+          type="button"
+          className="today-date-step"
+          aria-label="Next day"
+          onClick={() => stepDay(1)}
+          disabled={isToday}
+        >
+          <Icon name="chevron-right" size={16} />
+        </button>
+        {!isToday && (
+          <button
+            type="button"
+            className="link-btn today-date-jump"
+            onClick={() => setViewDate(todayIso)}
+          >
+            Today
+          </button>
+        )}
+      </header>
+      {isToday &&
+        detectionPrompts !== "off" &&
+        suggestion &&
+        !switchCandidate && (
+          <section
+            className={`suggest suggest--${detectionPrompts}`}
+            aria-label="Auto-detected work"
+            // A non-blocking inline notification, not a dialog: announce via
+            // the live region (assertive for the heavier "modal" style,
+            // polite otherwise) rather than claiming an `alertdialog` role it
+            // doesn't honor (no focus trap / aria-modal / Escape).
+            aria-live={
+              announce
+                ? detectionPrompts === "modal"
+                  ? "assertive"
+                  : "polite"
+                : "off"
+            }
+          >
+            <div className="suggest-head">
+              <Icon name="sparkle" size={13} />
+              <span>Detected</span>
+              <button
+                className="suggest-x"
+                onClick={() => dismiss()}
+                aria-label="Dismiss suggestion"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+            <div className="suggest-body">
+              {suggestion.project ? (
+                <>
+                  Working on{" "}
+                  <ProjectChip project={projectsById[suggestion.project]} />
+                </>
+              ) : (
+                <>Detected</>
+              )}{" "}
+              — <em>{suggestion.ruleName}</em>?
+              {suggestion.tags.length > 0 && (
+                <span className="suggest-tags">
+                  {suggestion.tags.map((t) => (
+                    <Tag key={t}>{t}</Tag>
+                  ))}
+                </span>
+              )}
+            </div>
+            <div className="suggest-why">
+              <SuggestWhy signals={suggestion.matchedSignals ?? []} />
+              <button
+                className="suggest-link"
+                onClick={() => {
+                  const id = suggestion.ruleId;
+                  dismiss();
+                  onOpenRule(id);
+                }}
+              >
+                view rule
+              </button>
+            </div>
+            <div className="suggest-actions">
+              <button
+                className="btn btn--primary"
+                onClick={() => void confirm()}
+              >
+                <Icon name="check" size={13} /> Confirm
+              </button>
+              <button
+                className="btn btn--ghost"
+                onClick={() => {
+                  // "Change…" = don't accept the rule's project; dismiss the
+                  // suggestion and open the idle project picker so the user
+                  // can choose what to start instead.
+                  dismiss();
+                  setIdlePickerOpen(true);
+                }}
+              >
+                Change…
+              </button>
+            </div>
+          </section>
+        )}
 
       {detectionPrompts !== "off" && (
         <TaskSwitchBanner
@@ -614,183 +672,185 @@ export function TodayView({
 
       {attributeError && <ErrorBanner message={attributeError} />}
 
-      <section
-        className="now"
-        aria-label="Current timer"
-        aria-busy={timer.loading}
-      >
-        <div className="now-meta">
-          <span className="now-label">
-            {timer.loading
-              ? "Connecting…"
-              : timer.running
-                ? "Now · running"
-                : "Now · idle"}
-          </span>
-          {!timer.loading && timer.running && (
-            <span
-              className="now-source"
-              title={
-                runningSource === "rule"
-                  ? "Started automatically by a rule"
-                  : runningSource === "calendar"
-                    ? "Started by a calendar event"
-                    : "Started manually"
-              }
-            >
-              <Icon
-                name={
-                  runningSource === "rule"
-                    ? "sparkle"
-                    : runningSource === "calendar"
-                      ? "calendar"
-                      : "edit"
-                }
-                size={11}
-              />{" "}
-              {runningSource}
+      {isToday && (
+        <section
+          className="now"
+          aria-label="Current timer"
+          aria-busy={timer.loading}
+        >
+          <div className="now-meta">
+            <span className="now-label">
+              {timer.loading
+                ? "Connecting…"
+                : timer.running
+                  ? "Now · running"
+                  : "Now · idle"}
             </span>
-          )}
-        </div>
-        <div className="now-time" aria-live={announce ? "polite" : "off"}>
-          <span className="t-hms">
-            {hh}
-            <span className="t-sep">:</span>
-            {mm}
-            <span className="t-sep">:</span>
-            {ss}
-          </span>
-        </div>
-        {!timer.loading && timer.running && !editingStart && (
-          <button
-            className="now-started"
-            onClick={() => {
-              setStartError(null);
-              setStartDraft(isoToLocal(timer.running!.startedAt));
-              setEditingStart(true);
-            }}
-            title="Edit start time"
-            aria-label="Edit start time"
-          >
-            <Icon name="edit" size={10} /> started{" "}
-            {fmtClockFromIso(timer.running.startedAt)}
-          </button>
-        )}
-        {timer.running && editingStart && (
-          <div className="now-start-edit">
-            <input
-              type="datetime-local"
-              className="field-input"
-              value={startDraft}
-              onChange={(e) => setStartDraft(e.target.value)}
-              max={isoToLocal(new Date().toISOString())}
-              aria-label="Start time"
-              aria-describedby={startError ? "start-edit-err" : undefined}
-              aria-invalid={startError ? true : undefined}
-            />
-            <button
-              className="btn btn--primary btn--sm"
-              onClick={onCommitStart}
-            >
-              Set start
-            </button>
-            <button
-              className="btn btn--ghost btn--sm"
-              onClick={onCancelStartEdit}
-            >
-              Cancel
-            </button>
-            {startError && (
-              <p id="start-edit-err" className="now-start-error" role="alert">
-                {startError}
-              </p>
+            {!timer.loading && timer.running && (
+              <span
+                className="now-source"
+                title={
+                  runningSource === "rule"
+                    ? "Started automatically by a rule"
+                    : runningSource === "calendar"
+                      ? "Started by a calendar event"
+                      : "Started manually"
+                }
+              >
+                <Icon
+                  name={
+                    runningSource === "rule"
+                      ? "sparkle"
+                      : runningSource === "calendar"
+                        ? "calendar"
+                        : "edit"
+                  }
+                  size={11}
+                />{" "}
+                {runningSource}
+              </span>
             )}
           </div>
-        )}
-        {timer.running ? (
-          <>
-            <div className="now-task">
+          <div className="now-time" aria-live={announce ? "polite" : "off"}>
+            <span className="t-hms">
+              {hh}
+              <span className="t-sep">:</span>
+              {mm}
+              <span className="t-sep">:</span>
+              {ss}
+            </span>
+          </div>
+          {!timer.loading && timer.running && !editingStart && (
+            <button
+              className="now-started"
+              onClick={() => {
+                setStartError(null);
+                setStartDraft(isoToLocal(timer.running!.startedAt));
+                setEditingStart(true);
+              }}
+              title="Edit start time"
+              aria-label="Edit start time"
+            >
+              <Icon name="edit" size={10} /> started{" "}
+              {fmtClockFromIso(timer.running.startedAt)}
+            </button>
+          )}
+          {timer.running && editingStart && (
+            <div className="now-start-edit">
               <input
-                key={timer.running.id}
-                className="now-input"
-                defaultValue={runningTask}
-                aria-label="Task description"
-                aria-describedby={
-                  missingFields.description ? "stop-err-desc" : undefined
-                }
-                aria-invalid={missingFields.description || undefined}
-                placeholder="What are you working on?"
-                onChange={(e) => debouncedDesc(e.currentTarget.value)}
-                onBlur={() => debouncedDesc.flush()}
+                type="datetime-local"
+                className="field-input"
+                value={startDraft}
+                onChange={(e) => setStartDraft(e.target.value)}
+                max={isoToLocal(new Date().toISOString())}
+                aria-label="Start time"
+                aria-describedby={startError ? "start-edit-err" : undefined}
+                aria-invalid={startError ? true : undefined}
               />
-            </div>
-            {stopBlocked && (
-              <p
-                className="now-stop-error"
-                role="alert"
-                aria-live="assertive"
-                aria-atomic="true"
+              <button
+                className="btn btn--primary btn--sm"
+                onClick={onCommitStart}
               >
-                {missingFields.project && missingFields.description
-                  ? "Add a project and description to stop."
-                  : missingFields.project
-                    ? "Choose a project to stop."
-                    : "Add a description to stop."}
+                Set start
+              </button>
+              <button
+                className="btn btn--ghost btn--sm"
+                onClick={onCancelStartEdit}
+              >
+                Cancel
+              </button>
+              {startError && (
+                <p id="start-edit-err" className="now-start-error" role="alert">
+                  {startError}
+                </p>
+              )}
+            </div>
+          )}
+          {timer.running ? (
+            <>
+              <div className="now-task">
+                <input
+                  key={timer.running.id}
+                  className="now-input"
+                  defaultValue={runningTask}
+                  aria-label="Task description"
+                  aria-describedby={
+                    missingFields.description ? "stop-err-desc" : undefined
+                  }
+                  aria-invalid={missingFields.description || undefined}
+                  placeholder="What are you working on?"
+                  onChange={(e) => debouncedDesc(e.currentTarget.value)}
+                  onBlur={() => debouncedDesc.flush()}
+                />
+              </div>
+              {stopBlocked && (
+                <p
+                  className="now-stop-error"
+                  role="alert"
+                  aria-live="assertive"
+                  aria-atomic="true"
+                >
+                  {missingFields.project && missingFields.description
+                    ? "Add a project and description to stop."
+                    : missingFields.project
+                      ? "Choose a project to stop."
+                      : "Add a description to stop."}
+                </p>
+              )}
+              <p id="stop-err-desc" hidden={!missingFields.description}>
+                A description is required before you can stop the timer.
               </p>
-            )}
-            <p id="stop-err-desc" hidden={!missingFields.description}>
-              A description is required before you can stop the timer.
-            </p>
-            <div className="now-row">
-              <div className="now-chips">
-                <ProjectPickerChip
-                  projectId={runningProject}
-                  projects={projects}
-                  open={pickerOpen}
-                  setOpen={setPickerOpen}
-                  onPick={onPickProject}
-                  cbEnabled={cbEnabled}
-                  invalid={missingFields.project}
-                />
+              <div className="now-row">
+                <div className="now-chips">
+                  <ProjectPickerChip
+                    projectId={runningProject}
+                    projects={projects}
+                    open={pickerOpen}
+                    setOpen={setPickerOpen}
+                    onPick={onPickProject}
+                    cbEnabled={cbEnabled}
+                    invalid={missingFields.project}
+                  />
+                </div>
+                <button
+                  className="btn btn--stop"
+                  aria-label="Stop timer"
+                  onClick={() => onStop(timer.running!)}
+                >
+                  <Icon name="stop" size={12} /> Stop
+                </button>
               </div>
-              <button
-                className="btn btn--stop"
-                aria-label="Stop timer"
-                onClick={() => onStop(timer.running!)}
-              >
-                <Icon name="stop" size={12} /> Stop
-              </button>
-            </div>
-          </>
-        ) : (
-          !timer.loading && (
-            <div className="now-row">
-              <div className="now-chips">
-                <ProjectPickerChip
-                  projectId={idleProjectId}
-                  projects={projects}
-                  open={idlePickerOpen}
-                  setOpen={setIdlePickerOpen}
-                  onPick={(id) => {
-                    setIdleProjectId(id);
-                    setIdlePickerOpen(false);
-                  }}
-                  cbEnabled={cbEnabled}
-                />
+            </>
+          ) : (
+            !timer.loading && (
+              <div className="now-row">
+                <div className="now-chips">
+                  <ProjectPickerChip
+                    projectId={idleProjectId}
+                    projects={projects}
+                    open={idlePickerOpen}
+                    setOpen={setIdlePickerOpen}
+                    onPick={(id) => {
+                      setIdleProjectId(id);
+                      setIdlePickerOpen(false);
+                    }}
+                    cbEnabled={cbEnabled}
+                  />
+                </div>
+                <button
+                  className="btn btn--primary"
+                  aria-label="Start timer"
+                  onClick={onStartIdle}
+                >
+                  <Icon name="play" size={12} /> Start
+                </button>
               </div>
-              <button
-                className="btn btn--primary"
-                aria-label="Start timer"
-                onClick={onStartIdle}
-              >
-                <Icon name="play" size={12} /> Start
-              </button>
-            </div>
-          )
-        )}
-      </section>
+            )
+          )}
+        </section>
+      )}
 
-      {layoutVariant === "projects-first" && (
+      {isToday && layoutVariant === "projects-first" && (
         <section className="quick" aria-label="Quick-start a project">
           <div className="sect-label">Quick start</div>
           {projects.length === 0 ? (
@@ -828,32 +888,42 @@ export function TodayView({
         projects={projects}
         announce={announce}
         cbEnabled={cbEnabled}
+        showNow={isToday}
       />
 
-      {!compact && layoutVariant !== "projects-first" && (
-        <section className="recent" aria-label="Recent entries">
+      {/* Always show the entries list on a past day — it's the surface for
+          editing/deleting that day's entries — even under layouts that hide
+          "Recent" today. */}
+      {(!isToday || (!compact && layoutVariant !== "projects-first")) && (
+        <section
+          className="recent"
+          aria-label={isToday ? "Recent entries" : "Logged entries"}
+        >
           <div className="sect-label">
-            <span>Recent</span>
+            <span>{isToday ? "Recent" : "Entries"}</span>
           </div>
           <RecentList
             entries={recentEntries}
             projectsById={projectsById}
             onEdit={onEditRecent}
             rounding={rounding}
+            emptyToday={isToday}
           />
         </section>
       )}
 
-      <section className="upcoming" aria-label="Upcoming calendar events">
-        <div className="sect-label">
-          <span>Up next</span>
-        </div>
-        <UpcomingList
-          events={upcomingEvents}
-          onStart={onUpcomingStart}
-          calendarsConnected={calendarsConnected}
-        />
-      </section>
+      {isToday && (
+        <section className="upcoming" aria-label="Upcoming calendar events">
+          <div className="sect-label">
+            <span>Up next</span>
+          </div>
+          <UpcomingList
+            events={upcomingEvents}
+            onStart={onUpcomingStart}
+            calendarsConnected={calendarsConnected}
+          />
+        </section>
+      )}
 
       {modalState.open && (
         <ManualEntryModal
@@ -990,6 +1060,8 @@ interface TimelineSectionProps {
   projects: Project[];
   announce: boolean;
   cbEnabled: boolean;
+  /** Draw the live "now" marker + use today wording — false for a past day. */
+  showNow: boolean;
 }
 
 function TimelineSection({
@@ -997,6 +1069,7 @@ function TimelineSection({
   projects,
   announce,
   cbEnabled,
+  showNow,
 }: TimelineSectionProps) {
   const [nowMin, setNowMin] = useState(() => minutesNow());
   useEffect(() => {
@@ -1020,16 +1093,16 @@ function TimelineSection({
   );
 
   return (
-    <section className="timeline" aria-label="Today's timeline">
+    <section className="timeline" aria-label="Timeline">
       <div className="sect-label">
-        <span>Today's path</span>
+        <span>{showNow ? "Today's path" : "Path"}</span>
         <span className="sect-meta">
           {fmtHm(Math.round(totalLoggedMin))} logged
         </span>
       </div>
       {entries.length === 0 ? (
         <Empty
-          title="No entries yet today"
+          title={showNow ? "No entries yet today" : "No entries logged"}
           body="The timeline fills as you log time."
           tone="soft"
         />
@@ -1041,6 +1114,7 @@ function TimelineSection({
             nowMin={nowMin}
             announce={announce}
             cbEnabled={cbEnabled}
+            showNow={showNow}
           />
           <ul className="legend">
             {legend.map((l) => (
@@ -1065,6 +1139,7 @@ interface DayTimelineProps {
   nowMin: number;
   announce: boolean;
   cbEnabled: boolean;
+  showNow: boolean;
 }
 
 function DayTimeline({
@@ -1073,6 +1148,7 @@ function DayTimeline({
   nowMin,
   announce,
   cbEnabled,
+  showNow,
 }: DayTimelineProps) {
   const byId = useMemo(() => projectById(projects), [projects]);
   const nowPct = startToPercent(nowMin);
@@ -1110,14 +1186,16 @@ function DayTimeline({
             />
           );
         })}
-        <div
-          className="dt-now"
-          style={{ left: `${nowPct}%` }}
-          aria-label="Now"
-          aria-live={announce ? "polite" : "off"}
-        >
-          <span className="dt-now-label">{fmtClock(Math.round(nowMin))}</span>
-        </div>
+        {showNow && (
+          <div
+            className="dt-now"
+            style={{ left: `${nowPct}%` }}
+            aria-label="Now"
+            aria-live={announce ? "polite" : "off"}
+          >
+            <span className="dt-now-label">{fmtClock(Math.round(nowMin))}</span>
+          </div>
+        )}
       </div>
       <div className="dt-axis">
         {[8, 10, 12, 14, 16, 18].map((h) => (

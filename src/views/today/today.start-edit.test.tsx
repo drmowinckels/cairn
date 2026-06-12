@@ -45,7 +45,7 @@ describe("TodayView running-start edit (inside Tauri)", () => {
   async function renderToday(opts: { updateRejects?: boolean } = {}) {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return running;
-      if (cmd === "list_today") return [running];
+      if (cmd === "list_day") return [running];
       if (cmd === "list_projects")
         return [
           {

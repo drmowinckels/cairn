@@ -629,6 +629,35 @@ pub async fn list_today(state: State<'_, AppState>) -> Result<Vec<Entry>, String
     rows.into_iter().map(entry_from_row).collect()
 }
 
+/// Entries that fall on `date` (a local `YYYY-MM-DD`), for the Today view's
+/// day navigation — so a user can step back and edit a past day's entries.
+/// The window is local midnight to the next, matching `list_week`'s local-day
+/// boundaries (NOT the UTC boundary `list_today` uses), so "yesterday" lines
+/// up with the user's calendar day. Logic lives here (tested directly); the
+/// thin `#[tauri::command]` shim is in the codecov-ignored `lib.rs`.
+pub async fn list_day_impl(state: State<'_, AppState>, date: String) -> Result<Vec<Entry>, String> {
+    let day = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|e| format!("invalid date '{date}': {e}"))?;
+    let start = local_midnight_utc(day);
+    let end = local_midnight_utc(day + Duration::days(1));
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, project_id, task_id, description, started_at, ended_at, source, rule_id
+          FROM entries
+         WHERE started_at >= ?1 AND started_at < ?2
+         ORDER BY started_at ASC
+        "#,
+    )
+    .bind(start.to_rfc3339())
+    .bind(end.to_rfc3339())
+    .fetch_all(&state.db.pool)
+    .await
+    .map_err(err)?;
+
+    rows.into_iter().map(entry_from_row).collect()
+}
+
 #[tauri::command]
 pub async fn list_week(state: State<'_, AppState>) -> Result<Vec<WeekDayAgg>, String> {
     // This Monday in the user's local timezone.
@@ -2656,6 +2685,45 @@ mod tests {
         let state = app.state::<crate::AppState>();
         let today = list_today(state).await.unwrap();
         assert!(today.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_day_filters_to_the_given_local_day_and_rejects_bad_input() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "today work"),
+        )
+        .await
+        .unwrap();
+
+        // Today's local day includes the entry.
+        let today = chrono::Local::now().date_naive().to_string();
+        let on_today = list_day_impl(state.clone(), today).await.unwrap();
+        assert_eq!(on_today.len(), 1);
+        assert_eq!(on_today[0].description, "today work");
+
+        // A far-off day has none of it.
+        let elsewhere = list_day_impl(state.clone(), "2020-01-01".into())
+            .await
+            .unwrap();
+        assert!(elsewhere.is_empty());
+
+        // A malformed date is rejected rather than silently returning nothing.
+        let err = list_day_impl(state, "not-a-date".into()).await.unwrap_err();
+        assert!(err.contains("invalid date"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn list_day_surfaces_a_query_error() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // The date parses, but the entries query fails on the closed pool.
+        state.db.pool.close().await;
+        let err = list_day_impl(state, "2026-01-01".into()).await.unwrap_err();
+        assert!(!err.is_empty(), "a closed pool surfaces an error: {err}");
     }
 
     #[tokio::test]

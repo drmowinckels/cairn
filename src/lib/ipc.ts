@@ -104,9 +104,11 @@ export async function deleteTask(id: string): Promise<void> {
   await invoke("delete_task", { id });
 }
 
-export async function listToday(): Promise<BackendEntry[]> {
+/** Entries for a local day (`YYYY-MM-DD`). The Today view passes today by
+ *  default and steps the date back for past-day editing. */
+export async function listDay(date: string): Promise<BackendEntry[]> {
   if (!inTauri) return [];
-  return invoke<BackendEntry[]>("list_today");
+  return invoke<BackendEntry[]>("list_day", { date });
 }
 
 export interface BackendWeekDay {

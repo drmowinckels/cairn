@@ -26,6 +26,9 @@ interface Props {
   onEdit?: (id: string) => void;
   emptyAction?: ReactNode;
   rounding?: Rounding;
+  /** Whether this list is showing today (vs a navigated past day) — only
+   *  affects the empty-state wording. Defaults to today. */
+  emptyToday?: boolean;
 }
 
 const DEFAULT_DOT = "var(--ink-faint)";
@@ -36,13 +39,18 @@ export function RecentList({
   onEdit,
   emptyAction,
   rounding = ROUNDING_OFF,
+  emptyToday = true,
 }: Props) {
   const cbEnabled = useColorblindEnabled();
   if (entries.length === 0) {
     return (
       <Empty
-        title="No entries yet today"
-        body="Start a timer or let a rule catch what you're doing."
+        title={emptyToday ? "No entries yet today" : "No entries this day"}
+        body={
+          emptyToday
+            ? "Start a timer or let a rule catch what you're doing."
+            : "Nothing was logged on this day."
+        }
         action={emptyAction}
       />
     );
