@@ -2715,6 +2715,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_day_surfaces_a_query_error() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // The date parses, but the entries query fails on the closed pool.
+        state.db.pool.close().await;
+        let err = list_day(state, "2026-01-01".into()).await.unwrap_err();
+        assert!(!err.is_empty(), "a closed pool surfaces an error: {err}");
+    }
+
+    #[tokio::test]
     async fn list_rules_is_empty_on_fresh_db() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
