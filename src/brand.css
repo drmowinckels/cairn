@@ -3474,13 +3474,15 @@ select.rule-conf {
 /* Token affordance for a connector that authenticates (#110). The token is
    typed into a masked field and sent once; this only ever shows whether one
    is stored, never the value. */
-.connector-secrets {
+.connector-secrets,
+.connector-params {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.connector-secret {
+.connector-secret,
+.connector-param {
   margin-top: 8px;
   padding-left: 22px;
 }
@@ -3491,7 +3493,8 @@ select.rule-conf {
 }
 
 .connector-secret-status,
-.connector-secret-form {
+.connector-secret-form,
+.connector-param-form {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3518,75 +3521,19 @@ select.rule-conf {
   background: var(--surface-2);
 }
 
-.connector-secret-label {
-  font-size: var(--font-tiny);
-  color: var(--ink-mute);
-}
-
-.connector-secret-input {
-  min-width: 180px;
-  flex: 1 1 180px;
-}
-
-.connector-secret-action {
-  appearance: none;
-  font: inherit;
-  font-size: var(--font-tiny);
-  color: var(--accent-ink);
-  background: var(--surface-2);
-  border: 0.5px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  padding: 4px 9px;
-  cursor: pointer;
-}
-
-.connector-secret-action:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.connector-secret-action:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.connector-secret-action:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.connector-secret-action--ghost {
-  color: var(--ink-soft);
-  background: transparent;
-}
-
-.connector-params {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.connector-param {
-  margin-top: 8px;
-  padding-left: 22px;
-}
-
-.connector-param-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
+.connector-secret-label,
 .connector-param-label {
   font-size: var(--font-tiny);
   color: var(--ink-mute);
 }
 
+.connector-secret-input,
 .connector-param-input {
   min-width: 180px;
   flex: 1 1 180px;
 }
 
+.connector-secret-action,
 .connector-param-action {
   appearance: none;
   font: inherit;
@@ -3599,20 +3546,24 @@ select.rule-conf {
   cursor: pointer;
 }
 
+.connector-secret-action:hover:not(:disabled),
 .connector-param-action:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
+.connector-secret-action:focus-visible,
 .connector-param-action:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
+.connector-secret-action:disabled,
 .connector-param-action:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
+.connector-secret-action--ghost,
 .connector-param-action--ghost {
   color: var(--ink-soft);
   background: transparent;
