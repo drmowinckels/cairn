@@ -10,10 +10,12 @@ import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { isRoundingActive, roundingLabel } from "../../lib/rounding";
 import {
   averageUnitLabel,
+  bucketGranularity,
   buildBuckets,
   chartAxis,
   computeDelta,
   deltaComparisonLabel,
+  formatBarHours,
   formatRangeLabel,
   percentOf,
   rangeTitle,
@@ -51,17 +53,25 @@ export function ReportsView({ density }: Props) {
     rounding,
   });
 
+  const gran = bucketGranularity(range);
   const buckets = useMemo(
     () => (data ? buildBuckets(data, range) : []),
     [data, range],
+  );
+  // The week keeps its full Mon–Sun day frame (future days shown empty); the
+  // longer ranges trim trailing all-future buckets so a year in June doesn't
+  // trail six empty months.
+  const bars = useMemo(
+    () => (range === "week" ? buckets : buckets.filter((b) => !b.isFuture)),
+    [buckets, range],
   );
   const digest = useMemo(
     () => (data ? reportDigest(data, buckets, range) : null),
     [data, buckets, range],
   );
   const axis = useMemo(
-    () => chartAxis(buckets.reduce((m, b) => Math.max(m, b.totalSeconds), 0)),
-    [buckets],
+    () => chartAxis(bars.reduce((m, b) => Math.max(m, b.totalSeconds), 0)),
+    [bars],
   );
   const axisMaxHours = axis.maxSeconds / 3600;
   const totalSeconds = data?.totalSeconds ?? 0;
@@ -240,10 +250,7 @@ export function ReportsView({ density }: Props) {
         </div>
       </section>
 
-      <section
-        className="chart"
-        aria-label={`Hours per ${digest?.averageUnit ?? "day"}`}
-      >
+      <section className="chart" aria-label={`Hours per ${gran}`}>
         <div className="chart-grid">
           {axis.ticks.map((h) => (
             <div
@@ -256,14 +263,17 @@ export function ReportsView({ density }: Props) {
             </div>
           ))}
           <div className="chart-bars">
-            {buckets.map((b) => {
+            {bars.map((b) => {
               const heightPct = (b.totalSeconds / axis.maxSeconds) * 100;
               const hours = secondsToHours(b.totalSeconds);
+              // "Week of Jun 9" reads clearer than a bare week-start day; days
+              // ("Mon") and months ("Jun") are already self-describing.
+              const barName = gran === "week" ? `Week of ${b.label}` : b.label;
               return (
                 <div
                   key={b.key}
                   className={`bar-col${b.isCurrent ? " is-today" : ""}${b.isFuture ? " is-future" : ""}`}
-                  aria-label={`${b.label}: ${hours.toFixed(1)} hours${b.isCurrent ? " (current)" : ""}`}
+                  aria-label={`${barName}: ${hours.toFixed(1)} hours${b.isCurrent ? " (current)" : ""}`}
                 >
                   <div
                     className="bar-stack"
@@ -283,7 +293,7 @@ export function ReportsView({ density }: Props) {
                   </div>
                   <div className="bar-meta">
                     <span className="bar-h">
-                      {b.totalSeconds > 0 ? hours.toFixed(1) : "·"}
+                      {b.totalSeconds > 0 ? formatBarHours(hours) : "·"}
                     </span>
                     <span className="bar-d">{b.label}</span>
                   </div>
