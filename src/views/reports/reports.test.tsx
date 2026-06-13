@@ -67,53 +67,64 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
     expect(week.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("switching range re-buckets the chart and updates the title", () => {
+  it("swaps the weekly timeline for a by-project treemap on longer ranges", () => {
     const { container } = render(<ReportsView density="comfy" />);
-    const barCount = () => container.querySelectorAll(".bar-col").length;
-    // Week → one bar per day.
-    expect(barCount()).toBe(7);
+    const bars = () => container.querySelectorAll(".bar-col").length;
+    const treemap = () => container.querySelector(".treemap");
 
-    // Month → one bar per ISO week (4–6, depending on how the weeks fall),
-    // never 28+ daily bars.
-    fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
-    expect(screen.getByRole("heading", { name: /this month/i })).toBeTruthy();
-    expect(barCount()).toBeGreaterThanOrEqual(4);
-    expect(barCount()).toBeLessThanOrEqual(6);
+    // Week → a daily timeline (7 bars), no treemap.
+    expect(bars()).toBe(7);
+    expect(treemap()).toBeNull();
 
-    // Quarter → one bar per month (3).
-    fireEvent.click(screen.getByRole("radio", { name: /^quarter$/i }));
-    expect(screen.getByRole("heading", { name: /this quarter/i })).toBeTruthy();
-    expect(barCount()).toBe(3);
-
-    // Year → one bar per month (12).
-    fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
-    expect(screen.getByRole("heading", { name: /this year/i })).toBeTruthy();
-    expect(barCount()).toBe(12);
+    // Month / quarter / year → one by-project treemap, no daily bars: for the
+    // longer ranges "where did the time go" beats a per-period trend.
+    for (const r of ["month", "quarter", "year"]) {
+      fireEvent.click(
+        screen.getByRole("radio", { name: new RegExp(`^${r}$`, "i") }),
+      );
+      expect(
+        screen.getByRole("heading", { name: new RegExp(`this ${r}`, "i") }),
+      ).toBeTruthy();
+      expect(bars()).toBe(0);
+      expect(treemap()).toBeTruthy();
+    }
   });
 
-  it("labels the chart by bucket unit and names weekly bars 'Week of …'", () => {
-    const { container } = render(<ReportsView density="comfy" />);
-    // Week buckets by day.
+  it("labels the week chart 'Hours per day' and the treemap 'Time by project'", () => {
+    render(<ReportsView density="comfy" />);
+    // Week is the daily timeline.
     expect(screen.getByRole("region", { name: "Hours per day" })).toBeTruthy();
 
-    // Month buckets by week — the axis label says so, and a weekly bar is
-    // named "Week of <start>" rather than a bare date.
+    // A longer range drops the timeline entirely and exposes the treemap as a
+    // single accessible image.
     fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
-    expect(screen.getByRole("region", { name: "Hours per week" })).toBeTruthy();
-    const weekBars = Array.from(container.querySelectorAll(".bar-col")).map(
-      (el) => el.getAttribute("aria-label") ?? "",
-    );
-    expect(weekBars.some((l) => /^Week of /.test(l))).toBe(true);
+    expect(screen.queryByRole("region", { name: /hours per/i })).toBeNull();
+    expect(screen.getByRole("img", { name: "Time by project" })).toBeTruthy();
+  });
 
-    // Quarter and year bucket by month.
-    fireEvent.click(screen.getByRole("radio", { name: /^quarter$/i }));
-    expect(
-      screen.getByRole("region", { name: "Hours per month" }),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
-    expect(
-      screen.getByRole("region", { name: "Hours per month" }),
-    ).toBeTruthy();
+  it("renders treemap tiles with project labels and contrast-picked text color", () => {
+    // jsdom does no layout, so the container measures 0px and squarify emits
+    // nothing. Force a width so the tile-rendering path runs.
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      value: 600,
+    });
+    try {
+      const { container } = render(<ReportsView density="comfy" />);
+      fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
+      const tiles = container.querySelectorAll<HTMLElement>(".tm-tile");
+      expect(tiles.length).toBeGreaterThan(0);
+      const first = tiles[0]!;
+      expect(
+        first.querySelector(".tm-name")?.textContent?.length,
+      ).toBeGreaterThan(0);
+      expect(first.querySelector(".tm-meta")?.textContent).toMatch(/h · \d+%/);
+      // Each tile gets an explicit text color from the WCAG contrast pick, so
+      // labels never sit white-on-yellow.
+      expect(first.style.color).not.toBe("");
+    } finally {
+      delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
   });
 
   it("renders horizontal gridlines with mono hour labels (#148, spec §3.2)", () => {

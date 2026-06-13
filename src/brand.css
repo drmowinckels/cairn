@@ -2040,6 +2040,48 @@ body {
   min-height: 6px;
 }
 
+/* ─── TREEMAP (month/quarter/year, time by project) ─────────────────── */
+.treemap {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.tm-tile {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  padding: 6px 8px;
+  border: 2px solid var(--bg);
+  border-radius: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.tm-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tm-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tm-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
 /* ─── BREAKDOWN LIST ────────────────────────────────────────────────── */
 .bd-list {
   list-style: none;

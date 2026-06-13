@@ -146,6 +146,7 @@ respawns
 rgba
 roadmap
 roxygen2
+rrggbb
 rustdoc
 rustup
 serde
@@ -157,6 +158,8 @@ spctl
 specta
 sqlite
 sqlx
+squarified
+squarify
 stapler
 stringifying
 swaymsg
@@ -170,6 +173,7 @@ thiserror
 timesheet
 todotxt
 treeitems
+treemap
 twilight
 typedoc
 unconfigured
