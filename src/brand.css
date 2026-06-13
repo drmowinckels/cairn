@@ -1862,6 +1862,9 @@ body {
 
 /* ─── REPORTS DIGEST ────────────────────────────────────────────────── */
 .rep-digest {
+  /* Extra breathing room above the digest so it doesn't crowd the chart's
+     bar labels (which sit in the chart's padding-bottom). */
+  margin-top: 10px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 20px;
