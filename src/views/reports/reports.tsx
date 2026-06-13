@@ -21,7 +21,6 @@ import {
   rangeTitle,
   reportDigest,
   secondsToHours,
-  visibleBuckets,
   weekdayLabel,
 } from "../../lib/report-math";
 import type { ReportProjectSlice, ReportRange } from "../../lib/ipc";
@@ -59,14 +58,13 @@ export function ReportsView({ density }: Props) {
     () => (data ? buildBuckets(data, range) : []),
     [data, range],
   );
-  const bars = useMemo(() => visibleBuckets(buckets, range), [buckets, range]);
   const digest = useMemo(
     () => (data ? reportDigest(data, buckets, range) : null),
     [data, buckets, range],
   );
   const axis = useMemo(
-    () => chartAxis(bars.reduce((m, b) => Math.max(m, b.totalSeconds), 0)),
-    [bars],
+    () => chartAxis(buckets.reduce((m, b) => Math.max(m, b.totalSeconds), 0)),
+    [buckets],
   );
   const axisMaxHours = axis.maxSeconds / 3600;
   const totalSeconds = data?.totalSeconds ?? 0;
@@ -258,7 +256,7 @@ export function ReportsView({ density }: Props) {
             </div>
           ))}
           <div className="chart-bars">
-            {bars.map((b) => {
+            {buckets.map((b) => {
               const heightPct = (b.totalSeconds / axis.maxSeconds) * 100;
               const hours = secondsToHours(b.totalSeconds);
               // "Week of Jun 9" reads clearer than a bare week-start day; days

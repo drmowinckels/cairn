@@ -18,7 +18,6 @@ import {
   rangeTitle,
   reportDigest,
   secondsToHours,
-  visibleBuckets,
   weekdayLabel,
 } from "./report-math";
 import type { ReportSummary } from "./ipc";
@@ -245,7 +244,7 @@ describe("bucketGranularity / averageUnitLabel / mondayOfIso", () => {
   it("maps each range to its bucket granularity", () => {
     expect(bucketGranularity("week")).toBe("day");
     expect(bucketGranularity("month")).toBe("week");
-    expect(bucketGranularity("quarter")).toBe("week");
+    expect(bucketGranularity("quarter")).toBe("month");
     expect(bucketGranularity("year")).toBe("month");
   });
   it("labels the average unit", () => {
@@ -304,21 +303,7 @@ describe("buildBuckets", () => {
     expect(b[1]!.totalSeconds).toBe(50);
   });
 
-  it("for a quarter rolls days up into weekly buckets", () => {
-    const now = new Date(2026, 2, 31);
-    const s = summaryStub({
-      byDay: [
-        { date: "2026-01-10", byProject: [{ projectId: "a", seconds: 60 }] }, // wk of Jan 5
-        { date: "2026-01-20", byProject: [{ projectId: "a", seconds: 40 }] }, // wk of Jan 19
-        { date: "2026-02-05", byProject: [{ projectId: "a", seconds: 30 }] }, // wk of Feb 2
-      ],
-    });
-    const b = buildBuckets(s, "quarter", now);
-    expect(b.map((x) => x.label)).toEqual(["Jan 5", "Jan 19", "Feb 2"]);
-    expect(b[0]!.totalSeconds).toBe(60);
-  });
-
-  it("for a year rolls days up into monthly buckets", () => {
+  it("for a quarter/year rolls days up into monthly buckets", () => {
     const now = new Date(2026, 2, 31);
     const s = summaryStub({
       byDay: [
@@ -327,35 +312,14 @@ describe("buildBuckets", () => {
         { date: "2026-02-05", byProject: [{ projectId: "a", seconds: 30 }] },
       ],
     });
-    const b = buildBuckets(s, "year", now);
-    expect(b.map((x) => x.label)).toEqual(["Jan", "Feb"]);
-    expect(b[0]!.totalSeconds).toBe(100);
-  });
-});
-
-describe("visibleBuckets", () => {
-  const now = new Date(2026, 2, 15); // Mar 15 2026
-  const s = summaryStub({
-    byDay: [
-      { date: "2026-01-10", byProject: [{ projectId: "a", seconds: 60 }] }, // Jan, elapsed
-      { date: "2026-03-10", byProject: [{ projectId: "a", seconds: 30 }] }, // Mar, current
-      { date: "2026-05-10", byProject: [{ projectId: "a", seconds: 20 }] }, // May, future
-    ],
-  });
-
-  it("keeps every bucket for a week (the full Mon–Sun frame)", () => {
-    const b = buildBuckets(s, "week", now);
-    expect(visibleBuckets(b, "week")).toBe(b);
-  });
-
-  it("drops trailing all-future buckets for the longer ranges", () => {
-    const b = buildBuckets(s, "year", now);
-    expect(b.map((x) => x.label)).toEqual(["Jan", "Mar", "May"]);
-    // May is entirely after Mar 15 → trimmed; Jan + the current month stay.
-    expect(visibleBuckets(b, "year").map((x) => x.label)).toEqual([
+    // A quarter and a year both bucket by month (3 bars / 12 bars).
+    expect(buildBuckets(s, "quarter", now).map((x) => x.label)).toEqual([
       "Jan",
-      "Mar",
+      "Feb",
     ]);
+    const year = buildBuckets(s, "year", now);
+    expect(year.map((x) => x.label)).toEqual(["Jan", "Feb"]);
+    expect(year[0]!.totalSeconds).toBe(100);
   });
 });
 
