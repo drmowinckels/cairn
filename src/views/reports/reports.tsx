@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Empty, ErrorBanner, Mono } from "../../lib/components";
 import { readableTextColor, squarify } from "../../lib/treemap";
 import { cbColor } from "../../lib/colorblind";
@@ -85,8 +85,11 @@ export function ReportsView({ density }: Props) {
   // A slice groups by local project, else by remote-task project (#110), else
   // the no-project bucket. Its key must be unique across remote slices (which
   // all have a null projectId).
-  const sliceKey = (s: ReportProjectSlice): string =>
-    s.projectId ?? s.remoteProjectName ?? "_none";
+  const sliceKey = useCallback(
+    (s: ReportProjectSlice): string =>
+      s.projectId ?? s.remoteProjectName ?? "_none",
+    [],
+  );
   const sliceName = (s: ReportProjectSlice): string =>
     s.projectId
       ? projectName(s.projectId)

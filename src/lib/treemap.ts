@@ -85,17 +85,20 @@ export function squarify(
 }
 
 /** Black or white — whichever reads better on `bg` (a `#rgb`/`#rrggbb` colour),
- *  by WCAG relative-luminance contrast. Non-hex input (e.g. a CSS variable like
- *  the faint no-project fill) falls back to the app's default ink, which is
- *  dark — correct for a light fill. */
+ *  by WCAG relative-luminance contrast. The two extremes are deliberate: pure
+ *  black and white are the only pair that *guarantees* ≥4.5:1 (AA) on any fill —
+ *  their passing ranges overlap, so the better of the two always clears 4.5
+ *  (worst case ≈4.58:1, at the mid-tone crossover). A softer ink would leave a
+ *  mid-tone dead zone where neither it nor white reaches AA. Non-hex input (a
+ *  CSS variable like the faint no-project fill) falls back to the app ink, which
+ *  tracks the theme and contrasts that fill in both. */
 export function readableTextColor(bg: string): string {
   const rgb = parseHexColor(bg);
   if (!rgb) return "var(--ink)";
   const l = relativeLuminance(rgb);
-  // WCAG contrast of white vs black against luminance `l`.
   const contrastWhite = 1.05 / (l + 0.05);
   const contrastBlack = (l + 0.05) / 0.05;
-  return contrastWhite >= contrastBlack ? "#fff" : "#15171f";
+  return contrastWhite >= contrastBlack ? "#fff" : "#000";
 }
 
 function parseHexColor(s: string): [number, number, number] | null {

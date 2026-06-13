@@ -119,18 +119,57 @@ describe("readableTextColor", () => {
     expect(readableTextColor("#15171f")).toBe("#fff");
   });
 
-  it("returns dark ink on light backgrounds (incl. the yellow tile)", () => {
-    expect(readableTextColor("#ffffff")).toBe("#15171f");
-    expect(readableTextColor("#f2cc8f")).toBe("#15171f");
+  it("returns black on light backgrounds (incl. the yellow tile)", () => {
+    expect(readableTextColor("#ffffff")).toBe("#000");
+    expect(readableTextColor("#f2cc8f")).toBe("#000");
   });
 
   it("expands 3-digit hex and is case-insensitive", () => {
-    expect(readableTextColor("#FFF")).toBe("#15171f");
+    expect(readableTextColor("#FFF")).toBe("#000");
     expect(readableTextColor("#abc")).toBe(readableTextColor("#aabbcc"));
   });
 
   it("falls back to the app ink for non-hex input (CSS variables)", () => {
     expect(readableTextColor("var(--ink-faint)")).toBe("var(--ink)");
     expect(readableTextColor("rgb(1,2,3)")).toBe("var(--ink)");
+  });
+
+  it("clears AA (≥4.5:1) on any fill — incl. the mid-tone dead zone", () => {
+    const lin = (c: number) => {
+      const x = c / 255;
+      return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    };
+    const lum = (hx: string) => {
+      const h =
+        hx.length === 4 ? "#" + hx.slice(1).replace(/./g, (c) => c + c) : hx;
+      return (
+        0.2126 * lin(parseInt(h.slice(1, 3), 16)) +
+        0.7152 * lin(parseInt(h.slice(3, 5), 16)) +
+        0.0722 * lin(parseInt(h.slice(5, 7), 16))
+      );
+    };
+    const contrast = (a: string, b: string) => {
+      const [la, lb] = [lum(a), lum(b)];
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+    // Includes the project palette plus mid-tones a user could pick that a
+    // softer ink would fail (#777/#808080 sit in the dead band).
+    const fills = [
+      "#81b29a",
+      "#f2cc8f",
+      "#e07a5f",
+      "#9a9bb0",
+      "#c8b8e0",
+      "#777777",
+      "#808080",
+      "#2e86c1",
+      "#16a085",
+      "#c0392b",
+      "#0072b2",
+      "#000000",
+    ];
+    for (const bg of fills) {
+      expect(contrast(readableTextColor(bg), bg)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
