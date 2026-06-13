@@ -21,6 +21,7 @@ import {
   rangeTitle,
   reportDigest,
   secondsToHours,
+  visibleBuckets,
   weekdayLabel,
 } from "../../lib/report-math";
 import type { ReportProjectSlice, ReportRange } from "../../lib/ipc";
@@ -58,13 +59,7 @@ export function ReportsView({ density }: Props) {
     () => (data ? buildBuckets(data, range) : []),
     [data, range],
   );
-  // The week keeps its full Mon–Sun day frame (future days shown empty); the
-  // longer ranges trim trailing all-future buckets so a year in June doesn't
-  // trail six empty months.
-  const bars = useMemo(
-    () => (range === "week" ? buckets : buckets.filter((b) => !b.isFuture)),
-    [buckets, range],
-  );
+  const bars = useMemo(() => visibleBuckets(buckets, range), [buckets, range]);
   const digest = useMemo(
     () => (data ? reportDigest(data, buckets, range) : null),
     [data, buckets, range],
