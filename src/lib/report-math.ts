@@ -26,32 +26,33 @@ export interface ChartAxis {
   ticks: number[];
 }
 
+// The 1/2/5/10 "nice" mantissas, chosen by where the normalized value `f`
+// (1 ≤ f < 10) falls. `round` uses nearest boundaries (`<`, for a tick step);
+// `ceil` uses upper boundaries (`<=`, for the axis range so it never clips).
+function niceRound(f: number): number {
+  if (f < 1.5) return 1;
+  if (f < 3) return 2;
+  if (f < 7) return 5;
+  return 10;
+}
+
+function niceCeil(f: number): number {
+  if (f <= 1) return 1;
+  if (f <= 2) return 2;
+  if (f <= 5) return 5;
+  return 10;
+}
+
 /**
- * A "nice" number near `x` of the form 1/2/5 × 10ⁿ (Heckbert's nice-number
- * algorithm). `round` picks the nearest nice number (for tick steps); else the
- * smallest nice number ≥ `x` (for the axis range). Lets the chart's gridlines
- * read as round values at any magnitude.
+ * A "nice" number near `x` of the form 1/2/5 × 10ⁿ. `round` picks the nearest
+ * nice number (for tick steps); else the smallest nice number ≥ `x` (for the
+ * axis range). Lets the chart's gridlines read as round values at any magnitude.
  */
 export function niceNum(x: number, round: boolean): number {
   if (x <= 0) return 1;
   const exp = Math.floor(Math.log10(x));
   const f = x / 10 ** exp; // 1 ≤ f < 10
-  const nf = round
-    ? f < 1.5
-      ? 1
-      : f < 3
-        ? 2
-        : f < 7
-          ? 5
-          : 10
-    : f <= 1
-      ? 1
-      : f <= 2
-        ? 2
-        : f <= 5
-          ? 5
-          : 10;
-  return nf * 10 ** exp;
+  return (round ? niceRound(f) : niceCeil(f)) * 10 ** exp;
 }
 
 /** How many gridline intervals the chart aims for (so ~5 gridlines). */
@@ -311,6 +312,24 @@ export function buildBuckets(
   return order.map((k) => byKey.get(k)!);
 }
 
+/** Buckets that have elapsed (today or earlier) — trailing all-future buckets
+ *  dropped. The single definition of "elapsed" shared by the chart's visible
+ *  bars and the digest. */
+function elapsedBuckets(buckets: ReportBucket[]): ReportBucket[] {
+  return buckets.filter((b) => !b.isFuture);
+}
+
+/** The buckets the chart shows for `range`: a week keeps its full Mon–Sun day
+ *  frame (future days shown empty, like a calendar), the longer ranges drop
+ *  trailing all-future buckets so a year viewed in June doesn't trail six empty
+ *  months. */
+export function visibleBuckets(
+  buckets: ReportBucket[],
+  range: ReportRange,
+): ReportBucket[] {
+  return range === "week" ? buckets : elapsedBuckets(buckets);
+}
+
 export interface ReportDigest {
   /** Mean tracked seconds per elapsed bucket (day/week/month). */
   averageSeconds: number;
@@ -334,7 +353,7 @@ export function reportDigest(
   range: ReportRange,
   now: Date = new Date(),
 ): ReportDigest {
-  const elapsed = buckets.filter((b) => !b.isFuture);
+  const elapsed = elapsedBuckets(buckets);
   const averageSeconds =
     elapsed.length > 0 ? summary.totalSeconds / elapsed.length : 0;
 
