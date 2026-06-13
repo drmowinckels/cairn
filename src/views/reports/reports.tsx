@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Empty, ErrorBanner, Mono } from "../../lib/components";
+import { readableTextColor, squarify } from "../../lib/treemap";
 import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { buildWeekSummary } from "../../lib/summary";
@@ -10,7 +11,6 @@ import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { isRoundingActive, roundingLabel } from "../../lib/rounding";
 import {
   averageUnitLabel,
-  bucketGranularity,
   buildBuckets,
   chartAxis,
   computeDelta,
@@ -53,7 +53,6 @@ export function ReportsView({ density }: Props) {
     rounding,
   });
 
-  const gran = bucketGranularity(range);
   const buckets = useMemo(
     () => (data ? buildBuckets(data, range) : []),
     [data, range],
@@ -67,6 +66,7 @@ export function ReportsView({ density }: Props) {
     [buckets],
   );
   const axisMaxHours = axis.maxSeconds / 3600;
+  const projectSlices = data?.byProject ?? [];
   const totalSeconds = data?.totalSeconds ?? 0;
   const totalHours = secondsToHours(totalSeconds);
   const delta = computeDelta(totalSeconds, data?.prevTotalSeconds ?? 0);
@@ -243,59 +243,66 @@ export function ReportsView({ density }: Props) {
         </div>
       </section>
 
-      <section className="chart" aria-label={`Hours per ${gran}`}>
-        <div className="chart-grid">
-          {axis.ticks.map((h) => (
-            <div
-              key={h}
-              className="chart-line"
-              style={{ bottom: `${(h / axisMaxHours) * 100}%` }}
-              aria-hidden="true"
-            >
-              <span className="chart-axis">{h}</span>
-            </div>
-          ))}
-          <div className="chart-bars">
-            {buckets.map((b) => {
-              const heightPct = (b.totalSeconds / axis.maxSeconds) * 100;
-              const hours = secondsToHours(b.totalSeconds);
-              // "Week of Jun 9" reads clearer than a bare week-start day; days
-              // ("Mon") and months ("Jun") are already self-describing.
-              const barName = gran === "week" ? `Week of ${b.label}` : b.label;
-              return (
-                <div
-                  key={b.key}
-                  className={`bar-col${b.isCurrent ? " is-today" : ""}${b.isFuture ? " is-future" : ""}`}
-                  aria-label={`${barName}: ${hours.toFixed(1)} hours${b.isCurrent ? " (current)" : ""}`}
-                >
+      {range === "week" ? (
+        <section className="chart" aria-label="Hours per day">
+          <div className="chart-grid">
+            {axis.ticks.map((h) => (
+              <div
+                key={h}
+                className="chart-line"
+                style={{ bottom: `${(h / axisMaxHours) * 100}%` }}
+                aria-hidden="true"
+              >
+                <span className="chart-axis">{h}</span>
+              </div>
+            ))}
+            <div className="chart-bars">
+              {buckets.map((b) => {
+                const heightPct = (b.totalSeconds / axis.maxSeconds) * 100;
+                const hours = secondsToHours(b.totalSeconds);
+                return (
                   <div
-                    className="bar-stack"
-                    style={{ height: `${heightPct}%` }}
+                    key={b.key}
+                    className={`bar-col${b.isCurrent ? " is-today" : ""}${b.isFuture ? " is-future" : ""}`}
+                    aria-label={`${b.label}: ${hours.toFixed(1)} hours${b.isCurrent ? " (current)" : ""}`}
                   >
-                    {b.segments.map((s) => (
-                      <div
-                        key={sliceKey(s)}
-                        className="bar-seg"
-                        style={{
-                          flex: s.seconds,
-                          background: projectColor(s.projectId),
-                        }}
-                        title={`${sliceName(s)}: ${secondsToHours(s.seconds).toFixed(1)}h`}
-                      />
-                    ))}
+                    <div
+                      className="bar-stack"
+                      style={{ height: `${heightPct}%` }}
+                    >
+                      {b.segments.map((s) => (
+                        <div
+                          key={sliceKey(s)}
+                          className="bar-seg"
+                          style={{
+                            flex: s.seconds,
+                            background: projectColor(s.projectId),
+                          }}
+                          title={`${sliceName(s)}: ${secondsToHours(s.seconds).toFixed(1)}h`}
+                        />
+                      ))}
+                    </div>
+                    <div className="bar-meta">
+                      <span className="bar-h">
+                        {b.totalSeconds > 0 ? formatBarHours(hours) : "·"}
+                      </span>
+                      <span className="bar-d">{b.label}</span>
+                    </div>
                   </div>
-                  <div className="bar-meta">
-                    <span className="bar-h">
-                      {b.totalSeconds > 0 ? formatBarHours(hours) : "·"}
-                    </span>
-                    <span className="bar-d">{b.label}</span>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : (
+        <Treemap
+          slices={projectSlices}
+          totalSeconds={totalSeconds}
+          sliceKey={sliceKey}
+          sliceName={sliceName}
+          sliceColor={(s) => projectColor(s.projectId)}
+        />
+      )}
 
       {digest && (
         <section className="rep-digest" aria-label="Digest">
@@ -351,39 +358,41 @@ export function ReportsView({ density }: Props) {
         </section>
       )}
 
-      <section className="breakdown" aria-label="Project breakdown">
-        <div className="sect-label">
-          <span>By project</span>
-        </div>
-        <ul className="bd-list">
-          {(data?.byProject ?? []).map((slice) => {
-            const hours = secondsToHours(slice.seconds);
-            const pct = percentOf(slice.seconds, totalSeconds);
-            const color = projectColor(slice.projectId);
-            return (
-              <li key={sliceKey(slice)} className="bd-row">
-                <span
-                  className="proj-dot"
-                  style={{ background: color, width: 8, height: 8 }}
-                />
-                <span className="bd-name">{sliceName(slice)}</span>
-                <div className="bd-bar">
-                  <div
-                    className="bd-bar-fill"
-                    style={{ width: `${pct}%`, background: color }}
+      {range === "week" && (
+        <section className="breakdown" aria-label="Project breakdown">
+          <div className="sect-label">
+            <span>By project</span>
+          </div>
+          <ul className="bd-list">
+            {projectSlices.map((slice) => {
+              const hours = secondsToHours(slice.seconds);
+              const pct = percentOf(slice.seconds, totalSeconds);
+              const color = projectColor(slice.projectId);
+              return (
+                <li key={sliceKey(slice)} className="bd-row">
+                  <span
+                    className="proj-dot"
+                    style={{ background: color, width: 8, height: 8 }}
                   />
-                </div>
-                <span className="bd-pct">
-                  <Mono>{pct.toFixed(0)}</Mono>%
-                </span>
-                <span className="bd-h">
-                  <Mono>{hours.toFixed(1)}</Mono>h
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
+                  <span className="bd-name">{sliceName(slice)}</span>
+                  <div className="bd-bar">
+                    <div
+                      className="bd-bar-fill"
+                      style={{ width: `${pct}%`, background: color }}
+                    />
+                  </div>
+                  <span className="bd-pct">
+                    <Mono>{pct.toFixed(0)}</Mono>%
+                  </span>
+                  <span className="bd-h">
+                    <Mono>{hours.toFixed(1)}</Mono>h
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       <section className="honesty" aria-label="Honesty meter">
         <div className="sect-label">
@@ -469,6 +478,93 @@ export function ReportsView({ density }: Props) {
         </button>
       </section>
     </div>
+  );
+}
+
+const TREEMAP_HEIGHT = 220;
+
+/** A squarified treemap of the period's time by project — each tile's area is
+ *  the project's share. Replaces the timeline chart for the longer ranges,
+ *  where "where did the time go" beats a per-period trend. */
+function Treemap({
+  slices,
+  totalSeconds,
+  sliceKey,
+  sliceName,
+  sliceColor,
+}: {
+  slices: ReportProjectSlice[];
+  totalSeconds: number;
+  sliceKey: (s: ReportProjectSlice) => string;
+  sliceName: (s: ReportProjectSlice) => string;
+  sliceColor: (s: ReportProjectSlice) => string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    // The ref is attached before layout effects fire, so it is always set here.
+    const el = ref.current!;
+    const measure = () => setWidth(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const byKey = useMemo(
+    () => new Map(slices.map((s) => [sliceKey(s), s])),
+    [slices, sliceKey],
+  );
+  const tiles = useMemo(
+    () =>
+      width > 0
+        ? squarify(
+            slices.map((s) => ({ key: sliceKey(s), value: s.seconds })),
+            width,
+            TREEMAP_HEIGHT,
+          )
+        : [],
+    [slices, sliceKey, width],
+  );
+
+  return (
+    <section
+      className="treemap"
+      ref={ref}
+      style={{ height: TREEMAP_HEIGHT }}
+      role="img"
+      aria-label="Time by project"
+    >
+      {tiles.map((t) => {
+        // Every tile key comes from `slices`, so the lookup always hits.
+        const s = byKey.get(t.key)!;
+        const hours = secondsToHours(s.seconds);
+        const pct = percentOf(s.seconds, totalSeconds);
+        const bg = sliceColor(s);
+        return (
+          <div
+            key={t.key}
+            className="tm-tile"
+            style={{
+              left: `${(t.x / width) * 100}%`,
+              top: `${(t.y / TREEMAP_HEIGHT) * 100}%`,
+              width: `${(t.w / width) * 100}%`,
+              height: `${(t.h / TREEMAP_HEIGHT) * 100}%`,
+              background: bg,
+              color: readableTextColor(bg),
+            }}
+            title={`${sliceName(s)}: ${hours.toFixed(1)}h · ${pct.toFixed(0)}%`}
+          >
+            <span className="tm-label">
+              <span className="tm-name">{sliceName(s)}</span>
+              <span className="tm-meta">
+                {formatBarHours(hours)}h · {pct.toFixed(0)}%
+              </span>
+            </span>
+          </div>
+        );
+      })}
+    </section>
   );
 }
 

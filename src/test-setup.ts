@@ -13,6 +13,17 @@ vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn().mockResolvedValue(undefined),
 }));
 
+// jsdom has no ResizeObserver; the Treemap (reports view) observes its
+// container to size tiles. A no-op stub lets it mount — tests that need a
+// concrete width stub `clientWidth` directly.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 if (typeof globalThis.localStorage === "undefined") {
   const store = new Map<string, string>();
   const storage: Storage = {
