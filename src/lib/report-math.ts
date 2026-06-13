@@ -6,6 +6,13 @@ export function secondsToHours(seconds: number): number {
   return seconds / HOUR;
 }
 
+/** Compact hours label for a chart bar: one decimal for day-scale bars (`8.5`),
+ *  whole hours once bucket totals reach double digits (a month/year bar's
+ *  `165`), so the long ranges don't read as `165.0`. */
+export function formatBarHours(hours: number): string {
+  return hours >= 10 ? String(Math.round(hours)) : hours.toFixed(1);
+}
+
 /** Percentage of a part relative to a total, clamped to [0, 100]. */
 export function percentOf(part: number, total: number): number {
   if (total <= 0) return 0;
@@ -20,20 +27,55 @@ export interface ChartAxis {
 }
 
 /**
- * Y-axis for the hours-per-day chart (spec §3.2). Anchored at a minimum
- * of 8h so a light week still shows the 0/2/4/6/8 gridlines, and the
- * ceiling is rounded up to the next even hour so the top gridline always
- * sits at the axis ceiling and a heavy day's bar never overflows it.
- * Negative/NaN input is treated as zero.
+ * A "nice" number near `x` of the form 1/2/5 × 10ⁿ (Heckbert's nice-number
+ * algorithm). `round` picks the nearest nice number (for tick steps); else the
+ * smallest nice number ≥ `x` (for the axis range). Lets the chart's gridlines
+ * read as round values at any magnitude.
  */
-export function chartAxis(maxDaySeconds: number): ChartAxis {
-  const safeSeconds = Number.isFinite(maxDaySeconds)
-    ? Math.max(0, maxDaySeconds)
+export function niceNum(x: number, round: boolean): number {
+  if (x <= 0) return 1;
+  const exp = Math.floor(Math.log10(x));
+  const f = x / 10 ** exp; // 1 ≤ f < 10
+  const nf = round
+    ? f < 1.5
+      ? 1
+      : f < 3
+        ? 2
+        : f < 7
+          ? 5
+          : 10
+    : f <= 1
+      ? 1
+      : f <= 2
+        ? 2
+        : f <= 5
+          ? 5
+          : 10;
+  return nf * 10 ** exp;
+}
+
+/** How many gridline intervals the chart aims for (so ~5 gridlines). */
+const TARGET_TICKS = 5;
+
+/**
+ * Y-axis for the chart. Each bar is a *bucket* total — hours-per-day for a
+ * week, but per-week or per-month for the longer ranges, so the magnitude
+ * spans single hours to a few hundred. Pick a round tick step (1/2/5 × 10ⁿ)
+ * targeting ~5 gridlines, instead of a fixed 2h step that would draw dozens of
+ * lines on a month/quarter/year. An 8h floor keeps a light *week*'s familiar
+ * 0/2/4/6/8 reference; for longer ranges the bucket totals dwarf 8h, so it
+ * never binds. Negative/NaN input is treated as zero.
+ */
+export function chartAxis(maxBucketSeconds: number): ChartAxis {
+  const safeSeconds = Number.isFinite(maxBucketSeconds)
+    ? Math.max(0, maxBucketSeconds)
     : 0;
-  const maxHours = Math.max(8, Math.ceil(safeSeconds / HOUR / 2) * 2);
+  const maxHours = Math.max(8, safeSeconds / HOUR);
+  const step = niceNum(niceNum(maxHours, false) / (TARGET_TICKS - 1), true);
+  const ceilHours = Math.ceil(maxHours / step) * step;
   const ticks: number[] = [];
-  for (let h = 0; h <= maxHours; h += 2) ticks.push(h);
-  return { maxSeconds: maxHours * HOUR, ticks };
+  for (let h = 0; h <= ceilHours + 1e-9; h += step) ticks.push(h);
+  return { maxSeconds: ceilHours * HOUR, ticks };
 }
 
 export type Delta =
@@ -99,9 +141,12 @@ export function bucketGranularity(range: ReportRange): BucketGranularity {
   switch (range) {
     case "week":
       return "day";
+    // A month rolls up to ISO weeks; a quarter (~13 weeks) does too — coarse
+    // 3-month bars hide every within-quarter trend, and ~13 week bars read like
+    // the year's 12 months. Only a full year rolls up to months.
     case "month":
-      return "week";
     case "quarter":
+      return "week";
     case "year":
       return "month";
   }

@@ -7,11 +7,13 @@ import {
   computeDelta,
   dayMonthLabel,
   deltaComparisonLabel,
+  formatBarHours,
   formatRangeLabel,
   isFuture,
   isoLocalDate,
   isToday,
   mondayOfIso,
+  niceNum,
   percentOf,
   rangeTitle,
   reportDigest,
@@ -36,6 +38,37 @@ describe("secondsToHours", () => {
     expect(secondsToHours(3600)).toBe(1);
     expect(secondsToHours(1800)).toBe(0.5);
     expect(secondsToHours(0)).toBe(0);
+  });
+});
+
+describe("formatBarHours", () => {
+  it("shows one decimal for day-scale bars, whole hours once double-digit", () => {
+    expect(formatBarHours(8.5)).toBe("8.5");
+    expect(formatBarHours(0)).toBe("0.0");
+    expect(formatBarHours(10)).toBe("10");
+    expect(formatBarHours(42.4)).toBe("42");
+    expect(formatBarHours(164.6)).toBe("165");
+  });
+});
+
+describe("niceNum", () => {
+  it("rounds to the smallest nice number ≥ x when round is false", () => {
+    expect(niceNum(1, false)).toBe(1);
+    expect(niceNum(1.7, false)).toBe(2);
+    expect(niceNum(4.2, false)).toBe(5);
+    expect(niceNum(8, false)).toBe(10);
+    expect(niceNum(42, false)).toBe(50); // f=4.2 → 5 × 10
+    expect(niceNum(165, false)).toBe(200); // f=1.65 → 2 × 100
+  });
+  it("rounds to the nearest nice number when round is true", () => {
+    expect(niceNum(1.2, true)).toBe(1); // f<1.5
+    expect(niceNum(2.5, true)).toBe(2); // f<3
+    expect(niceNum(5, true)).toBe(5); // f<7
+    expect(niceNum(8, true)).toBe(10); // f≥7
+  });
+  it("treats non-positive input as 1", () => {
+    expect(niceNum(0, true)).toBe(1);
+    expect(niceNum(-5, false)).toBe(1);
   });
 });
 
@@ -64,16 +97,30 @@ describe("chartAxis", () => {
     expect(axis.ticks).toEqual([0, 2, 4, 6, 8]);
   });
 
-  it("rounds the ceiling up to the next even hour so bars never overflow", () => {
+  it("keeps 2h steps for a typical week, rounding the ceiling up", () => {
     const axis = chartAxis(9.3 * 3600);
     expect(axis.maxSeconds).toBe(10 * 3600);
     expect(axis.ticks).toEqual([0, 2, 4, 6, 8, 10]);
   });
 
-  it("treats an exact even-hour max as its own ceiling", () => {
+  it("uses round 10h steps for a month's weekly bars (no 22-line blowup)", () => {
+    // A busy week ~42h: 6 gridlines, not the old fixed-2h count of ~22.
+    const axis = chartAxis(42 * 3600);
+    expect(axis.maxSeconds).toBe(50 * 3600);
+    expect(axis.ticks).toEqual([0, 10, 20, 30, 40, 50]);
+  });
+
+  it("uses round 50h steps for a year's monthly bars (no 84-line blowup)", () => {
+    // A busy month ~165h: 5 gridlines, not ~84.
+    const axis = chartAxis(165 * 3600);
+    expect(axis.maxSeconds).toBe(200 * 3600);
+    expect(axis.ticks).toEqual([0, 50, 100, 150, 200]);
+  });
+
+  it("scales the step to 5h for a heavy single day (~12h)", () => {
     const axis = chartAxis(12 * 3600);
-    expect(axis.maxSeconds).toBe(12 * 3600);
-    expect(axis.ticks).toEqual([0, 2, 4, 6, 8, 10, 12]);
+    expect(axis.maxSeconds).toBe(15 * 3600);
+    expect(axis.ticks).toEqual([0, 5, 10, 15]);
   });
 
   it("treats negative or non-finite input as zero", () => {
@@ -197,7 +244,7 @@ describe("bucketGranularity / averageUnitLabel / mondayOfIso", () => {
   it("maps each range to its bucket granularity", () => {
     expect(bucketGranularity("week")).toBe("day");
     expect(bucketGranularity("month")).toBe("week");
-    expect(bucketGranularity("quarter")).toBe("month");
+    expect(bucketGranularity("quarter")).toBe("week");
     expect(bucketGranularity("year")).toBe("month");
   });
   it("labels the average unit", () => {
@@ -256,7 +303,21 @@ describe("buildBuckets", () => {
     expect(b[1]!.totalSeconds).toBe(50);
   });
 
-  it("for a quarter/year rolls days up into monthly buckets", () => {
+  it("for a quarter rolls days up into weekly buckets", () => {
+    const now = new Date(2026, 2, 31);
+    const s = summaryStub({
+      byDay: [
+        { date: "2026-01-10", byProject: [{ projectId: "a", seconds: 60 }] }, // wk of Jan 5
+        { date: "2026-01-20", byProject: [{ projectId: "a", seconds: 40 }] }, // wk of Jan 19
+        { date: "2026-02-05", byProject: [{ projectId: "a", seconds: 30 }] }, // wk of Feb 2
+      ],
+    });
+    const b = buildBuckets(s, "quarter", now);
+    expect(b.map((x) => x.label)).toEqual(["Jan 5", "Jan 19", "Feb 2"]);
+    expect(b[0]!.totalSeconds).toBe(60);
+  });
+
+  it("for a year rolls days up into monthly buckets", () => {
     const now = new Date(2026, 2, 31);
     const s = summaryStub({
       byDay: [
@@ -265,7 +326,7 @@ describe("buildBuckets", () => {
         { date: "2026-02-05", byProject: [{ projectId: "a", seconds: 30 }] },
       ],
     });
-    const b = buildBuckets(s, "quarter", now);
+    const b = buildBuckets(s, "year", now);
     expect(b.map((x) => x.label)).toEqual(["Jan", "Feb"]);
     expect(b[0]!.totalSeconds).toBe(100);
   });

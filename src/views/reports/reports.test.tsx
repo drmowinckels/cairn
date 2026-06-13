@@ -69,25 +69,53 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
 
   it("switching range re-buckets the chart and updates the title", () => {
     const { container } = render(<ReportsView density="comfy" />);
-    // Week → 7 daily bars.
+    // Week → 7 daily bars (the full Mon–Sun frame; future days stay).
     expect(container.querySelectorAll(".bar-col").length).toBe(7);
 
-    // Month → weekly bars (4–6, never 28+ daily bars).
+    // Each longer range rolls days up to a few bars and trims trailing future
+    // buckets, so the exact count depends on today's date — assert the
+    // granularity bound (never the raw day count) here; the precise bucketing
+    // is pinned in report-math's buildBuckets tests with a fixed `now`.
+    const barCount = () => container.querySelectorAll(".bar-col").length;
+
+    // Month → weekly bars (≤6), not 28+ daily.
     fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
     expect(screen.getByRole("heading", { name: /this month/i })).toBeTruthy();
-    const monthBars = container.querySelectorAll(".bar-col").length;
-    expect(monthBars).toBeGreaterThanOrEqual(4);
-    expect(monthBars).toBeLessThanOrEqual(6);
+    expect(barCount()).toBeGreaterThanOrEqual(1);
+    expect(barCount()).toBeLessThanOrEqual(6);
 
-    // Quarter → ~3 monthly bars.
+    // Quarter → weekly bars (~13 max), not ~90 daily.
     fireEvent.click(screen.getByRole("radio", { name: /^quarter$/i }));
     expect(screen.getByRole("heading", { name: /this quarter/i })).toBeTruthy();
-    expect(container.querySelectorAll(".bar-col").length).toBe(3);
+    expect(barCount()).toBeGreaterThanOrEqual(1);
+    expect(barCount()).toBeLessThanOrEqual(14);
 
-    // Year → 12 monthly bars.
+    // Year → monthly bars (≤12), not 365 daily.
     fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
     expect(screen.getByRole("heading", { name: /this year/i })).toBeTruthy();
-    expect(container.querySelectorAll(".bar-col").length).toBe(12);
+    expect(barCount()).toBeGreaterThanOrEqual(1);
+    expect(barCount()).toBeLessThanOrEqual(12);
+  });
+
+  it("labels the chart by bucket unit and names weekly bars 'Week of …'", () => {
+    const { container } = render(<ReportsView density="comfy" />);
+    // Week buckets by day.
+    expect(screen.getByRole("region", { name: "Hours per day" })).toBeTruthy();
+
+    // Month/quarter bucket by week — the axis label says so, and a weekly bar
+    // is named "Week of <start>" rather than a bare date.
+    fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
+    expect(screen.getByRole("region", { name: "Hours per week" })).toBeTruthy();
+    const weekBars = Array.from(container.querySelectorAll(".bar-col")).map(
+      (el) => el.getAttribute("aria-label") ?? "",
+    );
+    expect(weekBars.some((l) => /^Week of /.test(l))).toBe(true);
+
+    // Year buckets by month.
+    fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
+    expect(
+      screen.getByRole("region", { name: "Hours per month" }),
+    ).toBeTruthy();
   });
 
   it("renders horizontal gridlines with mono hour labels (#148, spec §3.2)", () => {
