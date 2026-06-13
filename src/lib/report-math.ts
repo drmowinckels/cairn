@@ -141,15 +141,12 @@ export type BucketGranularity = "day" | "week" | "month";
 export function bucketGranularity(range: ReportRange): BucketGranularity {
   switch (range) {
     case "week":
-      return "day";
-    // A month rolls up to ISO weeks; a quarter (~13 weeks) does too — coarse
-    // 3-month bars hide every within-quarter trend, and ~13 week bars read like
-    // the year's 12 months. Only a full year rolls up to months.
+      return "day"; // 7 bars
     case "month":
+      return "week"; // ~4–5 bars
     case "quarter":
-      return "week";
     case "year":
-      return "month";
+      return "month"; // 3 bars / 12 bars
   }
 }
 
@@ -312,24 +309,6 @@ export function buildBuckets(
   return order.map((k) => byKey.get(k)!);
 }
 
-/** Buckets that have elapsed (today or earlier) — trailing all-future buckets
- *  dropped. The single definition of "elapsed" shared by the chart's visible
- *  bars and the digest. */
-function elapsedBuckets(buckets: ReportBucket[]): ReportBucket[] {
-  return buckets.filter((b) => !b.isFuture);
-}
-
-/** The buckets the chart shows for `range`: a week keeps its full Mon–Sun day
- *  frame (future days shown empty, like a calendar), the longer ranges drop
- *  trailing all-future buckets so a year viewed in June doesn't trail six empty
- *  months. */
-export function visibleBuckets(
-  buckets: ReportBucket[],
-  range: ReportRange,
-): ReportBucket[] {
-  return range === "week" ? buckets : elapsedBuckets(buckets);
-}
-
 export interface ReportDigest {
   /** Mean tracked seconds per elapsed bucket (day/week/month). */
   averageSeconds: number;
@@ -353,7 +332,9 @@ export function reportDigest(
   range: ReportRange,
   now: Date = new Date(),
 ): ReportDigest {
-  const elapsed = elapsedBuckets(buckets);
+  // Future buckets (a year's months past today) are empty frame — average and
+  // "busiest" are over the elapsed ones only.
+  const elapsed = buckets.filter((b) => !b.isFuture);
   const averageSeconds =
     elapsed.length > 0 ? summary.totalSeconds / elapsed.length : 0;
 

@@ -69,32 +69,26 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
 
   it("switching range re-buckets the chart and updates the title", () => {
     const { container } = render(<ReportsView density="comfy" />);
-    // Week → 7 daily bars (the full Mon–Sun frame; future days stay).
-    expect(container.querySelectorAll(".bar-col").length).toBe(7);
-
-    // Each longer range rolls days up to a few bars and trims trailing future
-    // buckets, so the exact count depends on today's date — assert the
-    // granularity bound (never the raw day count) here; the precise bucketing
-    // is pinned in report-math's buildBuckets tests with a fixed `now`.
     const barCount = () => container.querySelectorAll(".bar-col").length;
+    // Week → one bar per day.
+    expect(barCount()).toBe(7);
 
-    // Month → weekly bars (≤6), not 28+ daily.
+    // Month → one bar per ISO week (4–6, depending on how the weeks fall),
+    // never 28+ daily bars.
     fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
     expect(screen.getByRole("heading", { name: /this month/i })).toBeTruthy();
-    expect(barCount()).toBeGreaterThanOrEqual(1);
+    expect(barCount()).toBeGreaterThanOrEqual(4);
     expect(barCount()).toBeLessThanOrEqual(6);
 
-    // Quarter → weekly bars (~13 max), not ~90 daily.
+    // Quarter → one bar per month (3).
     fireEvent.click(screen.getByRole("radio", { name: /^quarter$/i }));
     expect(screen.getByRole("heading", { name: /this quarter/i })).toBeTruthy();
-    expect(barCount()).toBeGreaterThanOrEqual(1);
-    expect(barCount()).toBeLessThanOrEqual(14);
+    expect(barCount()).toBe(3);
 
-    // Year → monthly bars (≤12), not 365 daily.
+    // Year → one bar per month (12).
     fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
     expect(screen.getByRole("heading", { name: /this year/i })).toBeTruthy();
-    expect(barCount()).toBeGreaterThanOrEqual(1);
-    expect(barCount()).toBeLessThanOrEqual(12);
+    expect(barCount()).toBe(12);
   });
 
   it("labels the chart by bucket unit and names weekly bars 'Week of …'", () => {
@@ -102,8 +96,8 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
     // Week buckets by day.
     expect(screen.getByRole("region", { name: "Hours per day" })).toBeTruthy();
 
-    // Month/quarter bucket by week — the axis label says so, and a weekly bar
-    // is named "Week of <start>" rather than a bare date.
+    // Month buckets by week — the axis label says so, and a weekly bar is
+    // named "Week of <start>" rather than a bare date.
     fireEvent.click(screen.getByRole("radio", { name: /^month$/i }));
     expect(screen.getByRole("region", { name: "Hours per week" })).toBeTruthy();
     const weekBars = Array.from(container.querySelectorAll(".bar-col")).map(
@@ -111,7 +105,11 @@ describe("ReportsView (fixture mode, no Tauri)", () => {
     );
     expect(weekBars.some((l) => /^Week of /.test(l))).toBe(true);
 
-    // Year buckets by month.
+    // Quarter and year bucket by month.
+    fireEvent.click(screen.getByRole("radio", { name: /^quarter$/i }));
+    expect(
+      screen.getByRole("region", { name: "Hours per month" }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: /^year$/i }));
     expect(
       screen.getByRole("region", { name: "Hours per month" }),
