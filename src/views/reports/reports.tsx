@@ -10,6 +10,11 @@ import { useReportSummary } from "../../lib/use-report-summary";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { isRoundingActive, roundingLabel } from "../../lib/rounding";
 import {
+  eventsInLastDays,
+  loadSuggestionFeedback,
+  weeklyTrustSummary,
+} from "../../lib/review-insights";
+import {
   averageUnitLabel,
   buildBuckets,
   chartAxis,
@@ -48,6 +53,7 @@ export function ReportsView({ density }: Props) {
   );
   const [range, setRange] = useState<ReportRange>("week");
   const [copied, setCopied] = useState(false);
+  const [feedbackEvents] = useState(() => loadSuggestionFeedback());
   const { rounding } = useRoundingPrefs();
   const { data, loading, error, refresh } = useReportSummary(range, {
     rounding,
@@ -158,6 +164,8 @@ export function ReportsView({ density }: Props) {
     (data?.bySource.rule ?? 0) +
     (data?.bySource.calendar ?? 0) +
     (data?.bySource.manual ?? 0);
+  const trust = weeklyTrustSummary(data, feedbackEvents);
+  const recentFeedback = eventsInLastDays(feedbackEvents, 7);
 
   return (
     <div className="view view-reports" data-density={density}>
@@ -452,6 +460,80 @@ export function ReportsView({ density }: Props) {
             </Mono>
           </li>
         </ul>
+      </section>
+
+      <section className="data-block" aria-label="Weekly trust summary">
+        <div className="sect-label">
+          <span>Weekly trust summary</span>
+        </div>
+        <ul className="data-list">
+          <li className="data-row">
+            <span className="data-name">Auto-classified</span>
+            <span className="data-meta">
+              <Mono>{trust.autoClassifiedPct}</Mono>%
+            </span>
+          </li>
+          <li className="data-row">
+            <span className="data-name">Manual logging</span>
+            <span className="data-meta">
+              <Mono>{trust.manualPct}</Mono>%
+            </span>
+          </li>
+          <li className="data-row">
+            <span className="data-name">Unresolved (no project)</span>
+            <span className="data-meta">
+              <Mono>{secondsToHours(trust.unresolvedSeconds).toFixed(1)}</Mono>h
+            </span>
+          </li>
+          <li className="data-row">
+            <span className="data-name">Suggestion corrections</span>
+            <span className="data-meta">
+              <Mono>{trust.correctedSuggestions}</Mono>
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <section className="data-block" aria-label="Suggestion quality feedback">
+        <div className="sect-label">
+          <span>Suggestion quality</span>
+        </div>
+        {recentFeedback.length === 0 ? (
+          <p className="data-meta">No suggestion feedback captured yet.</p>
+        ) : (
+          <ul className="data-list">
+            <li className="data-row">
+              <span className="data-name">Confirmed</span>
+              <span className="data-meta">
+                <Mono>
+                  {
+                    recentFeedback.filter((e) => e.outcome === "confirmed")
+                      .length
+                  }
+                </Mono>
+              </span>
+            </li>
+            <li className="data-row">
+              <span className="data-name">Changed</span>
+              <span className="data-meta">
+                <Mono>
+                  {recentFeedback.filter((e) => e.outcome === "changed").length}
+                </Mono>
+              </span>
+            </li>
+            <li className="data-row">
+              <span className="data-name">Dismissed</span>
+              <span className="data-meta">
+                <Mono>
+                  {
+                    recentFeedback.filter((e) => e.outcome === "dismissed")
+                      .length
+                  }
+                </Mono>
+              </span>
+            </li>
+          </ul>
+        )}
       </section>
 
       <section className="export-row">

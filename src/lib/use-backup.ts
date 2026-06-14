@@ -17,6 +17,7 @@ import {
   type DataPaths,
 } from "./ipc";
 import { ROUNDING_OFF, type Rounding } from "./rounding";
+import { clearReviewInsights } from "./review-insights";
 
 /**
  * Run `fn` with the popover temporarily pinned. Native dialogs
@@ -187,6 +188,10 @@ export function useBackup(): BackupState {
       if (!confirmed) return;
       setStatus({ kind: "working", message: "Deleting…" });
       await deleteEverything();
+      // The backend only wipes the SQLite tables; the suggestion-feedback log
+      // lives in localStorage (#191), so clear it here to honour the
+      // "delete everything" contract in docs/PRIVACY.md.
+      clearReviewInsights();
       // The backend wiped + reseeded the DB in place (no exit/restart —
       // those crashed the app). Reload the webview so every view
       // refetches the empty state and onboarding re-arms.

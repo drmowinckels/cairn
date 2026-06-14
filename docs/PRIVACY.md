@@ -15,15 +15,16 @@ The first three sentences appear verbatim in the **Data tab → Storage** sectio
 
 ## What is stored
 
-| Stored                                                                | Reason                               |
-| --------------------------------------------------------------------- | ------------------------------------ |
-| Time entries (start, end, project, tags, description, source)         | The app's purpose                    |
-| Projects and tags the user has created                                | The app's purpose                    |
-| Rules (conditions, actions)                                           | User configuration                   |
-| Exclusion list                                                        | User configuration                   |
-| Calendar event titles for entries created by the calendar rule        | The user explicitly wanted this rule |
-| Calendar source list: label, redacted URL or file path, poll interval | So Cairn knows what to fetch         |
-| Idle periods (timestamps only)                                        | To compute idle prompts and reports  |
+| Stored                                                                  | Reason                                                                                          |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Time entries (start, end, project, tags, description, source)           | The app's purpose                                                                               |
+| Projects and tags the user has created                                  | The app's purpose                                                                               |
+| Rules (conditions, actions)                                             | User configuration                                                                              |
+| Exclusion list                                                          | User configuration                                                                              |
+| Calendar event titles for entries created by the calendar rule          | The user explicitly wanted this rule                                                            |
+| Calendar source list: label, redacted URL or file path, poll interval   | So Cairn knows what to fetch                                                                    |
+| Idle periods (timestamps only)                                          | To compute idle prompts and reports                                                             |
+| Suggestion feedback log: outcome, rule, project + matched signal values | Learn repeated patterns into rules; trust/quality analytics ([§](#suggestion-feedback-log-191)) |
 
 ## What is **not** stored
 
@@ -32,6 +33,10 @@ The first three sentences appear verbatim in the **Data tab → Storage** sectio
 - File paths (used in matching, discarded)
 - Frontmost app name as a _log_ (only the project decided by the rule is logged)
 - IP address, hostname, user account, machine ID, OS version — none of it. No reason to collect it.
+
+The one exception: when a rule fires and you **act on the suggestion**, the specific
+signal values that matched are kept in the local [suggestion feedback log](#suggestion-feedback-log-191)
+— never any other signal value, never anything that leaves the device.
 
 ## Exclusion list
 
@@ -52,6 +57,19 @@ Hidden in Settings → Advanced. Off by default, **sticky off** on every relaunc
 - Big yellow warning text on enable.
 - Disabling deletes the file.
 - Used only for troubleshooting and reporting rule-detection bugs upstream. The user controls when it runs.
+
+## Suggestion feedback log (#191)
+
+When you act on a detection suggestion — **confirm**, **dismiss**, or **change…** — Cairn records the outcome in a small **local** log (the webview's `localStorage`, key `cairn:suggestion-feedback:v1`, capped at the most recent 400 events). It powers two features: proposing an explicit _learned_ rule once a pattern repeats, and the trust / suggestion-quality summaries in Today and Reports.
+
+Each event keeps the rule id and name, the project, the outcome, and **the matched signal values that fired the suggestion** — one per matched signal kind (e.g. the git branch, IDE folder, calendar event title, or window/tab title a condition referenced). This is the one place those matched values are retained on disk; everywhere else they are read in memory and discarded.
+
+Why this stays within the contract:
+
+- **Local only.** It lives in `localStorage` on this machine and is never uploaded — the no-network guarantee is unchanged.
+- **Exclusion-respecting.** The values come from the _redacted_ snapshot the rules engine already saw, so an excluded app, domain, or window-title pattern can never reach the log.
+- **Only what a rule matched.** A signal value you never wrote a rule against is never recorded — only the specific values a matched condition referenced, and only when you acted on the resulting suggestion.
+- **Clearable.** "Delete everything" wipes it with the rest of your data, and dismissing a learned-rule prompt drops that pattern.
 
 ## Calendar integration
 
@@ -101,7 +119,7 @@ Cairn can check whether a newer version exists. This is the one outbound request
 - **Restore from file**: the user picks any `.sqlite` file with the system open dialog. Cairn stages it next to the live DB as `cairn.sqlite.pending` and swaps it in on next launch (the previous DB is preserved as `cairn.sqlite.bak`). Cancelling the pending restore deletes the staged file. There is no live pool swap, so a restore cannot corrupt an in-flight write.
 - **Export CSV**: writes one row per entry with columns `entry_id,started_at,ended_at,duration_minutes,client,project,task,description,source`. `duration_minutes` is the rounded entry duration (open entries measure to now); `client`, `project`, and `task` are scalar names (empty when unset). There is no tag fan-out. Drops cleanly into pandas, dplyr, or any spreadsheet.
 - **View what's stored**: reveals the data folder in Finder / Explorer / file manager via the OS — no extra info leaves the device.
-- **Delete everything**: shows an OS confirmation dialog, then resets the install in place — no app exit. It first purges the calendar-URL bearer secrets from the OS keychain (while the `calendar_sources` rows can still be enumerated), then wipes every user table in the live database, re-seeds the default clients/projects for fresh-install parity, and re-arms onboarding (clearing the git discovery-roots override). The live `cairn.sqlite` file stays in place; only the staged restore (`.pending`), the rotation backup (`.bak`), and the debug raw-signals log are removed from disk. The running tray and popover stay alive on the same DB pool.
+- **Delete everything**: shows an OS confirmation dialog, then resets the install in place — no app exit. It first purges the calendar-URL bearer secrets from the OS keychain (while the `calendar_sources` rows can still be enumerated), then wipes every user table in the live database, re-seeds the default clients/projects for fresh-install parity, and re-arms onboarding (clearing the git discovery-roots override). The live `cairn.sqlite` file stays in place; only the staged restore (`.pending`), the rotation backup (`.bak`), and the debug raw-signals log are removed from disk. The frontend also clears the local [suggestion feedback log](#suggestion-feedback-log-191) from `localStorage`. The running tray and popover stay alive on the same DB pool.
 
 A note on cloud-synced folders: backup and restore are explicitly snapshot operations, not live sync. Pointing Cairn's live database at a cloud folder is out of scope for v1 — see [docs/future/sync-relocate.md](future/sync-relocate.md) for the design we'd ship if we ever revisit it.
 
@@ -110,7 +128,7 @@ A note on cloud-synced folders: backup and restore are explicitly snapshot opera
 Any of these requires a CHANGELOG entry tagged `[privacy]` and explicit reaffirmation in the Settings privacy card:
 
 - Adding any outbound network request (including update checks). The user-configured calendar fetches in Settings → Integrations → Calendar are the one allowed exception, scoped to URLs the user explicitly added.
-- Persisting any field marked "not stored" above.
+- Persisting any field marked "not stored" above. The local [suggestion feedback log](#suggestion-feedback-log-191) (#191) is the one such case, shipped as a deliberate, documented local-only exception — this section is its `[privacy]` reaffirmation.
 - Adding any third-party SDK (analytics, crash reporting, anything).
 - Changing the exclusion list behavior so an excluded signal _is_ observed in any capacity.
 
