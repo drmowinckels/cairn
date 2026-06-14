@@ -9,7 +9,8 @@ import { useAnnounce } from "../../lib/use-announce";
 import { fmtClock, fmtClockFromIso, fmtHm } from "../../lib/time";
 import { startEditError, validateStartEdit } from "../../lib/edit-start";
 import { useTimer } from "../../lib/use-timer";
-import { useSuggestion } from "../../lib/use-suggestion";
+import { useSuggestion, type Suggestion } from "../../lib/use-suggestion";
+import { useRules, defaultOpForSignal } from "../../lib/use-rules";
 import { useProjects } from "../../lib/use-projects";
 import { useToday } from "../../lib/use-today";
 import { useUpcoming } from "../../lib/use-upcoming";
@@ -26,8 +27,22 @@ import {
   inTauri,
   listTasks,
   saveTask,
+  updateEntry,
   type BackendEntry,
 } from "../../lib/ipc";
+import {
+  bestLearnedRuleCandidate,
+  buildReviewInbox,
+  computeFocusInsights,
+  DISMISSED_LEARNING_KEY,
+  loadSuggestionFeedback,
+  plannedVsActualMinutes,
+  recordSuggestionFeedback,
+  saveSuggestionFeedback,
+  type LearnedRuleCandidate,
+  type SuggestionFeedbackEvent,
+  type SuggestionOutcome,
+} from "../../lib/review-insights";
 import { useConnectors } from "../../lib/use-connectors";
 import { useTaskMap } from "../../lib/use-tasks";
 import {
@@ -181,6 +196,61 @@ export function TodayView({
   const { suggestion, confirm, dismiss } = useSuggestion({
     currentRunningRuleId: timer.running?.ruleId ?? null,
   });
+
+  // #191 suggestion feedback loop: every confirm/dismiss/change is recorded
+  // locally so we can (a) propose an explicit "learned" rule once a pattern
+  // repeats and (b) surface trust/quality analytics. Feedback is the only new
+  // state persisted — window titles are never stored (privacy contract).
+  const rules = useRules();
+  const [feedbackEvents, setFeedbackEvents] = useState<
+    SuggestionFeedbackEvent[]
+  >(() => loadSuggestionFeedback());
+  const [pendingChangedSuggestion, setPendingChangedSuggestion] =
+    useState<Suggestion | null>(null);
+  const [reviewProjectId, setReviewProjectId] = useState<string | null>(null);
+  const [learningBusy, setLearningBusy] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [learnError, setLearnError] = useState<string | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [dismissedLearningSignature, setDismissedLearningSignature] = useState<
+    string | null
+  >(() => window.localStorage.getItem(DISMISSED_LEARNING_KEY));
+
+  const commitFeedback = useCallback(
+    (
+      match: Suggestion,
+      outcome: SuggestionOutcome,
+      selectedProjectId: string | null = null,
+    ) => {
+      setFeedbackEvents((prev) => {
+        const next = recordSuggestionFeedback(
+          prev,
+          match,
+          outcome,
+          selectedProjectId,
+        );
+        saveSuggestionFeedback(next);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const onConfirmSuggestion = useCallback(
+    async (s: Suggestion) => {
+      commitFeedback(s, "confirmed", s.project ?? null);
+      await confirm();
+    },
+    [commitFeedback, confirm],
+  );
+
+  const onDismissSuggestion = useCallback(
+    async (s: Suggestion) => {
+      commitFeedback(s, "dismissed", null);
+      await dismiss();
+    },
+    [commitFeedback, dismiss],
+  );
 
   // #105 task-switch prompt: while tracking, watch for a *different* project's
   // rule becoming the top match and — after a dwell — offer to switch. When
@@ -336,11 +406,93 @@ export function TodayView({
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
         return;
       }
+      commitFeedback(suggestion, "dismissed", null);
       dismiss();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [suggestion, detectionPrompts, dismiss]);
+  }, [suggestion, detectionPrompts, commitFeedback, dismiss]);
+
+  // #191 review/insight surfaces, all derived from the day's entries +
+  // locally-recorded suggestion feedback — no new backend, no new persistence
+  // beyond the feedback log.
+  const learnedRuleCandidate = useMemo(() => {
+    const candidate = bestLearnedRuleCandidate(feedbackEvents);
+    if (!candidate) return null;
+    if (dismissedLearningSignature === candidate.signature) return null;
+    return candidate;
+  }, [feedbackEvents, dismissedLearningSignature]);
+
+  const reviewInbox = useMemo(
+    () => buildReviewInbox(todayEntries, feedbackEvents),
+    [todayEntries, feedbackEvents],
+  );
+  const focusInsights = useMemo(
+    () => computeFocusInsights(todayEntries),
+    [todayEntries],
+  );
+  const plannedVsActual = useMemo(
+    () => plannedVsActualMinutes(todayEntries),
+    [todayEntries],
+  );
+
+  // Re-entry is prevented by the button's `disabled={batchBusy}` — only the
+  // chosen project (button disabled until one is picked) ever reaches here.
+  const onBatchAssignUnassigned = useCallback(async () => {
+    const targets = todayEntries.filter((e) => e.projectId === null);
+    setBatchError(null);
+    setBatchBusy(true);
+    try {
+      await Promise.all(
+        targets.map((entry) =>
+          updateEntry({ id: entry.id, projectId: reviewProjectId }),
+        ),
+      );
+      await today.refresh();
+    } catch (e) {
+      setBatchError(
+        `Couldn't apply batch assignment — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setBatchBusy(false);
+    }
+  }, [reviewProjectId, todayEntries, today]);
+
+  const persistDismissedLearning = useCallback((signature: string) => {
+    setDismissedLearningSignature(signature);
+    window.localStorage.setItem(DISMISSED_LEARNING_KEY, signature);
+  }, []);
+
+  // The candidate is passed in (narrowed at the call site); re-entry is
+  // prevented by the button's `disabled={learningBusy}`.
+  const onCreateLearnedRule = useCallback(
+    async (candidate: LearnedRuleCandidate) => {
+      setLearnError(null);
+      setLearningBusy(true);
+      try {
+        const id = await rules.add();
+        await rules.update(id, {
+          name: `Learned: ${candidate.sampleRuleName}`,
+          confidence: "suggestive",
+          when: candidate.conditions.map((c) => ({
+            signal: c.signal,
+            op: defaultOpForSignal(c.signal),
+            value: c.value,
+          })),
+          then: { project: candidate.projectId },
+        });
+        persistDismissedLearning(candidate.signature);
+        onOpenRule(id);
+      } catch (e) {
+        setLearnError(
+          `Couldn't save the rule — ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        setLearningBusy(false);
+      }
+    },
+    [rules, persistDismissedLearning, onOpenRule],
+  );
 
   // ── manual-entry modal (#21) ────────────────────────────────────
   const [modalState, setModalState] = useState<
@@ -581,7 +733,7 @@ export function TodayView({
               <span>Detected</span>
               <button
                 className="suggest-x"
-                onClick={() => dismiss()}
+                onClick={() => void onDismissSuggestion(suggestion)}
                 aria-label="Dismiss suggestion"
               >
                 <Icon name="x" size={12} />
@@ -611,7 +763,7 @@ export function TodayView({
                 className="suggest-link"
                 onClick={() => {
                   const id = suggestion.ruleId;
-                  dismiss();
+                  void onDismissSuggestion(suggestion);
                   onOpenRule(id);
                 }}
               >
@@ -621,17 +773,21 @@ export function TodayView({
             <div className="suggest-actions">
               <button
                 className="btn btn--primary"
-                onClick={() => void confirm()}
+                onClick={() => void onConfirmSuggestion(suggestion)}
               >
                 <Icon name="check" size={13} /> Confirm
               </button>
               <button
                 className="btn btn--ghost"
                 onClick={() => {
-                  // "Change…" = don't accept the rule's project; dismiss the
-                  // suggestion and open the idle project picker so the user
-                  // can choose what to start instead.
-                  dismiss();
+                  // "Change…" = don't accept the rule's project; hide the
+                  // banner and open the idle project picker so the user can
+                  // choose what to start instead. Remember the suggestion so
+                  // the picker's choice is recorded as a single "changed"
+                  // outcome — we deliberately do NOT also record a "dismissed"
+                  // here, which would double-count one correction.
+                  setPendingChangedSuggestion(suggestion);
+                  void dismiss();
                   setIdlePickerOpen(true);
                 }}
               >
@@ -831,6 +987,10 @@ export function TodayView({
                     open={idlePickerOpen}
                     setOpen={setIdlePickerOpen}
                     onPick={(id) => {
+                      if (pendingChangedSuggestion) {
+                        commitFeedback(pendingChangedSuggestion, "changed", id);
+                        setPendingChangedSuggestion(null);
+                      }
                       setIdleProjectId(id);
                       setIdlePickerOpen(false);
                     }}
@@ -923,6 +1083,176 @@ export function TodayView({
             calendarsConnected={calendarsConnected}
           />
         </section>
+      )}
+
+      {isToday && (
+        <>
+          {learnedRuleCandidate && (
+            <section className="data-block" aria-label="Rule learning prompt">
+              <div className="sect-label">
+                <span>Rule suggestion</span>
+              </div>
+              <p className="data-meta">
+                Repeated pattern detected ({learnedRuleCandidate.confirms}{" "}
+                confirms, {learnedRuleCandidate.changes} corrections). Save as
+                an explicit rule?
+              </p>
+              <ul className="suggest-tags">
+                {learnedRuleCandidate.conditions.map((condition) => (
+                  <li
+                    key={`${condition.signal}-${condition.value}`}
+                    className="tag"
+                  >
+                    {condition.signal}: {condition.value}
+                  </li>
+                ))}
+              </ul>
+              <div className="suggest-actions">
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void onCreateLearnedRule(learnedRuleCandidate)}
+                  disabled={learningBusy}
+                >
+                  <Icon name="check" size={13} /> Save as rule
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={() =>
+                    persistDismissedLearning(learnedRuleCandidate.signature)
+                  }
+                  disabled={learningBusy}
+                >
+                  Dismiss
+                </button>
+              </div>
+              {learnError && (
+                <p className="now-stop-error" role="alert">
+                  {learnError}
+                </p>
+              )}
+            </section>
+          )}
+
+          <section className="data-block" aria-label="Review inbox">
+            <div className="sect-label">
+              <span>Review inbox</span>
+            </div>
+            {reviewInbox.length === 0 ? (
+              <Empty
+                title="No unresolved items"
+                body="Suggestions and timeline gaps are clean right now."
+                tone="soft"
+              />
+            ) : (
+              <ul className="data-list">
+                {reviewInbox.map((item) => (
+                  <li key={item.id} className="data-row">
+                    <span className="data-name">{item.title}</span>
+                    <span className="data-meta">{item.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {reviewInbox.some((item) => item.kind === "no-project") && (
+              <>
+                <div className="data-add-row">
+                  <select
+                    className="field-input"
+                    value={reviewProjectId ?? ""}
+                    onChange={(e) =>
+                      setReviewProjectId(
+                        e.target.value === "" ? null : e.target.value,
+                      )
+                    }
+                    aria-label="Project for batch assignment"
+                  >
+                    <option value="">Assign unassigned entries to…</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => void onBatchAssignUnassigned()}
+                    disabled={!reviewProjectId || batchBusy}
+                  >
+                    Apply to unassigned
+                  </button>
+                </div>
+                {batchError && (
+                  <p className="now-stop-error" role="alert">
+                    {batchError}
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+
+          <section className="data-block" aria-label="Focus insights">
+            <div className="sect-label">
+              <span>Focus insights</span>
+            </div>
+            <ul className="data-list">
+              <li className="data-row">
+                <span className="data-name">Context switches</span>
+                <span className="data-meta">
+                  {focusInsights.contextSwitches}
+                </span>
+              </li>
+              <li className="data-row">
+                <span className="data-name">Deep work</span>
+                <span className="data-meta">
+                  {focusInsights.deepWorkBlocks} blocks ·{" "}
+                  {fmtHm(focusInsights.deepWorkMinutes)}
+                </span>
+              </li>
+              <li className="data-row">
+                <span className="data-name">Fragmented blocks (≤15m)</span>
+                <span className="data-meta">
+                  {focusInsights.fragmentedBlocks}
+                </span>
+              </li>
+              <li className="data-row">
+                <span className="data-name">Meeting time</span>
+                <span className="data-meta">
+                  {fmtHm(focusInsights.meetingMinutes)}
+                </span>
+              </li>
+            </ul>
+          </section>
+
+          <section className="data-block" aria-label="Planned versus actual">
+            <div className="sect-label">
+              <span>Planned vs actual</span>
+            </div>
+            <ul className="data-list">
+              <li className="data-row">
+                <span className="data-name">Planned (calendar)</span>
+                <span className="data-meta">
+                  {fmtHm(plannedVsActual.planned)}
+                </span>
+              </li>
+              <li className="data-row">
+                <span className="data-name">Actual (non-calendar)</span>
+                <span className="data-meta">
+                  {fmtHm(plannedVsActual.actual)}
+                </span>
+              </li>
+              <li className="data-row">
+                <span className="data-name">Drift</span>
+                <span className="data-meta">
+                  {plannedVsActual.drift >= 0 ? "+" : "-"}
+                  {fmtHm(Math.abs(plannedVsActual.drift))}
+                </span>
+              </li>
+            </ul>
+          </section>
+        </>
       )}
 
       {modalState.open && (

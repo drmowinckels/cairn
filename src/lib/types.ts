@@ -183,9 +183,12 @@ export interface RuleMatchEvent {
   /**
    * The live signal values that contributed to this match, for the
    * suggestion banner's "why" evidence line (#143). One entry per
-   * signal kind a matched condition referenced. Render-only — these
-   * are never persisted. The backend builds them from the *redacted*
-   * snapshot, so an excluded app/window/domain can never appear here.
+   * signal kind a matched condition referenced. The backend never
+   * persists them (they aren't written to the DB) and builds them from
+   * the *redacted* snapshot, so an excluded app/window/domain can never
+   * appear here. The frontend's local suggestion-feedback log (#191)
+   * does retain these matched values on disk to learn repeated patterns
+   * — a documented, local-only exception; see `docs/PRIVACY.md`.
    * Optional + defaulted: a payload from before #143 (or a strict
    * auto-start path that never renders a banner) carries no chips.
    */
