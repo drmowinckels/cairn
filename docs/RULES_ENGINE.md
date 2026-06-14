@@ -57,11 +57,13 @@ pub enum IdleState {
 | `ide.folder`     | IDE detection by app + heuristics on window title (`"file.tsx — cairn"`) and process cwd | The project folder open in the active IDE        |
 | `git.branch`     | Watcher on `.git/HEAD` of currently-relevant repo                                        | The current git branch                           |
 | `git.repo`       | Same                                                                                     | The repo path/name                               |
-| `browser.domain` | Browser extension push (Safari/Firefox/Chrome)                                           | Domain of the active tab                         |
+| `browser.domain` | Browser extension push (Safari/Firefox/Chrome) — _plugin signal source_                  | Domain of the active tab                         |
 | `browser.tab`    | Same                                                                                     | Tab title                                        |
 | `browser.url`    | Same                                                                                     | Full URL of the active tab                       |
-| `calendar.event` | OS calendar API                                                                          | Match against title of an event currently active |
+| `calendar.event` | Calendar plugin (opt-in ICS fetch) — _plugin signal source_                              | Match against title of an event currently active |
 | `idle`           | OS idle API                                                                              | Active / idle (with duration)                    |
+
+> **Plugin signal sources are origin-agnostic.** The engine consumes a `SignalSnapshot` regardless of where each field came from — a core collector (`window` · `git` · `idle`) or an opt-in plugin (`calendar`, `browser`). A rule that references a plugin signal (e.g. `calendar.event`) stays valid in the builder even when its plugin is disabled; it simply never matches, because a disabled source contributes no events to the snapshot. See [the plugin boundary](/PLUGINS).
 
 ## 2. Rule data model
 
