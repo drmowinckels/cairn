@@ -100,7 +100,7 @@ A floating panel anchored under the macOS tray icon. 500×variable, max-height `
 Structure (top → bottom):
 
 1. **Header** — `.pop-head`: brand mark + "Cairn" wordmark + `LocalBadge` + spacer + icon buttons (search ⌘K, plus = new manual entry).
-2. **Nav tabs** — `.pop-nav`: Today / Reports / Rules / Settings, with hairline underline indicator on active. Right-aligned hint shows the open/hide shortcut `⌃⌥T`.
+2. **Nav tabs** — `.pop-nav`: Today / Reports / Rules / Data / Settings / Extensions, with hairline underline indicator on active. Right-aligned hint shows the open/hide shortcut `⌃⌥T`.
 3. **Body** — `.pop-body`: scrollable container, the active view renders here.
 4. **Footer** — `.pop-foot`: status strip with "4h 12m today · 3 rules active" and `⌃⌥␣ stop` hint.
 
@@ -198,8 +198,17 @@ Ordered to put the most important things first.
 2. **Never track these** — exclusion list. Each row: lock icon + value in mono code + kind label (app/domain/window) + × remove. Last row is an inline add input. Below: checkbox "Pause tracking on private/incognito browser windows" (default on).
 3. **Accessibility** — toggles for text size (4-position segmented), high contrast, reduce motion, colorblind-safe palette, screen reader announcements, focus rings always visible, detection prompts (segmented: Off / Subtle / Modal).
 4. **Shortcuts** — list of keyboard shortcuts with `<Kbd>` chips.
-5. **Integrations** — Calendar / Git / Browsers, each with a status line and a "Configure…" / "Manage…" / "Install…" action.
-6. **Foot** — version, Apache-2.0, GitHub link.
+5. **Foot** — version, Apache-2.0, GitHub link.
+
+> Integrations no longer live under Settings — everything optional and opt-in moved to its own **Extensions** tab (§3.5).
+
+### 3.5 Extensions
+
+Everything optional and opt-in: integrations, signal-source plugins, and the PM connectors Cairn reads tasks from. Kept separate from Settings so day-to-day preferences stay clear of the things you plug in. Three cards, top → bottom:
+
+1. **Integrations** — Calendar / Git / Browsers, each with a status line and a "Configure…" / "Manage…" / "Install…" action.
+2. **Plugins** — the signal-source plugins core never starts on its own. Each row: name + capability badges (**Network**, **Secrets**) + an enable/disable toggle. **Calendar** is the first such plugin: opt-in, it fetches ICS feeds (Network) and stores credentials in the OS keychain (Secrets), which is why it sits behind the plugin boundary rather than on core's always-on path. Disabling it stops all fetching and clears its events from rule matching, persisting across launches. A rule that references a calendar signal stays valid while the plugin is off — it simply never matches.
+3. **Connectors** — the PM connectors (GitHub / GitLab / Trello) Cairn reads tasks from, each with per-connector enable/disable and credential management.
 
 ---
 
