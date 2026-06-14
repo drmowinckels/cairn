@@ -169,13 +169,13 @@ value can never inject request _structure_.
 | ------------------------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | <code v-pre>{{project.id}}</code>    | `listTasks`  | the id of the project being listed                                                                                                                                                      |
 | <code v-pre>{{cursor}}</code>        | any          | the current page cursor (empty on the first request)                                                                                                                                    |
-| <code v-pre>{{cursorLiteral}}</code> | any          | the cursor as a JSON/GraphQL value — `null` on the first request, else a quoted, escaped string. Use it inside a GraphQL body (`after:{{cursorLiteral}}`) where `after:""` is rejected. |
+| <code v-pre>{{cursorLiteral}}</code> | any          | the cursor as a JSON/GraphQL value — `null` on the first request, else a quoted, escaped string. Use it inside a GraphQL body (<code v-pre>after:{{cursorLiteral}}</code>) where `after:""` is rejected. |
 | <code v-pre>{{offset}}</code>        | any          | the running item offset, advanced by `limit` each page (starts at 0)                                                                                                                    |
 | <code v-pre>{{page}}</code>          | any          | the 1-indexed page number, advanced by 1 each page (starts at 1)                                                                                                                        |
 | <code v-pre>{{&lt;param&gt;}}</code> | any          | a value the connector declares under [`params`](#params-optional-user-entered-configuration) (e.g. <code v-pre>{{owner}}</code>)                                                        |
 
 A template may only reference these built-ins (plus the connector's declared
-params); an unknown variable — or `{{project.id}}` outside `listTasks` — is
+params); an unknown variable — or <code v-pre>{{project.id}}</code> outside `listTasks` — is
 **rejected when the manifest loads**, not silently at fetch time.
 
 ### Pagination (optional)
@@ -202,10 +202,10 @@ Three strategies:
   <code v-pre>{{cursorLiteral}}</code> in a GraphQL body).
 - **`offset`** (`{ "type": "offset", "limit": 100 }`) — advances
   <code v-pre>{{offset}}</code> by `limit` (from 0) until a page returns fewer
-  than `limit` items, e.g. `"query": { "offset": "{{offset}}" }`.
+  than `limit` items, e.g. <code v-pre>"query": { "offset": "{{offset}}" }</code>.
 - **`page`** (`{ "type": "page", "size": 100 }`) — advances the 1-indexed
   <code v-pre>{{page}}</code> by 1 until a page returns fewer than `size`
-  items, e.g. `"query": { "page": "{{page}}", "per_page": "100" }`. For
+  items, e.g. <code v-pre>"query": { "page": "{{page}}", "per_page": "100" }</code>. For
   page-number REST APIs like GitLab. `size` must equal the server's effective
   page size (the `per_page` you request, capped by the server's own max) — if
   `size` is larger, a full page looks short and the walk stops early. `size`
@@ -227,7 +227,7 @@ Settings → Connectors.
 
 | Field         | Notes                                                                        |
 | ------------- | ---------------------------------------------------------------------------- |
-| `key`         | Stable kebab-case key (`^[a-z0-9-]+$`); the `{{key}}` a template references. |
+| `key`         | Stable kebab-case key (`^[a-z0-9-]+$`); the <code v-pre>{{key}}</code> a template references. |
 | `label`       | Field label in the settings card.                                            |
 | `placeholder` | Optional hint shown in the empty input.                                      |
 
@@ -363,7 +363,7 @@ tasks from its lines. `capabilities` is empty — fully local, no keychain.
 > `pageInfo { hasNextPage endCursor }` and <code v-pre>after:{{cursorLiteral}}</code>
 > (#193) — `after:null` on the first page, then `after:"<endCursor>"` — capped by
 > the usual page/item limits. Values templated into a GraphQL **string literal**
-> (`id:"{{project.id}}"`, `login:"{{owner}}"`) are JSON-escaped but not
+> (<code v-pre>id:"{{project.id}}"</code>, <code v-pre>login:"{{owner}}"</code>) are JSON-escaped but not
 > GraphQL-string-escaped — safe here because the host is pinned and the read is
 > read-only, so the worst case is a malformed query.
 >
@@ -655,8 +655,8 @@ check yours (it is published at `/schemas/pm-connector.json`).
    Projects** (GraphQL), **GitLab** (REST issues), and **Trello** (REST
    boards/cards) ship compiled in (`connectors/manifests/*.json`, registered
    by `ConnectorHost::load`, listed in `builtin::ALL`). GitHub/GitLab paginate
-   to completion — GitHub via GraphQL cursor (`after:{{cursorLiteral}}`),
-   GitLab via page number (`page={{page}}`) — capped by the usual page/item
+   to completion — GitHub via GraphQL cursor (<code v-pre>after:{{cursorLiteral}}</code>),
+   GitLab via page number (<code v-pre>page={{page}}</code>) — capped by the usual page/item
    limits (#193). Trello uses `multi` auth (the user's own `key` + `token`,
    no Cairn-shipped app key) and reads up to `limit:1000` cards/board.
 5. ✅ Offline cache (`connector_cache`) so attribution survives a dropped
