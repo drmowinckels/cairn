@@ -50,7 +50,14 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 url = "2"
 percent-encoding = "2"
 base64 = "0.22"
-keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+# Encrypted-file fallback for calendar URL secrets when the OS keychain
+# (Secret Service on Linux) is unavailable (#40). Documented downgrade —
+# see docs/PRIVACY.md. XChaCha20-Poly1305 with a machine-id-derived key.
+chacha20poly1305 = "0.10"
+blake3 = "1"
+machine-uid = "0.5"
+getrandom = "0.2"
 # Cross-platform filesystem watcher used by `signals::git_watcher`
 # to detect `.git/HEAD` changes (branch switches, rebases). Uses
 # FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on
@@ -93,3 +100,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # exercise OS-agnostic DB / IPC / rules paths).
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+
+# Linux CI is headless, so production's Secret Service keyring has no
+# daemon there. `ctor` lets a test-only initializer pin the default keyring
+# store to the in-memory mock before any test runs, so the real-keyring
+# roundtrip tests stay deterministic without a D-Bus session (#40).
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "0.2"

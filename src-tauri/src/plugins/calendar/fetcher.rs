@@ -524,4 +524,52 @@ mod tests {
             "downgrade refusal must surface as a classified fetch error: {chain}",
         );
     }
+
+    /// End-to-end ICS path (#40): a fake HTTP server serves a real calendar
+    /// payload, the fetcher pulls it, and the parser turns it into a
+    /// concrete, currently-active event — the same flow a calendar signal
+    /// source runs on every refresh, with no OS calendar API involved. This
+    /// is the cross-platform integration test the parity issue calls for.
+    #[tokio::test]
+    async fn fetch_then_parse_yields_active_event() {
+        use crate::plugins::calendar::parser;
+        use chrono::{TimeZone, Utc};
+
+        let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Cairn//test//EN\r\n\
+                   BEGIN:VEVENT\r\nUID:evt-1@cairn.test\r\nSUMMARY:Standup\r\n\
+                   DTSTART:20260615T100000Z\r\nDTEND:20260615T110000Z\r\n\
+                   END:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/cal.ics")
+            .with_status(200)
+            .with_header("content-type", "text/calendar")
+            .with_body(ics)
+            .create_async()
+            .await;
+
+        let fetcher = Fetcher::new_allowing_http().expect("build http-allowing fetcher");
+        let url = format!("{}/cal.ics", server.url());
+        let outcome = fetcher
+            .fetch(&url, None, None)
+            .await
+            .expect("fetch must succeed");
+        mock.assert_async().await;
+
+        // A 200 with a body is always `Changed`. Use `if let` (no
+        // never-taken match arm) and an `Option` so every line here runs.
+        let now = Utc.with_ymd_and_hms(2026, 6, 15, 10, 30, 0).unwrap();
+        let mut parsed = None;
+        if let FetchOutcome::Changed(ok) = outcome {
+            parsed = Some(parser::parse(&ok.body, now).expect("ics must parse"));
+        }
+        let events = parsed.expect("a 200 body must be FetchOutcome::Changed");
+        assert_eq!(events.len(), 1, "exactly one event expected");
+        assert_eq!(events[0].summary, "Standup");
+        assert!(
+            parser::is_active(&events[0], now),
+            "the event must be active at 10:30 UTC"
+        );
+    }
 }
