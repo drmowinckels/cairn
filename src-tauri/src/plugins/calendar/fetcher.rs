@@ -551,18 +551,20 @@ mod tests {
 
         let fetcher = Fetcher::new_allowing_http().expect("build http-allowing fetcher");
         let url = format!("{}/cal.ics", server.url());
-        let body = match fetcher
+        let outcome = fetcher
             .fetch(&url, None, None)
             .await
-            .expect("fetch must succeed")
-        {
-            FetchOutcome::Changed(ok) => ok.body,
-            other => panic!("expected a changed body, got {other:?}"),
-        };
+            .expect("fetch must succeed");
         mock.assert_async().await;
 
+        // A 200 with a body is always `Changed`. Use `if let` (no
+        // never-taken match arm) and an `Option` so every line here runs.
         let now = Utc.with_ymd_and_hms(2026, 6, 15, 10, 30, 0).unwrap();
-        let events = parser::parse(&body, now).expect("ics must parse");
+        let mut parsed = None;
+        if let FetchOutcome::Changed(ok) = outcome {
+            parsed = Some(parser::parse(&ok.body, now).expect("ics must parse"));
+        }
+        let events = parsed.expect("a 200 body must be FetchOutcome::Changed");
         assert_eq!(events.len(), 1, "exactly one event expected");
         assert_eq!(events[0].summary, "Standup");
         assert!(
