@@ -32,8 +32,45 @@ Gatekeeper will warn end users, so they're required for a real release.
 > key file in CI. If you switch, update the `env:` block in
 > `release.yml` accordingly.
 
-Windows (#43) and Linux signing secrets are tracked in their own issues;
-the beta ships an unsigned Windows installer for now.
+### Windows code-signing (#43)
+
+The Windows job builds a WiX **MSI** (Start-menu shortcut + uninstaller)
+and Authenticode-signs it when these secrets are present. They are
+**optional** — without them the MSI still builds, just unsigned (handy
+for dry runs), but Windows SmartScreen will warn end users, so a real
+release wants them set.
+
+| Secret                         | What it is                                                                              | Required for    |
+| ------------------------------ | --------------------------------------------------------------------------------------- | --------------- |
+| `WINDOWS_CERTIFICATE`          | Base64 of your code-signing cert exported as `.pfx`. `base64 -i cert.pfx` (no newlines) | Windows signing |
+| `WINDOWS_CERTIFICATE_PASSWORD` | The password you set when exporting the `.pfx`                                          | Windows signing |
+
+The job decodes the PFX, imports it into the runner's certificate store,
+reads its thumbprint, and writes `src-tauri/tauri.windows.conf.json` —
+which Tauri auto-merges (RFC 7396) so the WiX bundler signs the MSI. That
+file is generated in CI and git-ignored; the signing identity never
+touches the repo.
+
+> **SmartScreen.** A standard OV certificate signs the binary but earns
+> SmartScreen reputation only over time/downloads; an **EV** certificate
+> clears SmartScreen immediately. A **self-signed** cert (below) is fine
+> to prove the signing path end-to-end but gives users an
+> _untrusted-publisher_ prompt — for public betas, unsigned or a real
+> OV/EV cert are the realistic choices.
+
+#### Generating a self-signed cert (to test the signing path)
+
+On a Windows machine / runner (PowerShell):
+
+```powershell
+$cert = New-SelfSignedCertificate -Type CodeSigning `
+  -Subject "CN=Cairn (self-signed test)" `
+  -CertStoreLocation Cert:\CurrentUser\My
+$pwd = ConvertTo-SecureString -String "<choose-a-password>" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath cairn-test.pfx -Password $pwd
+# Then: base64 the .pfx into WINDOWS_CERTIFICATE, password into WINDOWS_CERTIFICATE_PASSWORD
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("cairn-test.pfx")) | Set-Clipboard
+```
 
 ### Updater signing key (#45)
 

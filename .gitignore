@@ -21,6 +21,9 @@ Cargo.lock.bak
 # Tauri
 /src-tauri/target/
 /src-tauri/gen/schemas/
+# Generated in CI to inject the Windows signing thumbprint (#43); the
+# signing identity must never be committed.
+/src-tauri/tauri.windows.conf.json
 
 # Browser extension (M7)
 /browser-extension/native-host/target/
