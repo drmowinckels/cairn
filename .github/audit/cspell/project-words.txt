@@ -59,6 +59,7 @@ WCAG
 WebdriverIO
 acks
 anyhow
+appindicator
 appleid
 apricot
 autonumber
@@ -109,7 +110,9 @@ knip
 lcov
 lede
 libappindicator
+libayatana
 librsvg2
+libwebkit
 libxss
 llvm-cov
 lychee

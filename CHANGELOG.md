@@ -14,6 +14,10 @@ as the GitHub Release body, so keep the most recent version at the top.
   installer otherwise — the same opt-in pattern as the macOS signing
   secrets (#43). See `RELEASING.md` for setup and the SmartScreen
   caveat.
+- `[linux]` The release pipeline pins the Linux bundles to a `.deb`
+  (Debian 12 / Ubuntu 22.04+) and an AppImage (Ubuntu 22.04 LTS,
+  Fedora 39+), built on `ubuntu-22.04` for broad glibc compatibility.
+  `rpm` is no longer shipped — AppImage covers Fedora (#44).
 
 ### Updates
 
