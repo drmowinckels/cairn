@@ -131,11 +131,12 @@ jobs:
             args: "--bundles msi"
             rust-targets: ""
     runs-on: ${{ matrix.platform }}
-    # Exposed at the job level so the import step's `if:` can test for its
-    # presence (the env context isn't available in a step's own `env:`).
+    # Only the cert is exposed job-wide, and solely so the import step's
+    # `if:` can test for its presence (the env context isn't available in a
+    # step's own `env:`). The password is scoped to the import step alone so
+    # it never reaches the test steps or the third-party build action.
     env:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -181,6 +182,8 @@ jobs:
       - name: Import Windows code-signing certificate (optional)
         if: matrix.platform == 'windows-latest' && env.WINDOWS_CERTIFICATE != ''
         shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           $pfxBytes = [Convert]::FromBase64String(($env:WINDOWS_CERTIFICATE -replace '\s', ''))
           $pfxPath = Join-Path $env:RUNNER_TEMP 'cairn-signing.pfx'
