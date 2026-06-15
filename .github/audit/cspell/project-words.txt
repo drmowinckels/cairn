@@ -106,6 +106,7 @@ intra-doc
 itemscope
 kbds
 keychain
+keyutils
 knip
 lcov
 lede

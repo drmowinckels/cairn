@@ -215,12 +215,15 @@ async fn open_db_for_setup(path: &std::path::Path) -> Result<Db, String> {
 /// exercised from `--lib` tests; production passes `Fetcher::new`.
 fn calendar_registry_for_setup(
     pool: sqlx::SqlitePool,
+    data_dir: &std::path::Path,
     build_fetcher: impl FnOnce() -> anyhow::Result<plugins::calendar::fetcher::Fetcher>,
 ) -> Result<Arc<CalendarRegistry>, String> {
     let fetcher = build_fetcher().map_err(|e| {
         format!("could not initialise the calendar engine; Cairn cannot start: {e}")
     })?;
-    Ok(Arc::new(CalendarRegistry::with_fetcher(pool, fetcher)))
+    Ok(Arc::new(CalendarRegistry::with_fetcher_in(
+        pool, fetcher, data_dir,
+    )))
 }
 
 use plugins::calendar::CalendarRegistry;
@@ -518,6 +521,7 @@ pub fn run() {
 
             let calendar = calendar_registry_for_setup(
                 db.pool.clone(),
+                &data_dir,
                 plugins::calendar::fetcher::Fetcher::new,
             )?;
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
@@ -846,7 +850,8 @@ mod tests {
         // registry only stores it — so this stays a pure, sync test of
         // the happy path.
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").expect("lazy pool");
-        let result = calendar_registry_for_setup(pool, Fetcher::new);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let result = calendar_registry_for_setup(pool, dir.path(), Fetcher::new);
         assert!(
             result.is_ok(),
             "a working fetcher builder must yield a registry"
@@ -860,7 +865,8 @@ mod tests {
         // `expect` (#160): the registry now surfaces a startup-fatal,
         // user-actionable message instead of panicking.
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").expect("lazy pool");
-        let result = calendar_registry_for_setup(pool, || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let result = calendar_registry_for_setup(pool, dir.path(), || {
             anyhow::bail!("simulated TLS backend init failure")
         });
         let err = result

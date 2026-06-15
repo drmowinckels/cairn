@@ -6,6 +6,17 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ## Unreleased
 
+### Signals
+
+- `[calendar]` Cross-platform parity for calendar URL secrets (#40). Linux
+  now uses the persistent D-Bus Secret Service (was the kernel keyutils
+  keyring, which was wiped on reboot). When no OS keychain is reachable —
+  e.g. a headless box with no keyring daemon — secrets fall back to an
+  encrypted file in the data dir (XChaCha20-Poly1305, machine-id-derived
+  key, owner-only), a documented downgrade described in `docs/PRIVACY.md`.
+  Adds an end-to-end ICS integration test (fake HTTP server → fetch →
+  parse → active event) so the platform-agnostic path is covered in CI.
+
 ### Packaging
 
 - `[windows]` The release pipeline now builds a WiX **MSI** (Start-menu

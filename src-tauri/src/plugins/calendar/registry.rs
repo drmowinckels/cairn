@@ -83,6 +83,15 @@ impl CalendarRegistry {
         Self::with_fetcher_and_secrets(pool, fetcher, Arc::new(secrets::Keychain))
     }
 
+    /// Like [`Self::with_fetcher`], but picks the secret backend at startup
+    /// via [`secrets::open`]: the OS keychain when reachable, otherwise the
+    /// encrypted-file fallback under `data_dir` (#40). Production uses this
+    /// so a headless Linux box without a Secret Service daemon still gets
+    /// persistent calendar secrets.
+    pub fn with_fetcher_in(pool: SqlitePool, fetcher: Fetcher, data_dir: &std::path::Path) -> Self {
+        Self::with_fetcher_and_secrets(pool, fetcher, secrets::open(data_dir))
+    }
+
     /// Build a registry with both the fetcher and the secret store injected —
     /// tests pass an in-memory fake so they exercise the credential cache
     /// without touching the real keychain.
