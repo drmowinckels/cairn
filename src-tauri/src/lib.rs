@@ -16,6 +16,19 @@ mod update;
 #[cfg(test)]
 mod test_support;
 
+// Linux CI runs headless, where production's Secret Service keyring has no
+// D-Bus daemon. Pin the default keyring store to the in-memory mock before
+// any test runs (a `ctor` runs at binary load, ahead of every test thread's
+// first `keyring::Entry` use) so the real-keyring roundtrip tests — calendar
+// and connector secrets — stay deterministic without provisioning a keyring
+// daemon. Production never compiles this (`cfg(test)`) and keeps the Secret
+// Service default. See `plugins::calendar::secrets` and #40.
+#[cfg(all(test, target_os = "linux"))]
+#[ctor::ctor]
+fn pin_mock_keyring_for_linux_tests() {
+    keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+}
+
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 

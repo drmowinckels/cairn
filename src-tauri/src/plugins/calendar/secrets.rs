@@ -154,6 +154,9 @@ fn classify_probe(probe: Result<String, keyring::Error>) -> bool {
 pub struct EncryptedFileStore {
     path: PathBuf,
     cipher: XChaCha20Poly1305,
+    /// Serialises the read-modify-write in `store`/`remove` so two
+    /// concurrent mutations can't lose an update or race the rename.
+    write_lock: std::sync::Mutex<()>,
 }
 
 impl EncryptedFileStore {
@@ -163,6 +166,7 @@ impl EncryptedFileStore {
         Self {
             cipher: XChaCha20Poly1305::new((&key).into()),
             path,
+            write_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -208,12 +212,20 @@ impl Secrets for EncryptedFileStore {
     }
 
     fn store(&self, id: &str, secret: &str) -> Result<(), SecretError> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut map = self.read_map()?;
         map.insert(id.to_string(), secret.to_string());
         self.write_map(&map)
     }
 
     fn remove(&self, id: &str) -> Result<(), SecretError> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut map = self.read_map()?;
         if map.remove(id).is_some() {
             self.write_map(&map)?;
@@ -230,19 +242,39 @@ fn derive_machine_key() -> Result<[u8; 32], SecretError> {
     Ok(blake3::derive_key(KEY_CONTEXT, id.as_bytes()))
 }
 
-/// Write `bytes` to `path` atomically (temp file + rename) with
-/// owner-only permissions on Unix, so the encrypted blob is never
-/// world-readable and a crash mid-write can't leave a partial file.
+/// Write `bytes` to `path` atomically (temp file + rename). The temp file
+/// is created owner-only from the outset on Unix — so the encrypted blob is
+/// never briefly world-readable under the process umask — and its name is
+/// unique per process+call so concurrent writers can't clobber each other's
+/// temp or race the rename. A crash mid-write leaves only a stale `.tmp`.
 fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), SecretError> {
-    let tmp = path.with_extension("enc.tmp");
-    std::fs::write(&tmp, bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-    }
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("enc.{}.{seq}.tmp", std::process::id()));
+    write_owner_only(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// Create `path` (truncating) and write `bytes`, with `0600` permissions
+/// applied at creation time on Unix.
+fn write_owner_only(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(bytes)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, bytes)
+    }
 }
 
 pub fn store(id: &str, secret: &str) -> Result<(), SecretError> {
@@ -373,6 +405,32 @@ mod tests {
             reopened.load("x").unwrap().as_deref(),
             Some("https://example.com/x.ics")
         );
+    }
+
+    #[test]
+    fn encrypted_file_concurrent_stores_do_not_lose_updates() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(store_in(dir.path()));
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let s = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    s.store(&format!("id-{i}"), &format!("https://example.com/{i}.ics"))
+                        .unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        for i in 0..8 {
+            assert_eq!(
+                store.load(&format!("id-{i}")).unwrap().as_deref(),
+                Some(format!("https://example.com/{i}.ics").as_str()),
+                "every concurrent write must survive (no lost update)"
+            );
+        }
     }
 
     #[test]

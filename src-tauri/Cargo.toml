@@ -100,3 +100,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # exercise OS-agnostic DB / IPC / rules paths).
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+
+# Linux CI is headless, so production's Secret Service keyring has no
+# daemon there. `ctor` lets a test-only initializer pin the default keyring
+# store to the in-memory mock before any test runs, so the real-keyring
+# roundtrip tests stay deterministic without a D-Bus session (#40).
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "0.2"
