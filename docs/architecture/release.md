@@ -99,16 +99,24 @@ App Store Connect API key instead, swap the `env:` block in
 
 ## Windows & Linux
 
-- **Windows (#43):** the beta ships an unsigned (or self-signed)
-  installer; SmartScreen will warn until an Authenticode/EV cert is
-  provisioned. Rotation runbook will be added alongside that cert.
+- **Windows (#43):** the Windows job builds a WiX **MSI** (Start-menu
+  shortcut + uninstaller) and Authenticode-signs it when the optional
+  `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` secrets are set,
+  mirroring the optional Apple secrets — unsigned otherwise. SmartScreen
+  warns on an unsigned or self-signed installer; an OV cert gains
+  reputation over time and an EV cert clears it immediately. Signing
+  config (`certificateThumbprint` + timestamp) is generated in CI into
+  `tauri.windows.conf.json` and merged via RFC 7396, so the thumbprint
+  never lives in the repo. **Rotation:** export the replacement `.pfx`,
+  update the two secrets, and re-cut the release — no config change, since
+  the thumbprint is read from the imported cert at build time.
 - **Linux (#44):** `.deb` + AppImage are not signed in the
   conventional sense; integrity is via the repo/release checksums.
 
 ## Where things live
 
-| Concern                  | Location                                                                  |
-| ------------------------ | ------------------------------------------------------------------------- |
+| Concern                  | Location                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | Pipeline                 | [`.github/workflows/release.yml`](https://github.com/drmowinckels/cairn/blob/main/.github/workflows/release.yml)    |
 | Bundle config            | [`src-tauri/tauri.conf.json`](https://github.com/drmowinckels/cairn/blob/main/src-tauri/tauri.conf.json) → `bundle` |
 | Entitlements             | [`src-tauri/entitlements.plist`](https://github.com/drmowinckels/cairn/blob/main/src-tauri/entitlements.plist)      |

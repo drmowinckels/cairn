@@ -13,6 +13,10 @@ name: Release
 # (see RELEASING.md). When those secrets are absent the macOS job still
 # runs and produces an UNSIGNED bundle, so the pipeline is exercisable
 # before the cert is provisioned.
+#
+# The Windows job builds a WiX MSI (Start-menu shortcut + uninstaller) and
+# Authenticode-signs it when WINDOWS_CERTIFICATE is set, falling back to an
+# unsigned installer otherwise — same optional pattern as macOS (#43).
 
 on:
   push:
@@ -124,9 +128,14 @@ jobs:
             args: ""
             rust-targets: ""
           - platform: windows-latest
-            args: ""
+            args: "--bundles msi"
             rust-targets: ""
     runs-on: ${{ matrix.platform }}
+    # Exposed at the job level so the import step's `if:` can test for its
+    # presence (the env context isn't available in a step's own `env:`).
+    env:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -161,6 +170,35 @@ jobs:
         run: npm run test
       - name: Test (Rust)
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      # Windows Authenticode signing (#43). Optional, like the Apple
+      # secrets: when WINDOWS_CERTIFICATE is unset the step is skipped and
+      # the MSI ships unsigned (SmartScreen will warn — see RELEASING.md).
+      # When set, we import the PFX, read its thumbprint, and write a
+      # platform-specific config file that Tauri auto-merges (RFC 7396) so
+      # the WiX bundler signs the MSI. The file is generated, never
+      # committed (.gitignore), so the signing identity stays in CI only.
+      - name: Import Windows code-signing certificate (optional)
+        if: matrix.platform == 'windows-latest' && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $pfxBytes = [Convert]::FromBase64String(($env:WINDOWS_CERTIFICATE -replace '\s', ''))
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'cairn-signing.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfxPath
+          $signing = @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $cert.Thumbprint
+                digestAlgorithm       = 'sha256'
+                timestampUrl          = 'http://timestamp.digicert.com'
+              }
+            }
+          } | ConvertTo-Json -Depth 6
+          Set-Content -Path src-tauri/tauri.windows.conf.json -Value $signing -Encoding utf8
+          Write-Host "MSI signing enabled (thumbprint $($cert.Thumbprint))."
 
       - name: Build, sign, notarize, and upload to the draft release
         uses: tauri-apps/tauri-action@v0

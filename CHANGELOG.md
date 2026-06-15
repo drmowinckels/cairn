@@ -6,6 +6,15 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ## Unreleased
 
+### Packaging
+
+- `[windows]` The release pipeline now builds a WiX **MSI** (Start-menu
+  shortcut + uninstaller) and Authenticode-signs it when the optional
+  `WINDOWS_CERTIFICATE` secrets are set, falling back to an unsigned
+  installer otherwise — the same opt-in pattern as the macOS signing
+  secrets (#43). See `RELEASING.md` for setup and the SmartScreen
+  caveat.
+
 ### Updates
 
 - `[privacy]` Opt-in update checker (#45). Off by default; when enabled in
