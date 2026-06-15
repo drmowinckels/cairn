@@ -17,6 +17,12 @@ name: Release
 # The Windows job builds a WiX MSI (Start-menu shortcut + uninstaller) and
 # Authenticode-signs it when WINDOWS_CERTIFICATE is set, falling back to an
 # unsigned installer otherwise — same optional pattern as macOS (#43).
+#
+# The Linux job builds a `.deb` (Debian 12 / Ubuntu 22.04+) and an AppImage
+# (universal — Ubuntu 22.04 LTS, Fedora 39+); building on the oldest
+# supported runner (ubuntu-22.04, glibc 2.35) keeps both broadly
+# compatible. Linux bundles are unsigned; integrity is via release
+# checksums (#44).
 
 on:
   push:
@@ -125,7 +131,7 @@ jobs:
             args: "--target universal-apple-darwin"
             rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           - platform: ubuntu-22.04
-            args: ""
+            args: "--bundles deb,appimage"
             rust-targets: ""
           - platform: windows-latest
             args: "--bundles msi"

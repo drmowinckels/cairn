@@ -155,6 +155,28 @@ stapler validate /Applications/Cairn.app
 stapler validate Cairn_0.1.0_universal.dmg
 ```
 
+## Verifying the Linux bundles (#44)
+
+The Linux job emits a `.deb` and an AppImage. There is no signature to
+check (integrity is via the release checksums), so verification is an
+install + launch round-trip on the supported distros:
+
+```bash
+# Debian 12 / Ubuntu 22.04+ — install, launch, then remove
+sudo apt install ./Cairn_0.1.0_amd64.deb
+cairn            # tray icon appears; popover opens
+sudo apt remove cairn
+
+# AppImage — Ubuntu 22.04 LTS and Fedora 39+ (no install step)
+chmod +x Cairn_0.1.0_amd64.AppImage
+./Cairn_0.1.0_amd64.AppImage
+```
+
+> The `.deb` runtime dependencies live in `tauri.conf.json`
+> (`bundle.linux.deb.depends`); if a fresh install complains about a
+> missing `libwebkit2gtk` / `libayatana-appindicator`, reconcile that
+> list. `rpm` is intentionally not shipped — AppImage covers Fedora.
+
 ## Troubleshooting
 
 - **`The binary is not signed with a valid Developer ID`** — the

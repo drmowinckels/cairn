@@ -110,8 +110,16 @@ App Store Connect API key instead, swap the `env:` block in
   never lives in the repo. **Rotation:** export the replacement `.pfx`,
   update the two secrets, and re-cut the release — no config change, since
   the thumbprint is read from the imported cert at build time.
-- **Linux (#44):** `.deb` + AppImage are not signed in the
-  conventional sense; integrity is via the repo/release checksums.
+- **Linux (#44):** the Linux job builds a `.deb` (Debian 12 /
+  Ubuntu 22.04+) and an AppImage (universal — verified targets are
+  Ubuntu 22.04 LTS and Fedora 39+). Both are pinned via
+  `--bundles deb,appimage`; `rpm` is intentionally not shipped since
+  AppImage covers Fedora and an Ubuntu-built rpm carries
+  Debian-style dependency names. Building on `ubuntu-22.04` (glibc 2.35)
+  keeps both bundles compatible with newer distros. `.deb` runtime deps
+  are declared in `tauri.conf.json` (`bundle.linux.deb.depends`). Linux
+  bundles are not signed in the conventional sense; integrity is via the
+  release checksums.
 
 ## Where things live
 
