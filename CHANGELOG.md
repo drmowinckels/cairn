@@ -16,6 +16,12 @@ as the GitHub Release body, so keep the most recent version at the top.
   key, owner-only), a documented downgrade described in `docs/PRIVACY.md`.
   Adds an end-to-end ICS integration test (fake HTTP server → fetch →
   parse → active event) so the platform-agnostic path is covered in CI.
+- `[git]` The git watcher now seeds every discovered repo's branch on
+  startup without dropping events. It previously `try_send`-ed the startup
+  batch into a bounded channel and silently dropped most of it on machines
+  with many repos (logging a burst of "startup try_send dropped event: no
+  available capacity"); it now awaits each send, applying backpressure
+  instead — first-launch branch state seeds cleanly.
 
 ### Packaging
 
