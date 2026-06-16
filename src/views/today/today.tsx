@@ -1102,6 +1102,7 @@ export function TodayView({
               announce={announce}
               cbEnabled={cbEnabled}
               showNow={isToday}
+              onEntryClick={onEditRecent}
             />
           ) : (
             <RecentList

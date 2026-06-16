@@ -78,8 +78,22 @@ describe("TimelineStrip (#188)", () => {
     });
     expect(container.querySelector(".vt-seg-desc")).toBeNull();
     expect(container.querySelector(".vt-seg")?.getAttribute("aria-label")).toBe(
-      "Cairn",
+      "Edit Cairn",
     );
+  });
+
+  it("clicking a block calls onEntryClick with the entry id", () => {
+    const onEntryClick = vi.fn();
+    const { container } = renderStrip({ onEntryClick });
+    (container.querySelector(".vt-seg") as HTMLButtonElement).click();
+    expect(onEntryClick).toHaveBeenCalledWith("e1");
+  });
+
+  it("renders blocks disabled (non-interactive) when no onEntryClick is given", () => {
+    const { container } = renderStrip();
+    expect(
+      (container.querySelector(".vt-seg") as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it("draws the now-rule only when showNow is set", () => {

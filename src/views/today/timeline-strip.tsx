@@ -25,13 +25,15 @@ interface Props {
   cbEnabled: boolean;
   /** Draw the live "now" rule and scroll it into view — false for a past day. */
   showNow: boolean;
+  /** Open the editor for a clicked block. Omit to render read-only. */
+  onEntryClick?: (id: string) => void;
 }
 
 /**
  * Vertical, scrollable day timeline (#188): entries render as colour-coded
  * blocks down a time axis, height proportional to duration, gaps left as empty
- * surface so "what didn't I track?" reads at a glance. Read-only for now —
- * click-to-edit and drag-resize land in follow-up PRs.
+ * surface so "what didn't I track?" reads at a glance. Clicking a block opens
+ * the entry editor; drag-resize lands in a follow-up PR.
  */
 export function TimelineStrip({
   entries,
@@ -39,6 +41,7 @@ export function TimelineStrip({
   announce,
   cbEnabled,
   showNow,
+  onEntryClick,
 }: Props) {
   const [nowMin, setNowMin] = useState(() => minutesNow());
   useEffect(() => {
@@ -76,7 +79,7 @@ export function TimelineStrip({
     <div
       className="vt"
       ref={scrollRef}
-      role="img"
+      role="group"
       aria-label={`Timeline from ${fmtClock(win.startMin)} to ${fmtClock(
         win.endMin,
       )}`}
@@ -107,12 +110,15 @@ export function TimelineStrip({
             const name = proj?.name ?? "Uncategorized";
             const label = s.description ? `${name} · ${s.description}` : name;
             return (
-              <div
+              <button
                 key={s.id}
+                type="button"
                 className={`vt-seg${s.running ? " is-running" : ""}`}
                 style={{ top: `${topPx}px`, height: `${heightPx}px` }}
                 title={label}
-                aria-label={label}
+                aria-label={`Edit ${label}`}
+                disabled={!onEntryClick}
+                onClick={() => onEntryClick?.(s.id)}
               >
                 <span
                   className="vt-seg-bar"
@@ -125,7 +131,7 @@ export function TimelineStrip({
                     <span className="vt-seg-desc">{s.description}</span>
                   )}
                 </span>
-              </div>
+              </button>
             );
           })}
           {showNow && (
