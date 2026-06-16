@@ -168,6 +168,7 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         plugin_host,
         connector_host,
         capture: crate::signals::capture::SignalCapture::new(),
+        activity_recorder: crate::signals::activity_recorder::ActivityRecorder::new(),
         data_dir,
         exclusions,
         exclusions_mutator: tokio::sync::Mutex::new(()),
