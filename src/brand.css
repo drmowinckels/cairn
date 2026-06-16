@@ -1619,6 +1619,141 @@ body {
   gap: 5px;
 }
 
+/* ─── VERTICAL TIMELINE (#188) ──────────────────────────────────────── */
+.vt {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+
+.vt-canvas {
+  position: relative;
+}
+
+.vt-axis {
+  position: absolute;
+  inset: 0;
+}
+
+.vt-tick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 0.5px solid var(--hairline);
+}
+
+.vt-tick-label {
+  position: absolute;
+  top: 1px;
+  left: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+
+/* Segments + the now-rule sit right of the 44px hour-label gutter. */
+.vt-track {
+  position: absolute;
+  inset: 0 0 0 44px;
+}
+
+.vt-seg {
+  position: absolute;
+  left: 0;
+  right: 6px;
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+  padding: 3px 6px;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.vt-seg-bar {
+  flex: 0 0 3px;
+  align-self: stretch;
+  border-radius: 2px;
+}
+
+.vt-seg-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.vt-seg-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vt-seg-desc {
+  font-size: 12px;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vt-seg.is-running {
+  border-color: var(--accent-ink);
+}
+
+.vt-now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1.5px solid var(--accent-ink);
+  pointer-events: none;
+}
+
+.vt-now-label {
+  position: absolute;
+  top: -8px;
+  right: 4px;
+  padding: 0 3px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent-ink);
+  background: var(--bg-soft);
+}
+
+/* List / timeline view toggle in section labels (#188) */
+.view-toggle {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.view-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 5px;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+
+.view-toggle-btn.is-active {
+  color: var(--ink);
+  background: var(--bg-soft);
+  border-color: var(--hairline-strong);
+}
+
+.view-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 1px;
+}
+
 /* ─── ENTRY LIST ────────────────────────────────────────────────────── */
 .entries {
   list-style: none;

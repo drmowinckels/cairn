@@ -3,10 +3,14 @@ import {
   TIMELINE_DAY_END_MIN,
   TIMELINE_DAY_SPAN_MIN,
   TIMELINE_DAY_START_MIN,
+  blockGeometry,
+  dayWindow,
   entriesToSegments,
+  hourTicks,
   legendFromSegments,
   minutesOfDay,
   startToPercent,
+  type TimelineSegment,
 } from "./timeline";
 import type { BackendEntry } from "./ipc";
 import type { Project } from "./types";
@@ -146,5 +150,71 @@ describe("legendFromSegments", () => {
       12 * 60,
     );
     expect(legendFromSegments(segments, PROJECTS)).toEqual([]);
+  });
+});
+
+function seg(startMin: number, endMin: number): TimelineSegment {
+  return {
+    id: `${startMin}-${endMin}`,
+    startMin,
+    endMin,
+    projectId: null,
+    description: "",
+    running: false,
+    source: "manual",
+  };
+}
+
+describe("dayWindow", () => {
+  it("defaults to the 08:00–19:00 working floor for a sparse day", () => {
+    expect(dayWindow([], 12 * 60, false)).toEqual({
+      startMin: TIMELINE_DAY_START_MIN,
+      endMin: TIMELINE_DAY_END_MIN,
+    });
+  });
+
+  it("expands (hour-aligned) to cover early and late entries", () => {
+    // 06:20 → 21:40 should widen the window to 06:00–22:00.
+    const w = dayWindow([seg(6 * 60 + 20, 21 * 60 + 40)], 12 * 60, false);
+    expect(w).toEqual({ startMin: 6 * 60, endMin: 22 * 60 });
+  });
+
+  it("extends to the now marker only when showNow is set", () => {
+    expect(dayWindow([], 21 * 60 + 5, false).endMin).toBe(TIMELINE_DAY_END_MIN);
+    expect(dayWindow([], 21 * 60 + 5, true).endMin).toBe(22 * 60);
+  });
+
+  it("never returns a zero-span window", () => {
+    const w = dayWindow([seg(8 * 60, 8 * 60)], 8 * 60, false);
+    expect(w.endMin).toBeGreaterThan(w.startMin);
+  });
+});
+
+describe("hourTicks", () => {
+  it("emits one mark per hour inclusive of both bounds", () => {
+    expect(hourTicks({ startMin: 8 * 60, endMin: 11 * 60 })).toEqual([
+      8 * 60,
+      9 * 60,
+      10 * 60,
+      11 * 60,
+    ]);
+  });
+});
+
+describe("blockGeometry", () => {
+  const win = { startMin: 8 * 60, endMin: 18 * 60 };
+
+  it("places a block by its true offset and duration", () => {
+    // 09:00–10:30 at 40px/h → top 40px, height 60px.
+    expect(blockGeometry(9 * 60, 10 * 60 + 30, win, 40, 10)).toEqual({
+      topPx: 40,
+      heightPx: 60,
+    });
+  });
+
+  it("clamps very short blocks to the minimum height but keeps the offset", () => {
+    const g = blockGeometry(9 * 60, 9 * 60 + 1, win, 40, 18);
+    expect(g.topPx).toBe(40);
+    expect(g.heightPx).toBe(18);
   });
 });
