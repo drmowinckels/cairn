@@ -49,10 +49,10 @@ function renderStrip(over: Partial<Parameters<typeof TimelineStrip>[0]> = {}) {
 describe("TimelineStrip (#188)", () => {
   it("renders one block per entry, height proportional to duration", () => {
     const { container } = renderStrip();
-    const segs = container.querySelectorAll<HTMLElement>(".vt-seg");
-    expect(segs).toHaveLength(1);
+    const blocks = container.querySelectorAll<HTMLElement>(".vt-seg");
+    expect(blocks).toHaveLength(1);
     // 90 min at 44px/h ≈ 66px.
-    expect(segs[0]!.style.height).toBe("66px");
+    expect(blocks[0]!.style.height).toBe("66px");
   });
 
   it("labels a block with its project name and description", () => {
@@ -77,9 +77,9 @@ describe("TimelineStrip (#188)", () => {
       entries: [entry({ description: "" })],
     });
     expect(container.querySelector(".vt-seg-desc")).toBeNull();
-    expect(
-      container.querySelector(".vt-seg")?.getAttribute("aria-label"),
-    ).toBe("Cairn");
+    expect(container.querySelector(".vt-seg")?.getAttribute("aria-label")).toBe(
+      "Cairn",
+    );
   });
 
   it("draws the now-rule only when showNow is set", () => {
