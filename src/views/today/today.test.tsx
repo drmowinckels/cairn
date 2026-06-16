@@ -59,6 +59,7 @@ function renderToday({
 afterEach(() => {
   vi.clearAllMocks();
   suggestionOverride = SUGGESTION_FIXTURE;
+  window.localStorage.clear();
 });
 
 describe("TodayView (idle — no running entry)", () => {
@@ -195,6 +196,19 @@ describe("TodayView (idle — no running entry)", () => {
     expect(screen.getByLabelText(/recent entries/i)).toBeTruthy();
     const recentEmpty = document.querySelector(".recent .empty");
     expect(recentEmpty).toBeTruthy();
+  });
+
+  it("toggles the entries surface between list and the vertical timeline (#188)", () => {
+    const { container } = renderToday();
+    // Defaults to the list (no timeline strip).
+    expect(container.querySelector(".vt")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /timeline view/i }));
+    expect(container.querySelector(".vt")).toBeTruthy();
+    expect(document.querySelector(".recent .empty")).toBeNull();
+    // And back to the list.
+    fireEvent.click(screen.getByRole("button", { name: /list view/i }));
+    expect(container.querySelector(".vt")).toBeNull();
+    expect(document.querySelector(".recent .empty")).toBeTruthy();
   });
 
   it("renders the quick-start grid only in projects-first layout", () => {

@@ -66,6 +66,8 @@ import type {
   Task,
 } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
+import { TimelineStrip } from "./timeline-strip";
+import { useTimelineViewPrefs } from "../../lib/use-timeline-view-prefs";
 import { SuggestWhy } from "./suggest-why";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
 import { WorkingHoursReminder } from "./working-hours-reminder";
@@ -370,6 +372,7 @@ export function TodayView({
   const projectsById = useMemo(() => projectById(projects), [projects]);
   const cbEnabled = useColorblindEnabled();
   const { rounding } = useRoundingPrefs();
+  const { view: entriesView, setView: setEntriesView } = useTimelineViewPrefs();
   const announceMsg = useAnnounce();
   const prevRunningIdRef = useRef<string | null>(timer.running?.id ?? null);
 
@@ -1060,15 +1063,55 @@ export function TodayView({
           aria-label={isToday ? "Recent entries" : "Logged entries"}
         >
           <div className="sect-label">
-            <span>{isToday ? "Recent" : "Entries"}</span>
+            <span>
+              {entriesView === "timeline"
+                ? "Timeline"
+                : isToday
+                  ? "Recent"
+                  : "Entries"}
+            </span>
+            <div className="view-toggle" role="group" aria-label="Entries view">
+              <button
+                type="button"
+                className={`view-toggle-btn${
+                  entriesView === "list" ? " is-active" : ""
+                }`}
+                aria-label="List view"
+                aria-pressed={entriesView === "list"}
+                onClick={() => setEntriesView("list")}
+              >
+                <Icon name="list" size={13} />
+              </button>
+              <button
+                type="button"
+                className={`view-toggle-btn${
+                  entriesView === "timeline" ? " is-active" : ""
+                }`}
+                aria-label="Timeline view"
+                aria-pressed={entriesView === "timeline"}
+                onClick={() => setEntriesView("timeline")}
+              >
+                <Icon name="grid" size={13} />
+              </button>
+            </div>
           </div>
-          <RecentList
-            entries={recentEntries}
-            projectsById={projectsById}
-            onEdit={onEditRecent}
-            rounding={rounding}
-            emptyToday={isToday}
-          />
+          {entriesView === "timeline" ? (
+            <TimelineStrip
+              entries={todayEntries}
+              projects={projects}
+              announce={announce}
+              cbEnabled={cbEnabled}
+              showNow={isToday}
+            />
+          ) : (
+            <RecentList
+              entries={recentEntries}
+              projectsById={projectsById}
+              onEdit={onEditRecent}
+              rounding={rounding}
+              emptyToday={isToday}
+            />
+          )}
         </section>
       )}
 

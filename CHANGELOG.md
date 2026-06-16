@@ -59,6 +59,15 @@ as the GitHub Release body, so keep the most recent version at the top.
   the only outbound network Cairn core makes besides user-configured
   calendar fetches.
 
+### Today
+
+- `[feature]` Vertical day timeline (#188). The Today entries surface has a
+  list / timeline toggle (in the section header, persisted): the timeline
+  renders the day's entries as colour-coded blocks down a scrollable time
+  axis, height proportional to duration, with gaps left as empty surface and
+  a live "now" rule. Read-only for now — click-to-edit, drag-resize and
+  split/merge follow. List stays the default.
+
 ## Beta v0.1.0
 
 First public beta. Local-first time tracking with passive auto-detection.
