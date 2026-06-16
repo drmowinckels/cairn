@@ -15,6 +15,12 @@ as the GitHub Release body, so keep the most recent version at the top.
   (`app_categories.json`) and the editor lists the matched apps as helper
   text. Derived in the matcher from the already-redacted `app.name`, so an
   excluded app contributes no category — no change to the privacy contract.
+- `[rules]` Starter-rule suggestions (#189). The Rules view now shows a
+  collapsible "Suggestions" section with bundled, disabled-by-default rules
+  (Meetings → meeting apps, Coding → editors). Adding one creates the named
+  project if absent and a real rule; nothing is tracked until the user opts
+  in. Dismissals persist locally; an adopted/dismissed starter stops
+  suggesting.
 - `[calendar]` Cross-platform parity for calendar URL secrets (#40). Linux
   now uses the persistent D-Bus Secret Service (was the kernel keyutils
   keyring, which was wiped on reboot). When no OS keychain is reachable —

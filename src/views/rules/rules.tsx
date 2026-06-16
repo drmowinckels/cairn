@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
 import { Empty, ProjectChip } from "../../lib/components";
 import type { AppCategory } from "../../lib/ipc";
@@ -32,6 +32,14 @@ import { selectLiveSignals, useSnapshot } from "../../lib/use-snapshot";
 import { LiveSignalsCard } from "./live-signals-card";
 import { RuleTestBench } from "./test-bench";
 import { ExclusionsSection } from "./exclusions-section";
+import { StarterSuggestions } from "./starter-suggestions";
+import {
+  adoptStarter,
+  loadDismissedStarters,
+  pendingStarters,
+  persistDismissedStarter,
+  type StarterRule,
+} from "../../lib/starter-rules";
 import { LIVE_SIGNALS as FIXTURE_SIGNALS } from "../../test-fixtures/data";
 import { inTauri } from "../../lib/ipc";
 
@@ -83,10 +91,11 @@ export function RulesView({
   density,
   ambiguityDefault,
 }: Props) {
-  const { rules, add, update, remove, duplicate, move } = useRules({
-    defaultAmbiguity: ambiguityDefault,
-  });
-  const { projects } = useProjects();
+  const { rules, add, addFromTemplate, update, remove, duplicate, move } =
+    useRules({
+      defaultAmbiguity: ambiguityDefault,
+    });
+  const { projects, create: createProject } = useProjects();
   const projectById = useMemo(
     () => new Map(projects.map((p) => [p.id, p])),
     [projects],
@@ -138,6 +147,38 @@ export function RulesView({
   // "Rule X moved to position Y" without taking focus from the
   // active control.
   const [moveAnnouncement, setMoveAnnouncement] = useState("");
+
+  // Starter-rule suggestions (#189): bundled templates the user can adopt
+  // with one click. Dismissals persist to localStorage; adoption is detected
+  // by the live rule set, so an adopted/dismissed starter stops suggesting.
+  const [dismissedStarters, setDismissedStarters] = useState<string[]>(
+    loadDismissedStarters,
+  );
+  const [starterBusy, setStarterBusy] = useState(false);
+  const [starterError, setStarterError] = useState<string | null>(null);
+  const pendingStarterRules = useMemo(
+    () => pendingStarters(rules, dismissedStarters),
+    [rules, dismissedStarters],
+  );
+
+  const handleAdoptStarter = useCallback(
+    async (starter: StarterRule) => {
+      setStarterBusy(true);
+      setStarterError(null);
+      const err = await adoptStarter(starter, {
+        projects,
+        createProject,
+        addFromTemplate,
+      });
+      setStarterError(err);
+      setStarterBusy(false);
+    },
+    [projects, createProject, addFromTemplate],
+  );
+
+  const handleDismissStarter = useCallback((id: string) => {
+    setDismissedStarters(persistDismissedStarter(id));
+  }, []);
 
   /**
    * Clicking a Live-signals row adds a condition with the prefilled
@@ -271,6 +312,14 @@ export function RulesView({
           ))}
         </ul>
       )}
+
+      <StarterSuggestions
+        starters={pendingStarterRules}
+        onAdopt={handleAdoptStarter}
+        onDismiss={handleDismissStarter}
+        busy={starterBusy}
+        error={starterError}
+      />
 
       {complexity === "heavy" && <RuleTestBench />}
 

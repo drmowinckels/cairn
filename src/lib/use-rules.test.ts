@@ -440,6 +440,50 @@ describe("useRules hook", () => {
     expect(result.current.rules[0].priority).toBe(10);
   });
 
+  it("addFromTemplate() creates a rule from the template and persists it", async () => {
+    const { result } = renderHook(() => useRules());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      await result.current.addFromTemplate({
+        name: "Meetings",
+        when: [{ signal: "app.category", op: "equals", value: "meeting" }],
+        then: { project: "proj-meetings" },
+        confidence: "suggestive",
+      });
+    });
+    expect(result.current.rules).toHaveLength(1);
+    const created = result.current.rules[0];
+    expect(created.name).toBe("Meetings");
+    expect(created.when[0]).toEqual({
+      signal: "app.category",
+      op: "equals",
+      value: "meeting",
+    });
+    expect(created.then.project).toBe("proj-meetings");
+    // No app-wide default supplied → falls back to "prompt".
+    expect(created.ambiguityBehavior).toBe("prompt");
+    expect(ipc.saveRule).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Meetings", enabled: true }),
+    );
+  });
+
+  it("addFromTemplate() inherits the app-wide ambiguity default", async () => {
+    const { result } = renderHook(() =>
+      useRules({ defaultAmbiguity: "log-to-uncategorized" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      await result.current.addFromTemplate({
+        name: "Coding",
+        when: [{ signal: "app.category", op: "equals", value: "editor" }],
+        then: { project: "proj-dev" },
+      });
+    });
+    expect(result.current.rules[0].ambiguityBehavior).toBe(
+      "log-to-uncategorized",
+    );
+  });
+
   it("update() applies the patch locally and persists", async () => {
     ipcMock.__seed([
       {
