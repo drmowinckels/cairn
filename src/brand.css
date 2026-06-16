@@ -1688,6 +1688,30 @@ body {
   outline-offset: 1px;
 }
 
+/* Drag-resize handles overlaid on a block's top/bottom edges (#188). */
+.vt-handle {
+  position: absolute;
+  left: 0;
+  right: 6px;
+  height: 7px;
+  cursor: row-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.vt-handle--top {
+  transform: translateY(-3px);
+}
+
+.vt-handle--bottom {
+  transform: translateY(-4px);
+}
+
+.vt-handle:hover {
+  background: color-mix(in srgb, var(--accent-ink) 30%, transparent);
+  border-radius: 2px;
+}
+
 .vt-seg-bar {
   flex: 0 0 3px;
   align-self: stretch;

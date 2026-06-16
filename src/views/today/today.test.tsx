@@ -376,6 +376,76 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     ).toBeTruthy();
   });
 
+  it("dragging a timeline block edge persists the new time via update_entry (#188)", async () => {
+    const { invoke } = await freshRender("manual");
+    fireEvent.click(
+      await screen.findByRole("button", { name: /timeline view/i }),
+    );
+    const handle = await waitFor(() => {
+      const h = document.querySelector<HTMLElement>(".vt-handle--bottom");
+      if (!h) throw new Error("no resize handle yet");
+      return h;
+    });
+    fireEvent.pointerDown(handle, { clientY: 100 });
+    window.dispatchEvent(new MouseEvent("pointermove", { clientY: 144 }));
+    window.dispatchEvent(new MouseEvent("pointerup"));
+    await waitFor(() =>
+      expect(invoke.mock.calls.some(([c]) => c === "update_entry")).toBe(true),
+    );
+  });
+
+  it("a failed timeline resize is logged via console.error (#188 catch)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const closed = {
+      id: "c1",
+      projectId: "cairn",
+      taskId: null,
+      description: "earlier",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 600_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [closed];
+      if (cmd === "list_projects")
+        return [
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
+        ];
+      if (cmd === "update_entry") throw new Error("resize boom");
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /timeline view/i }),
+    );
+    const handle = await waitFor(() => {
+      const h = document.querySelector<HTMLElement>(".vt-handle--bottom");
+      if (!h) throw new Error("no resize handle yet");
+      return h;
+    });
+    fireEvent.pointerDown(handle, { clientY: 100 });
+    window.dispatchEvent(new MouseEvent("pointermove", { clientY: 144 }));
+    window.dispatchEvent(new MouseEvent("pointerup"));
+    await waitFor(() => expect(errSpy).toHaveBeenCalled());
+    errSpy.mockRestore();
+  });
+
   it("timeline legend pairs each project dot with its name (#30 a11y dual-signal)", async () => {
     // Color is not the only signal: every dot in the legend must be
     // accompanied by the project's name so a grayscale render still

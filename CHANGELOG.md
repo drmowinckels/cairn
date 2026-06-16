@@ -65,8 +65,9 @@ as the GitHub Release body, so keep the most recent version at the top.
   list / timeline toggle (in the section header, persisted): the timeline
   renders the day's entries as colour-coded blocks down a scrollable time
   axis, height proportional to duration, with gaps left as empty surface and
-  a live "now" rule. Clicking a block opens the entry editor; drag-resize and
-  split/merge follow. List stays the default.
+  a live "now" rule. Clicking a block opens the entry editor, and dragging a
+  block's top/bottom edge resizes its start/end time (snapped to 5 min,
+  persisted via `update_entry`). List stays the default.
 
 ## Beta v0.1.0
 
