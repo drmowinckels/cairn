@@ -3136,6 +3136,77 @@ select.rule-conf {
   gap: 12px;
 }
 
+/* Starter-rule "Suggestions" section (#189). */
+.starter-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--ink);
+}
+
+.starter-head .settings-h {
+  margin: 8px 0 2px;
+}
+
+.starter-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-mute);
+  background: var(--bg-soft);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.starter-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.starter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-sm);
+}
+
+.starter-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.starter-name {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.starter-desc {
+  font-size: 12px;
+  color: var(--ink-mute);
+  line-height: 1.4;
+}
+
+.starter-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .excl-list {
   list-style: none;
   margin: 0;

@@ -34,6 +34,18 @@ interface RuleBody {
 }
 
 /**
+ * Minimal shape for creating a rule from a predefined template — the
+ * starter-rule "Suggestions" flow (#189). The new rule inherits the user's
+ * app-wide ambiguity default and slots in at the bottom of the list.
+ */
+export interface RuleTemplate {
+  name: string;
+  when: RuleCondition[];
+  then: RuleAction;
+  confidence?: Confidence;
+}
+
+/**
  * The closed set of valid `AmbiguityBehavior` values. Exported so
  * the rule editor + the suggestion dispatcher use a single source
  * of truth: a new variant added here is automatically reachable by
@@ -73,6 +85,9 @@ export interface UseRules {
   refresh: () => Promise<void>;
   /** Create a blank rule with sensible defaults. Returns its id. */
   add: () => Promise<string>;
+  /** Create a rule from a predefined template (starter rules, #189).
+   *  Returns its id. */
+  addFromTemplate: (template: RuleTemplate) => Promise<string>;
   /** Patch the local rule + persist. `then` is shallow-merged. */
   update: (id: string, patch: PatchRule) => Promise<void>;
   /** Drop a rule. */
@@ -164,6 +179,30 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
     commit((prev) => [...prev, deserializeRule(saved)]);
     return saved.id;
   }, [commit, defaultAmbiguity]);
+
+  const addFromTemplate = useCallback(
+    async (template: RuleTemplate): Promise<string> => {
+      const draft: Rule = {
+        id: cryptoId(),
+        name: template.name,
+        enabled: true,
+        priority: nextPriority(rulesRef.current),
+        confidence: template.confidence,
+        ambiguityBehavior: defaultAmbiguity,
+        when: template.when,
+        then: template.then,
+        matchedToday: 0,
+      };
+      if (!inTauri) {
+        commit((prev) => [...prev, draft]);
+        return draft.id;
+      }
+      const saved = await saveRuleIpc(serializeRule(draft, null));
+      commit((prev) => [...prev, deserializeRule(saved)]);
+      return saved.id;
+    },
+    [commit, defaultAmbiguity],
+  );
 
   const update = useCallback(
     async (id: string, patch: PatchRule) => {
@@ -277,6 +316,7 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
       errorNonce,
       refresh,
       add,
+      addFromTemplate,
       update,
       remove,
       duplicate,
@@ -289,6 +329,7 @@ export function useRules(opts: UseRulesOpts = {}): UseRules {
       errorNonce,
       refresh,
       add,
+      addFromTemplate,
       update,
       remove,
       duplicate,

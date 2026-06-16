@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import { RulesView } from "./index";
 import { appCategoryHint } from "./rules";
 
 afterEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
 });
 
 import type { AmbiguityBehavior } from "../../lib/types";
@@ -884,5 +891,61 @@ describe("appCategoryHint (#189)", () => {
   it("falls back to listing valid category names when unrecognised", () => {
     expect(appCategoryHint("nope", cats)).toBe("Use one of: meeting, editor");
     expect(appCategoryHint("", cats)).toBe("Use one of: meeting, editor");
+  });
+});
+
+describe("RulesView — starter suggestions (#189)", () => {
+  function starterSection(container: HTMLElement) {
+    return container.querySelector<HTMLElement>(
+      '[data-section="starter-rules"]',
+    );
+  }
+  function starterNames(container: HTMLElement) {
+    const section = starterSection(container);
+    return section
+      ? Array.from(section.querySelectorAll(".starter-name")).map(
+          (n) => n.textContent,
+        )
+      : [];
+  }
+  function rowFor(container: HTMLElement, name: string) {
+    const section = starterSection(container)!;
+    return Array.from(
+      section.querySelectorAll<HTMLElement>(".starter-row"),
+    ).find((r) => r.querySelector(".starter-name")?.textContent === name)!;
+  }
+
+  it("lists the bundled starters for a user who hasn't adopted them", () => {
+    const { container } = renderRules();
+    expect(screen.getByRole("button", { name: /suggestions/i })).toBeTruthy();
+    expect(starterNames(container)).toEqual(["Meetings", "Coding"]);
+  });
+
+  it("adopting a starter creates a rule and drops it from the suggestions", async () => {
+    const { container } = renderRules();
+    const before = container.querySelectorAll(".rule-list .rule").length;
+    fireEvent.click(
+      within(rowFor(container, "Meetings")).getByRole("button", {
+        name: /add/i,
+      }),
+    );
+    await waitFor(() => expect(starterNames(container)).toEqual(["Coding"]));
+    // A real rule was created for the adopted starter.
+    expect(container.querySelectorAll(".rule-list .rule").length).toBe(
+      before + 1,
+    );
+  });
+
+  it("dismissing a starter hides it and persists across remounts", async () => {
+    const { container, unmount } = renderRules();
+    fireEvent.click(
+      within(rowFor(container, "Coding")).getByRole("button", {
+        name: /dismiss/i,
+      }),
+    );
+    await waitFor(() => expect(starterNames(container)).toEqual(["Meetings"]));
+    unmount();
+    const second = renderRules();
+    expect(starterNames(second.container)).toEqual(["Meetings"]);
   });
 });
