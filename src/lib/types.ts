@@ -73,7 +73,8 @@ export type SignalKind =
   | "browser.tab"
   | "window.title"
   | "calendar.event"
-  | "app.name";
+  | "app.name"
+  | "app.category";
 
 export type Op =
   | "contains"

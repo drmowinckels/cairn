@@ -13,6 +13,7 @@ const SIGNAL_WHY_LABELS: Record<SignalKind, string> = {
   "ide.folder": "folder",
   "window.title": "window",
   "app.name": "app",
+  "app.category": "category",
   "browser.domain": "site",
   // Dead entry: the Rust `Condition` enum has no `BrowserTab` variant, so
   // `collect_matched_signals` never emits "browser.tab"; it exists only to

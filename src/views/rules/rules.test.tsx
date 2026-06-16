@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { RulesView } from "./index";
+import { appCategoryHint } from "./rules";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -293,6 +294,30 @@ describe("RulesView", () => {
     // rule would be unmatchable.
     const opSel = container.querySelector<HTMLSelectElement>(".cond-op");
     expect(opSel?.value).toBe("is-active");
+  });
+
+  it("offers app.category in the signal picker and shows a hint row when chosen (#189)", () => {
+    const { container } = renderRules({
+      openRuleId: "r1",
+      complexity: "medium",
+    });
+    const signalSel =
+      container.querySelector<HTMLSelectElement>(".cond-sig-sel");
+    expect(signalSel).toBeTruthy();
+    // The option is offered in the dropdown.
+    expect(
+      Array.from(signalSel!.options).some((o) => o.value === "app.category"),
+    ).toBe(true);
+    // No hint row before app.category is selected.
+    expect(container.querySelector(".cond-hint")).toBeNull();
+    fireEvent.change(signalSel!, { target: { value: "app.category" } });
+    // The helper row renders for app.category conditions (text is empty in
+    // fixture mode where the category table isn't fetched).
+    expect(container.querySelector(".cond-hint")).toBeTruthy();
+    // Switching to a non-category signal drops the hint again — the row is
+    // specific to app.category.
+    fireEvent.change(signalSel!, { target: { value: "app.name" } });
+    expect(container.querySelector(".cond-hint")).toBeNull();
   });
 
   // ---- #14: Confidence heuristic warning --------------------------
@@ -817,5 +842,47 @@ describe("RulesView", () => {
     const valInput = openRule.querySelector<HTMLInputElement>(".cond-val");
     expect(signalSel?.value).toBe("ide.folder");
     expect(valInput?.value).toBe("~/code/cairn");
+  });
+});
+
+describe("appCategoryHint (#189)", () => {
+  const cats = [
+    {
+      category: "meeting",
+      label: "Meeting apps",
+      apps: ["Zoom", "Microsoft Teams", "Webex"],
+    },
+    {
+      category: "editor",
+      label: "Code editors",
+      apps: ["a", "b", "c", "d", "e", "f", "g", "h"],
+    },
+  ];
+
+  it("returns empty string before the table has loaded", () => {
+    expect(appCategoryHint("meeting", [])).toBe("");
+  });
+
+  it("lists the matched apps for a recognised category", () => {
+    expect(appCategoryHint("meeting", cats)).toBe(
+      "Matches meeting apps: Zoom, Microsoft Teams, Webex",
+    );
+  });
+
+  it("is case- and whitespace-insensitive on the value", () => {
+    expect(appCategoryHint("  MEETING ", cats)).toBe(
+      "Matches meeting apps: Zoom, Microsoft Teams, Webex",
+    );
+  });
+
+  it("truncates to the first six apps with an ellipsis", () => {
+    expect(appCategoryHint("editor", cats)).toBe(
+      "Matches code editors: a, b, c, d, e, f, …",
+    );
+  });
+
+  it("falls back to listing valid category names when unrecognised", () => {
+    expect(appCategoryHint("nope", cats)).toBe("Use one of: meeting, editor");
+    expect(appCategoryHint("", cats)).toBe("Use one of: meeting, editor");
   });
 });

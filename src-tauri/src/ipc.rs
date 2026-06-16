@@ -1303,6 +1303,15 @@ pub async fn list_rules(state: State<'_, AppState>) -> Result<Vec<Rule>, String>
         .collect()
 }
 
+/// The bundled app→category table (#189), surfaced to the rule editor so it
+/// can list which apps each `app.category` value matches without duplicating
+/// the mapping in the frontend. A pure read of compiled-in data — no DB, no
+/// state, no secrets — so it's safe to expose and directly unit-testable.
+#[tauri::command]
+pub fn list_app_categories() -> Vec<crate::rules::app_categories::AppCategory> {
+    crate::rules::app_categories::categories().to_vec()
+}
+
 /// Maximum length of a single field on a dry-run snapshot, counted
 /// in UTF-16 code units to match the DOM `<input maxLength>`
 /// semantics the frontend bench uses (see `src/views/rules/test-bench.tsx`).
@@ -2586,6 +2595,20 @@ mod tests {
     use super::*;
     use crate::test_support::mock_app_with_db;
     use tauri::Manager;
+
+    #[test]
+    fn list_app_categories_returns_the_bundled_table() {
+        // The command is a pure read of compiled-in data — no state — so it
+        // can be called directly. Pins that the meeting group reaches the UI
+        // with its apps, the contract the rule editor's helper text relies on.
+        let cats = list_app_categories();
+        let meeting = cats
+            .iter()
+            .find(|c| c.category == "meeting")
+            .expect("meeting category present");
+        assert!(!meeting.label.is_empty());
+        assert!(meeting.apps.iter().any(|a| a == "Zoom"));
+    }
 
     #[tokio::test]
     async fn report_summary_on_fresh_db_is_zero_with_full_day_buckets() {

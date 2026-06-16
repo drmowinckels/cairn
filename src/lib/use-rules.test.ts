@@ -399,6 +399,10 @@ describe("defaultOpForSignal", () => {
     expect(defaultOpForSignal("ide.folder")).toBe("contains");
     expect(defaultOpForSignal("git.branch")).toBe("contains");
   });
+
+  it("returns equals for app.category (a fixed-set value, not a substring)", () => {
+    expect(defaultOpForSignal("app.category")).toBe("equals");
+  });
 });
 
 describe("useRules hook", () => {

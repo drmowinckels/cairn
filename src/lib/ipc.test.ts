@@ -59,6 +59,16 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("idle_seconds");
   });
 
+  it("listAppCategories invokes the command and returns the table", async () => {
+    const table = [
+      { category: "meeting", label: "Meeting apps", apps: ["Zoom"] },
+    ];
+    invokeMock.mockResolvedValue(table);
+    const { listAppCategories } = await import("./ipc");
+    expect(await listAppCategories()).toEqual(table);
+    expect(invokeMock).toHaveBeenCalledWith("list_app_categories");
+  });
+
   it("deleteEntry forwards the id and ignores the response", async () => {
     invokeMock.mockResolvedValue(null);
     const { deleteEntry } = await import("./ipc");
@@ -359,6 +369,12 @@ describe("ipc helpers (outside Tauri)", () => {
   it("getGitDiscoveryRoots returns the dev default without the backend", async () => {
     const { getGitDiscoveryRoots } = await import("./ipc");
     expect(await getGitDiscoveryRoots()).toEqual(["~/code"]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("listAppCategories short-circuits to [] without calling the backend", async () => {
+    const { listAppCategories } = await import("./ipc");
+    expect(await listAppCategories()).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

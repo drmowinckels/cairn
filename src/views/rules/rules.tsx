@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
 import { Empty, ProjectChip } from "../../lib/components";
+import type { AppCategory } from "../../lib/ipc";
+import { useAppCategories } from "../../lib/use-app-categories";
 import type {
   AmbiguityBehavior,
   Confidence,
@@ -54,6 +56,7 @@ const SIGNAL_OPTIONS: SignalKind[] = [
   "window.title",
   "calendar.event",
   "app.name",
+  "app.category",
 ];
 
 const CONFIDENCE_OPTIONS: Confidence[] = ["suggestive", "strict"];
@@ -312,6 +315,7 @@ function RuleRow({
   projectById,
 }: RuleRowProps) {
   const project = rule.then.project ? projectById.get(rule.then.project) : null;
+  const appCategories = useAppCategories();
   const stopBubble = (e: React.MouseEvent | React.KeyboardEvent) =>
     e.stopPropagation();
 
@@ -572,6 +576,11 @@ function RuleRow({
                     <Icon name="x" size={11} />
                   </button>
                 )}
+                {c.signal === "app.category" && (
+                  <p className="cond-hint">
+                    {appCategoryHint(c.value, appCategories)}
+                  </p>
+                )}
               </div>
             ))}
             {complexity !== "light" && (
@@ -754,6 +763,28 @@ function RuleConditionPill({ cond }: { cond: RuleCondition }) {
   );
 }
 
+const HINT_MAX_APPS = 6;
+
+/** Helper text under an `app.category` condition: which apps the entered
+ *  category matches. Falls back to listing the valid category names when the
+ *  value is empty or unrecognised, so the user can see their options (#189).
+ *  Returns "" when the table hasn't loaded (helper text is optional). */
+export function appCategoryHint(
+  value: string,
+  categories: AppCategory[],
+): string {
+  if (categories.length === 0) return "";
+  const match = categories.find(
+    (c) => c.category.toLowerCase() === value.trim().toLowerCase(),
+  );
+  if (!match) {
+    return `Use one of: ${categories.map((c) => c.category).join(", ")}`;
+  }
+  const shown = match.apps.slice(0, HINT_MAX_APPS).join(", ");
+  const more = match.apps.length > HINT_MAX_APPS ? ", …" : "";
+  return `Matches ${match.label.toLowerCase()}: ${shown}${more}`;
+}
+
 function SignalIcon({ kind, small }: { kind: SignalKind; small?: boolean }) {
   const name: IconName =
     kind === "ide.folder"
@@ -768,7 +799,9 @@ function SignalIcon({ kind, small }: { kind: SignalKind; small?: boolean }) {
               ? "type"
               : kind === "calendar.event"
                 ? "calendar"
-                : "info";
+                : kind === "app.category"
+                  ? "grid"
+                  : "info";
   return <Icon name={name} size={small ? 11 : 12} className="sig-ic" />;
 }
 
