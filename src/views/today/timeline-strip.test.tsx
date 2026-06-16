@@ -1,12 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { TimelineStrip } from "./timeline-strip";
+import { minutesOfDay } from "../../lib/timeline";
 import type { BackendEntry } from "../../lib/ipc";
 import type { Project } from "../../lib/types";
 
 afterEach(() => {
   vi.useRealTimers();
 });
+
+function pointerMove(clientY: number) {
+  window.dispatchEvent(new MouseEvent("pointermove", { clientY }));
+}
+function pointerUp() {
+  window.dispatchEvent(new MouseEvent("pointerup"));
+}
 
 const PROJECTS: Project[] = [
   {
@@ -115,5 +123,69 @@ describe("TimelineStrip (#188)", () => {
       showNow: true,
     });
     expect(container.querySelector(".vt-seg.is-running")).toBeTruthy();
+  });
+
+  it("renders no edge handles without an onResize callback", () => {
+    const { container } = renderStrip();
+    expect(container.querySelectorAll(".vt-handle")).toHaveLength(0);
+  });
+
+  it("renders no edge handles on the running entry", () => {
+    const onResize = vi.fn();
+    const { container } = renderStrip({
+      entries: [entry({ endedAt: null })],
+      showNow: true,
+      onResize,
+    });
+    expect(container.querySelectorAll(".vt-handle")).toHaveLength(0);
+  });
+
+  it("dragging the bottom handle down resizes the end time", () => {
+    const onResize = vi.fn();
+    const { container } = renderStrip({ onResize }); // entry 09:00–10:30
+    const bottom = container.querySelector(".vt-handle--bottom")!;
+    fireEvent.pointerDown(bottom, { clientY: 200 });
+    pointerMove(244); // +44px = +60min
+    pointerUp();
+    expect(onResize).toHaveBeenCalledTimes(1);
+    const [id, patch] = onResize.mock.calls[0];
+    expect(id).toBe("e1");
+    expect(minutesOfDay(patch.endedAt)).toBe(11 * 60 + 30); // 10:30 + 60
+    expect(patch.startedAt).toBeUndefined();
+  });
+
+  it("dragging the top handle up resizes the start time", () => {
+    const onResize = vi.fn();
+    const { container } = renderStrip({ onResize });
+    const top = container.querySelector(".vt-handle--top")!;
+    fireEvent.pointerDown(top, { clientY: 200 });
+    pointerMove(156); // -44px = -60min
+    pointerUp();
+    const [, patch] = onResize.mock.calls[0];
+    expect(minutesOfDay(patch.startedAt)).toBe(8 * 60); // 09:00 − 60
+    expect(patch.endedAt).toBeUndefined();
+  });
+
+  it("a click with no movement does not commit a resize (either edge)", () => {
+    const onResize = vi.fn();
+    const { container } = renderStrip({ onResize });
+    fireEvent.pointerDown(container.querySelector(".vt-handle--bottom")!, {
+      clientY: 200,
+    });
+    pointerUp();
+    fireEvent.pointerDown(container.querySelector(".vt-handle--top")!, {
+      clientY: 200,
+    });
+    pointerUp();
+    expect(onResize).not.toHaveBeenCalled();
+  });
+
+  it("ignores stray window pointer events when no drag is in progress", () => {
+    const onResize = vi.fn();
+    renderStrip({ onResize });
+    // No handle was pressed — the live window listeners must no-op.
+    pointerMove(300);
+    pointerUp();
+    expect(onResize).not.toHaveBeenCalled();
   });
 });

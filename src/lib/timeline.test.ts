@@ -3,12 +3,14 @@ import {
   TIMELINE_DAY_END_MIN,
   TIMELINE_DAY_SPAN_MIN,
   TIMELINE_DAY_START_MIN,
+  applyMinuteToIso,
   blockGeometry,
   dayWindow,
   entriesToSegments,
   hourTicks,
   legendFromSegments,
   minutesOfDay,
+  resizeSegment,
   startToPercent,
   type TimelineSegment,
 } from "./timeline";
@@ -216,5 +218,51 @@ describe("blockGeometry", () => {
     const g = blockGeometry(9 * 60, 9 * 60 + 1, win, 40, 18);
     expect(g.topPx).toBe(40);
     expect(g.heightPx).toBe(18);
+  });
+});
+
+describe("resizeSegment", () => {
+  // 09:00–10:30
+  const s = 9 * 60;
+  const e = 10 * 60 + 30;
+
+  it("moves the start edge and snaps to the grid", () => {
+    expect(resizeSegment("start", s, e, -32, 5)).toEqual({
+      startMin: 8 * 60 + 30, // 540 - 32 = 508 → snap 5 → 510
+      endMin: e,
+    });
+  });
+
+  it("moves the end edge and leaves the start untouched", () => {
+    expect(resizeSegment("end", s, e, 30, 5)).toEqual({
+      startMin: s,
+      endMin: 11 * 60, // 630 + 30 = 660
+    });
+  });
+
+  it("won't let the start cross the end (keeps a minimum duration)", () => {
+    const r = resizeSegment("start", s, e, 999, 5);
+    expect(r.startMin).toBe(e - 5);
+  });
+
+  it("won't let the end cross the start (keeps a minimum duration)", () => {
+    const r = resizeSegment("end", s, e, -999, 5);
+    expect(r.endMin).toBe(s + 5);
+  });
+
+  it("clamps the start to the start of day and the end to midnight", () => {
+    expect(resizeSegment("start", s, e, -10_000, 5).startMin).toBe(0);
+    expect(resizeSegment("end", s, e, 10_000, 5).endMin).toBe(24 * 60);
+  });
+});
+
+describe("applyMinuteToIso", () => {
+  it("re-times an ISO to a new minute-of-day on the same local day", () => {
+    const out = applyMinuteToIso("2026-05-26T09:00:00", 11 * 60 + 30);
+    expect(minutesOfDay(out)).toBe(11 * 60 + 30);
+  });
+
+  it("returns the input unchanged for an invalid timestamp", () => {
+    expect(applyMinuteToIso("not-a-date", 600)).toBe("not-a-date");
   });
 });

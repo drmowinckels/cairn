@@ -126,6 +126,52 @@ export function blockGeometry(
   return { topPx, heightPx: Math.max(minPx, rawHeight) };
 }
 
+export type ResizeEdge = "start" | "end";
+
+/** Minutes a resized entry must keep so a block can't collapse to nothing. */
+export const RESIZE_MIN_DURATION_MIN = 5;
+
+function snapTo(minutes: number, snapMin: number): number {
+  return Math.round(minutes / snapMin) * snapMin;
+}
+
+/**
+ * Apply a drag-resize to one edge of a segment (#188). The moved edge snaps to
+ * `snapMin` and is clamped so it can't cross the opposite edge (keeping at
+ * least `RESIZE_MIN_DURATION_MIN`) or leave the 0–1440 day. The other edge is
+ * untouched. Pure — the component feeds it a pointer delta in minutes.
+ */
+export function resizeSegment(
+  edge: ResizeEdge,
+  startMin: number,
+  endMin: number,
+  deltaMin: number,
+  snapMin: number,
+): { startMin: number; endMin: number } {
+  if (edge === "start") {
+    let s = snapTo(startMin + deltaMin, snapMin);
+    s = Math.min(s, endMin - RESIZE_MIN_DURATION_MIN);
+    s = Math.max(0, s);
+    return { startMin: s, endMin };
+  }
+  let e = snapTo(endMin + deltaMin, snapMin);
+  e = Math.max(e, startMin + RESIZE_MIN_DURATION_MIN);
+  e = Math.min(e, 24 * 60);
+  return { startMin, endMin: e };
+}
+
+/**
+ * Re-time an ISO timestamp to a new minute-of-day on the SAME local calendar
+ * day — used to turn a resized block's minute offset back into the RFC3339
+ * value `update_entry` expects. Works in local time to mirror `minutesOfDay`.
+ */
+export function applyMinuteToIso(iso: string, minuteOfDay: number): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setHours(Math.floor(minuteOfDay / 60), Math.round(minuteOfDay % 60), 0, 0);
+  return d.toISOString();
+}
+
 export interface LegendItem {
   projectId: ProjectId;
   color: string;

@@ -654,6 +654,16 @@ export function TodayView({
     [findEntryById, openEdit],
   );
 
+  const refreshToday = today.refresh;
+  const onResizeEntry = useCallback(
+    (id: string, patch: { startedAt?: string; endedAt?: string }) => {
+      updateEntry({ id, ...patch })
+        .then(() => refreshToday())
+        .catch((e) => console.error("timeline resize failed", e));
+    },
+    [refreshToday],
+  );
+
   const upcomingEvents = useMemo<UpcomingEvent[]>(
     () =>
       upcoming.events.map((e) => ({
@@ -1103,6 +1113,7 @@ export function TodayView({
               cbEnabled={cbEnabled}
               showNow={isToday}
               onEntryClick={onEditRecent}
+              onResize={onResizeEntry}
             />
           ) : (
             <RecentList
