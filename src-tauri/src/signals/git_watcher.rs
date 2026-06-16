@@ -255,23 +255,29 @@ pub fn spawn_watcher_task(
 
     // Spawn into a tokio task — the startup-emit loop does file
     // I/O on each repo's `.git/HEAD`, which would otherwise block
-    // the Tauri `setup()` callback. Inside the task we also push
-    // events into a tokio mpsc (try_send is non-blocking) so a
-    // user with hundreds of repos doesn't stall app launch.
+    // the Tauri `setup()` callback.
     tokio::spawn(async move {
-        // Emit one event per repo on startup so the snapshot
-        // stream has the latest branch before any user-driven
-        // event arrives. Sorted by `discover_repos`, so the
-        // first-arriving event is the alphabetically-first repo;
-        // the snapshot stream's `LiveState.git` only retains one
-        // value, so subsequent repos overwrite — that's fine
-        // because the *real* active-repo determination happens
-        // via the window source + `derive_ide_folder`'s repo-paths
-        // fallback once the user navigates.
+        // Emit one event per repo on startup so the snapshot stream has
+        // the latest branch before any user-driven event arrives.
+        //
+        // We `send().await` rather than `try_send` here: we're already
+        // inside the spawned task (not the `setup()` callback), so
+        // awaiting can't stall app launch, and it applies backpressure
+        // instead of dropping events when the channel briefly fills —
+        // which it does on machines with many repos, where the old
+        // `try_send` dropped most of the startup batch. The live-event
+        // loop in `run` already awaits sends on this same channel.
+        //
+        // Sorted by `discover_repos`, so `LiveState.git` settles on the
+        // alphabetically-last repo; the *real* active-repo determination
+        // happens via the window source + `derive_ide_folder`'s
+        // repo-paths fallback once the user navigates.
         for repo in &repos {
             if let Some(ctx) = read_git_context(repo) {
-                if let Err(e) = event_tx.try_send(SignalEvent::Git(Some(ctx))) {
-                    log::warn!("git_watcher: startup try_send dropped event: {e}");
+                if event_tx.send(SignalEvent::Git(Some(ctx))).await.is_err() {
+                    // Snapshot stream dropped its receiver before we
+                    // finished seeding — nothing left to receive, stop.
+                    return;
                 }
             }
         }
@@ -839,5 +845,54 @@ mod tests {
             // events, so this branch is reachable only if a
             // future refactor adds something.
         }
+    }
+
+    #[tokio::test]
+    async fn spawn_watcher_seeds_every_repo_when_channel_is_smaller_than_repo_count() {
+        // Regression for the startup `try_send` drop: with more repos than
+        // the channel buffer, the old code dropped every seed past the
+        // buffer ("startup try_send dropped event: no available capacity").
+        // Awaiting the send must deliver all N as the receiver drains.
+        let tmp = tempfile::tempdir().unwrap();
+        let n = 12usize;
+        let repos: Vec<PathBuf> = (0..n)
+            .map(|i| mk_repo(tmp.path(), &format!("r{i:02}")))
+            .collect();
+
+        // Buffer far smaller than the repo count.
+        let (tx, mut rx) = mpsc::channel::<SignalEvent>(2);
+        spawn_watcher_task(tx, repos.clone());
+
+        let mut seeded = std::collections::HashSet::new();
+        for _ in 0..n {
+            let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("each startup seed must arrive (none dropped)")
+                .expect("channel open");
+            if let SignalEvent::Git(Some(ctx)) = ev {
+                seeded.insert(ctx.repo_path);
+            }
+        }
+        assert_eq!(
+            seeded.len(),
+            n,
+            "every discovered repo must be seeded on startup, none dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_watcher_stops_seeding_when_stream_receiver_is_gone() {
+        // If the snapshot stream drops its receiver, the awaited seed send
+        // returns Err and the task must exit cleanly (not hang or panic).
+        let tmp = tempfile::tempdir().unwrap();
+        let repos = vec![mk_repo(tmp.path(), "a"), mk_repo(tmp.path(), "b")];
+        let (tx, rx) = mpsc::channel::<SignalEvent>(1);
+        let handle = spawn_watcher_task(tx, repos);
+        drop(rx);
+
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("task must terminate once the receiver is gone")
+            .expect("task must not panic");
     }
 }
