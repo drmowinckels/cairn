@@ -1,3 +1,4 @@
+mod activity_log;
 mod auto_backup;
 mod backup;
 mod connectors;
