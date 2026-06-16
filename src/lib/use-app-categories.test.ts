@@ -49,4 +49,22 @@ describe("useAppCategories (#189)", () => {
     await Promise.resolve();
     expect(result.current).toEqual([]);
   });
+
+  it("does not set state when unmounted before the fetch resolves", async () => {
+    let resolveFetch!: (v: typeof table) => void;
+    listAppCategoriesMock.mockReturnValue(
+      new Promise((r) => {
+        resolveFetch = r;
+      }),
+    );
+    const { useAppCategories } = await import("./use-app-categories");
+    const { result, unmount } = renderHook(() => useAppCategories());
+    expect(result.current).toEqual([]);
+    // Unmount first, then resolve: the `active` guard must skip setState so
+    // there's no update-after-unmount (React would warn).
+    unmount();
+    resolveFetch(table);
+    await Promise.resolve();
+    expect(result.current).toEqual([]);
+  });
 });

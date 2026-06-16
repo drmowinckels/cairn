@@ -314,6 +314,10 @@ describe("RulesView", () => {
     // The helper row renders for app.category conditions (text is empty in
     // fixture mode where the category table isn't fetched).
     expect(container.querySelector(".cond-hint")).toBeTruthy();
+    // Switching to a non-category signal drops the hint again — the row is
+    // specific to app.category.
+    fireEvent.change(signalSel!, { target: { value: "app.name" } });
+    expect(container.querySelector(".cond-hint")).toBeNull();
   });
 
   // ---- #14: Confidence heuristic warning --------------------------

@@ -2546,9 +2546,10 @@ body {
 }
 
 /* Helper line under an app.category condition: which apps the chosen
-   category matches. Indented past the signal icon, kept at the 12px
-   tertiary floor. */
+   category matches. Spans the full condition grid on its own row, indented
+   past the signal icon, kept at the 12px tertiary floor. */
 .cond-hint {
+  grid-column: 1 / -1;
   margin: 0;
   padding-left: 20px;
   font-size: 12px;

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../lib/icon";
 import { Empty, ProjectChip } from "../../lib/components";
 import type { AppCategory } from "../../lib/ipc";
@@ -509,81 +509,79 @@ function RuleRow({
           <div className="rule-when">
             <div className="sect-label">When</div>
             {rule.when.map((c, i) => (
-              <Fragment key={i}>
-                <div className="cond">
-                  {i > 0 && (
-                    <button
-                      className="cond-join"
-                      onClick={(e) => {
-                        stopBubble(e);
-                        setCondition(i, { any: !c.any });
-                      }}
-                      aria-label={
-                        c.any ? "OR — switch to AND" : "AND — switch to OR"
-                      }
-                      title="Click to switch between AND / OR"
-                    >
-                      {c.any ? "OR" : "AND"}
-                    </button>
-                  )}
-                  <SignalIcon kind={c.signal} />
-                  <select
-                    className="cond-sig-sel"
-                    value={c.signal}
-                    onClick={stopBubble}
-                    onChange={(e) =>
-                      handleSignalChange(i, e.target.value as SignalKind)
+              <div key={i} className="cond">
+                {i > 0 && (
+                  <button
+                    className="cond-join"
+                    onClick={(e) => {
+                      stopBubble(e);
+                      setCondition(i, { any: !c.any });
+                    }}
+                    aria-label={
+                      c.any ? "OR — switch to AND" : "AND — switch to OR"
                     }
-                    aria-label="Signal"
+                    title="Click to switch between AND / OR"
                   >
-                    {SIGNAL_OPTIONS.map((s) => (
-                      <option key={s} value={s}>
-                        {SIGNAL_LABELS[s]}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="cond-op"
-                    value={c.op}
-                    onClick={stopBubble}
-                    onChange={(e) =>
-                      setCondition(i, { op: e.target.value as Op })
-                    }
-                    aria-label="Operator"
+                    {c.any ? "OR" : "AND"}
+                  </button>
+                )}
+                <SignalIcon kind={c.signal} />
+                <select
+                  className="cond-sig-sel"
+                  value={c.signal}
+                  onClick={stopBubble}
+                  onChange={(e) =>
+                    handleSignalChange(i, e.target.value as SignalKind)
+                  }
+                  aria-label="Signal"
+                >
+                  {SIGNAL_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {SIGNAL_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="cond-op"
+                  value={c.op}
+                  onClick={stopBubble}
+                  onChange={(e) =>
+                    setCondition(i, { op: e.target.value as Op })
+                  }
+                  aria-label="Operator"
+                >
+                  {Object.entries(OP_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+                <DebouncedTextInput
+                  className="cond-val"
+                  value={c.value}
+                  onCommit={(value) => setCondition(i, { value })}
+                  maxLength={MAX_CONDITION_VALUE}
+                  onClick={stopBubble}
+                  aria-label="Value"
+                />
+                {complexity !== "light" && rule.when.length > 1 && (
+                  <button
+                    className="cond-x"
+                    aria-label="Remove condition"
+                    onClick={(e) => {
+                      stopBubble(e);
+                      removeCondition(i);
+                    }}
                   >
-                    {Object.entries(OP_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                  <DebouncedTextInput
-                    className="cond-val"
-                    value={c.value}
-                    onCommit={(value) => setCondition(i, { value })}
-                    maxLength={MAX_CONDITION_VALUE}
-                    onClick={stopBubble}
-                    aria-label="Value"
-                  />
-                  {complexity !== "light" && rule.when.length > 1 && (
-                    <button
-                      className="cond-x"
-                      aria-label="Remove condition"
-                      onClick={(e) => {
-                        stopBubble(e);
-                        removeCondition(i);
-                      }}
-                    >
-                      <Icon name="x" size={11} />
-                    </button>
-                  )}
-                </div>
+                    <Icon name="x" size={11} />
+                  </button>
+                )}
                 {c.signal === "app.category" && (
                   <p className="cond-hint">
                     {appCategoryHint(c.value, appCategories)}
                   </p>
                 )}
-              </Fragment>
+              </div>
             ))}
             {complexity !== "light" && (
               <button
