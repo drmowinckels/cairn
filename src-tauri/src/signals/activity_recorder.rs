@@ -98,6 +98,15 @@ fn snapshot_foreground(snap: &SignalSnapshot) -> (Option<String>, Option<String>
     (app, hint)
 }
 
+/// Foreground of a (possibly absent) snapshot. A missing snapshot is "no
+/// foreground" — the recorder treats it the same as an excluded app.
+fn foreground_of(next: Option<&SignalSnapshot>) -> (Option<String>, Option<String>) {
+    match next {
+        Some(snap) => snapshot_foreground(snap),
+        None => (None, None),
+    }
+}
+
 struct Session {
     stop_tx: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
@@ -162,13 +171,13 @@ async fn recorder_loop(
 ) {
     let mut builder = SpanBuilder::default();
 
-    // Seed from the current value so a foreground present at start opens a span.
+    // Seed from the current value so a foreground present at start opens a
+    // span. A fresh builder has nothing open, so this only ever opens — it
+    // never completes a span — hence the return value is intentionally unused.
     let initial = snapshot_rx.borrow().clone();
     if let Some(snap) = initial {
         let (app, hint) = snapshot_foreground(&snap);
-        if let Some(span) = builder.observe(app, hint, Utc::now()) {
-            persist(&pool, &span).await;
-        }
+        builder.observe(app, hint, Utc::now());
     }
 
     loop {
@@ -180,10 +189,7 @@ async fn recorder_loop(
                     break; // stream gone
                 }
                 let next = snapshot_rx.borrow().clone();
-                let (app, hint) = match next {
-                    Some(snap) => snapshot_foreground(&snap),
-                    None => (None, None),
-                };
+                let (app, hint) = foreground_of(next.as_ref());
                 if let Some(span) = builder.observe(app, hint, Utc::now()) {
                     persist(&pool, &span).await;
                 }
@@ -310,6 +316,65 @@ mod tests {
         rec.stop().await; // flushes the open Code span
         assert!(!rec.is_active().await);
         assert!(activity_log::count(&db.pool).await.unwrap() >= 1);
+    }
+
+    fn fg(app: Option<&str>) -> Option<SignalSnapshot> {
+        Some(SignalSnapshot {
+            ide_folder: None,
+            git_branch: None,
+            window_title: None,
+            app_name: app.map(str::to_string),
+            browser_domain: None,
+            calendar: vec![],
+        })
+    }
+
+    #[test]
+    fn foreground_of_maps_absent_and_present_snapshots() {
+        // A missing snapshot is "no foreground" (same as an excluded app).
+        assert_eq!(foreground_of(None), (None, None));
+        let snap = SignalSnapshot {
+            ide_folder: None,
+            git_branch: None,
+            window_title: Some("notes.md — Obsidian".into()),
+            app_name: Some("Obsidian".into()),
+            browser_domain: None,
+            calendar: vec![],
+        };
+        let (app, hint) = foreground_of(Some(&snap));
+        assert_eq!(app.as_deref(), Some("Obsidian"));
+        assert_eq!(hint.as_deref(), Some("notes.md"));
+    }
+
+    #[tokio::test]
+    async fn recorder_exits_when_the_stream_sender_drops() {
+        let (_dir, db) = test_db().await;
+        let (tx, rx) = watch::channel(fg(Some("Zoom")));
+        let rec = ActivityRecorder::new();
+        rec.start_with_receiver(db.pool.clone(), rx).await.unwrap();
+        drop(tx); // stream gone → the loop's `changed.is_err()` break
+        rec.stop().await; // joins the already-exited task without hanging
+        assert!(!rec.is_active().await);
+    }
+
+    #[tokio::test]
+    async fn persist_swallows_and_logs_an_insert_error() {
+        let (_dir, db) = test_db().await;
+        sqlx::query("DROP TABLE activity_log")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        // Table gone → the insert errors; persist must log and not panic.
+        persist(
+            &db.pool,
+            &CompletedSpan {
+                app_name: "X".into(),
+                title_hint: None,
+                start: t(0),
+                end: t(1),
+            },
+        )
+        .await;
     }
 
     #[tokio::test]
