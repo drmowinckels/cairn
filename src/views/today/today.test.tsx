@@ -214,9 +214,9 @@ describe("TodayView (idle — no running entry)", () => {
 
   it("renders the upcoming section with empty state outside Tauri", () => {
     const { container } = renderToday();
+    // Outside Tauri calendarsConnected is forced true, so the section shows
+    // its "nothing scheduled" empty state (useUpcoming returns no events).
     expect(container.querySelector(".upcoming")).toBeTruthy();
-    // useUpcoming returns no events outside Tauri; useCalendars also empty,
-    // so the section renders the not-connected empty state.
     expect(container.querySelectorAll(".up-item").length).toBe(0);
   });
 
@@ -363,6 +363,16 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       const text = item.textContent?.trim() ?? "";
       expect(text.length).toBeGreaterThan(0);
     }
+  });
+
+  it("hides the 'Up next' section entirely when no calendar is connected", async () => {
+    await freshRender("manual");
+    await waitFor(() => {
+      expect(document.querySelectorAll(".dt-seg").length).toBe(2);
+    });
+    // freshRender leaves list_calendar_sources unhandled (returns null), so
+    // no source is enabled — the upcoming section should not render at all.
+    expect(document.querySelector(".upcoming")).toBeNull();
   });
 
   it("debounced description edits call update_entry after a quiet period", async () => {

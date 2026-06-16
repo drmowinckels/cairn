@@ -18,18 +18,13 @@ function event(overrides: Partial<UpcomingEvent> = {}): UpcomingEvent {
 }
 
 describe("UpcomingList", () => {
-  it("renders the not-connected empty state when no calendars are connected", () => {
-    render(<UpcomingList events={[]} calendarsConnected={false} />);
-    expect(screen.getByText(/no calendar connected/i)).toBeTruthy();
-  });
-
-  it("renders the soft empty state when calendars are connected but no events", () => {
-    render(<UpcomingList events={[]} calendarsConnected />);
+  it("renders the soft empty state when there are no events", () => {
+    render(<UpcomingList events={[]} />);
     expect(screen.getByText(/nothing scheduled/i)).toBeTruthy();
   });
 
   it("each row is a focusable button labelled with summary + time", () => {
-    render(<UpcomingList events={[event({})]} calendarsConnected />);
+    render(<UpcomingList events={[event({})]} />);
     const btn = screen.getByRole("button", {
       name: /start timer for design review/i,
     });
@@ -38,13 +33,7 @@ describe("UpcomingList", () => {
 
   it("clicking a row calls onStart with the event", () => {
     const onStart = vi.fn();
-    render(
-      <UpcomingList
-        events={[event({})]}
-        onStart={onStart}
-        calendarsConnected
-      />,
-    );
+    render(<UpcomingList events={[event({})]} onStart={onStart} />);
     fireEvent.click(
       screen.getByRole("button", { name: /start timer for design review/i }),
     );
@@ -53,16 +42,12 @@ describe("UpcomingList", () => {
   });
 
   it("all-day events show 'all day' instead of a clock time", () => {
-    render(
-      <UpcomingList events={[event({ allDay: true })]} calendarsConnected />,
-    );
+    render(<UpcomingList events={[event({ allDay: true })]} />);
     expect(screen.getByText(/all day/i)).toBeTruthy();
   });
 
   it("renders summary as '(no title)' fallback when empty", () => {
-    render(
-      <UpcomingList events={[event({ summary: "" })]} calendarsConnected />,
-    );
+    render(<UpcomingList events={[event({ summary: "" })]} />);
     expect(screen.getByText(/no title/i)).toBeTruthy();
   });
 });
