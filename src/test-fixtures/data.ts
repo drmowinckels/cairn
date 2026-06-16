@@ -118,6 +118,7 @@ export const SIGNAL_LABELS: Record<string, string> = {
   "window.title":   "Window title",
   "calendar.event": "Calendar event",
   "app.name":       "App name",
+  "app.category":   "App category",
 };
 
 export const OP_LABELS: Record<string, string> = {

@@ -483,7 +483,11 @@ export function withConditionRemoved(
 
 export function defaultOpForSignal(signal: SignalKind): Op {
   // `calendar.event` is a state, not a substring — the engine only
-  // supports `is-active` for it. Other signals default to `contains`
-  // which is the friendliest fuzzy match for IDE folders / titles.
-  return signal === "calendar.event" ? "is-active" : "contains";
+  // supports `is-active` for it. `app.category` resolves to one of a fixed
+  // set of category names, so an exact `equals` is the right default rather
+  // than a fuzzy substring. Other signals default to `contains` — the
+  // friendliest fuzzy match for IDE folders / titles.
+  if (signal === "calendar.event") return "is-active";
+  if (signal === "app.category") return "equals";
+  return "contains";
 }

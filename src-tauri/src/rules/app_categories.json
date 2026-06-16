@@ -1,0 +1,97 @@
+{
+  "comment": "Maps foreground application names to a coarse category for the app.category rule condition (#189). Matching is case-insensitive and exact against the OS-reported app name (macOS localizedName, Linux window class, Windows executable basename) — list each platform's spelling. Edit this file to extend coverage; no Rust change needed. Categories are checked in array order; the first match wins.",
+  "categories": [
+    {
+      "category": "meeting",
+      "label": "Meeting apps",
+      "apps": [
+        "zoom.us",
+        "Zoom",
+        "Microsoft Teams",
+        "Microsoft Teams (work or school)",
+        "Teams",
+        "ms-teams",
+        "teams-for-linux",
+        "Webex",
+        "Cisco Webex Meetings",
+        "Webex Meetings",
+        "Google Meet",
+        "Around",
+        "Whereby"
+      ]
+    },
+    {
+      "category": "editor",
+      "label": "Code editors / IDEs",
+      "apps": [
+        "Code",
+        "Visual Studio Code",
+        "Code - Insiders",
+        "VSCodium",
+        "Cursor",
+        "Zed",
+        "Sublime Text",
+        "sublime_text",
+        "Xcode",
+        "Nova",
+        "IntelliJ IDEA",
+        "PyCharm",
+        "WebStorm",
+        "GoLand",
+        "RubyMine",
+        "CLion",
+        "Rider",
+        "PhpStorm",
+        "DataGrip",
+        "Android Studio",
+        "RStudio",
+        "Emacs",
+        "jetbrains-idea"
+      ]
+    },
+    {
+      "category": "terminal",
+      "label": "Terminals",
+      "apps": [
+        "Terminal",
+        "iTerm2",
+        "iTerm",
+        "Warp",
+        "Alacritty",
+        "kitty",
+        "WezTerm",
+        "wezterm-gui",
+        "Ghostty",
+        "Hyper",
+        "Konsole",
+        "GNOME Terminal",
+        "gnome-terminal-server",
+        "Tilix",
+        "WindowsTerminal",
+        "rio"
+      ]
+    },
+    {
+      "category": "browser",
+      "label": "Browsers",
+      "apps": [
+        "Safari",
+        "Firefox",
+        "Google Chrome",
+        "google-chrome",
+        "chrome",
+        "Chromium",
+        "Microsoft Edge",
+        "msedge",
+        "Brave Browser",
+        "Brave-browser",
+        "Arc",
+        "Vivaldi",
+        "Opera",
+        "Zen Browser",
+        "LibreWolf",
+        "Tor Browser"
+      ]
+    }
+  ]
+}

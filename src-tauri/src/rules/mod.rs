@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod app_categories;
 pub mod snoozer;
 pub use snoozer::{SnoozeSnapshot, Snoozer};
 
@@ -65,6 +66,19 @@ pub enum Condition {
     },
     #[serde(rename = "app.name")]
     AppName {
+        op: Op,
+        value: String,
+        #[serde(default)]
+        any: bool,
+    },
+    /// Matches the *category* of the foreground app (`meeting`, `editor`,
+    /// `terminal`, `browser`, …) rather than its exact name. The category
+    /// is derived from `app.name` via the bundled `app_categories` table, so
+    /// a single "meetings" rule covers Zoom, Teams, Webex, … without a
+    /// per-app rule. Derived in-matcher from the already-redacted snapshot —
+    /// an excluded app has no `app_name` and so no category (#189).
+    #[serde(rename = "app.category")]
+    AppCategory {
         op: Op,
         value: String,
         #[serde(default)]
@@ -417,6 +431,12 @@ fn collect_matched_signals(rule: &Rule, snap: &SignalSnapshot) -> Vec<MatchedSig
             Condition::GitBranch { .. } => push("git.branch", snap.git_branch.as_deref()),
             Condition::WindowTitle { .. } => push("window.title", snap.window_title.as_deref()),
             Condition::AppName { .. } => push("app.name", snap.app_name.as_deref()),
+            Condition::AppCategory { .. } => push(
+                "app.category",
+                snap.app_name
+                    .as_deref()
+                    .and_then(app_categories::categorize),
+            ),
             Condition::BrowserDomain { .. } => {
                 push("browser.domain", snap.browser_domain.as_deref())
             }
@@ -539,6 +559,7 @@ fn condition_is_any(c: &Condition) -> bool {
         | Condition::GitBranch { any, .. }
         | Condition::WindowTitle { any, .. }
         | Condition::AppName { any, .. }
+        | Condition::AppCategory { any, .. }
         | Condition::BrowserDomain { any, .. }
         | Condition::CalendarEvent { any, .. } => *any,
     }
@@ -555,6 +576,13 @@ fn condition_matches(c: &Condition, snap: &SignalSnapshot) -> bool {
                     (snap.window_title.as_deref(), op, value)
                 }
                 Condition::AppName { op, value, .. } => (snap.app_name.as_deref(), op, value),
+                Condition::AppCategory { op, value, .. } => (
+                    snap.app_name
+                        .as_deref()
+                        .and_then(app_categories::categorize),
+                    op,
+                    value,
+                ),
                 Condition::BrowserDomain { op, value, .. } => {
                     (snap.browser_domain.as_deref(), op, value)
                 }
@@ -1915,5 +1943,91 @@ mod tests {
         let v = serde_json::to_value(&ms).unwrap();
         assert_eq!(v["signal"], "git.branch");
         assert_eq!(v["value"], "feat/rules-ui");
+    }
+
+    #[test]
+    fn app_category_matches_via_derived_category() {
+        // A "meetings" rule keyed on the category fires for any app the
+        // bundled table maps to `meeting` — here Zoom — without naming it.
+        let rule = rule_with(
+            "meetings",
+            "meetings",
+            vec![Condition::AppCategory {
+                op: Op::Equals,
+                value: "meeting".into(),
+                any: false,
+            }],
+        );
+        let mut s = snap();
+        s.app_name = Some("zoom.us".into());
+        let m = evaluate(std::iter::once(&rule), &s).expect("category rule fires");
+        assert_eq!(m.project.as_deref(), Some("meetings"));
+    }
+
+    #[test]
+    fn app_category_does_not_match_other_categories() {
+        let rule = rule_with(
+            "meetings",
+            "meetings",
+            vec![Condition::AppCategory {
+                op: Op::Equals,
+                value: "meeting".into(),
+                any: false,
+            }],
+        );
+        let mut s = snap();
+        s.app_name = Some("Safari".into()); // browser, not meeting
+        assert!(evaluate(std::iter::once(&rule), &s).is_none());
+    }
+
+    #[test]
+    fn app_category_no_match_when_app_name_absent() {
+        // An excluded app is redacted to `app_name = None` before the
+        // snapshot reaches the matcher, so its category is underivable and
+        // the condition can never fire — the privacy guarantee in-matcher.
+        let rule = rule_with(
+            "meetings",
+            "meetings",
+            vec![Condition::AppCategory {
+                op: Op::Equals,
+                value: "meeting".into(),
+                any: false,
+            }],
+        );
+        let mut s = snap();
+        s.app_name = None;
+        assert!(evaluate(std::iter::once(&rule), &s).is_none());
+    }
+
+    #[test]
+    fn app_category_chip_value_is_the_category() {
+        let rule = rule_with(
+            "editing",
+            "dev",
+            vec![Condition::AppCategory {
+                op: Op::Equals,
+                value: "editor".into(),
+                any: false,
+            }],
+        );
+        let mut s = snap();
+        s.app_name = Some("Code".into());
+        let m = evaluate(std::iter::once(&rule), &s).expect("category rule fires");
+        assert_eq!(m.matched_signals.len(), 1);
+        assert_eq!(m.matched_signals[0].signal, "app.category");
+        assert_eq!(m.matched_signals[0].value, "editor");
+    }
+
+    #[test]
+    fn app_category_condition_serialises_to_dotted_signal() {
+        // Pins the wire form the TS `SignalKind` union relies on.
+        let c = Condition::AppCategory {
+            op: Op::Equals,
+            value: "meeting".into(),
+            any: false,
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["signal"], "app.category");
+        assert_eq!(v["value"], "meeting");
     }
 }

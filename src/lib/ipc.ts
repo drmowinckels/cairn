@@ -177,6 +177,21 @@ export async function listRules(): Promise<BackendRule[]> {
   return invoke<BackendRule[]>("list_rules");
 }
 
+/** One `app.category` value and the foreground apps that map to it (#189).
+ *  Mirrors the Rust `AppCategory` bundled in `app_categories.json`. */
+export interface AppCategory {
+  category: string;
+  label: string;
+  apps: string[];
+}
+
+/** The bundled app→category table powering the `app.category` rule
+ *  condition's helper text. Empty outside Tauri (fixture mode). */
+export async function listAppCategories(): Promise<AppCategory[]> {
+  if (!inTauri) return [];
+  return invoke<AppCategory[]>("list_app_categories");
+}
+
 export interface SaveRuleInput {
   id: string | null;
   name: string;

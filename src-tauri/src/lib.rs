@@ -430,6 +430,7 @@ pub fn run() {
             ipc::list_week,
             ipc::report_summary,
             ipc::list_rules,
+            ipc::list_app_categories,
             ipc::save_rule,
             ipc::delete_rule,
             ipc::reorder_rules,

@@ -8,6 +8,13 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Signals
 
+- `[rules]` New `app.category` rule condition (#189). Matches the _category_
+  of the foreground app — `meeting` · `editor` · `terminal` · `browser` —
+  rather than its exact name, so a single "Meetings" rule covers Zoom, Teams,
+  Webex, … without one rule per app. The mapping ships compiled-in
+  (`app_categories.json`) and the editor lists the matched apps as helper
+  text. Derived in the matcher from the already-redacted `app.name`, so an
+  excluded app contributes no category — no change to the privacy contract.
 - `[calendar]` Cross-platform parity for calendar URL secrets (#40). Linux
   now uses the persistent D-Bus Secret Service (was the kernel keyutils
   keyring, which was wiped on reboot). When no OS keychain is reachable —
