@@ -60,7 +60,9 @@ describe("ipc helpers (inside Tauri)", () => {
   });
 
   it("listAppCategories invokes the command and returns the table", async () => {
-    const table = [{ category: "meeting", label: "Meeting apps", apps: ["Zoom"] }];
+    const table = [
+      { category: "meeting", label: "Meeting apps", apps: ["Zoom"] },
+    ];
     invokeMock.mockResolvedValue(table);
     const { listAppCategories } = await import("./ipc");
     expect(await listAppCategories()).toEqual(table);
