@@ -358,6 +358,24 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     expect(document.querySelector(".dt-now-label")).toBeTruthy();
   });
 
+  it("clicking a vertical-timeline block opens the entry editor (#188)", async () => {
+    await freshRender("manual");
+    fireEvent.click(
+      await screen.findByRole("button", { name: /timeline view/i }),
+    );
+    const block = await waitFor(() => {
+      const b = document.querySelector<HTMLButtonElement>(
+        ".vt-seg:not(:disabled)",
+      );
+      if (!b) throw new Error("no interactive block yet");
+      return b;
+    });
+    fireEvent.click(block);
+    expect(
+      await screen.findByRole("dialog", { name: /edit entry/i }),
+    ).toBeTruthy();
+  });
+
   it("timeline legend pairs each project dot with its name (#30 a11y dual-signal)", async () => {
     // Color is not the only signal: every dot in the legend must be
     // accompanied by the project's name so a grayscale render still
