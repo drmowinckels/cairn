@@ -55,6 +55,21 @@ describe("TodayView day navigation (#editing-past-days)", () => {
             archived: false,
           },
         ];
+      if (cmd === "list_calendar_sources")
+        return [
+          {
+            id: "cal1",
+            kind: "url",
+            label: "Work",
+            location: "https://example.com/cal.ics",
+            pollSeconds: 900,
+            enabled: true,
+            lastSyncedAt: null,
+            lastEtag: null,
+            lastModified: null,
+            lastError: null,
+          },
+        ];
       return null;
     });
     vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
@@ -78,7 +93,9 @@ describe("TodayView day navigation (#editing-past-days)", () => {
     await renderToday();
     expect(screen.getByText(/^today$/i)).toBeTruthy();
     expect(screen.getByLabelText(/current timer/i)).toBeTruthy();
-    expect(screen.getByLabelText(/upcoming calendar events/i)).toBeTruthy();
+    expect(
+      await screen.findByLabelText(/upcoming calendar events/i),
+    ).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: /next day/i }) as HTMLButtonElement)
         .disabled,

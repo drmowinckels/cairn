@@ -1072,16 +1072,12 @@ export function TodayView({
         </section>
       )}
 
-      {isToday && (
+      {isToday && calendarsConnected && (
         <section className="upcoming" aria-label="Upcoming calendar events">
           <div className="sect-label">
             <span>Up next</span>
           </div>
-          <UpcomingList
-            events={upcomingEvents}
-            onStart={onUpcomingStart}
-            calendarsConnected={calendarsConnected}
-          />
+          <UpcomingList events={upcomingEvents} onStart={onUpcomingStart} />
         </section>
       )}
 

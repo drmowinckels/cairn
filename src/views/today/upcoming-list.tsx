@@ -12,20 +12,10 @@ export interface UpcomingEvent {
 interface Props {
   events: UpcomingEvent[];
   onStart?: (event: UpcomingEvent) => void;
-  calendarsConnected: boolean;
 }
 
-export function UpcomingList({ events, onStart, calendarsConnected }: Props) {
+export function UpcomingList({ events, onStart }: Props) {
   if (events.length === 0) {
-    if (!calendarsConnected) {
-      return (
-        <Empty
-          title="No calendar connected"
-          body="Add a calendar subscription in Settings to see upcoming events here."
-          tone="soft"
-        />
-      );
-    }
     return (
       <Empty
         title="Nothing scheduled"
