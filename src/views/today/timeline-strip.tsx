@@ -10,17 +10,13 @@ import {
   resizeSegment,
   type ResizeEdge,
 } from "../../lib/timeline";
+import { useMinuteClock } from "../../lib/use-minute-clock";
 import type { BackendEntry } from "../../lib/ipc";
 import type { Project } from "../../lib/types";
 
 const PX_PER_HOUR = 44;
 const MIN_BLOCK_PX = 18;
 const SNAP_MIN = 5;
-
-function minutesNow(): number {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
-}
 
 /** A resize edit ready to persist. Carries only the edge that moved. */
 export interface ResizePatch {
@@ -73,11 +69,7 @@ export function TimelineStrip({
   onEntryClick,
   onResize,
 }: Props) {
-  const [nowMin, setNowMin] = useState(() => minutesNow());
-  useEffect(() => {
-    const id = window.setInterval(() => setNowMin(minutesNow()), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
+  const nowMin = useMinuteClock();
 
   const segments = useMemo(
     () => entriesToSegments(entries, nowMin),
@@ -226,9 +218,11 @@ export function TimelineStrip({
             const color = cbColor(proj?.color ?? "var(--ink-mute)", cbEnabled);
             const name = proj?.name ?? "Uncategorized";
             const label = s.description ? `${name} · ${s.description}` : name;
-            // Closed entries can be edge-resized; the running entry's end is
-            // "now", so it isn't a handle target.
-            const commit = s.running ? undefined : onResize;
+            // Closed, same-day entries can be edge-resized. The running
+            // entry's end is "now", and a clamped (past-midnight) entry's end
+            // isn't on this day — neither is a handle target; edit via the
+            // modal (click the block).
+            const commit = s.running || s.clamped ? undefined : onResize;
             return (
               <div key={s.id}>
                 <button

@@ -68,6 +68,7 @@ import type {
 import { RecentList, type RecentEntry } from "./recent-list";
 import { TimelineStrip } from "./timeline-strip";
 import { useTimelineViewPrefs } from "../../lib/use-timeline-view-prefs";
+import { useMinuteClock } from "../../lib/use-minute-clock";
 import { SuggestWhy } from "./suggest-why";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
 import { WorkingHoursReminder } from "./working-hours-reminder";
@@ -1452,11 +1453,7 @@ function TimelineSection({
   cbEnabled,
   showNow,
 }: TimelineSectionProps) {
-  const [nowMin, setNowMin] = useState(() => minutesNow());
-  useEffect(() => {
-    const id = window.setInterval(() => setNowMin(minutesNow()), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
+  const nowMin = useMinuteClock();
 
   const segments = useMemo(
     () => entriesToSegments(entries, nowMin),
@@ -1591,9 +1588,4 @@ function DayTimeline({
       </div>
     </div>
   );
-}
-
-function minutesNow(): number {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }

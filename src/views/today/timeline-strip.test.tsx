@@ -140,6 +140,22 @@ describe("TimelineStrip (#188)", () => {
     expect(container.querySelectorAll(".vt-handle")).toHaveLength(0);
   });
 
+  it("renders no edge handles on a clamped (past-midnight) entry", () => {
+    const onResize = vi.fn();
+    const { container } = renderStrip({
+      // 23:00 → 01:00 next day → clamped; its end isn't on this day.
+      entries: [
+        entry({
+          startedAt: "2026-05-26T23:00:00",
+          endedAt: "2026-05-27T01:00:00",
+        }),
+      ],
+      onResize,
+    });
+    expect(container.querySelector(".vt-seg")).toBeTruthy(); // still renders
+    expect(container.querySelectorAll(".vt-handle")).toHaveLength(0);
+  });
+
   it("dragging the bottom handle down resizes the end time", () => {
     const onResize = vi.fn();
     const { container } = renderStrip({ onResize }); // entry 09:00–10:30
