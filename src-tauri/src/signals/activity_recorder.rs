@@ -36,6 +36,17 @@ struct OpenSpan {
     start: DateTime<Utc>,
 }
 
+impl OpenSpan {
+    fn complete(self, end: DateTime<Utc>) -> CompletedSpan {
+        CompletedSpan {
+            app_name: self.app_name,
+            title_hint: self.title_hint,
+            start: self.start,
+            end,
+        }
+    }
+}
+
 /// Folds a sequence of `(foreground app, time)` observations into spans. A span
 /// opens when an app takes the foreground and completes when the foreground
 /// changes to a different app or away entirely (`None`). Same-app observations
@@ -60,12 +71,7 @@ impl SpanBuilder {
                 return None; // same app — extend the open span
             }
         }
-        let completed = self.open.take().map(|o| CompletedSpan {
-            app_name: o.app_name,
-            title_hint: o.title_hint,
-            start: o.start,
-            end: at,
-        });
+        let completed = self.open.take().map(|o| o.complete(at));
         if let Some(app) = app_name {
             self.open = Some(OpenSpan {
                 app_name: app,
@@ -78,12 +84,7 @@ impl SpanBuilder {
 
     /// Close any open span at `at` (called on stop/shutdown).
     pub fn flush(&mut self, at: DateTime<Utc>) -> Option<CompletedSpan> {
-        self.open.take().map(|o| CompletedSpan {
-            app_name: o.app_name,
-            title_hint: o.title_hint,
-            start: o.start,
-            end: at,
-        })
+        self.open.take().map(|o| o.complete(at))
     }
 }
 
