@@ -1362,6 +1362,24 @@ pub async fn delete_activity_log_impl(state: State<'_, AppState>) -> Result<(), 
     Ok(())
 }
 
+/// The activity-log spans for a local day (`YYYY-MM-DD`), for the review
+/// surface (#190). Same local-midnight window `list_day` uses for entries, so
+/// "today's activity" lines up with the user's calendar day. Logic here
+/// (tested); the thin `#[tauri::command]` shim is in the codecov-ignored
+/// `lib.rs`.
+pub async fn list_activity_log_impl(
+    state: State<'_, AppState>,
+    date: String,
+) -> Result<Vec<crate::activity_log::ActivityRow>, String> {
+    let day = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|e| format!("invalid date '{date}': {e}"))?;
+    let start = local_midnight_utc(day);
+    let end = local_midnight_utc(day + Duration::days(1));
+    crate::activity_log::list_in_range(&state.db.pool, &start.to_rfc3339(), &end.to_rfc3339())
+        .await
+        .map_err(err)
+}
+
 /// Maximum length of a single field on a dry-run snapshot, counted
 /// in UTF-16 code units to match the DOM `<input maxLength>`
 /// semantics the frontend bench uses (see `src/views/rules/test-bench.tsx`).
@@ -2719,6 +2737,43 @@ mod tests {
                 .await
         );
         assert_eq!(crate::activity_log::count(&db.pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn list_activity_log_returns_the_local_days_spans() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        // A span earlier today (local). Use local midnight + 9h so it lands in
+        // the queried day regardless of the test host's timezone.
+        let today = Local::now().date_naive();
+        let start = local_midnight_utc(today) + Duration::hours(9);
+        crate::activity_log::insert(
+            &db.pool,
+            &start.to_rfc3339(),
+            &(start + Duration::minutes(5)).to_rfc3339(),
+            "Zoom",
+            Some("Standup"),
+            "window",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        let state = app.state::<crate::AppState>();
+        let rows = list_activity_log_impl(state, today.format("%Y-%m-%d").to_string())
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].app_name, "Zoom");
+        assert_eq!(rows[0].title_hint.as_deref(), Some("Standup"));
+    }
+
+    #[tokio::test]
+    async fn list_activity_log_rejects_a_bad_date() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = list_activity_log_impl(state, "not-a-date".into())
+            .await
+            .unwrap_err();
+        assert!(err.contains("invalid date"));
     }
 
     #[tokio::test]
