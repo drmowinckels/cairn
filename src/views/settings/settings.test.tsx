@@ -82,6 +82,37 @@ afterEach(() => {
 });
 
 describe("SettingsView (browser-dev mode)", () => {
+  it("renders the Activity log section only when the activityLog prop is supplied (#190)", () => {
+    const { rerender } = render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
+    // Absent by default (the optional prop).
+    expect(
+      screen.queryByRole("switch", { name: /save activity log/i }),
+    ).toBeNull();
+    rerender(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        activityLog={{
+          settings: { enabled: false, retentionDays: 7 },
+          error: null,
+          setEnabled: vi.fn(async () => undefined),
+          setRetentionDays: vi.fn(async () => undefined),
+          deleteAll: vi.fn(async () => undefined),
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("switch", { name: /save activity log/i }),
+    ).toBeTruthy();
+  });
+
   it("points to the Data tab for the privacy guarantees (moved there)", () => {
     render(
       <SettingsView

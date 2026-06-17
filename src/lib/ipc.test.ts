@@ -69,6 +69,39 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("list_app_categories");
   });
 
+  it("getActivityLogSettings returns the backend settings", async () => {
+    invokeMock.mockResolvedValue({ enabled: true, retentionDays: 30 });
+    const { getActivityLogSettings } = await import("./ipc");
+    expect(await getActivityLogSettings()).toEqual({
+      enabled: true,
+      retentionDays: 30,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("get_activity_log_settings");
+  });
+
+  it("getActivityLogSettings coerces a null response to defaults", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { getActivityLogSettings, ACTIVITY_LOG_DEFAULTS } =
+      await import("./ipc");
+    expect(await getActivityLogSettings()).toEqual(ACTIVITY_LOG_DEFAULTS);
+  });
+
+  it("setActivityLogSettings forwards the settings under a `settings` key", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { setActivityLogSettings } = await import("./ipc");
+    await setActivityLogSettings({ enabled: true, retentionDays: 7 });
+    expect(invokeMock).toHaveBeenCalledWith("set_activity_log_settings", {
+      settings: { enabled: true, retentionDays: 7 },
+    });
+  });
+
+  it("deleteActivityLog invokes the command", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { deleteActivityLog } = await import("./ipc");
+    await deleteActivityLog();
+    expect(invokeMock).toHaveBeenCalledWith("delete_activity_log");
+  });
+
   it("deleteEntry forwards the id and ignores the response", async () => {
     invokeMock.mockResolvedValue(null);
     const { deleteEntry } = await import("./ipc");
@@ -375,6 +408,19 @@ describe("ipc helpers (outside Tauri)", () => {
   it("listAppCategories short-circuits to [] without calling the backend", async () => {
     const { listAppCategories } = await import("./ipc");
     expect(await listAppCategories()).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("activity-log commands short-circuit without the backend", async () => {
+    const {
+      getActivityLogSettings,
+      setActivityLogSettings,
+      deleteActivityLog,
+      ACTIVITY_LOG_DEFAULTS,
+    } = await import("./ipc");
+    expect(await getActivityLogSettings()).toEqual(ACTIVITY_LOG_DEFAULTS);
+    await setActivityLogSettings({ enabled: true, retentionDays: 1 });
+    await deleteActivityLog();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

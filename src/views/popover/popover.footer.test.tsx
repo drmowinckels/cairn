@@ -93,6 +93,7 @@ interface Backend {
     keep: number;
   };
   autoBackupStatus?: { lastBackupAt: string | null; count: number };
+  activityLogSettings?: { enabled: boolean; retentionDays: number };
 }
 
 async function mountPopover(backend: Backend) {
@@ -132,6 +133,10 @@ async function mountPopover(backend: Backend) {
           return backend.autoBackupStatus ?? { lastBackupAt: null, count: 0 };
         case "signal_capture_status":
           return { active: false };
+        case "get_activity_log_settings":
+          return (
+            backend.activityLogSettings ?? { enabled: false, retentionDays: 7 }
+          );
         default:
           // Arrays for any list_* command so consumers that `.map`
           // over the result don't crash; null for everything else
@@ -205,6 +210,17 @@ describe("Popover footer — live totals (#142)", () => {
     // The old hardcoded fixture copy must be gone.
     expect(footer.textContent).not.toMatch(/4h 12m/);
     expect(footer.textContent).not.toMatch(/3 rules active/);
+    // Activity log is off here → no recording indicator.
+    expect(footer.querySelector(".foot-rec")).toBeNull();
+  });
+
+  it("shows the activity-log recording indicator when the log is on (#190)", async () => {
+    await mountPopover({
+      activityLogSettings: { enabled: true, retentionDays: 7 },
+    });
+    const footer = document.querySelector(".pop-foot") as HTMLElement;
+    await waitFor(() => expect(footer.querySelector(".foot-rec")).toBeTruthy());
+    expect(footer.textContent).toMatch(/activity log/i);
   });
 
   it("shows a stale-backup indicator when the last backup is overdue", async () => {
