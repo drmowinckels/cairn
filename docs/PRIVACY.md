@@ -15,28 +15,31 @@ The first three sentences appear verbatim in the **Data tab → Storage** sectio
 
 ## What is stored
 
-| Stored                                                                  | Reason                                                                                          |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Time entries (start, end, project, tags, description, source)           | The app's purpose                                                                               |
-| Projects and tags the user has created                                  | The app's purpose                                                                               |
-| Rules (conditions, actions)                                             | User configuration                                                                              |
-| Exclusion list                                                          | User configuration                                                                              |
-| Calendar event titles for entries created by the calendar rule          | The user explicitly wanted this rule                                                            |
-| Calendar source list: label, redacted URL or file path, poll interval   | So Cairn knows what to fetch                                                                    |
-| Idle periods (timestamps only)                                          | To compute idle prompts and reports                                                             |
-| Suggestion feedback log: outcome, rule, project + matched signal values | Learn repeated patterns into rules; trust/quality analytics ([§](#suggestion-feedback-log-191)) |
+| Stored                                                                                              | Reason                                                                                          |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Time entries (start, end, project, tags, description, source)                                       | The app's purpose                                                                               |
+| Projects and tags the user has created                                                              | The app's purpose                                                                               |
+| Rules (conditions, actions)                                                                         | User configuration                                                                              |
+| Exclusion list                                                                                      | User configuration                                                                              |
+| Calendar event titles for entries created by the calendar rule                                      | The user explicitly wanted this rule                                                            |
+| Calendar source list: label, redacted URL or file path, poll interval                               | So Cairn knows what to fetch                                                                    |
+| Idle periods (timestamps only)                                                                      | To compute idle prompts and reports                                                             |
+| Suggestion feedback log: outcome, rule, project + matched signal values                             | Learn repeated patterns into rules; trust/quality analytics ([§](#suggestion-feedback-log-191)) |
+| **Only if you turn it on:** activity log — app name + a redacted window-title fragment + timestamps | Opt-in "review your day" (off by default; [§](#activity-log-190))                               |
 
 ## What is **not** stored
 
-- Window titles (used in matching, discarded)
+- Window titles (used in matching, discarded — _unless_ you opt into the [activity log](#activity-log-190), which keeps a redacted fragment)
 - Browser URLs / tab titles (used in matching, discarded)
 - File paths (used in matching, discarded)
-- Frontmost app name as a _log_ (only the project decided by the rule is logged)
+- Frontmost app name as a _log_ (only the project decided by the rule is logged — _unless_ you opt into the [activity log](#activity-log-190))
 - IP address, hostname, user account, machine ID, OS version — none of it. No reason to collect it.
 
-The one exception: when a rule fires and you **act on the suggestion**, the specific
-signal values that matched are kept in the local [suggestion feedback log](#suggestion-feedback-log-191)
-— never any other signal value, never anything that leaves the device.
+Two exceptions, both local-only and on by your choice: when a rule fires and you
+**act on the suggestion**, the matched signal values are kept in the
+[suggestion feedback log](#suggestion-feedback-log-191); and when you turn on the
+opt-in [activity log](#activity-log-190), the foreground app name and a redacted
+window-title fragment are recorded. Nothing else, and nothing leaves the device.
 
 ## Exclusion list
 
@@ -62,7 +65,7 @@ Hidden in Settings → Advanced. Off by default, **sticky off** on every relaunc
 
 When you act on a detection suggestion — **confirm**, **dismiss**, or **change…** — Cairn records the outcome in a small **local** log (the webview's `localStorage`, key `cairn:suggestion-feedback:v1`, capped at the most recent 400 events). It powers two features: proposing an explicit _learned_ rule once a pattern repeats, and the trust / suggestion-quality summaries in Today and Reports.
 
-Each event keeps the rule id and name, the project, the outcome, and **the matched signal values that fired the suggestion** — one per matched signal kind (e.g. the git branch, IDE folder, calendar event title, or window/tab title a condition referenced). This is the one place those matched values are retained on disk; everywhere else they are read in memory and discarded.
+Each event keeps the rule id and name, the project, the outcome, and **the matched signal values that fired the suggestion** — one per matched signal kind (e.g. the git branch, IDE folder, calendar event title, or window/tab title a condition referenced). Apart from the opt-in [activity log](#activity-log-190), this is the only place those matched values are retained on disk; everywhere else they are read in memory and discarded.
 
 Why this stays within the contract:
 
@@ -70,6 +73,20 @@ Why this stays within the contract:
 - **Exclusion-respecting.** The values come from the _redacted_ snapshot the rules engine already saw, so an excluded app, domain, or window-title pattern can never reach the log.
 - **Only what a rule matched.** A signal value you never wrote a rule against is never recorded — only the specific values a matched condition referenced, and only when you acted on the resulting suggestion.
 - **Clearable.** "Delete everything" wipes it with the rest of your data, and dismissing a learned-rule prompt drops that pattern.
+
+## Activity log (#190)
+
+An **opt-in** "review your day" log, hidden in Settings → Detection → **Save activity log**. **Off by default**, and a fresh install never records anything. When the user turns it on, Cairn keeps a compact span — `started_at`, `ended_at`, the foreground **app name**, a **redacted window-title fragment**, and the source — in the `activity_log` table of `cairn.sqlite`, so the day can be reviewed and dragged onto projects later. This is **not** the [debug capture](#debug-capture-raw-signals) (which dumps the full raw stream for troubleshooting) — it is user-facing, redacted, and retention-bounded.
+
+Why this stays within the contract:
+
+- **Off by default; "off" means gone.** The toggle persists, but disabling it **stops recording and purges every existing row immediately** — the same "the data must not exist when the feature is off" stance as the debug capture deleting its file.
+- **Titles are redacted, never stored in full.** Only the window-title segment **before the first dash separator** (em-dash, en-dash, or hyphen — the set `signals::ide` parses) is kept; everything from the separator onward is dropped. A full multi-part title (file + project + app) is never written.
+- **Exclusion-respecting.** The recorder reads the **same redacted snapshots the rules engine sees**, after the exclusion list has already run at the collector. An excluded app arrives as "no foreground" and produces **no row** — its name and title never reach the table. Incognito/private browser windows are likewise dropped upstream.
+- **Local only.** It is rows in the local SQLite file; nothing is uploaded — the no-network guarantee is unchanged.
+- **Retention-bounded.** A retention window (default **7 days**, configurable; "until I delete" keeps everything) is purged on each launch. A **"Delete activity log"** control hard-deletes all rows on demand, and "Delete everything" wipes it with the rest of your data.
+- **A visible indicator** shows while recording is active, so it is never running silently.
+- **Excluded from the standard CSV export** (it is raw activity, not time entries); it has its own separate export.
 
 ## Calendar integration
 
@@ -129,7 +146,7 @@ A note on cloud-synced folders: backup and restore are explicitly snapshot opera
 Any of these requires a CHANGELOG entry tagged `[privacy]` and explicit reaffirmation in the Settings privacy card:
 
 - Adding any outbound network request (including update checks). The user-configured calendar fetches in Settings → Integrations → Calendar are the one allowed exception, scoped to URLs the user explicitly added.
-- Persisting any field marked "not stored" above. The local [suggestion feedback log](#suggestion-feedback-log-191) (#191) is the one such case, shipped as a deliberate, documented local-only exception — this section is its `[privacy]` reaffirmation.
+- Persisting any field marked "not stored" above. Two deliberate, documented, local-only exceptions exist: the always-on [suggestion feedback log](#suggestion-feedback-log-191) (#191), and the **opt-in, off-by-default** [activity log](#activity-log-190) (#190) — both confined to this machine, both clearable, and the activity log purged the moment it is turned off. Any further such persistence needs the same `[privacy]` reaffirmation.
 - Adding any third-party SDK (analytics, crash reporting, anything).
 - Changing the exclusion list behavior so an excluded signal _is_ observed in any capacity.
 

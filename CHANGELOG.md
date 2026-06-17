@@ -6,6 +6,18 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ## Unreleased
 
+### Privacy
+
+- `[privacy]` Opt-in activity log for the "review your day" flow (#190). Off by
+  default. When enabled (Settings → Detection → "Save activity log"), Cairn
+  records compact foreground spans — app name, a **redacted** window-title
+  fragment (only the segment before the first dash separator; never the full
+  title), and timestamps — to the local `activity_log` table. It reads the same
+  redacted snapshots the rules engine sees, so the exclusion list (and
+  incognito windows) keep excluded apps out entirely. Retention-bounded
+  (default 7 days, purged on launch); disabling the toggle stops recording and
+  purges every row immediately. Local only — no network. See `docs/PRIVACY.md`.
+
 ### Signals
 
 - `[rules]` New `app.category` rule condition (#189). Matches the _category_
