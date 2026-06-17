@@ -10,6 +10,7 @@ function stub(over: Partial<UseActivityLog> = {}): UseActivityLog {
     setEnabled: vi.fn().mockResolvedValue(undefined),
     setRetentionDays: vi.fn().mockResolvedValue(undefined),
     deleteAll: vi.fn().mockResolvedValue(undefined),
+    exportToFile: vi.fn().mockResolvedValue(undefined),
     ...over,
   };
 }
@@ -75,6 +76,17 @@ describe("ActivityLogCard (#190)", () => {
       screen.getByRole("button", { name: /delete activity log/i }),
     );
     expect(al.deleteAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("Export CSV shows only when on and calls exportToFile", () => {
+    const off = stub();
+    const { rerender } = render(<ActivityLogCard activityLog={off} />);
+    expect(screen.queryByRole("button", { name: /export csv/i })).toBeNull();
+
+    const on = stub({ settings: { enabled: true, retentionDays: 7 } });
+    rerender(<ActivityLogCard activityLog={on} />);
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+    expect(on.exportToFile).toHaveBeenCalledTimes(1);
   });
 
   it("renders an error banner when the hook reports one", () => {

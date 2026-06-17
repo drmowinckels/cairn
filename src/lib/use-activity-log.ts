@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import {
   ACTIVITY_LOG_DEFAULTS,
   deleteActivityLog,
+  exportActivityLogCsv,
   getActivityLogSettings,
+  inTauri,
   setActivityLogSettings,
   type ActivityLogSettings,
 } from "./ipc";
+import { withPopoverPinned } from "./use-backup";
 
 export interface UseActivityLog {
   settings: ActivityLogSettings;
@@ -16,6 +20,8 @@ export interface UseActivityLog {
   setRetentionDays: (days: number) => Promise<void>;
   /** Hard-delete every row now, leaving the toggle on. */
   deleteAll: () => Promise<void>;
+  /** Pick a destination and write the log to CSV. No-op if cancelled. */
+  exportToFile: () => Promise<void>;
 }
 
 /**
@@ -78,5 +84,31 @@ export function useActivityLog(): UseActivityLog {
     }
   }, []);
 
-  return { settings, error, setEnabled, setRetentionDays, deleteAll };
+  const exportToFile = useCallback(async () => {
+    if (!inTauri) return;
+    setError(null);
+    try {
+      const defaultPath = `cairn-activity-${new Date().toISOString().slice(0, 10)}.csv`;
+      const dest = await withPopoverPinned(() =>
+        save({
+          title: "Export activity log as CSV",
+          defaultPath,
+          filters: [{ name: "CSV", extensions: ["csv"] }],
+        }),
+      );
+      if (!dest) return;
+      await exportActivityLogCsv(dest);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  return {
+    settings,
+    error,
+    setEnabled,
+    setRetentionDays,
+    deleteAll,
+    exportToFile,
+  };
 }

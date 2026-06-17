@@ -21,8 +21,14 @@ interface Props {
  * privacy contract is in `docs/PRIVACY.md`.
  */
 export function ActivityLogCard({ activityLog }: Props) {
-  const { settings, error, setEnabled, setRetentionDays, deleteAll } =
-    activityLog;
+  const {
+    settings,
+    error,
+    setEnabled,
+    setRetentionDays,
+    deleteAll,
+    exportToFile,
+  } = activityLog;
   const [confirmEnable, setConfirmEnable] = useState(false);
 
   return (
@@ -70,13 +76,24 @@ export function ActivityLogCard({ activityLog }: Props) {
         </SetRow>
       )}
 
-      <button
-        type="button"
-        className="btn btn--ghost btn--sm"
-        onClick={() => void deleteAll()}
-      >
-        Delete activity log now
-      </button>
+      <div className="settings-actions">
+        {settings.enabled && (
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => void exportToFile()}
+          >
+            Export CSV
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={() => void deleteAll()}
+        >
+          Delete activity log now
+        </button>
+      </div>
 
       {error && (
         <div className="privacy-banner privacy-banner--error" role="alert">

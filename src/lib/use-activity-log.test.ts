@@ -4,18 +4,36 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 const getMock = vi.fn();
 const setMock = vi.fn();
 const deleteMock = vi.fn();
+const exportMock = vi.fn();
+const saveMock = vi.fn();
+let inTauriValue = true;
 
 vi.mock("./ipc", () => ({
   ACTIVITY_LOG_DEFAULTS: { enabled: false, retentionDays: 7 },
+  get inTauri() {
+    return inTauriValue;
+  },
   getActivityLogSettings: () => getMock(),
   setActivityLogSettings: (s: unknown) => setMock(s),
   deleteActivityLog: () => deleteMock(),
+  exportActivityLogCsv: (dest: string) => exportMock(dest),
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: (opts: unknown) => saveMock(opts),
+}));
+
+vi.mock("./use-backup", () => ({
+  withPopoverPinned: (fn: () => Promise<unknown>) => fn(),
 }));
 
 afterEach(() => {
   getMock.mockReset();
   setMock.mockReset();
   deleteMock.mockReset();
+  exportMock.mockReset();
+  saveMock.mockReset();
+  inTauriValue = true;
 });
 
 describe("useActivityLog (#190)", () => {
@@ -75,6 +93,55 @@ describe("useActivityLog (#190)", () => {
       await result.current.deleteAll();
     });
     expect(deleteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("exportToFile writes to the picked destination", async () => {
+    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    saveMock.mockResolvedValue("/tmp/cairn-activity.csv");
+    exportMock.mockResolvedValue("/tmp/cairn-activity.csv");
+    const { useActivityLog } = await import("./use-activity-log");
+    const { result } = renderHook(() => useActivityLog());
+    await act(async () => {
+      await result.current.exportToFile();
+    });
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(exportMock).toHaveBeenCalledWith("/tmp/cairn-activity.csv");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("exportToFile is a no-op when the save dialog is cancelled", async () => {
+    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    saveMock.mockResolvedValue(null);
+    const { useActivityLog } = await import("./use-activity-log");
+    const { result } = renderHook(() => useActivityLog());
+    await act(async () => {
+      await result.current.exportToFile();
+    });
+    expect(exportMock).not.toHaveBeenCalled();
+  });
+
+  it("exportToFile is a no-op outside Tauri", async () => {
+    inTauriValue = false;
+    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    const { useActivityLog } = await import("./use-activity-log");
+    const { result } = renderHook(() => useActivityLog());
+    await act(async () => {
+      await result.current.exportToFile();
+    });
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(exportMock).not.toHaveBeenCalled();
+  });
+
+  it("exportToFile surfaces a write error", async () => {
+    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    saveMock.mockResolvedValue("/tmp/x.csv");
+    exportMock.mockRejectedValue(new Error("disk full"));
+    const { useActivityLog } = await import("./use-activity-log");
+    const { result } = renderHook(() => useActivityLog());
+    await act(async () => {
+      await result.current.exportToFile();
+    });
+    expect(result.current.error).toContain("disk full");
   });
 
   it("surfaces a load error", async () => {

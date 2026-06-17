@@ -86,7 +86,7 @@ Why this stays within the contract:
 - **Local only.** It is rows in the local SQLite file; nothing is uploaded — the no-network guarantee is unchanged.
 - **Retention-bounded.** A retention window (default **7 days**, configurable; "until I delete" keeps everything) is purged on each launch. A **"Delete activity log"** control hard-deletes all rows on demand, and "Delete everything" wipes it with the rest of your data.
 - **A visible indicator** shows while recording is active, so it is never running silently.
-- **Excluded from the standard CSV export** (it is raw activity, not time entries); it has its own separate export.
+- **Excluded from the standard CSV export** (it is raw activity, not time entries). It has its own separate **"Export CSV"** action (Settings → Activity log, shown only while the log is on) that writes one row per span with columns `activity_id,started_at,ended_at,duration_minutes,app_name,title_hint,source` to a path the user picks via the system save dialog. `title_hint` is the same redacted fragment stored in the table — never the full title — so the export carries nothing the log itself doesn't.
 
 ## Calendar integration
 

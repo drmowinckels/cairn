@@ -118,6 +118,17 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(await listActivityLog("2026-06-16")).toEqual([]);
   });
 
+  it("exportActivityLogCsv forwards the destination and returns the path", async () => {
+    invokeMock.mockResolvedValue("/tmp/cairn-activity.csv");
+    const { exportActivityLogCsv } = await import("./ipc");
+    expect(await exportActivityLogCsv("/tmp/cairn-activity.csv")).toBe(
+      "/tmp/cairn-activity.csv",
+    );
+    expect(invokeMock).toHaveBeenCalledWith("export_activity_log_csv", {
+      dest: "/tmp/cairn-activity.csv",
+    });
+  });
+
   it("deleteEntry forwards the id and ignores the response", async () => {
     invokeMock.mockResolvedValue(null);
     const { deleteEntry } = await import("./ipc");

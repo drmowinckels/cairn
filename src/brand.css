@@ -3374,6 +3374,12 @@ select.rule-conf {
   gap: 6px;
 }
 
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .settings-h {
   font-family: var(--serif);
   font-size: 18px;
