@@ -27,6 +27,8 @@ export function minutesOfDay(iso: string): number {
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }
 
+export const MINUTES_PER_DAY = 24 * 60;
+
 export interface TimelineSegment {
   id: string;
   startMin: number;
@@ -35,12 +37,18 @@ export interface TimelineSegment {
   description: string;
   running: boolean;
   source: string;
+  /** True when the entry runs past local midnight: `endMin` is clamped to
+   *  end-of-day so only the part on this day renders. Such a segment isn't
+   *  edge-resizable (its end isn't on this day) — edit it via the modal. */
+  clamped: boolean;
 }
 
 /**
- * Project a backend entry list into segments positioned along the
- * 08:00–19:00 track. The running entry (endedAt === null) gets
- * `endMin = nowMin` so it grows in real time.
+ * Project a backend entry list into segments. The running entry
+ * (endedAt === null) gets `endMin = nowMin` so it grows in real time. An entry
+ * whose end is past local midnight (`endMin < startMin`) is clamped to
+ * end-of-day and flagged, so it renders its same-day portion instead of
+ * vanishing off-track.
  */
 export function entriesToSegments(
   entries: BackendEntry[],
@@ -49,9 +57,14 @@ export function entriesToSegments(
   return entries.map((e) => {
     const startMin = minutesOfDay(e.startedAt);
     const running = e.endedAt === null;
-    const endMin = running
+    let endMin = running
       ? Math.max(startMin, nowMin)
       : minutesOfDay(e.endedAt as string);
+    let clamped = false;
+    if (!running && endMin < startMin) {
+      endMin = MINUTES_PER_DAY;
+      clamped = true;
+    }
     return {
       id: e.id,
       startMin,
@@ -60,6 +73,7 @@ export function entriesToSegments(
       description: e.description,
       running,
       source: e.source,
+      clamped,
     };
   });
 }

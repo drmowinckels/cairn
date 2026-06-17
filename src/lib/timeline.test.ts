@@ -117,6 +117,26 @@ describe("entriesToSegments", () => {
     );
     expect(segments[0].endMin).toBe(segments[0].startMin);
   });
+
+  it("clamps a past-midnight entry to end-of-day and flags it", () => {
+    // 23:00 → 01:00 next day: minutesOfDay(end) < start, so it would render
+    // off-track. Clamp to 24:00 and mark it clamped (not edge-resizable).
+    const segments = entriesToSegments(
+      [entry("a", "p1", "2026-05-23T23:00:00", "2026-05-24T01:00:00")],
+      12 * 60,
+    );
+    expect(segments[0].startMin).toBe(23 * 60);
+    expect(segments[0].endMin).toBe(24 * 60);
+    expect(segments[0].clamped).toBe(true);
+  });
+
+  it("leaves a normal same-day entry unclamped", () => {
+    const segments = entriesToSegments(
+      [entry("a", "p1", "2026-05-23T09:00:00", "2026-05-23T10:00:00")],
+      12 * 60,
+    );
+    expect(segments[0].clamped).toBe(false);
+  });
 });
 
 describe("legendFromSegments", () => {
@@ -164,6 +184,7 @@ function seg(startMin: number, endMin: number): TimelineSegment {
     description: "",
     running: false,
     source: "manual",
+    clamped: false,
   };
 }
 
