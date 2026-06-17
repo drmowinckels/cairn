@@ -195,6 +195,14 @@ async fn delete_activity_log(state: tauri::State<'_, AppState>) -> Result<(), St
 }
 
 #[tauri::command]
+async fn list_activity_log(
+    state: tauri::State<'_, AppState>,
+    date: String,
+) -> Result<Vec<activity_log::ActivityRow>, String> {
+    ipc::list_activity_log_impl(state, date).await
+}
+
+#[tauri::command]
 async fn preview_connector_manifest(path: String) -> Result<connectors::ConnectorManifest, String> {
     ipc::preview_connector_manifest_impl(path).await
 }
@@ -497,6 +505,7 @@ pub fn run() {
             get_activity_log_settings,
             set_activity_log_settings,
             delete_activity_log,
+            list_activity_log,
             ipc::signal_capture_status,
             ipc::get_onboarding_state,
             ipc::complete_onboarding,

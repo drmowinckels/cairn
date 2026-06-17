@@ -12,6 +12,19 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
+/// One stored activity span, surfaced to the "review your day" UI (#190).
+/// `serde(camelCase)` so it crosses IPC unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityRow {
+    pub id: i64,
+    pub started_at: String,
+    pub ended_at: String,
+    pub app_name: String,
+    pub title_hint: Option<String>,
+    pub source: String,
+}
+
 /// User-controlled activity-log settings, stored on the singleton app_state
 /// row so the collector can read them without the webview open.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +106,37 @@ pub async fn count(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
         .fetch_one(pool)
         .await?;
     Ok(row.get::<i64, _>("n"))
+}
+
+/// Spans whose start falls in `[start, end)` (RFC3339 UTC bounds), oldest
+/// first — the day's activity for the review surface (#190). Mirrors the
+/// `started_at`-window semantics `list_day` uses for entries.
+pub async fn list_in_range(
+    pool: &SqlitePool,
+    start: &str,
+    end: &str,
+) -> Result<Vec<ActivityRow>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, started_at, ended_at, app_name, title_hint, source \
+           FROM activity_log \
+          WHERE started_at >= ?1 AND started_at < ?2 \
+          ORDER BY started_at ASC",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ActivityRow {
+            id: r.get("id"),
+            started_at: r.get("started_at"),
+            ended_at: r.get("ended_at"),
+            app_name: r.get("app_name"),
+            title_hint: r.get("title_hint"),
+            source: r.get("source"),
+        })
+        .collect())
 }
 
 /// Hard-delete every row (the "Delete activity log now" action). Returns the
@@ -206,6 +250,32 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count(&db.pool).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_in_range_returns_only_in_window_rows_oldest_first() {
+        let (_dir, db) = test_db().await;
+        // Two in-window (09:00, 11:00) + one before the window (yesterday).
+        for (start, app) in [
+            ("2026-06-16T11:00:00+00:00", "Code"),
+            ("2026-06-16T09:00:00+00:00", "Zoom"),
+            ("2026-06-15T23:00:00+00:00", "Old"),
+        ] {
+            insert(&db.pool, start, start, app, None, "window", Utc::now())
+                .await
+                .unwrap();
+        }
+        let rows = list_in_range(
+            &db.pool,
+            "2026-06-16T00:00:00+00:00",
+            "2026-06-17T00:00:00+00:00",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.app_name.as_str()).collect::<Vec<_>>(),
+            ["Zoom", "Code"], // oldest first; the previous day is excluded
+        );
     }
 
     #[tokio::test]
