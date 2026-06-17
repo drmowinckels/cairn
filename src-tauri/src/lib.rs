@@ -175,6 +175,26 @@ async fn list_day(
 }
 
 #[tauri::command]
+async fn get_activity_log_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<activity_log::ActivityLogSettings, String> {
+    ipc::get_activity_log_settings_impl(state).await
+}
+
+#[tauri::command]
+async fn set_activity_log_settings(
+    state: tauri::State<'_, AppState>,
+    settings: activity_log::ActivityLogSettings,
+) -> Result<(), String> {
+    ipc::set_activity_log_settings_impl(state, settings).await
+}
+
+#[tauri::command]
+async fn delete_activity_log(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    ipc::delete_activity_log_impl(state).await
+}
+
+#[tauri::command]
 async fn preview_connector_manifest(path: String) -> Result<connectors::ConnectorManifest, String> {
     ipc::preview_connector_manifest_impl(path).await
 }
@@ -242,6 +262,7 @@ fn calendar_registry_for_setup(
 
 use plugins::calendar::CalendarRegistry;
 use rules::{Rule as EngineRule, Snoozer};
+use signals::activity_recorder::ActivityRecorder;
 use signals::browser_extension::BrowserExtensionState;
 use signals::capture::SignalCapture;
 use signals::exclusions::ExclusionMatcher;
@@ -270,6 +291,10 @@ pub struct AppState {
     /// toggle is in-memory only and never persisted across launches.
     /// See `signals::capture` and `docs/PRIVACY.md`.
     pub capture: SignalCapture,
+    /// Opt-in activity-log recorder (#190). Recreated off each launch; started
+    /// at boot only when the persisted toggle is on. See
+    /// `signals::activity_recorder` and `docs/PRIVACY.md`.
+    pub activity_recorder: ActivityRecorder,
     /// Absolute path to the resolved app data dir. The capture IPC
     /// uses this to write `debug-signals.ndjson` so the writer
     /// doesn't need to re-resolve via `AppHandle::path()` on every
@@ -469,6 +494,9 @@ pub fn run() {
             ipc::browser_extension_status,
             ipc::start_signal_capture,
             ipc::stop_signal_capture,
+            get_activity_log_settings,
+            set_activity_log_settings,
+            delete_activity_log,
             ipc::signal_capture_status,
             ipc::get_onboarding_state,
             ipc::complete_onboarding,
@@ -765,6 +793,7 @@ pub fn run() {
                 plugin_host,
                 connector_host,
                 capture: SignalCapture::new(),
+                activity_recorder: ActivityRecorder::new(),
                 data_dir: data_dir.clone(),
                 exclusions,
                 exclusions_mutator: tokio::sync::Mutex::new(()),
@@ -778,6 +807,35 @@ pub fn run() {
                 browser_extension: browser_extension_state,
                 auto_backup_lock,
             });
+
+            // Activity log (#190): apply retention and resume recording if the
+            // user left the opt-in toggle on. Off by default, so a fresh
+            // install does nothing here.
+            {
+                let state = app.state::<AppState>();
+                let settings =
+                    tauri::async_runtime::block_on(activity_log::load_settings(&state.db.pool));
+                if settings.enabled {
+                    tauri::async_runtime::block_on(async {
+                        if let Err(e) = activity_log::purge_older_than(
+                            &state.db.pool,
+                            settings.retention_days,
+                            chrono::Utc::now(),
+                        )
+                        .await
+                        {
+                            log::warn!("activity_log: boot purge failed: {e}");
+                        }
+                        if let Err(e) = state
+                            .activity_recorder
+                            .start_with_receiver(state.db.pool.clone(), state.stream.subscribe())
+                            .await
+                        {
+                            log::warn!("activity_log: boot recorder start failed: {e}");
+                        }
+                    });
+                }
+            }
 
             tray::setup(app.handle())?;
             popover::register_shortcut(app.handle());

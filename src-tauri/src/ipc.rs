@@ -1312,6 +1312,56 @@ pub fn list_app_categories() -> Vec<crate::rules::app_categories::AppCategory> {
     crate::rules::app_categories::categories().to_vec()
 }
 
+/// Current activity-log settings (#190). Logic lives here (testable); the thin
+/// `#[tauri::command]` shim is in the codecov-ignored `lib.rs`.
+pub async fn get_activity_log_settings_impl(
+    state: State<'_, AppState>,
+) -> Result<crate::activity_log::ActivityLogSettings, String> {
+    Ok(crate::activity_log::load_settings(&state.db.pool).await)
+}
+
+/// Persist the activity-log toggle + retention and reconcile the recorder
+/// (#190). Enabling applies retention immediately and starts the recorder;
+/// disabling stops it and **purges every row** — "off" means the data doesn't
+/// exist, mirroring how the debug capture deletes its file (`docs/PRIVACY.md`).
+pub async fn set_activity_log_settings_impl(
+    state: State<'_, AppState>,
+    settings: crate::activity_log::ActivityLogSettings,
+) -> Result<(), String> {
+    crate::activity_log::save_settings(&state.db.pool, settings)
+        .await
+        .map_err(err)?;
+    if settings.enabled {
+        crate::activity_log::purge_older_than(
+            &state.db.pool,
+            settings.retention_days,
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(err)?;
+        // Ignore "already running" so toggling retention while on doesn't fail.
+        let _ = state
+            .activity_recorder
+            .start_with_receiver(state.db.pool.clone(), state.stream.subscribe())
+            .await;
+    } else {
+        state.activity_recorder.stop().await;
+        crate::activity_log::delete_all(&state.db.pool)
+            .await
+            .map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Hard-delete every activity-log row now ("Delete activity log" button),
+/// leaving the toggle untouched (#190).
+pub async fn delete_activity_log_impl(state: State<'_, AppState>) -> Result<(), String> {
+    crate::activity_log::delete_all(&state.db.pool)
+        .await
+        .map_err(err)?;
+    Ok(())
+}
+
 /// Maximum length of a single field on a dry-run snapshot, counted
 /// in UTF-16 code units to match the DOM `<input maxLength>`
 /// semantics the frontend bench uses (see `src/views/rules/test-bench.tsx`).
@@ -2608,6 +2658,86 @@ mod tests {
             .expect("meeting category present");
         assert!(!meeting.label.is_empty());
         assert!(meeting.apps.iter().any(|a| a == "Zoom"));
+    }
+
+    #[tokio::test]
+    async fn activity_log_settings_default_off_and_round_trip() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Default: off.
+        let s = get_activity_log_settings_impl(state).await.unwrap();
+        assert!(!s.enabled);
+
+        // Enabling persists, starts the recorder, and applies retention.
+        let state = app.state::<crate::AppState>();
+        set_activity_log_settings_impl(
+            state,
+            crate::activity_log::ActivityLogSettings {
+                enabled: true,
+                retention_days: 30,
+            },
+        )
+        .await
+        .unwrap();
+        let state = app.state::<crate::AppState>();
+        let s = get_activity_log_settings_impl(state).await.unwrap();
+        assert!(s.enabled);
+        assert_eq!(s.retention_days, 30);
+        assert!(
+            app.state::<crate::AppState>()
+                .activity_recorder
+                .is_active()
+                .await
+        );
+
+        // Disabling stops the recorder AND purges every row (privacy contract).
+        crate::activity_log::insert(
+            &db.pool,
+            "2026-06-16T09:00:00+00:00",
+            "2026-06-16T09:05:00+00:00",
+            "Code",
+            None,
+            "window",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        let state = app.state::<crate::AppState>();
+        set_activity_log_settings_impl(
+            state,
+            crate::activity_log::ActivityLogSettings {
+                enabled: false,
+                retention_days: 30,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !app.state::<crate::AppState>()
+                .activity_recorder
+                .is_active()
+                .await
+        );
+        assert_eq!(crate::activity_log::count(&db.pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_activity_log_clears_rows_without_touching_the_toggle() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        crate::activity_log::insert(
+            &db.pool,
+            "2026-06-16T09:00:00+00:00",
+            "2026-06-16T09:05:00+00:00",
+            "Code",
+            None,
+            "window",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        let state = app.state::<crate::AppState>();
+        delete_activity_log_impl(state).await.unwrap();
+        assert_eq!(crate::activity_log::count(&db.pool).await.unwrap(), 0);
     }
 
     #[tokio::test]

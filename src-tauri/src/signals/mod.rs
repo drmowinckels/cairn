@@ -8,6 +8,7 @@
 //! warnings` happy until then.
 #![allow(dead_code)]
 
+pub mod activity_recorder;
 pub mod browser;
 pub mod browser_extension;
 pub mod capture;
