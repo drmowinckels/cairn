@@ -108,8 +108,8 @@ fn foreground_of(next: Option<&SignalSnapshot>) -> (Option<String>, Option<Strin
 }
 
 struct Session {
-    stop_tx: Option<oneshot::Sender<()>>,
-    task: Option<JoinHandle<()>>,
+    stop_tx: oneshot::Sender<()>,
+    task: JoinHandle<()>,
 }
 
 /// In-memory handle to the running recorder. Starting/stopping is driven by the
@@ -142,25 +142,20 @@ impl ActivityRecorder {
         }
         let (stop_tx, stop_rx) = oneshot::channel();
         let task = tokio::spawn(recorder_loop(pool, snapshot_rx, stop_rx));
-        *guard = Some(Session {
-            stop_tx: Some(stop_tx),
-            task: Some(task),
-        });
+        *guard = Some(Session { stop_tx, task });
         Ok(())
     }
 
     /// Stop recording. The writer flushes its open span before exiting.
     pub async fn stop(&self) {
         let session = self.inner.lock().await.take();
-        let Some(mut session) = session else {
+        let Some(session) = session else {
             return;
         };
-        if let Some(tx) = session.stop_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(task) = session.task.take() {
-            let _ = task.await;
-        }
+        // Signal the loop to break, then join it — awaiting the handle as the
+        // final statement keeps the post-await region off a nested brace.
+        let _ = session.stop_tx.send(());
+        let _ = session.task.await;
     }
 }
 
@@ -181,7 +176,11 @@ async fn recorder_loop(
     }
 
     loop {
-        tokio::select! {
+        // The select arm ends on a *sync* expression (the completed span, if
+        // any); the single `persist().await` lives in the loop body. This
+        // keeps both persist sites consolidated and the await off a nested
+        // closing brace (a cargo-llvm-cov region quirk).
+        let completed = tokio::select! {
             biased;
             _ = &mut stop_rx => break,
             changed = snapshot_rx.changed() => {
@@ -190,11 +189,11 @@ async fn recorder_loop(
                 }
                 let next = snapshot_rx.borrow().clone();
                 let (app, hint) = foreground_of(next.as_ref());
-                if let Some(span) = builder.observe(app, hint, Utc::now()) {
-                    persist(&pool, &span).await;
-                }
+                builder.observe(app, hint, Utc::now())
             }
-        }
+        };
+        let Some(span) = completed else { continue };
+        persist(&pool, &span).await;
     }
     if let Some(span) = builder.flush(Utc::now()) {
         persist(&pool, &span).await;
@@ -287,33 +286,32 @@ mod tests {
         assert_eq!(hint.as_deref(), Some("main.rs"));
     }
 
+    /// Give the spawned recorder task time to run its (await-free) seed and
+    /// park on `changed()`, so a subsequent `send` arrives as a distinct
+    /// change rather than collapsing into the seed value.
+    async fn settle() {
+        tokio::time::sleep(Duration::milliseconds(50).to_std().unwrap()).await;
+    }
+
     #[tokio::test]
     async fn records_a_span_to_the_db_when_the_foreground_changes() {
         let (_dir, db) = test_db().await;
-        let snap = |app: &str| {
-            Some(SignalSnapshot {
-                ide_folder: None,
-                git_branch: None,
-                window_title: None,
-                app_name: Some(app.into()),
-                browser_domain: None,
-                calendar: vec![],
-            })
-        };
-        let (tx, rx) = watch::channel(snap("Zoom"));
+        let (tx, rx) = watch::channel(fg(Some("Zoom")));
         let rec = ActivityRecorder::new();
         rec.start_with_receiver(db.pool.clone(), rx).await.unwrap();
         assert!(rec.is_active().await);
 
-        // Switch apps → the Zoom span completes and is written.
-        tx.send(snap("Code")).unwrap();
+        // Let "Zoom" seed + park, then switch → the Zoom span completes via the
+        // changed arm (not the stop flush) and is written.
+        settle().await;
+        tx.send(fg(Some("Code"))).unwrap();
         for _ in 0..200 {
             if activity_log::count(&db.pool).await.unwrap() >= 1 {
                 break;
             }
             tokio::time::sleep(Duration::milliseconds(5).to_std().unwrap()).await;
         }
-        rec.stop().await; // flushes the open Code span
+        rec.stop().await; // flushes the still-open Code span
         assert!(!rec.is_active().await);
         assert!(activity_log::count(&db.pool).await.unwrap() >= 1);
     }
@@ -352,8 +350,10 @@ mod tests {
         let (tx, rx) = watch::channel(fg(Some("Zoom")));
         let rec = ActivityRecorder::new();
         rec.start_with_receiver(db.pool.clone(), rx).await.unwrap();
-        drop(tx); // stream gone → the loop's `changed.is_err()` break
-        rec.stop().await; // joins the already-exited task without hanging
+        settle().await; // let the task park on changed()
+        drop(tx); // stream gone → `changed()` resolves Err → the is_err break
+        settle().await; // let the loop hit the break + flush + exit on its own
+        rec.stop().await; // task already exited; stop just joins the handle
         assert!(!rec.is_active().await);
     }
 
