@@ -102,6 +102,22 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("delete_activity_log");
   });
 
+  it("listActivityLog forwards the date and returns the rows", async () => {
+    const rows = [{ id: 1, appName: "Zoom" }];
+    invokeMock.mockResolvedValue(rows);
+    const { listActivityLog } = await import("./ipc");
+    expect(await listActivityLog("2026-06-16")).toEqual(rows);
+    expect(invokeMock).toHaveBeenCalledWith("list_activity_log", {
+      date: "2026-06-16",
+    });
+  });
+
+  it("listActivityLog coerces a null response to []", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { listActivityLog } = await import("./ipc");
+    expect(await listActivityLog("2026-06-16")).toEqual([]);
+  });
+
   it("deleteEntry forwards the id and ignores the response", async () => {
     invokeMock.mockResolvedValue(null);
     const { deleteEntry } = await import("./ipc");
@@ -416,11 +432,13 @@ describe("ipc helpers (outside Tauri)", () => {
       getActivityLogSettings,
       setActivityLogSettings,
       deleteActivityLog,
+      listActivityLog,
       ACTIVITY_LOG_DEFAULTS,
     } = await import("./ipc");
     expect(await getActivityLogSettings()).toEqual(ACTIVITY_LOG_DEFAULTS);
     await setActivityLogSettings({ enabled: true, retentionDays: 1 });
     await deleteActivityLog();
+    expect(await listActivityLog("2026-06-16")).toEqual([]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

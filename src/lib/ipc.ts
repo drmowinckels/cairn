@@ -726,6 +726,23 @@ export async function deleteActivityLog(): Promise<void> {
   await invoke("delete_activity_log");
 }
 
+/** One recorded activity span (#190). Mirrors Rust `ActivityRow`. */
+export interface ActivityRow {
+  id: number;
+  startedAt: string;
+  endedAt: string;
+  appName: string;
+  titleHint: string | null;
+  source: string;
+}
+
+/** The recorded spans for a local day (`YYYY-MM-DD`), oldest first. Empty
+ *  outside Tauri. */
+export async function listActivityLog(date: string): Promise<ActivityRow[]> {
+  if (!inTauri) return [];
+  return (await invoke<ActivityRow[]>("list_activity_log", { date })) ?? [];
+}
+
 /**
  * Snapshot of the single-row `app_state` marker (issue #31). When
  * `completedAt` is `null` the popover renders the onboarding overlay
