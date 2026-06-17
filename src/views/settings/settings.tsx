@@ -11,6 +11,8 @@ import type { UseTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
 import type { UseRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
 import type { UseUpdatePrefs } from "../../lib/use-update-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
+import type { UseActivityLog } from "../../lib/use-activity-log";
+import { ActivityLogCard } from "./activity-log-card";
 import {
   ROUNDING_INTERVALS,
   ROUND_MODES,
@@ -43,12 +45,18 @@ export type SettingsSectionId =
   | "accessibility"
   | "shortcuts"
   | "updates"
+  | "activity-log"
   | "diagnostics";
 
 interface Props {
   density: Density;
   a11y: UseA11yPrefs;
   capture: UseSignalCapture;
+  /**
+   * Opt-in activity-log controls (#190). Optional so tests can render
+   * without it; when absent the Activity log section is hidden.
+   */
+  activityLog?: UseActivityLog;
   /**
    * Re-arm the first-run onboarding overlay (issue #31). Settings
    * shells the action as "Run onboarding again"; the parent popover
@@ -179,6 +187,7 @@ export function SettingsView({
   density,
   a11y,
   capture,
+  activityLog,
   onRerunOnboarding,
   scrollToSection = null,
   scrollNonce = 0,
@@ -549,6 +558,8 @@ export function SettingsView({
         </section>
       )}
 
+      {activityLog && <ActivityLogCard activityLog={activityLog} />}
+
       <section
         className="settings-block"
         aria-label="Diagnostics"
@@ -654,7 +665,7 @@ interface SetRowProps {
   children: ReactNode;
 }
 
-function SetRow({ label, hint, children }: SetRowProps) {
+export function SetRow({ label, hint, children }: SetRowProps) {
   return (
     <div className="set-row">
       <div className="set-row-meta">
@@ -672,7 +683,7 @@ interface ToggleProps {
   label: string;
 }
 
-function Toggle({ on, onChange, label }: ToggleProps) {
+export function Toggle({ on, onChange, label }: ToggleProps) {
   return (
     <button
       type="button"

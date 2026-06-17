@@ -4157,6 +4157,39 @@ select.rule-conf {
   color: var(--accent-ink);
 }
 
+/* "Activity log recording" indicator (#190). A coloured dot + label so the
+   user always knows the opt-in log is active. */
+.pop-foot .foot-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-ink);
+}
+
+.pop-foot .rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  animation: rec-pulse 2s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-foot .rec-dot {
+    animation: none;
+  }
+}
+
 /* ─── CAPTURE BANNER (debug raw-signal capture) ─────────────────────── */
 .capture-banner {
   display: flex;

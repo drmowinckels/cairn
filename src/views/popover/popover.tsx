@@ -7,6 +7,7 @@ import { UpdateBanner } from "../../lib/update-banner";
 import { useA11yPrefs } from "../../lib/use-a11y-prefs";
 import { AnnouncerProvider, useAnnounce } from "../../lib/use-announce";
 import { useSignalCapture } from "../../lib/use-signal-capture";
+import { useActivityLog } from "../../lib/use-activity-log";
 import { useOnboarding } from "../../lib/use-onboarding";
 import { usePalette } from "../../lib/use-palette";
 import { usePopoverSize } from "../../lib/use-popover-size";
@@ -93,6 +94,7 @@ function PopoverShell({
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionId | null>(null);
   const capture = useSignalCapture();
+  const activityLog = useActivityLog();
   const onboarding = useOnboarding();
   const announce = useAnnounce();
   const popoverSize = usePopoverSize();
@@ -464,6 +466,7 @@ function PopoverShell({
               density={density}
               a11y={a11y}
               capture={capture}
+              activityLog={activityLog}
               scrollToSection={settingsSection}
               popoverSize={popoverSize}
               trayDetail={trayDetail}
@@ -506,6 +509,19 @@ function PopoverShell({
           )}
           <Icon name="sparkle" size={11} /> {activeRuleCount}{" "}
           {activeRuleCount === 1 ? "rule" : "rules"} active
+          {activityLog.settings.enabled && (
+            <>
+              <span className="foot-sep" />
+              <span
+                className="foot-rec"
+                role="img"
+                aria-label="Activity log is recording — Settings → Activity log to turn it off"
+                title="Activity log is recording"
+              >
+                <span className="rec-dot" aria-hidden="true" /> activity log
+              </span>
+            </>
+          )}
           {backupStale && (
             <>
               <span className="foot-sep" />

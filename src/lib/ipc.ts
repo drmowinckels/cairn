@@ -689,6 +689,43 @@ export async function signalCaptureStatus(): Promise<SignalCaptureStatus> {
   return invoke<SignalCaptureStatus>("signal_capture_status");
 }
 
+/** Opt-in activity-log settings (#190). Mirrors Rust `ActivityLogSettings`.
+ *  `retentionDays === 0` means "keep until I delete". */
+export interface ActivityLogSettings {
+  enabled: boolean;
+  retentionDays: number;
+}
+
+export const ACTIVITY_LOG_DEFAULTS: ActivityLogSettings = {
+  enabled: false,
+  retentionDays: 7,
+};
+
+export async function getActivityLogSettings(): Promise<ActivityLogSettings> {
+  if (!inTauri) return ACTIVITY_LOG_DEFAULTS;
+  // A stubbed invoke (tests / a11y audit harness) resolves null for un-mocked
+  // commands; never hand the UI a non-object it would deref.
+  return (
+    (await invoke<ActivityLogSettings>("get_activity_log_settings")) ??
+    ACTIVITY_LOG_DEFAULTS
+  );
+}
+
+/** Persist the toggle + retention. Enabling starts recording + applies
+ *  retention; disabling stops recording and purges every row (backend). */
+export async function setActivityLogSettings(
+  settings: ActivityLogSettings,
+): Promise<void> {
+  if (!inTauri) return;
+  await invoke("set_activity_log_settings", { settings });
+}
+
+/** Hard-delete every activity-log row now, leaving the toggle untouched. */
+export async function deleteActivityLog(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("delete_activity_log");
+}
+
 /**
  * Snapshot of the single-row `app_state` marker (issue #31). When
  * `completedAt` is `null` the popover renders the onboarding overlay
