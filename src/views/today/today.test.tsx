@@ -211,6 +211,15 @@ describe("TodayView (idle — no running entry)", () => {
     expect(document.querySelector(".recent .empty")).toBeTruthy();
   });
 
+  it("falls back to the list (no Activity toggle) when 'activity' is persisted but the log is off (#190)", () => {
+    // Persisted choice outlives the toggle being off → effective view is list.
+    window.localStorage.setItem("cairn:today-entries-view:v1", "activity");
+    const { container } = renderToday();
+    expect(screen.queryByRole("button", { name: /activity view/i })).toBeNull();
+    expect(container.querySelector(".act-review")).toBeNull();
+    expect(document.querySelector(".recent .empty")).toBeTruthy();
+  });
+
   it("renders the quick-start grid only in projects-first layout", () => {
     const { rerender } = renderToday();
     expect(screen.queryByLabelText(/quick-start a project/i)).toBeNull();
@@ -444,6 +453,49 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     window.dispatchEvent(new MouseEvent("pointerup"));
     await waitFor(() => expect(errSpy).toHaveBeenCalled());
     errSpy.mockRestore();
+  });
+
+  it("offers the Activity view + renders recorded spans when the log is on (#190)", async () => {
+    const span = {
+      id: 1,
+      startedAt: "2026-06-16T09:00:00+00:00",
+      endedAt: "2026-06-16T09:30:00+00:00",
+      appName: "Zoom",
+      titleHint: "Standup",
+      source: "window",
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [];
+      if (cmd === "list_projects")
+        return [
+          {
+            id: "cairn",
+            name: "Cairn",
+            clientId: null,
+            color: "#abc",
+            archived: false,
+          },
+        ];
+      if (cmd === "get_activity_log_settings")
+        return { enabled: true, retentionDays: 7 };
+      if (cmd === "list_activity_log") return [span];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    // The Activity toggle appears only because the log is enabled.
+    fireEvent.click(
+      await screen.findByRole("button", { name: /activity view/i }),
+    );
+    expect(await screen.findByText("Standup")).toBeTruthy();
   });
 
   it("timeline legend pairs each project dot with its name (#30 a11y dual-signal)", async () => {

@@ -67,7 +67,9 @@ import type {
 } from "../../lib/types";
 import { RecentList, type RecentEntry } from "./recent-list";
 import { TimelineStrip } from "./timeline-strip";
+import { ActivityReview } from "./activity-review";
 import { useTimelineViewPrefs } from "../../lib/use-timeline-view-prefs";
+import { useActivityLog } from "../../lib/use-activity-log";
 import { useMinuteClock } from "../../lib/use-minute-clock";
 import { SuggestWhy } from "./suggest-why";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
@@ -374,6 +376,12 @@ export function TodayView({
   const cbEnabled = useColorblindEnabled();
   const { rounding } = useRoundingPrefs();
   const { view: entriesView, setView: setEntriesView } = useTimelineViewPrefs();
+  const activityLog = useActivityLog();
+  // The "activity" review is only offered while the log is on; fall back to the
+  // list if a persisted "activity" choice outlives the toggle being turned off.
+  const activityAvailable = activityLog.settings.enabled;
+  const effectiveView =
+    entriesView === "activity" && !activityAvailable ? "list" : entriesView;
   const announceMsg = useAnnounce();
   const prevRunningIdRef = useRef<string | null>(timer.running?.id ?? null);
 
@@ -1075,20 +1083,22 @@ export function TodayView({
         >
           <div className="sect-label">
             <span>
-              {entriesView === "timeline"
+              {effectiveView === "timeline"
                 ? "Timeline"
-                : isToday
-                  ? "Recent"
-                  : "Entries"}
+                : effectiveView === "activity"
+                  ? "Activity"
+                  : isToday
+                    ? "Recent"
+                    : "Entries"}
             </span>
             <div className="view-toggle" role="group" aria-label="Entries view">
               <button
                 type="button"
                 className={`view-toggle-btn${
-                  entriesView === "list" ? " is-active" : ""
+                  effectiveView === "list" ? " is-active" : ""
                 }`}
                 aria-label="List view"
-                aria-pressed={entriesView === "list"}
+                aria-pressed={effectiveView === "list"}
                 onClick={() => setEntriesView("list")}
               >
                 <Icon name="list" size={13} />
@@ -1096,17 +1106,30 @@ export function TodayView({
               <button
                 type="button"
                 className={`view-toggle-btn${
-                  entriesView === "timeline" ? " is-active" : ""
+                  effectiveView === "timeline" ? " is-active" : ""
                 }`}
                 aria-label="Timeline view"
-                aria-pressed={entriesView === "timeline"}
+                aria-pressed={effectiveView === "timeline"}
                 onClick={() => setEntriesView("timeline")}
               >
                 <Icon name="grid" size={13} />
               </button>
+              {activityAvailable && (
+                <button
+                  type="button"
+                  className={`view-toggle-btn${
+                    effectiveView === "activity" ? " is-active" : ""
+                  }`}
+                  aria-label="Activity view"
+                  aria-pressed={effectiveView === "activity"}
+                  onClick={() => setEntriesView("activity")}
+                >
+                  <Icon name="reports" size={13} />
+                </button>
+              )}
             </div>
           </div>
-          {entriesView === "timeline" ? (
+          {effectiveView === "timeline" ? (
             <TimelineStrip
               entries={todayEntries}
               projects={projects}
@@ -1116,6 +1139,8 @@ export function TodayView({
               onEntryClick={onEditRecent}
               onResize={onResizeEntry}
             />
+          ) : effectiveView === "activity" ? (
+            <ActivityReview date={viewDate} onCreated={today.refresh} />
           ) : (
             <RecentList
               entries={recentEntries}
