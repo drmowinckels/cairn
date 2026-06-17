@@ -101,6 +101,10 @@ describe("TodayView required-fields gate (inside Tauri)", () => {
       expect(invoke).not.toHaveBeenCalledWith("stop_entry", expect.anything());
       const alert = await screen.findByRole("alert");
       expect(alert.textContent).toMatch(/choose a project/i);
+      // The notice carries a warning affordance (icon) + the chip class, so a
+      // blocked Stop is visibly "action needed", not silent plain text (#108).
+      expect(alert.className).toContain("now-stop-error");
+      expect(alert.querySelector("svg")).not.toBeNull();
     });
 
     it("does not block stop when project is set", async () => {
