@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "../../lib/icon";
 import { cbColor } from "../../lib/colorblind";
 import { fmtClock } from "../../lib/time";
 import {
   applyMinuteToIso,
   blockGeometry,
+  canMerge,
   dayWindow,
   entriesToSegments,
   hourTicks,
   resizeSegment,
+  splitAt,
   type ResizeEdge,
 } from "../../lib/timeline";
 import { useMinuteClock } from "../../lib/use-minute-clock";
@@ -17,6 +20,7 @@ import type { Project } from "../../lib/types";
 const PX_PER_HOUR = 44;
 const MIN_BLOCK_PX = 18;
 const SNAP_MIN = 5;
+const LONG_PRESS_MS = 500;
 
 /** A resize edit ready to persist. Carries only the edge that moved. */
 export interface ResizePatch {
@@ -35,6 +39,18 @@ interface Props {
   onEntryClick?: (id: string) => void;
   /** Persist a drag-resize. Omit to disable edge handles. */
   onResize?: (id: string, patch: ResizePatch) => void;
+  /** Split an entry at a minute-of-day into two. Omit to disable splitting. */
+  onSplit?: (entry: BackendEntry, splitMin: number) => void;
+  /** Merge two entries into one. Omit to disable merging. */
+  onMerge?: (a: BackendEntry, b: BackendEntry) => void;
+}
+
+/** Which block's split menu is open, and where its time anchor lives. */
+interface SplitMenu {
+  entry: BackendEntry;
+  splitMin: number;
+  /** Pixel offset of the cursor within the canvas, for menu placement. */
+  topPx: number;
 }
 
 interface DragState {
@@ -68,6 +84,8 @@ export function TimelineStrip({
   showNow,
   onEntryClick,
   onResize,
+  onSplit,
+  onMerge,
 }: Props) {
   const nowMin = useMinuteClock();
 
@@ -167,6 +185,85 @@ export function TimelineStrip({
     [],
   );
 
+  // --- split (context-menu / long-press) -------------------------------
+  // A right-click or long-press on a closed block maps the cursor's Y offset
+  // within the block to a minute-of-day, snaps it to the resize grid, and (when
+  // it lands strictly inside the block) opens a one-item "Split here" menu.
+  const [splitMenu, setSplitMenu] = useState<SplitMenu | null>(null);
+  const longPressRef = useRef<number | null>(null);
+  const splitItemRef = useRef<HTMLButtonElement>(null);
+  // The window changes as the day grows; the menu's pixel anchor reads it
+  // through a ref so the open handler isn't re-created every tick.
+  const winRef = useRef(win);
+  winRef.current = win;
+
+  // Map the cursor's Y within a block to a snapped, in-bounds minute-of-day,
+  // resolved synchronously at the event (a long-press reads it before arming
+  // its timer, so the rect is sampled while the target is still live).
+  const splitMinFor = useCallback(
+    (
+      clientY: number,
+      target: HTMLElement,
+      startMin: number,
+      endMin: number,
+    ) => {
+      const rect = target.getBoundingClientRect();
+      const frac = (clientY - rect.top) / Math.max(1, rect.height);
+      const raw = startMin + frac * (endMin - startMin);
+      return splitAt(startMin, endMin, raw, SNAP_MIN);
+    },
+    [],
+  );
+
+  const openSplitMenu = useCallback(
+    (entry: BackendEntry, splitMin: number | null) => {
+      if (splitMin === null) return;
+      const win = winRef.current;
+      const topPx = ((splitMin - win.startMin) / 60) * PX_PER_HOUR;
+      setSplitMenu({ entry, splitMin, topPx });
+    },
+    [],
+  );
+
+  const clearLongPress = useCallback(() => {
+    if (longPressRef.current !== null) {
+      window.clearTimeout(longPressRef.current);
+      longPressRef.current = null;
+    }
+  }, []);
+
+  // --- merge (select mode) ---------------------------------------------
+  // A toggle puts the strip in "select" mode; tapping blocks marks up to two.
+  // When the two are mergeable (same project, adjacent, both closed) the Merge
+  // action lights up. Leaving select mode clears the marks.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      // Keep at most two: a third tap drops the oldest.
+      return [...prev, id].slice(-2);
+    });
+  }, []);
+
+  const exitSelect = useCallback(() => {
+    setSelectMode(false);
+    setSelected([]);
+  }, []);
+
+  const mergePair = useMemo(() => {
+    // Resolve the marked ids against the live entries; if either no longer
+    // exists (the day refreshed under the selection) there's no pair to merge.
+    const picked = selected
+      .map((id) => entries.find((e) => e.id === id))
+      .filter((e): e is BackendEntry => e !== undefined);
+    if (picked.length !== 2) return null;
+    const [a, b] = picked;
+    if (!canMerge(a!, b!)) return null;
+    return { a: a!, b: b! };
+  }, [selected, entries]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   // Bring the now-line roughly to the middle when opening on today.
   useEffect(() => {
@@ -177,122 +274,287 @@ export function TimelineStrip({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showNow]);
 
+  // Esc closes the split menu; a pointer-down outside it dismisses it too.
+  useEffect(() => {
+    if (!splitMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSplitMenu(null);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (
+        e.target instanceof Node &&
+        !(e.target as Element).closest?.(".vt-split-menu")
+      ) {
+        setSplitMenu(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    // Move focus into the menu so keyboard users land on the action; Esc or an
+    // outside click closes it (handled above).
+    splitItemRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [splitMenu]);
+
+  const mergeReady = mergePair !== null;
+
   return (
-    <div
-      className="vt"
-      ref={scrollRef}
-      role="group"
-      aria-label={`Timeline from ${fmtClock(win.startMin)} to ${fmtClock(
-        win.endMin,
-      )}`}
-    >
-      <div className="vt-canvas" style={{ height: `${canvasPx}px` }}>
-        <div className="vt-axis" aria-hidden="true">
-          {ticks.map((m) => (
-            <div
-              key={m}
-              className="vt-tick"
-              style={{ top: `${((m - win.startMin) / 60) * PX_PER_HOUR}px` }}
+    <div className="vt-wrap">
+      {onMerge && (
+        <div className="vt-toolbar">
+          {selectMode ? (
+            <>
+              <span className="vt-toolbar-hint" aria-live="polite">
+                {selected.length === 0
+                  ? "Pick two adjacent blocks in the same project"
+                  : selected.length === 1
+                    ? "Pick one more to merge"
+                    : mergeReady
+                      ? "Ready to merge"
+                      : "Those two can't merge — pick adjacent, same-project blocks"}
+              </span>
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                disabled={!mergePair}
+                onClick={
+                  mergePair
+                    ? () => {
+                        onMerge(mergePair.a, mergePair.b);
+                        exitSelect();
+                      }
+                    : undefined
+                }
+              >
+                <Icon name="merge" size={12} /> Merge
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={exitSelect}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setSelectMode(true)}
             >
-              <span className="vt-tick-label">{fmtClock(m)}</span>
-            </div>
-          ))}
+              <Icon name="merge" size={12} /> Select to merge
+            </button>
+          )}
         </div>
-        <div className="vt-track">
-          {segments.map((s, i) => {
-            // `entriesToSegments` maps 1:1 in order, so `entries[i]` is the
-            // backend entry behind this segment — used to capture the ISO
-            // timestamps a resize commit re-times.
-            const entry = entries[i]!;
-            const drawStart =
-              preview?.id === s.id ? preview.startMin : s.startMin;
-            const drawEnd = preview?.id === s.id ? preview.endMin : s.endMin;
-            const { topPx, heightPx } = blockGeometry(
-              drawStart,
-              drawEnd,
-              win,
-              PX_PER_HOUR,
-              MIN_BLOCK_PX,
-            );
-            const proj = s.projectId ? byId.get(s.projectId) : undefined;
-            const color = cbColor(proj?.color ?? "var(--ink-mute)", cbEnabled);
-            const name = proj?.name ?? "Uncategorized";
-            const label = s.description ? `${name} · ${s.description}` : name;
-            // Closed, same-day entries can be edge-resized. The running
-            // entry's end is "now", and a clamped (past-midnight) entry's end
-            // isn't on this day — neither is a handle target; edit via the
-            // modal (click the block).
-            const commit = s.running || s.clamped ? undefined : onResize;
-            return (
-              <div key={s.id}>
+      )}
+      <div
+        className="vt"
+        ref={scrollRef}
+        role="group"
+        aria-label={`Timeline from ${fmtClock(win.startMin)} to ${fmtClock(
+          win.endMin,
+        )}`}
+      >
+        <div className="vt-canvas" style={{ height: `${canvasPx}px` }}>
+          <div className="vt-axis" aria-hidden="true">
+            {ticks.map((m) => (
+              <div
+                key={m}
+                className="vt-tick"
+                style={{ top: `${((m - win.startMin) / 60) * PX_PER_HOUR}px` }}
+              >
+                <span className="vt-tick-label">{fmtClock(m)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="vt-track">
+            {segments.map((s, i) => {
+              // `entriesToSegments` maps 1:1 in order, so `entries[i]` is the
+              // backend entry behind this segment — used to capture the ISO
+              // timestamps a resize commit re-times.
+              const entry = entries[i]!;
+              const drawStart =
+                preview?.id === s.id ? preview.startMin : s.startMin;
+              const drawEnd = preview?.id === s.id ? preview.endMin : s.endMin;
+              const { topPx, heightPx } = blockGeometry(
+                drawStart,
+                drawEnd,
+                win,
+                PX_PER_HOUR,
+                MIN_BLOCK_PX,
+              );
+              const proj = s.projectId ? byId.get(s.projectId) : undefined;
+              const color = cbColor(
+                proj?.color ?? "var(--ink-mute)",
+                cbEnabled,
+              );
+              const name = proj?.name ?? "Uncategorized";
+              const label = s.description ? `${name} · ${s.description}` : name;
+              // Closed, same-day entries can be edge-resized OR split. The
+              // running entry's end is "now", and a clamped (past-midnight)
+              // entry's end isn't on this day — neither is a handle/split
+              // target; edit via the modal (click the block).
+              const editable = !s.running && !s.clamped;
+              const commit = editable ? onResize : undefined;
+              const splittable = editable && Boolean(onSplit);
+              const isSelected = selected.includes(s.id);
+
+              // Only closed, same-day entries can be marked for merge — same
+              // constraint as split. A running/clamped block has no mergeable
+              // span on this day, so it's `disabled` in select mode (below) and
+              // its click never reaches here — no guard needed in the handler.
+              const selectable = editable;
+
+              const onSegClick = () => {
+                if (selectMode) {
+                  toggleSelect(s.id);
+                  return;
+                }
+                onEntryClick?.(s.id);
+              };
+
+              return (
+                <div key={s.id}>
+                  <button
+                    type="button"
+                    className={`vt-seg${s.running ? " is-running" : ""}${
+                      isSelected ? " is-selected" : ""
+                    }`}
+                    style={{ top: `${topPx}px`, height: `${heightPx}px` }}
+                    title={label}
+                    aria-label={
+                      selectMode
+                        ? selectable
+                          ? `Select ${label}`
+                          : `${label} — can't be merged`
+                        : `Edit ${label}`
+                    }
+                    aria-pressed={
+                      selectMode && selectable ? isSelected : undefined
+                    }
+                    disabled={selectMode ? !selectable : !onEntryClick}
+                    onClick={onSegClick}
+                    onContextMenu={
+                      splittable && !selectMode
+                        ? (e) => {
+                            e.preventDefault();
+                            openSplitMenu(
+                              entry,
+                              splitMinFor(
+                                e.clientY,
+                                e.currentTarget,
+                                s.startMin,
+                                s.endMin,
+                              ),
+                            );
+                          }
+                        : undefined
+                    }
+                    onPointerDown={
+                      splittable && !selectMode
+                        ? (e) => {
+                            if (e.pointerType !== "touch") return;
+                            const splitMin = splitMinFor(
+                              e.clientY,
+                              e.currentTarget,
+                              s.startMin,
+                              s.endMin,
+                            );
+                            clearLongPress();
+                            longPressRef.current = window.setTimeout(() => {
+                              openSplitMenu(entry, splitMin);
+                            }, LONG_PRESS_MS);
+                          }
+                        : undefined
+                    }
+                    onPointerUp={splittable ? clearLongPress : undefined}
+                    onPointerLeave={splittable ? clearLongPress : undefined}
+                  >
+                    <span
+                      className="vt-seg-bar"
+                      style={{ background: color }}
+                      aria-hidden="true"
+                    />
+                    <span className="vt-seg-body">
+                      <span className="vt-seg-name">{name}</span>
+                      {s.description && (
+                        <span className="vt-seg-desc">{s.description}</span>
+                      )}
+                    </span>
+                  </button>
+                  {commit && !selectMode && (
+                    <>
+                      <div
+                        className="vt-handle vt-handle--top"
+                        style={{ top: `${topPx}px` }}
+                        aria-hidden="true"
+                        onPointerDown={(e) =>
+                          beginResize(
+                            e,
+                            entry,
+                            "start",
+                            s.startMin,
+                            s.endMin,
+                            commit,
+                          )
+                        }
+                      />
+                      <div
+                        className="vt-handle vt-handle--bottom"
+                        style={{ top: `${topPx + heightPx}px` }}
+                        aria-hidden="true"
+                        onPointerDown={(e) =>
+                          beginResize(
+                            e,
+                            entry,
+                            "end",
+                            s.startMin,
+                            s.endMin,
+                            commit,
+                          )
+                        }
+                      />
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            {splitMenu && onSplit && (
+              <div
+                className="vt-split-menu"
+                role="menu"
+                aria-label="Split entry"
+                style={{ top: `${splitMenu.topPx}px` }}
+              >
                 <button
                   type="button"
-                  className={`vt-seg${s.running ? " is-running" : ""}`}
-                  style={{ top: `${topPx}px`, height: `${heightPx}px` }}
-                  title={label}
-                  aria-label={`Edit ${label}`}
-                  disabled={!onEntryClick}
-                  onClick={() => onEntryClick?.(s.id)}
+                  role="menuitem"
+                  className="vt-split-item"
+                  ref={splitItemRef}
+                  onClick={() => {
+                    onSplit(splitMenu.entry, splitMenu.splitMin);
+                    setSplitMenu(null);
+                  }}
                 >
-                  <span
-                    className="vt-seg-bar"
-                    style={{ background: color }}
-                    aria-hidden="true"
-                  />
-                  <span className="vt-seg-body">
-                    <span className="vt-seg-name">{name}</span>
-                    {s.description && (
-                      <span className="vt-seg-desc">{s.description}</span>
-                    )}
-                  </span>
+                  <Icon name="scissors" size={12} /> Split at{" "}
+                  {fmtClock(splitMenu.splitMin)}
                 </button>
-                {commit && (
-                  <>
-                    <div
-                      className="vt-handle vt-handle--top"
-                      style={{ top: `${topPx}px` }}
-                      aria-hidden="true"
-                      onPointerDown={(e) =>
-                        beginResize(
-                          e,
-                          entry,
-                          "start",
-                          s.startMin,
-                          s.endMin,
-                          commit,
-                        )
-                      }
-                    />
-                    <div
-                      className="vt-handle vt-handle--bottom"
-                      style={{ top: `${topPx + heightPx}px` }}
-                      aria-hidden="true"
-                      onPointerDown={(e) =>
-                        beginResize(
-                          e,
-                          entry,
-                          "end",
-                          s.startMin,
-                          s.endMin,
-                          commit,
-                        )
-                      }
-                    />
-                  </>
-                )}
               </div>
-            );
-          })}
-          {showNow && (
-            <div
-              className="vt-now"
-              style={{ top: `${nowTop}px` }}
-              aria-label="Now"
-              aria-live={announce ? "polite" : "off"}
-            >
-              <span className="vt-now-label">{fmtClock(nowMin)}</span>
-            </div>
-          )}
+            )}
+            {showNow && (
+              <div
+                className="vt-now"
+                style={{ top: `${nowTop}px` }}
+                aria-label="Now"
+                aria-live={announce ? "polite" : "off"}
+              >
+                <span className="vt-now-label">{fmtClock(nowMin)}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

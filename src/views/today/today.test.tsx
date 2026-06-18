@@ -455,6 +455,215 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     errSpy.mockRestore();
   });
 
+  // Two adjacent closed entries in the same project, an hour apart, so the
+  // timeline offers both split and merge over them.
+  function twoAdjacentEntries() {
+    const a = {
+      id: "a",
+      projectId: "cairn",
+      taskId: null,
+      description: "first",
+      startedAt: new Date(Date.now() - 7_200_000).toISOString(),
+      endedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    const b = {
+      id: "b",
+      projectId: "cairn",
+      taskId: null,
+      description: "second",
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endedAt: new Date(Date.now() - 600_000).toISOString(),
+      source: "manual",
+      ruleId: null,
+    };
+    return { a, b };
+  }
+
+  function projectFixture() {
+    return [
+      {
+        id: "cairn",
+        name: "Cairn",
+        clientId: null,
+        color: "#abc",
+        archived: false,
+      },
+    ];
+  }
+
+  it("splitting a block updates the original end + creates the second half (#188)", async () => {
+    const { a } = twoAdjacentEntries();
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [a];
+      if (cmd === "list_projects") return projectFixture();
+      if (cmd === "update_entry") return { ...a };
+      if (cmd === "create_entry") return { ...a, id: "a2" };
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /timeline view/i }),
+    );
+    const block = await waitFor(() => {
+      const b = document.querySelector<HTMLButtonElement>(
+        ".vt-seg:not(:disabled)",
+      );
+      if (!b) throw new Error("no block yet");
+      return b;
+    });
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      height: 100,
+      bottom: 100,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    fireEvent.contextMenu(block, { clientY: 50 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /split at/i }));
+    await waitFor(() => {
+      expect(invoke.mock.calls.some(([c]) => c === "update_entry")).toBe(true);
+      expect(invoke.mock.calls.some(([c]) => c === "create_entry")).toBe(true);
+    });
+  });
+
+  it("a failed split surfaces an error banner (#188 catch)", async () => {
+    const { a } = twoAdjacentEntries();
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [a];
+      if (cmd === "list_projects") return projectFixture();
+      if (cmd === "update_entry") throw new Error("split boom");
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /timeline view/i }),
+    );
+    const block = await waitFor(() => {
+      const b = document.querySelector<HTMLButtonElement>(
+        ".vt-seg:not(:disabled)",
+      );
+      if (!b) throw new Error("no block yet");
+      return b;
+    });
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      height: 100,
+      bottom: 100,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    fireEvent.contextMenu(block, { clientY: 50 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /split at/i }));
+    expect(await screen.findByText(/couldn't split the entry/i)).toBeTruthy();
+  });
+
+  it("merging two selected blocks extends one and deletes the other (#188)", async () => {
+    const { a, b } = twoAdjacentEntries();
+    const invoke = vi.fn(async (cmd: string, _args?: unknown) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [a, b];
+      if (cmd === "list_projects") return projectFixture();
+      if (cmd === "update_entry") return { ...a };
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /timeline view/i }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /select to merge/i }),
+    );
+    const blocks = await waitFor(() => {
+      const bs = document.querySelectorAll<HTMLButtonElement>(".vt-seg");
+      if (bs.length < 2) throw new Error("blocks not ready");
+      return bs;
+    });
+    fireEvent.click(blocks[0]!);
+    fireEvent.click(blocks[1]!);
+    fireEvent.click(screen.getByRole("button", { name: /^merge$/i }));
+    await waitFor(() => {
+      expect(invoke.mock.calls.some(([c]) => c === "update_entry")).toBe(true);
+      expect(
+        invoke.mock.calls.some(
+          ([c, args]) =>
+            c === "delete_entry" && (args as { id: string }).id === "b",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("a failed merge surfaces an error banner (#188 catch)", async () => {
+    const { a, b } = twoAdjacentEntries();
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [a, b];
+      if (cmd === "list_projects") return projectFixture();
+      // Delete-first ordering: the drop succeeds, then the extend throws.
+      if (cmd === "update_entry") throw new Error("merge boom");
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /timeline view/i }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /select to merge/i }),
+    );
+    const blocks = await waitFor(() => {
+      const bs = document.querySelectorAll<HTMLButtonElement>(".vt-seg");
+      if (bs.length < 2) throw new Error("blocks not ready");
+      return bs;
+    });
+    fireEvent.click(blocks[0]!);
+    fireEvent.click(blocks[1]!);
+    fireEvent.click(screen.getByRole("button", { name: /^merge$/i }));
+    expect(await screen.findByText(/couldn't merge entries/i)).toBeTruthy();
+  });
+
   it("offers the Activity view + renders recorded spans when the log is on (#190)", async () => {
     const span = {
       id: 1,
