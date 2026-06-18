@@ -1847,6 +1847,29 @@ body {
   outline-offset: -2px;
 }
 
+/* Keyboard "Split mode" (#188): a dashed marker at each splittable block's
+   snapped midpoint shows where activating it will cut. The block button stays
+   the interactive target, so the marker is inert. */
+.vt-split-mark {
+  position: absolute;
+  left: 0;
+  right: 6px;
+  border-top: 1px dashed var(--accent-ink);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.vt-split-mark-label {
+  position: absolute;
+  top: -8px;
+  right: 4px;
+  padding: 0 3px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent-ink);
+  background: var(--surface);
+}
+
 /* List / timeline view toggle in section labels (#188) */
 .view-toggle {
   display: inline-flex;

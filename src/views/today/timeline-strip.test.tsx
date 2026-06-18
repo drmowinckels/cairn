@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { TimelineStrip } from "./timeline-strip";
+import { AnnouncerProvider } from "../../lib/use-announce";
 import { minutesOfDay } from "../../lib/timeline";
 import type { BackendEntry } from "../../lib/ipc";
 import type { Project } from "../../lib/types";
@@ -352,6 +353,231 @@ describe("TimelineStrip split (#188)", () => {
     });
     expect(container.querySelector(".vt-split-menu")).toBeNull();
     vi.useRealTimers();
+  });
+});
+
+describe("TimelineStrip keyboard split mode (#188)", () => {
+  it("shows no Split toggle without an onSplit callback", () => {
+    const { container } = renderStrip({ onEntryClick: vi.fn() });
+    expect(container.querySelector(".vt-toolbar")).toBeNull();
+  });
+
+  it("shows a Split toggle when onSplit is given", () => {
+    const { getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    expect(getByText("Split")).toBeTruthy();
+  });
+
+  it("shows both Split and Select to merge toggles when both are given", () => {
+    const { getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onMerge: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    expect(getByText("Split")).toBeTruthy();
+    expect(getByText("Select to merge")).toBeTruthy();
+  });
+
+  it("entering split mode shows the hint and a Cancel button", () => {
+    const { getByText, queryByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    fireEvent.click(getByText("Split"));
+    expect(getByText(/Pick a block to split/)).toBeTruthy();
+    expect(getByText("Cancel")).toBeTruthy();
+    // The toggle is replaced by the mode controls.
+    expect(queryByText("Split")).toBeNull();
+  });
+
+  it("Cancel leaves split mode and restores the toggle", () => {
+    const { getByText, queryByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    fireEvent.click(getByText("Split"));
+    fireEvent.click(getByText("Cancel"));
+    expect(getByText("Split")).toBeTruthy();
+    expect(queryByText(/Pick a block to split/)).toBeNull();
+  });
+
+  it("activating a block in split mode splits it at the snapped midpoint", () => {
+    const onSplit = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit,
+      onEntryClick: vi.fn(),
+    }); // entry 09:00–10:30 → midpoint 09:45
+    fireEvent.click(getByText("Split"));
+    fireEvent.click(container.querySelector(".vt-seg")!);
+    expect(onSplit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "e1" }),
+      9 * 60 + 45,
+    );
+  });
+
+  it("does not open the editor for a block activated in split mode", () => {
+    const onEntryClick = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick,
+    });
+    fireEvent.click(getByText("Split"));
+    fireEvent.click(container.querySelector(".vt-seg")!);
+    expect(onEntryClick).not.toHaveBeenCalled();
+  });
+
+  it("labels a splittable block with its midpoint split point", () => {
+    const { container, getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector(".vt-seg")!;
+    expect(seg.getAttribute("aria-label")).toBe(
+      "Split Cairn · writing at its midpoint, 09:45",
+    );
+  });
+
+  it("renders a midpoint marker on splittable blocks only in split mode", () => {
+    const onSplit = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit,
+      onEntryClick: vi.fn(),
+    });
+    expect(container.querySelector(".vt-split-mark")).toBeNull();
+    fireEvent.click(getByText("Split"));
+    expect(container.querySelector(".vt-split-mark-label")?.textContent).toBe(
+      "09:45",
+    );
+  });
+
+  it("announces the split result through the shared live region", () => {
+    vi.useFakeTimers();
+    const { container, getByText, getByTestId } = render(
+      <AnnouncerProvider enabled={true}>
+        <TimelineStrip
+          entries={[entry()]}
+          projects={PROJECTS}
+          announce={false}
+          cbEnabled={false}
+          showNow={false}
+          onSplit={vi.fn()}
+          onEntryClick={vi.fn()}
+        />
+      </AnnouncerProvider>,
+    );
+    fireEvent.click(getByText("Split"));
+    fireEvent.click(container.querySelector(".vt-seg")!);
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(getByTestId("cairn-announcer").textContent).toBe(
+      "Split Cairn at 09:45 into two entries.",
+    );
+    vi.useRealTimers();
+  });
+
+  it("keeps focus reachable when a split leaves an un-splittable remainder", () => {
+    const onSplit = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit,
+      onEntryClick: vi.fn(),
+      // 09:00–09:10 splits at 09:05; the 09:00–09:05 half can't split again, so
+      // its block would go disabled — focus must land on Cancel, not the body.
+      entries: [
+        entry({
+          startedAt: "2026-05-26T09:00:00",
+          endedAt: "2026-05-26T09:10:00",
+        }),
+      ],
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector<HTMLButtonElement>(".vt-seg")!;
+    seg.focus();
+    fireEvent.click(seg);
+    expect(onSplit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "e1" }),
+      9 * 60 + 5,
+    );
+    expect(document.activeElement).toBe(getByText("Cancel"));
+  });
+
+  it("disables a block too short to split and won't split it", () => {
+    const onSplit = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit,
+      onEntryClick: vi.fn(),
+      // 09:00–09:05 → no interior 5-min grid point.
+      entries: [
+        entry({
+          startedAt: "2026-05-26T09:00:00",
+          endedAt: "2026-05-26T09:05:00",
+        }),
+      ],
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector<HTMLButtonElement>(".vt-seg")!;
+    expect(seg.disabled).toBe(true);
+    expect(seg.getAttribute("aria-label")).toMatch(/can't be split/i);
+    expect(container.querySelector(".vt-split-mark")).toBeNull();
+    fireEvent.click(seg);
+    expect(onSplit).not.toHaveBeenCalled();
+  });
+
+  it("disables a running block in split mode (no same-day span to split)", () => {
+    const { container, getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick: vi.fn(),
+      entries: [entry({ endedAt: null })],
+      showNow: true,
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector<HTMLButtonElement>(".vt-seg")!;
+    expect(seg.disabled).toBe(true);
+    expect(seg.getAttribute("aria-label")).toMatch(/can't be split/i);
+  });
+
+  it("hides edge handles while in split mode", () => {
+    const { container, getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onResize: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    expect(container.querySelectorAll(".vt-handle").length).toBeGreaterThan(0);
+    fireEvent.click(getByText("Split"));
+    expect(container.querySelectorAll(".vt-handle")).toHaveLength(0);
+  });
+
+  it("does not open the pointer split menu via right-click in split mode", () => {
+    const { container, getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector(".vt-seg")!;
+    pinSegRect(seg);
+    fireEvent.contextMenu(seg, { clientY: 147 });
+    expect(container.querySelector(".vt-split-menu")).toBeNull();
+  });
+
+  it("merge and split modes are mutually exclusive in the toolbar", () => {
+    const { container, getByText, queryByText } = renderStrip({
+      onSplit: vi.fn(),
+      onMerge: vi.fn(),
+      onEntryClick: vi.fn(),
+    });
+    fireEvent.click(getByText("Select to merge"));
+    expect(getByText(/Pick two adjacent blocks/)).toBeTruthy();
+    // Leaving merge restores both toggles; entering split shows only its hint.
+    fireEvent.click(getByText("Cancel"));
+    fireEvent.click(getByText("Split"));
+    expect(getByText(/Pick a block to split/)).toBeTruthy();
+    expect(queryByText(/Pick two adjacent blocks/)).toBeNull();
+    expect(
+      container.querySelector(".vt-seg")!.getAttribute("aria-pressed"),
+    ).toBeNull();
   });
 });
 
