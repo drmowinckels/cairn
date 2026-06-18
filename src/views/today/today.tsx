@@ -968,11 +968,14 @@ export function TodayView({
                   aria-live="assertive"
                   aria-atomic="true"
                 >
-                  {missingFields.project && missingFields.description
-                    ? "Add a project and description to stop."
-                    : missingFields.project
-                      ? "Choose a project to stop."
-                      : "Add a description to stop."}
+                  <Icon name="info" size={13} />
+                  <span>
+                    {missingFields.project && missingFields.description
+                      ? "Add a project and description to stop."
+                      : missingFields.project
+                        ? "Choose a project to stop."
+                        : "Add a description to stop."}
+                  </span>
                 </p>
               )}
               <p id="stop-err-desc" hidden={!missingFields.description}>

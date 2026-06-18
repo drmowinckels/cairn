@@ -6,6 +6,14 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ## Unreleased
 
+### Fixed
+
+- `[today]` The "required fields to stop" notice (#108) is now a visible warning
+  chip — amber background, border, and a warning icon — instead of plain text.
+  With "require a project/description to stop" enabled, clicking Stop on an
+  unfilled entry previously surfaced an easy-to-miss line that read as "the
+  button did nothing"; it now clearly signals an action is needed.
+
 ### Privacy
 
 - `[privacy]` Opt-in activity log for the "review your day" flow (#190). Off by

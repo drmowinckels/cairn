@@ -1309,6 +1309,29 @@ body {
   font-size: var(--font-tiny);
 }
 
+/* The "you must set a project/description to stop" notice (#108) and the
+   activity-review error. Styled as a warning chip — not plain text — so a
+   blocked Stop reads as "action needed", never "the button did nothing". */
+.now-stop-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 7px 9px;
+  background: var(--apricot-soft);
+  border: 0.5px solid var(--apricot);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font-size: var(--font-tiny);
+  line-height: 1.4;
+}
+
+.now-stop-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--danger);
+}
+
 .now-task {
   margin-bottom: 12px;
 }
