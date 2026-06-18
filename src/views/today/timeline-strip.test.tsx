@@ -287,6 +287,28 @@ describe("TimelineStrip split (#188)", () => {
     expect(container.querySelector(".vt-split-menu")).toBeNull();
   });
 
+  it("a non-Escape key leaves the split menu open", () => {
+    const onSplit = vi.fn();
+    const { container } = renderStrip({ onSplit, onEntryClick: vi.fn() });
+    const seg = container.querySelector(".vt-seg")!;
+    pinSegRect(seg);
+    fireEvent.contextMenu(seg, { clientY: 147 });
+    expect(container.querySelector(".vt-split-menu")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(container.querySelector(".vt-split-menu")).toBeTruthy();
+  });
+
+  it("a pointer-down inside the menu keeps it open", () => {
+    const onSplit = vi.fn();
+    const { container } = renderStrip({ onSplit, onEntryClick: vi.fn() });
+    const seg = container.querySelector(".vt-seg")!;
+    pinSegRect(seg);
+    fireEvent.contextMenu(seg, { clientY: 147 });
+    const menu = container.querySelector(".vt-split-menu")!;
+    fireEvent.pointerDown(menu);
+    expect(container.querySelector(".vt-split-menu")).toBeTruthy();
+  });
+
   it("a long-press (touch) opens the split menu after the delay", () => {
     vi.useFakeTimers();
     const onSplit = vi.fn();
