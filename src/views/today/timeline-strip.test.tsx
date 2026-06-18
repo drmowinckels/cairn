@@ -386,7 +386,9 @@ describe("TimelineStrip keyboard split mode (#188)", () => {
       onEntryClick: vi.fn(),
     });
     fireEvent.click(getByText("Split"));
-    expect(getByText(/Pick a block to split/)).toBeTruthy();
+    expect(
+      getByText(/move the split point with the up and down arrows/),
+    ).toBeTruthy();
     expect(getByText("Cancel")).toBeTruthy();
     // The toggle is replaced by the mode controls.
     expect(queryByText("Split")).toBeNull();
@@ -400,7 +402,9 @@ describe("TimelineStrip keyboard split mode (#188)", () => {
     fireEvent.click(getByText("Split"));
     fireEvent.click(getByText("Cancel"));
     expect(getByText("Split")).toBeTruthy();
-    expect(queryByText(/Pick a block to split/)).toBeNull();
+    expect(
+      queryByText(/move the split point with the up and down arrows/),
+    ).toBeNull();
   });
 
   it("activating a block in split mode splits it at the snapped midpoint", () => {
@@ -428,7 +432,7 @@ describe("TimelineStrip keyboard split mode (#188)", () => {
     expect(onEntryClick).not.toHaveBeenCalled();
   });
 
-  it("labels a splittable block with its midpoint split point", () => {
+  it("labels a splittable block with its split point and the arrow hint", () => {
     const { container, getByText } = renderStrip({
       onSplit: vi.fn(),
       onEntryClick: vi.fn(),
@@ -436,7 +440,7 @@ describe("TimelineStrip keyboard split mode (#188)", () => {
     fireEvent.click(getByText("Split"));
     const seg = container.querySelector(".vt-seg")!;
     expect(seg.getAttribute("aria-label")).toBe(
-      "Split Cairn · writing at its midpoint, 09:45",
+      "Split Cairn · writing at 09:45; up and down arrows move the split point",
     );
   });
 
@@ -451,6 +455,152 @@ describe("TimelineStrip keyboard split mode (#188)", () => {
     expect(container.querySelector(".vt-split-mark-label")?.textContent).toBe(
       "09:45",
     );
+  });
+
+  it("ArrowDown moves the split point later; ArrowUp moves it earlier", () => {
+    const { container, getByText } = renderStrip({
+      onSplit: vi.fn(),
+      onEntryClick: vi.fn(),
+    }); // entry 09:00–10:30, midpoint 09:45
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector<HTMLButtonElement>(".vt-seg")!;
+    const mark = () =>
+      container.querySelector(".vt-split-mark-label")?.textContent;
+    expect(mark()).toBe("09:45");
+    fireEvent.keyDown(seg, { key: "ArrowDown" });
+    expect(mark()).toBe("09:50");
+    expect(seg.getAttribute("aria-label")).toContain("at 09:50");
+    fireEvent.keyDown(seg, { key: "ArrowUp" });
+    fireEvent.keyDown(seg, { key: "ArrowUp" });
+    expect(mark()).toBe("09:40");
+  });
+
+  it("splits at the arrow-adjusted point, not the midpoint", () => {
+    const onSplit = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit,
+      onEntryClick: vi.fn(),
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector<HTMLButtonElement>(".vt-seg")!;
+    fireEvent.keyDown(seg, { key: "ArrowDown" }); // 09:45 → 09:50
+    fireEvent.click(seg);
+    expect(onSplit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "e1" }),
+      9 * 60 + 50,
+    );
+  });
+
+  it("falls back to the midpoint when a refresh shrinks the block under the draft", () => {
+    const { container, getByText, rerender } = render(
+      <TimelineStrip
+        entries={[entry()]} // 09:00–10:30, midpoint 09:45
+        projects={PROJECTS}
+        announce={false}
+        cbEnabled={false}
+        showNow={false}
+        onSplit={vi.fn()}
+        onEntryClick={vi.fn()}
+      />,
+    );
+    fireEvent.click(getByText("Split"));
+    fireEvent.keyDown(container.querySelector(".vt-seg")!, {
+      key: "ArrowDown",
+    });
+    fireEvent.keyDown(container.querySelector(".vt-seg")!, {
+      key: "ArrowDown",
+    });
+    expect(container.querySelector(".vt-split-mark-label")?.textContent).toBe(
+      "09:55",
+    );
+    // The day reloads and the entry is now 09:00–09:30 — the 09:55 draft is past
+    // its end, so the point snaps back to the new midpoint instead of cutting
+    // out of bounds.
+    rerender(
+      <TimelineStrip
+        entries={[entry({ endedAt: "2026-05-26T09:30:00" })]}
+        projects={PROJECTS}
+        announce={false}
+        cbEnabled={false}
+        showNow={false}
+        onSplit={vi.fn()}
+        onEntryClick={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".vt-split-mark-label")?.textContent).toBe(
+      "09:15",
+    );
+  });
+
+  it("won't move the split point onto an edge (rejects zero-length halves)", () => {
+    const onSplit = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit,
+      onEntryClick: vi.fn(),
+      // 09:00–09:10: 09:05 is the only interior grid point, so neither arrow
+      // can move off it.
+      entries: [
+        entry({
+          startedAt: "2026-05-26T09:00:00",
+          endedAt: "2026-05-26T09:10:00",
+        }),
+      ],
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector<HTMLButtonElement>(".vt-seg")!;
+    fireEvent.keyDown(seg, { key: "ArrowUp" });
+    fireEvent.keyDown(seg, { key: "ArrowDown" });
+    expect(container.querySelector(".vt-split-mark-label")?.textContent).toBe(
+      "09:05",
+    );
+    fireEvent.click(seg);
+    expect(onSplit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "e1" }),
+      9 * 60 + 5,
+    );
+  });
+
+  it("ignores non-arrow keys on a block in split mode", () => {
+    const onSplit = vi.fn();
+    const { container, getByText } = renderStrip({
+      onSplit,
+      onEntryClick: vi.fn(),
+    });
+    fireEvent.click(getByText("Split"));
+    const seg = container.querySelector<HTMLButtonElement>(".vt-seg")!;
+    fireEvent.keyDown(seg, { key: "ArrowLeft" });
+    expect(container.querySelector(".vt-split-mark-label")?.textContent).toBe(
+      "09:45",
+    );
+    expect(onSplit).not.toHaveBeenCalled();
+  });
+
+  it("announces the split point as it moves", () => {
+    vi.useFakeTimers();
+    const { container, getByText, getByTestId } = render(
+      <AnnouncerProvider enabled={true}>
+        <TimelineStrip
+          entries={[entry()]}
+          projects={PROJECTS}
+          announce={false}
+          cbEnabled={false}
+          showNow={false}
+          onSplit={vi.fn()}
+          onEntryClick={vi.fn()}
+        />
+      </AnnouncerProvider>,
+    );
+    fireEvent.click(getByText("Split"));
+    fireEvent.keyDown(container.querySelector(".vt-seg")!, {
+      key: "ArrowDown",
+    });
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(getByTestId("cairn-announcer").textContent).toBe(
+      "Split point 09:50",
+    );
+    vi.useRealTimers();
   });
 
   it("announces the split result through the shared live region", () => {
@@ -573,7 +723,9 @@ describe("TimelineStrip keyboard split mode (#188)", () => {
     // Leaving merge restores both toggles; entering split shows only its hint.
     fireEvent.click(getByText("Cancel"));
     fireEvent.click(getByText("Split"));
-    expect(getByText(/Pick a block to split/)).toBeTruthy();
+    expect(
+      getByText(/move the split point with the up and down arrows/),
+    ).toBeTruthy();
     expect(queryByText(/Pick two adjacent blocks/)).toBeNull();
     expect(
       container.querySelector(".vt-seg")!.getAttribute("aria-pressed"),
