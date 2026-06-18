@@ -186,6 +186,89 @@ export function applyMinuteToIso(iso: string, minuteOfDay: number): string {
   return d.toISOString();
 }
 
+/**
+ * Snap a split point (a minute-of-day picked from a cursor offset) to the same
+ * `snapMin` grid the resize uses, then accept it only if it lands STRICTLY
+ * inside the entry's `[startMin, endMin)` — a split on either edge would make a
+ * zero-length half, so it's rejected (returns null). Pure — the component maps
+ * the click's Y offset to a minute and passes it here.
+ */
+export function splitAt(
+  startMin: number,
+  endMin: number,
+  rawSplitMin: number,
+  snapMin: number,
+): number | null {
+  const snapped = snapTo(rawSplitMin, snapMin);
+  if (snapped <= startMin || snapped >= endMin) return null;
+  return snapped;
+}
+
+/**
+ * Largest gap, in minutes, two entries may have between them and still count as
+ * "adjacent" for a merge. A small slack lets the user merge back-to-back blocks
+ * that drifted a few minutes apart without merging across a real break.
+ */
+export const MERGE_MAX_GAP_MIN = 30;
+
+export interface MergeCandidate {
+  id: string;
+  projectId: ProjectId | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+/**
+ * Whether two entries can merge (#188): same project, neither still running,
+ * and adjacent in the day — i.e. the later one starts no earlier than the
+ * earlier one's end and within `MERGE_MAX_GAP_MIN` of it, with no overlap
+ * beyond ordering. Order-independent: the pair is sorted by start first. A
+ * `null` (no) project matches another `null` project — both "Uncategorized".
+ */
+export function canMerge(a: MergeCandidate, b: MergeCandidate): boolean {
+  if (a.id === b.id) return false;
+  if (a.projectId !== b.projectId) return false;
+  if (a.endedAt === null || b.endedAt === null) return false;
+  const [first, second] =
+    Date.parse(a.startedAt) <= Date.parse(b.startedAt) ? [a, b] : [b, a];
+  const firstEnd = Date.parse(first.endedAt as string);
+  const secondStart = Date.parse(second.startedAt);
+  const gapMin = (secondStart - firstEnd) / 60_000;
+  return gapMin >= 0 && gapMin <= MERGE_MAX_GAP_MIN;
+}
+
+export interface MergePlan {
+  /** The surviving entry: extend its `endedAt` to span both. */
+  keepId: string;
+  /** The absorbed entry: delete it after the keep is extended. */
+  dropId: string;
+  /** Earliest `startedAt` across the pair (RFC 3339). */
+  startedAt: string;
+  /** Latest `endedAt` across the pair (RFC 3339). */
+  endedAt: string;
+}
+
+/**
+ * Plan the merge of two entries into one spanning the earlier `startedAt` and
+ * the later `endedAt` (#188): the earlier-starting entry survives (its start is
+ * already correct, so only its end moves) and the later one is dropped. Pure —
+ * the component executes the plan via `update_entry` + `delete_entry`. Callers
+ * must `canMerge` first; both `endedAt` are non-null by that contract.
+ */
+export function mergeEntries(a: MergeCandidate, b: MergeCandidate): MergePlan {
+  const [first, second] =
+    Date.parse(a.startedAt) <= Date.parse(b.startedAt) ? [a, b] : [b, a];
+  const endA = Date.parse(a.endedAt as string);
+  const endB = Date.parse(b.endedAt as string);
+  const latestEnd = endA >= endB ? a.endedAt : b.endedAt;
+  return {
+    keepId: first.id,
+    dropId: second.id,
+    startedAt: first.startedAt,
+    endedAt: latestEnd as string,
+  };
+}
+
 export interface LegendItem {
   projectId: ProjectId;
   color: string;

@@ -36,7 +36,9 @@ export type IconName =
   | "keyboard"
   | "list"
   | "grid"
-  | "arrow-right";
+  | "arrow-right"
+  | "scissors"
+  | "merge";
 
 export function Icon({ name, size = 16, stroke = 1.5, className }: Props) {
   const props = {
@@ -259,6 +261,23 @@ export function Icon({ name, size = 16, stroke = 1.5, className }: Props) {
       return (
         <svg {...props}>
           <path d="M5 12h14M13 6l6 6-6 6" />
+        </svg>
+      );
+    case "scissors":
+      return (
+        <svg {...props}>
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+          <path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12" />
+        </svg>
+      );
+    case "merge":
+      return (
+        <svg {...props}>
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+          <circle cx="18" cy="12" r="3" />
+          <path d="M6 9v6M9 18h2a4 4 0 0 0 4-4M9 6h2a4 4 0 0 1 4 4" />
         </svg>
       );
   }

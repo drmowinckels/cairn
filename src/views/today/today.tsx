@@ -17,13 +17,17 @@ import { useUpcoming } from "../../lib/use-upcoming";
 import { useCalendars } from "../../lib/use-calendars";
 import { useDebouncedCallback } from "../../lib/use-debounced-callback";
 import {
+  applyMinuteToIso,
   entriesToSegments,
   legendFromSegments,
+  mergeEntries,
   startToPercent,
   type TimelineSegment,
 } from "../../lib/timeline";
 import {
   attributeEntryToRemoteTask,
+  createEntry,
+  deleteEntry,
   inTauri,
   listTasks,
   saveTask,
@@ -673,6 +677,50 @@ export function TodayView({
     [refreshToday],
   );
 
+  // #188 split: cut an entry at a minute-of-day into two. The original keeps
+  // its start and ends at the split; a new entry copies the original's
+  // project/task/description and runs from the split to the original end. The
+  // strip only offers this on a closed, same-day block.
+  const onSplitEntry = useCallback(
+    (entry: BackendEntry, splitMin: number) => {
+      const splitIso = applyMinuteToIso(entry.startedAt, splitMin);
+      updateEntry({ id: entry.id, endedAt: splitIso })
+        .then(() =>
+          createEntry({
+            projectId: entry.projectId,
+            taskId: entry.taskId,
+            description: entry.description,
+            startedAt: splitIso,
+            endedAt: entry.endedAt,
+            source: entry.source,
+          }),
+        )
+        .then(() => refreshToday())
+        .then(() => void timer.refresh())
+        .catch((e) => console.error("timeline split failed", e));
+    },
+    [refreshToday, timer],
+  );
+
+  // #188 merge: collapse two entries into one. The keep entry's end extends to
+  // span both; the dropped entry is deleted. The pair is pre-validated by the
+  // strip (same project, adjacent, both closed); we derive the plan here.
+  const onMergeEntries = useCallback(
+    (a: BackendEntry, b: BackendEntry) => {
+      const plan = mergeEntries(a, b);
+      updateEntry({
+        id: plan.keepId,
+        startedAt: plan.startedAt,
+        endedAt: plan.endedAt,
+      })
+        .then(() => deleteEntry(plan.dropId))
+        .then(() => refreshToday())
+        .then(() => void timer.refresh())
+        .catch((e) => console.error("timeline merge failed", e));
+    },
+    [refreshToday, timer],
+  );
+
   const upcomingEvents = useMemo<UpcomingEvent[]>(
     () =>
       upcoming.events.map((e) => ({
@@ -1141,6 +1189,8 @@ export function TodayView({
               showNow={isToday}
               onEntryClick={onEditRecent}
               onResize={onResizeEntry}
+              onSplit={onSplitEntry}
+              onMerge={onMergeEntries}
             />
           ) : effectiveView === "activity" ? (
             <ActivityReview date={viewDate} onCreated={today.refresh} />

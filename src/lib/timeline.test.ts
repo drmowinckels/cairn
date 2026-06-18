@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
+  MERGE_MAX_GAP_MIN,
   TIMELINE_DAY_END_MIN,
   TIMELINE_DAY_SPAN_MIN,
   TIMELINE_DAY_START_MIN,
   applyMinuteToIso,
   blockGeometry,
+  canMerge,
   dayWindow,
   entriesToSegments,
   hourTicks,
   legendFromSegments,
+  mergeEntries,
   minutesOfDay,
   resizeSegment,
+  splitAt,
   startToPercent,
+  type MergeCandidate,
   type TimelineSegment,
 } from "./timeline";
 import type { BackendEntry } from "./ipc";
@@ -285,5 +290,233 @@ describe("applyMinuteToIso", () => {
 
   it("returns the input unchanged for an invalid timestamp", () => {
     expect(applyMinuteToIso("not-a-date", 600)).toBe("not-a-date");
+  });
+});
+
+describe("splitAt", () => {
+  // 09:00–10:30
+  const s = 9 * 60;
+  const e = 10 * 60 + 30;
+
+  it("snaps a split point to the grid when it lands strictly inside", () => {
+    expect(splitAt(s, e, 9 * 60 + 47, 5)).toBe(9 * 60 + 45);
+  });
+
+  it("rejects a split snapping to the start edge", () => {
+    expect(splitAt(s, e, s + 1, 5)).toBeNull();
+  });
+
+  it("rejects a split snapping to the end edge", () => {
+    expect(splitAt(s, e, e - 1, 5)).toBeNull();
+  });
+
+  it("rejects a split before the start or after the end", () => {
+    expect(splitAt(s, e, s - 30, 5)).toBeNull();
+    expect(splitAt(s, e, e + 30, 5)).toBeNull();
+  });
+
+  it("rejects when the snapped point coincides with an edge exactly", () => {
+    // 09:02 snaps to 09:00 (the start) → no room for a first half.
+    expect(splitAt(s, e, s + 2, 5)).toBeNull();
+  });
+});
+
+function candidate(
+  id: string,
+  projectId: string | null,
+  startedAt: string,
+  endedAt: string | null,
+): MergeCandidate {
+  return { id, projectId, startedAt, endedAt };
+}
+
+describe("canMerge", () => {
+  it("merges two adjacent same-project closed entries", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate(
+      "b",
+      "p1",
+      "2026-05-26T10:00:00",
+      "2026-05-26T11:00:00",
+    );
+    expect(canMerge(a, b)).toBe(true);
+  });
+
+  it("is order-independent", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate(
+      "b",
+      "p1",
+      "2026-05-26T10:00:00",
+      "2026-05-26T11:00:00",
+    );
+    expect(canMerge(b, a)).toBe(true);
+  });
+
+  it("allows a small gap up to the threshold", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const gapEnd = new Date(
+      Date.parse("2026-05-26T10:00:00") + MERGE_MAX_GAP_MIN * 60_000,
+    ).toISOString();
+    const b = candidate("b", "p1", gapEnd, "2026-05-26T11:30:00");
+    expect(canMerge(a, b)).toBe(true);
+  });
+
+  it("rejects a gap larger than the threshold", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate(
+      "b",
+      "p1",
+      "2026-05-26T11:00:00",
+      "2026-05-26T12:00:00",
+    );
+    expect(canMerge(a, b)).toBe(false);
+  });
+
+  it("rejects different projects", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate(
+      "b",
+      "p2",
+      "2026-05-26T10:00:00",
+      "2026-05-26T11:00:00",
+    );
+    expect(canMerge(a, b)).toBe(false);
+  });
+
+  it("treats two uncategorized (null-project) entries as same project", () => {
+    const a = candidate(
+      "a",
+      null,
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate(
+      "b",
+      null,
+      "2026-05-26T10:00:00",
+      "2026-05-26T11:00:00",
+    );
+    expect(canMerge(a, b)).toBe(true);
+  });
+
+  it("rejects a running entry (open end)", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate("b", "p1", "2026-05-26T10:00:00", null);
+    expect(canMerge(a, b)).toBe(false);
+  });
+
+  it("rejects an overlapping pair (later starts before the earlier ends)", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:30:00",
+    );
+    const b = candidate(
+      "b",
+      "p1",
+      "2026-05-26T10:00:00",
+      "2026-05-26T11:00:00",
+    );
+    expect(canMerge(a, b)).toBe(false);
+  });
+
+  it("rejects merging an entry with itself", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    expect(canMerge(a, a)).toBe(false);
+  });
+});
+
+describe("mergeEntries", () => {
+  it("keeps the earlier entry and spans to the later end", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate(
+      "b",
+      "p1",
+      "2026-05-26T10:00:00",
+      "2026-05-26T11:00:00",
+    );
+    expect(mergeEntries(a, b)).toEqual({
+      keepId: "a",
+      dropId: "b",
+      startedAt: "2026-05-26T09:00:00",
+      endedAt: "2026-05-26T11:00:00",
+    });
+  });
+
+  it("is order-independent (same plan whichever way it's called)", () => {
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T10:00:00",
+    );
+    const b = candidate(
+      "b",
+      "p1",
+      "2026-05-26T10:00:00",
+      "2026-05-26T11:00:00",
+    );
+    expect(mergeEntries(b, a)).toEqual(mergeEntries(a, b));
+  });
+
+  it("takes the latest end even when the earlier entry ends later", () => {
+    // a starts first but ends after b — the merged end is a's end.
+    const a = candidate(
+      "a",
+      "p1",
+      "2026-05-26T09:00:00",
+      "2026-05-26T11:30:00",
+    );
+    const b = candidate(
+      "b",
+      "p1",
+      "2026-05-26T09:30:00",
+      "2026-05-26T10:00:00",
+    );
+    const plan = mergeEntries(a, b);
+    expect(plan.keepId).toBe("a");
+    expect(plan.endedAt).toBe("2026-05-26T11:30:00");
   });
 });
