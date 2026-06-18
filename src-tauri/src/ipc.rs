@@ -2155,15 +2155,29 @@ pub async fn hide_popover(app: tauri::AppHandle) -> Result<(), String> {
 /// pending. The idle prompt window (#93) calls this on mount to cover
 /// the cold-start race where its webview wasn't yet listening when the
 /// backend emitted `signal:idle-resume`.
+///
+/// Gated on a running timer (#235): idle time only exists while a timer
+/// runs through the idle period. A stash can outlive its session — the
+/// user returns from idle, ignores the prompt, then stops the timer (or
+/// quits) without resolving — leaving `last_idle` set. On the next cold
+/// start the idle webview would fetch it and prompt about idle time that
+/// no longer belongs to any entry. So if nothing is running, clear the
+/// stale stash and return `None`. Mirrors the SHOW gate in
+/// `fanout::run_idle_resume`.
 #[tauri::command]
-pub fn pending_idle(
+pub async fn pending_idle(
     state: State<'_, AppState>,
 ) -> Result<Option<crate::signals::stream::IdleResume>, String> {
-    Ok(state
+    let running = crate::signals::fanout::running_entry_exists(&state.db.pool).await;
+    let mut guard = state
         .last_idle
         .lock()
-        .map_err(|_| "last_idle lock poisoned".to_string())?
-        .clone())
+        .map_err(|_| "last_idle lock poisoned".to_string())?;
+    if running {
+        return Ok(guard.clone());
+    }
+    *guard = None;
+    Ok(None)
 }
 
 /// Dismiss the idle prompt: clear the pending idle state and hide the
@@ -3108,6 +3122,64 @@ mod tests {
         let since = Utc::now() - Duration::minutes(5);
         let until = Utc::now() - Duration::seconds(30);
         (entry, since, until)
+    }
+
+    // ---------------- pending_idle gating (#235) ----------------
+
+    fn idle_resume_now() -> crate::signals::stream::IdleResume {
+        let now = Utc::now();
+        crate::signals::stream::IdleResume {
+            since: now - Duration::minutes(10),
+            until: now,
+            duration_seconds: 600,
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_idle_returns_none_and_clears_stash_when_nothing_running() {
+        // #235: a stash left over from a previous session must not surface
+        // the idle prompt on cold start when no timer is running now.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        *app.state::<crate::AppState>().last_idle.lock().unwrap() = Some(idle_resume_now());
+
+        let state = app.state::<crate::AppState>();
+        let pending = pending_idle(state).await.unwrap();
+        assert!(pending.is_none(), "no running timer → no pending idle");
+        assert!(
+            app.state::<crate::AppState>()
+                .last_idle
+                .lock()
+                .unwrap()
+                .is_none(),
+            "the stale stash must be cleared so it can't re-surface later"
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_idle_returns_stash_when_a_timer_is_running() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let resume = idle_resume_now();
+        *app.state::<crate::AppState>().last_idle.lock().unwrap() = Some(resume.clone());
+        setup_idle_entry(app.state::<crate::AppState>()).await;
+
+        let state = app.state::<crate::AppState>();
+        let pending = pending_idle(state)
+            .await
+            .unwrap()
+            .expect("running timer → stashed idle is surfaced");
+        assert_eq!(pending.duration_seconds, resume.duration_seconds);
+        assert_eq!(pending.since, resume.since);
+        assert_eq!(pending.until, resume.until);
+    }
+
+    #[tokio::test]
+    async fn pending_idle_returns_none_when_stash_empty_and_timer_running() {
+        // Running timer but nothing stashed (resolved/dismissed already):
+        // the gate passes, and the empty stash returns None.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        setup_idle_entry(app.state::<crate::AppState>()).await;
+        let state = app.state::<crate::AppState>();
+        assert!(pending_idle(state).await.unwrap().is_none());
     }
 
     // ---------------- snooze IPCs (M1 #9) ----------------
