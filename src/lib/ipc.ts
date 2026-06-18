@@ -743,6 +743,12 @@ export async function listActivityLog(date: string): Promise<ActivityRow[]> {
   return (await invoke<ActivityRow[]>("list_activity_log", { date })) ?? [];
 }
 
+/** Write the whole activity log to `dest` as CSV; returns the path written.
+ *  Separate from the entries export, which never touches this table (#190). */
+export async function exportActivityLogCsv(dest: string): Promise<string> {
+  return invoke<string>("export_activity_log_csv", { dest });
+}
+
 /**
  * Snapshot of the single-row `app_state` marker (issue #31). When
  * `completedAt` is `null` the popover renders the onboarding overlay

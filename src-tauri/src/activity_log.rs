@@ -8,9 +8,14 @@
 //! exclusion list runs upstream at the collector, so an excluded app never
 //! reaches `insert`; `title_hint` is always run through [`redact_title`].
 
+use std::path::Path;
+
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
+use tokio::io::AsyncWriteExt;
+
+use crate::backup::csv_escape;
 
 /// One stored activity span, surfaced to the "review your day" UI (#190).
 /// `serde(camelCase)` so it crosses IPC unchanged.
@@ -204,6 +209,70 @@ pub async fn save_settings(
     Ok(())
 }
 
+/// Header for the activity-log CSV export (#190). Deliberately distinct from
+/// the entries export (`backup::CSV_HEADER`): this is the redacted foreground
+/// record, not time entries, and the two must never be conflated.
+pub const CSV_HEADER: &str =
+    "activity_id,started_at,ended_at,duration_minutes,app_name,title_hint,source";
+
+/// Whole-minute span duration for the export's `duration_minutes` column.
+/// Activity rows always carry both bounds; an unparseable bound degrades to an
+/// empty cell (defensive — stored values are RFC3339).
+fn csv_duration_minutes(started: &str, ended: &str) -> String {
+    let (Ok(start), Ok(end)) = (
+        DateTime::parse_from_rfc3339(started),
+        DateTime::parse_from_rfc3339(ended),
+    ) else {
+        return String::new();
+    };
+    ((end - start).num_seconds() / 60).to_string()
+}
+
+/// Write every activity-log row to `dest` as CSV, oldest first — the separate
+/// "Export activity log" action (#190). Distinct from the entries export, which
+/// never reads this table. `dest` comes from the system save dialog, so its
+/// parent directory already exists (unlike `backup::export_csv_to`'s
+/// programmatic targets, we don't create it).
+pub async fn export_csv_to(pool: &SqlitePool, dest: &Path) -> Result<(), String> {
+    let rows = sqlx::query(
+        "SELECT id, started_at, ended_at, app_name, title_hint, source \
+           FROM activity_log ORDER BY started_at ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(err)?;
+
+    let mut file = tokio::fs::File::create(dest).await.map_err(err)?;
+    file.write_all(format!("{CSV_HEADER}\n").as_bytes())
+        .await
+        .map_err(err)?;
+    for row in rows {
+        let id: i64 = row.get("id");
+        let started: String = row.get("started_at");
+        let ended: String = row.get("ended_at");
+        let app_name: String = row.get("app_name");
+        let title_hint: Option<String> = row.get("title_hint");
+        let source: String = row.get("source");
+        let line = format!(
+            "{},{},{},{},{},{},{}\n",
+            id,
+            csv_escape(&started),
+            csv_escape(&ended),
+            csv_duration_minutes(&started, &ended),
+            csv_escape(&app_name),
+            csv_escape(title_hint.as_deref().unwrap_or("")),
+            csv_escape(&source),
+        );
+        file.write_all(line.as_bytes()).await.map_err(err)?;
+    }
+    file.flush().await.map_err(err)?;
+    Ok(())
+}
+
+fn err<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +417,86 @@ mod tests {
         assert_eq!(
             load_settings(&db.pool).await,
             ActivityLogSettings::default(),
+        );
+    }
+
+    #[test]
+    fn csv_duration_minutes_floors_to_whole_minutes_and_degrades() {
+        assert_eq!(
+            csv_duration_minutes("2026-06-16T09:00:00+00:00", "2026-06-16T09:02:25+00:00",),
+            "2", // 145s → 2m
+        );
+        assert_eq!(
+            csv_duration_minutes("nope", "2026-06-16T09:00:00+00:00"),
+            ""
+        );
+        assert_eq!(csv_duration_minutes("2026-06-16T09:00:00+00:00", "bad"), "");
+    }
+
+    #[tokio::test]
+    async fn export_csv_writes_header_only_when_empty() {
+        let (dir, db) = test_db().await;
+        let dest = dir.path().join("activity.csv");
+        export_csv_to(&db.pool, &dest).await.unwrap();
+        let body = tokio::fs::read_to_string(&dest).await.unwrap();
+        assert_eq!(body, format!("{CSV_HEADER}\n"));
+    }
+
+    #[tokio::test]
+    async fn export_csv_surfaces_a_query_error() {
+        // Closing the pool makes the SELECT fail, exercising the error path
+        // (`map_err(err)`) the success cases never reach.
+        let (dir, db) = test_db().await;
+        db.pool.close().await;
+        let dest = dir.path().join("activity.csv");
+        assert!(export_csv_to(&db.pool, &dest).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn export_csv_writes_rows_oldest_first_with_duration_and_escaping() {
+        let (dir, db) = test_db().await;
+        // Out-of-order inserts; a title with a comma must be quoted.
+        insert(
+            &db.pool,
+            "2026-06-16T11:00:00+00:00",
+            "2026-06-16T11:30:00+00:00",
+            "Code",
+            Some("a, b"),
+            "window",
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        insert(
+            &db.pool,
+            "2026-06-16T09:00:00+00:00",
+            "2026-06-16T09:05:00+00:00",
+            "Zoom",
+            None,
+            "window",
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        let dest = dir.path().join("activity.csv");
+        export_csv_to(&db.pool, &dest).await.unwrap();
+        let lines: Vec<String> = tokio::fs::read_to_string(&dest)
+            .await
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(lines[0], CSV_HEADER);
+        // Oldest first; empty title_hint → empty cell; 5-minute span → "5".
+        assert_eq!(
+            lines[1],
+            "2,2026-06-16T09:00:00+00:00,2026-06-16T09:05:00+00:00,5,Zoom,,window",
+        );
+        // 30-minute span; the comma in the hint forces quoting.
+        assert_eq!(
+            lines[2],
+            "1,2026-06-16T11:00:00+00:00,2026-06-16T11:30:00+00:00,30,Code,\"a, b\",window",
         );
     }
 

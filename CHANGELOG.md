@@ -25,6 +25,12 @@ as the GitHub Release body, so keep the most recent version at the top.
   incognito windows) keep excluded apps out entirely. Retention-bounded
   (default 7 days, purged on launch); disabling the toggle stops recording and
   purges every row immediately. Local only — no network. See `docs/PRIVACY.md`.
+- `[privacy]` Separate "Export CSV" for the activity log (#190). The standard
+  entries export never touches the `activity_log` table; this dedicated action
+  (Settings → Activity log, shown only while the log is on) writes the redacted
+  spans (`activity_id,started_at,ended_at,duration_minutes,app_name,title_hint,source`)
+  to a path picked via the system save dialog. It carries only the same
+  redacted `title_hint` already stored — never the full title.
 
 ### Signals
 

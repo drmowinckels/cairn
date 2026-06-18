@@ -105,6 +105,7 @@ describe("SettingsView (browser-dev mode)", () => {
           setEnabled: vi.fn(async () => undefined),
           setRetentionDays: vi.fn(async () => undefined),
           deleteAll: vi.fn(async () => undefined),
+          exportToFile: vi.fn(async () => undefined),
         }}
       />,
     );

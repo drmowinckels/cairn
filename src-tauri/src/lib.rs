@@ -203,6 +203,14 @@ async fn list_activity_log(
 }
 
 #[tauri::command]
+async fn export_activity_log_csv(
+    state: tauri::State<'_, AppState>,
+    dest: String,
+) -> Result<String, String> {
+    ipc::export_activity_log_csv_impl(state, dest).await
+}
+
+#[tauri::command]
 async fn preview_connector_manifest(path: String) -> Result<connectors::ConnectorManifest, String> {
     ipc::preview_connector_manifest_impl(path).await
 }
@@ -506,6 +514,7 @@ pub fn run() {
             set_activity_log_settings,
             delete_activity_log,
             list_activity_log,
+            export_activity_log_csv,
             ipc::signal_capture_status,
             ipc::get_onboarding_state,
             ipc::complete_onboarding,

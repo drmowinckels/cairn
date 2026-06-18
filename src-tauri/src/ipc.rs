@@ -1380,6 +1380,19 @@ pub async fn list_activity_log_impl(
         .map_err(err)
 }
 
+/// Write the whole activity log to `dest` as CSV ("Export activity log"; #190),
+/// returning the path written. Separate from the entries export (`export_csv`),
+/// which never reads this table. Logic here (tested); the thin
+/// `#[tauri::command]` shim is in the codecov-ignored `lib.rs`.
+pub async fn export_activity_log_csv_impl(
+    state: State<'_, AppState>,
+    dest: String,
+) -> Result<String, String> {
+    let dest = std::path::PathBuf::from(dest);
+    crate::activity_log::export_csv_to(&state.db.pool, &dest).await?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
 /// Maximum length of a single field on a dry-run snapshot, counted
 /// in UTF-16 code units to match the DOM `<input maxLength>`
 /// semantics the frontend bench uses (see `src/views/rules/test-bench.tsx`).
@@ -2793,6 +2806,32 @@ mod tests {
         let state = app.state::<crate::AppState>();
         delete_activity_log_impl(state).await.unwrap();
         assert_eq!(crate::activity_log::count(&db.pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn export_activity_log_csv_writes_a_file_with_the_rows() {
+        let (dir, app, db) = mock_app_with_db().await;
+        crate::activity_log::insert(
+            &db.pool,
+            "2026-06-16T09:00:00+00:00",
+            "2026-06-16T09:05:00+00:00",
+            "Zoom",
+            Some("Standup"),
+            "window",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        let state = app.state::<crate::AppState>();
+        let dest = dir.path().join("activity.csv");
+        let out = export_activity_log_csv_impl(state, dest.to_string_lossy().to_string())
+            .await
+            .unwrap();
+        assert!(out.contains("activity.csv"));
+        let body = tokio::fs::read_to_string(&dest).await.unwrap();
+        assert!(body.starts_with(crate::activity_log::CSV_HEADER));
+        assert!(body.contains("Zoom"));
+        assert!(body.contains("Standup"));
     }
 
     #[tokio::test]

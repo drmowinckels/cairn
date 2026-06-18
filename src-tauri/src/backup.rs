@@ -495,7 +495,7 @@ async fn validate_sqlite_header(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn csv_escape(s: &str) -> String {
+pub(crate) fn csv_escape(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') {
         let escaped = s.replace('"', "\"\"");
         format!("\"{escaped}\"")
