@@ -240,12 +240,12 @@ export function canMerge(a: MergeCandidate, b: MergeCandidate): boolean {
 }
 
 export interface MergePlan {
-  /** The surviving entry: extend its `endedAt` to span both. */
+  /** The surviving entry: extend its `endedAt` to span both. It is the earlier
+   *  entry, so its `startedAt` is already correct — the merge never rewrites
+   *  the start, so no `startedAt` is carried here. */
   keepId: string;
   /** The absorbed entry: delete it after the keep is extended. */
   dropId: string;
-  /** Earliest `startedAt` across the pair (RFC 3339). */
-  startedAt: string;
   /** Latest `endedAt` across the pair (RFC 3339). */
   endedAt: string;
 }
@@ -266,7 +266,6 @@ export function mergeEntries(a: MergeCandidate, b: MergeCandidate): MergePlan {
   return {
     keepId: first.id,
     dropId: second.id,
-    startedAt: first.startedAt,
     endedAt: latestEnd as string,
   };
 }

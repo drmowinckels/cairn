@@ -480,7 +480,6 @@ describe("mergeEntries", () => {
     expect(mergeEntries(a, b)).toEqual({
       keepId: "a",
       dropId: "b",
-      startedAt: "2026-05-26T09:00:00",
       endedAt: "2026-05-26T11:00:00",
     });
   });
