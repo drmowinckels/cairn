@@ -15,6 +15,7 @@ import {
   minutesOfDay,
   resizeSegment,
   splitAt,
+  splitMidpoint,
   startToPercent,
   type MergeCandidate,
   type TimelineSegment,
@@ -318,6 +319,28 @@ describe("splitAt", () => {
   it("rejects when the snapped point coincides with an edge exactly", () => {
     // 09:02 snaps to 09:00 (the start) → no room for a first half.
     expect(splitAt(s, e, s + 2, 5)).toBeNull();
+  });
+});
+
+describe("splitMidpoint", () => {
+  it("returns the snapped midpoint of a block", () => {
+    // 09:00–10:30 → midpoint 09:45, already on the grid.
+    expect(splitMidpoint(9 * 60, 10 * 60 + 30, 5)).toBe(9 * 60 + 45);
+  });
+
+  it("snaps a midpoint that lands off the grid", () => {
+    // 09:00–10:12 → midpoint 09:36 → snaps to 09:35.
+    expect(splitMidpoint(9 * 60, 10 * 60 + 12, 5)).toBe(9 * 60 + 35);
+  });
+
+  it("returns null for a block too short to hold an interior grid point", () => {
+    // 09:00–09:05 → no multiple of 5 strictly inside.
+    expect(splitMidpoint(9 * 60, 9 * 60 + 5, 5)).toBeNull();
+  });
+
+  it("handles fractional (sub-minute) bounds", () => {
+    // 09:00:30–10:29:30 → midpoint 09:45, strictly inside.
+    expect(splitMidpoint(9 * 60 + 0.5, 10 * 60 + 29.5, 5)).toBe(9 * 60 + 45);
   });
 });
 

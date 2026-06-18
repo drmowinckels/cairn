@@ -205,6 +205,20 @@ export function splitAt(
 }
 
 /**
+ * The default split point for a block: its midpoint, snapped and validated by
+ * `splitAt`. Returns null when the block is too short to hold an interior grid
+ * point (any snapped midpoint would land on an edge). Seeds the keyboard "Split
+ * mode" so a split is reachable without a pointer position (#188).
+ */
+export function splitMidpoint(
+  startMin: number,
+  endMin: number,
+  snapMin: number,
+): number | null {
+  return splitAt(startMin, endMin, (startMin + endMin) / 2, snapMin);
+}
+
+/**
  * Largest gap, in minutes, two entries may have between them and still count as
  * "adjacent" for a merge. Kept at the 5-minute snap grid: it absorbs the small
  * drift between back-to-back blocks, but won't silently swallow a real break as

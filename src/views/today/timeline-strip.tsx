@@ -11,9 +11,11 @@ import {
   hourTicks,
   resizeSegment,
   splitAt,
+  splitMidpoint,
   type ResizeEdge,
 } from "../../lib/timeline";
 import { useMinuteClock } from "../../lib/use-minute-clock";
+import { useAnnounce } from "../../lib/use-announce";
 import type { BackendEntry } from "../../lib/ipc";
 import type { Project } from "../../lib/types";
 
@@ -252,6 +254,51 @@ export function TimelineStrip({
     setSelected([]);
   }, []);
 
+  // --- split (keyboard select mode) ------------------------------------
+  // The accessible counterpart to the pointer split menu: a toolbar toggle
+  // puts the strip in "split" mode, where a focused block seeds a split point
+  // at its midpoint, the up/down arrows move that point along the 5-min grid
+  // (edges rejected), and Enter cuts the block in two there — no pointer
+  // position needed. The result is routed to the app's shared live region
+  // (which honors the screen-reader pref), like timer/suggestion announcements.
+  const announceMsg = useAnnounce();
+  const [splitMode, setSplitMode] = useState(false);
+  // The arrow-adjusted split point for the block currently being split, or null
+  // to use that block's midpoint seed. Only one block is adjusted at a time, so
+  // a single {id, splitMin} suffices; it's cleared on split / mode change so a
+  // stale point can't outlive the block geometry it was chosen against.
+  const [splitDraft, setSplitDraft] = useState<{
+    id: string;
+    splitMin: number;
+  } | null>(null);
+  // Focus target for when a split leaves the original block too short to split
+  // again: it becomes `disabled` after the refresh and would drop focus to the
+  // body, so we move focus to this always-present control instead.
+  const splitCancelRef = useRef<HTMLButtonElement>(null);
+
+  // The two keyboard modes are mutually exclusive: entering one leaves the
+  // other (and clears the pointer menu + split draft) so the toolbar only ever
+  // shows one mode's controls.
+  const enterSelectMode = useCallback(() => {
+    setSelectMode(true);
+    setSplitMode(false);
+    setSplitDraft(null);
+    setSplitMenu(null);
+  }, []);
+
+  const enterSplitMode = useCallback(() => {
+    setSplitMode(true);
+    setSelectMode(false);
+    setSelected([]);
+    setSplitDraft(null);
+    setSplitMenu(null);
+  }, []);
+
+  const exitSplitMode = useCallback(() => {
+    setSplitMode(false);
+    setSplitDraft(null);
+  }, []);
+
   const mergePair = useMemo(() => {
     // Resolve the marked ids against the live entries; if either no longer
     // exists (the day refreshed under the selection) there's no pair to merge.
@@ -303,7 +350,7 @@ export function TimelineStrip({
 
   return (
     <div className="vt-wrap">
-      {onMerge && (
+      {(onMerge || onSplit) && (
         <div className="vt-toolbar">
           {selectMode ? (
             <>
@@ -323,7 +370,7 @@ export function TimelineStrip({
                 onClick={
                   mergePair
                     ? () => {
-                        onMerge(mergePair.a, mergePair.b);
+                        onMerge!(mergePair.a, mergePair.b);
                         exitSelect();
                       }
                     : undefined
@@ -339,14 +386,42 @@ export function TimelineStrip({
                 Cancel
               </button>
             </>
+          ) : splitMode ? (
+            <>
+              <span className="vt-toolbar-hint" aria-live="polite">
+                Focus a block, move the split point with the up and down arrows,
+                then press Enter to split
+              </span>
+              <button
+                ref={splitCancelRef}
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={exitSplitMode}
+              >
+                Cancel
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={() => setSelectMode(true)}
-            >
-              <Icon name="merge" size={12} /> Select to merge
-            </button>
+            <>
+              {onMerge && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={enterSelectMode}
+                >
+                  <Icon name="merge" size={12} /> Select to merge
+                </button>
+              )}
+              {onSplit && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={enterSplitMode}
+                >
+                  <Icon name="scissors" size={12} /> Split
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
@@ -408,9 +483,82 @@ export function TimelineStrip({
               // its click never reaches here — no guard needed in the handler.
               const selectable = editable;
 
+              // Keyboard split: the snapped point this block would cut at —
+              // the arrow-adjusted draft if this block owns it, else its
+              // midpoint seed; null when it's not splittable or too short to
+              // hold an interior grid point. Drives the split-mode label,
+              // disabled state, marker, arrow handler, and activate action.
+              const splitSeedMin = splittable
+                ? splitMidpoint(s.startMin, s.endMin, SNAP_MIN)
+                : null;
+              // Use the arrow-adjusted draft only while it's still strictly
+              // inside this block — re-validating through `splitAt` means a
+              // draft that the day refreshed out from under (the block shrank)
+              // silently falls back to the midpoint seed instead of cutting at
+              // a stale, now-out-of-bounds point.
+              const draftMin =
+                splitDraft?.id === s.id &&
+                splitAt(s.startMin, s.endMin, splitDraft.splitMin, SNAP_MIN) ===
+                  splitDraft.splitMin
+                  ? splitDraft.splitMin
+                  : null;
+              const splitPointMin = draftMin ?? splitSeedMin;
+              const splitAction =
+                splitMode && splitPointMin !== null
+                  ? () => {
+                      onSplit!(entry, splitPointMin);
+                      announceMsg(
+                        `Split ${name} at ${fmtClock(
+                          splitPointMin,
+                        )} into two entries.`,
+                      );
+                      setSplitDraft(null);
+                      // The original block keeps focus across the refresh
+                      // unless the first half it shrinks to (start → split) is
+                      // too short to split again — then it goes `disabled` and
+                      // drops focus. Pre-empt that by moving focus to Cancel.
+                      if (
+                        splitMidpoint(s.startMin, splitPointMin, SNAP_MIN) ===
+                        null
+                      ) {
+                        splitCancelRef.current?.focus();
+                      }
+                    }
+                  : null;
+              // Up/down nudge the split point along the grid (up = earlier);
+              // `splitAt` rejects a step onto either edge, so the point stays
+              // strictly inside and Enter can never make a zero-length half.
+              const onSegKeyDown =
+                splitMode && splitPointMin !== null
+                  ? (e: React.KeyboardEvent) => {
+                      const delta =
+                        e.key === "ArrowUp"
+                          ? -SNAP_MIN
+                          : e.key === "ArrowDown"
+                            ? SNAP_MIN
+                            : 0;
+                      if (delta === 0) return;
+                      e.preventDefault();
+                      const next = splitAt(
+                        s.startMin,
+                        s.endMin,
+                        splitPointMin + delta,
+                        SNAP_MIN,
+                      );
+                      if (next !== null) {
+                        setSplitDraft({ id: s.id, splitMin: next });
+                        announceMsg(`Split point ${fmtClock(next)}`);
+                      }
+                    }
+                  : undefined;
+
               const onSegClick = () => {
                 if (selectMode) {
                   toggleSelect(s.id);
+                  return;
+                }
+                if (splitAction) {
+                  splitAction();
                   return;
                 }
                 onEntryClick?.(s.id);
@@ -430,15 +578,28 @@ export function TimelineStrip({
                         ? selectable
                           ? `Select ${label}`
                           : `${label} — can't be merged`
-                        : `Edit ${label}`
+                        : splitMode
+                          ? splitPointMin !== null
+                            ? `Split ${label} at ${fmtClock(
+                                splitPointMin,
+                              )}; up and down arrows move the split point`
+                            : `${label} — can't be split`
+                          : `Edit ${label}`
                     }
                     aria-pressed={
                       selectMode && selectable ? isSelected : undefined
                     }
-                    disabled={selectMode ? !selectable : !onEntryClick}
+                    disabled={
+                      selectMode
+                        ? !selectable
+                        : splitMode
+                          ? splitPointMin === null
+                          : !onEntryClick
+                    }
                     onClick={onSegClick}
+                    onKeyDown={onSegKeyDown}
                     onContextMenu={
-                      splittable && !selectMode
+                      splittable && !selectMode && !splitMode
                         ? (e) => {
                             e.preventDefault();
                             openSplitMenu(
@@ -454,7 +615,7 @@ export function TimelineStrip({
                         : undefined
                     }
                     onPointerDown={
-                      splittable && !selectMode
+                      splittable && !selectMode && !splitMode
                         ? (e) => {
                             if (e.pointerType !== "touch") return;
                             const splitMin = splitMinFor(
@@ -485,7 +646,7 @@ export function TimelineStrip({
                       )}
                     </span>
                   </button>
-                  {commit && !selectMode && (
+                  {commit && !selectMode && !splitMode && (
                     <>
                       <div
                         className="vt-handle vt-handle--top"
@@ -518,6 +679,21 @@ export function TimelineStrip({
                         }
                       />
                     </>
+                  )}
+                  {splitMode && splitPointMin !== null && (
+                    <div
+                      className="vt-split-mark"
+                      style={{
+                        top: `${
+                          ((splitPointMin - win.startMin) / 60) * PX_PER_HOUR
+                        }px`,
+                      }}
+                      aria-hidden="true"
+                    >
+                      <span className="vt-split-mark-label">
+                        {fmtClock(splitPointMin)}
+                      </span>
+                    </div>
                   )}
                 </div>
               );
