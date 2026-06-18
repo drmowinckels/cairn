@@ -519,6 +519,9 @@ export function TodayView({
   // dismissible banner — the time entry persists, so we don't reopen the
   // modal (which would re-create it); the user can re-link from edit.
   const [attributeError, setAttributeError] = useState<string | null>(null);
+  // Surfaced when a timeline split/merge IPC call fails (#188) — these mutate
+  // real entries, so a failure must be visible, not a silent console error.
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   const openCreate = useCallback(() => {
     const now = new Date();
@@ -683,7 +686,11 @@ export function TodayView({
   // strip only offers this on a closed, same-day block.
   const onSplitEntry = useCallback(
     (entry: BackendEntry, splitMin: number) => {
+      setTimelineError(null);
       const splitIso = applyMinuteToIso(entry.startedAt, splitMin);
+      // Shrink the original to end at the split, then create the tail half.
+      // Shrink-first means a failed create can only lose the tail (recoverable),
+      // never leave the two halves overlapping.
       updateEntry({ id: entry.id, endedAt: splitIso })
         .then(() =>
           createEntry({
@@ -697,26 +704,30 @@ export function TodayView({
         )
         .then(() => refreshToday())
         .then(() => void timer.refresh())
-        .catch((e) => console.error("timeline split failed", e));
+        .catch((e) =>
+          setTimelineError(`Couldn't split the entry — ${String(e)}`),
+        );
     },
     [refreshToday, timer],
   );
 
-  // #188 merge: collapse two entries into one. The keep entry's end extends to
-  // span both; the dropped entry is deleted. The pair is pre-validated by the
+  // #188 merge: collapse two entries into one. The pair is pre-validated by the
   // strip (same project, adjacent, both closed); we derive the plan here.
+  // Delete the dropped entry FIRST, then extend the survivor's end to span both:
+  // if the second call fails the worst case is a recoverable under-count, never
+  // two overlapping (double-counted) entries. The survivor is the earlier entry,
+  // so its `startedAt` is already correct and we only move its `endedAt`.
   const onMergeEntries = useCallback(
     (a: BackendEntry, b: BackendEntry) => {
+      setTimelineError(null);
       const plan = mergeEntries(a, b);
-      updateEntry({
-        id: plan.keepId,
-        startedAt: plan.startedAt,
-        endedAt: plan.endedAt,
-      })
-        .then(() => deleteEntry(plan.dropId))
+      deleteEntry(plan.dropId)
+        .then(() => updateEntry({ id: plan.keepId, endedAt: plan.endedAt }))
         .then(() => refreshToday())
         .then(() => void timer.refresh())
-        .catch((e) => console.error("timeline merge failed", e));
+        .catch((e) =>
+          setTimelineError(`Couldn't merge entries — ${String(e)}`),
+        );
     },
     [refreshToday, timer],
   );
@@ -897,6 +908,8 @@ export function TodayView({
       )}
 
       {attributeError && <ErrorBanner message={attributeError} />}
+
+      {timelineError && <ErrorBanner message={timelineError} />}
 
       {isToday && (
         <section

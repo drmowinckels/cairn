@@ -386,6 +386,29 @@ describe("TimelineStrip merge (#188)", () => {
     expect(getByText("Pick one more to merge")).toBeTruthy();
   });
 
+  it("a running block can't be selected for merge (disabled + labelled)", () => {
+    const onMerge = vi.fn();
+    const { container, getByText } = renderMerge({
+      onMerge,
+      entries: [
+        adjacent[0]!, // closed 09:00–10:00 → selectable
+        entry({ id: "run", startedAt: "2026-05-26T10:00:00", endedAt: null }),
+      ],
+    });
+    fireEvent.click(getByText("Select to merge"));
+    const running =
+      container.querySelector<HTMLButtonElement>(".vt-seg.is-running")!;
+    expect(running.disabled).toBe(true);
+    expect(running.getAttribute("aria-label")).toMatch(/can't be merged/i);
+    expect(running.getAttribute("aria-pressed")).toBeNull();
+    const closed = container.querySelector<HTMLButtonElement>(
+      ".vt-seg:not(.is-running)",
+    )!;
+    expect(closed.disabled).toBe(false);
+    expect(closed.getAttribute("aria-label")).toMatch(/^select /i);
+    expect(closed.getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("selecting two adjacent same-project blocks enables Merge and calls onMerge", () => {
     const onMerge = vi.fn();
     const { container, getByText } = renderMerge({ onMerge });

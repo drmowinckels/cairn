@@ -541,8 +541,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     });
   });
 
-  it("a failed split is logged via console.error (#188 catch)", async () => {
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("a failed split surfaces an error banner (#188 catch)", async () => {
     const { a } = twoAdjacentEntries();
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
@@ -583,8 +582,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     } as DOMRect);
     fireEvent.contextMenu(block, { clientY: 50 });
     fireEvent.click(await screen.findByRole("menuitem", { name: /split at/i }));
-    await waitFor(() => expect(errSpy).toHaveBeenCalled());
-    errSpy.mockRestore();
+    expect(await screen.findByText(/couldn't split the entry/i)).toBeTruthy();
   });
 
   it("merging two selected blocks extends one and deletes the other (#188)", async () => {
@@ -630,13 +628,13 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     });
   });
 
-  it("a failed merge is logged via console.error (#188 catch)", async () => {
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("a failed merge surfaces an error banner (#188 catch)", async () => {
     const { a, b } = twoAdjacentEntries();
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
       if (cmd === "list_day") return [a, b];
       if (cmd === "list_projects") return projectFixture();
+      // Delete-first ordering: the drop succeeds, then the extend throws.
       if (cmd === "update_entry") throw new Error("merge boom");
       return null;
     });
@@ -663,8 +661,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     fireEvent.click(blocks[0]!);
     fireEvent.click(blocks[1]!);
     fireEvent.click(screen.getByRole("button", { name: /^merge$/i }));
-    await waitFor(() => expect(errSpy).toHaveBeenCalled());
-    errSpy.mockRestore();
+    expect(await screen.findByText(/couldn't merge entries/i)).toBeTruthy();
   });
 
   it("offers the Activity view + renders recorded spans when the log is on (#190)", async () => {

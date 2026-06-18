@@ -206,10 +206,12 @@ export function splitAt(
 
 /**
  * Largest gap, in minutes, two entries may have between them and still count as
- * "adjacent" for a merge. A small slack lets the user merge back-to-back blocks
- * that drifted a few minutes apart without merging across a real break.
+ * "adjacent" for a merge. Kept at the 5-minute snap grid: it absorbs the small
+ * drift between back-to-back blocks, but won't silently swallow a real break as
+ * tracked time on the merged entry — merging across a longer gap would inflate
+ * the day's total. A wider break is a deliberate edit, not a merge.
  */
-export const MERGE_MAX_GAP_MIN = 30;
+export const MERGE_MAX_GAP_MIN = 5;
 
 export interface MergeCandidate {
   id: string;

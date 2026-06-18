@@ -342,7 +342,7 @@ export function TimelineStrip({
           ) : (
             <button
               type="button"
-              className="btn btn--ghost btn--sm vt-select-btn"
+              className="btn btn--ghost btn--sm"
               onClick={() => setSelectMode(true)}
             >
               <Icon name="merge" size={12} /> Select to merge
@@ -402,6 +402,12 @@ export function TimelineStrip({
               const splittable = editable && Boolean(onSplit);
               const isSelected = selected.includes(s.id);
 
+              // Only closed, same-day entries can be marked for merge — same
+              // constraint as split. A running/clamped block has no mergeable
+              // span on this day, so it's `disabled` in select mode (below) and
+              // its click never reaches here — no guard needed in the handler.
+              const selectable = editable;
+
               const onSegClick = () => {
                 if (selectMode) {
                   toggleSelect(s.id);
@@ -420,10 +426,16 @@ export function TimelineStrip({
                     style={{ top: `${topPx}px`, height: `${heightPx}px` }}
                     title={label}
                     aria-label={
-                      selectMode ? `Select ${label}` : `Edit ${label}`
+                      selectMode
+                        ? selectable
+                          ? `Select ${label}`
+                          : `${label} — can't be merged`
+                        : `Edit ${label}`
                     }
-                    aria-pressed={selectMode ? isSelected : undefined}
-                    disabled={selectMode ? false : !onEntryClick}
+                    aria-pressed={
+                      selectMode && selectable ? isSelected : undefined
+                    }
+                    disabled={selectMode ? !selectable : !onEntryClick}
                     onClick={onSegClick}
                     onContextMenu={
                       splittable && !selectMode
