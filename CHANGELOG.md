@@ -16,6 +16,14 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Privacy
 
+- `[privacy]` Browser is now an opt-in, **fully local** signal-source plugin
+  (#37). It only _receives_ the active-tab domain over a per-user loopback
+  socket — no network egress, no keychain — so it carries **no** capability
+  badges, and the user controls it with a single toggle (Settings → Plugins)
+  that persists across launches. Disabling it stops the socket listener and
+  clears its contribution from matching. Domain-only matching, incognito and
+  exclusion-list gating, and the no-URL-persistence guarantee are unchanged.
+  See `docs/PRIVACY.md` "Browser integration".
 - `[privacy]` Opt-in activity log for the "review your day" flow (#190). Off by
   default. When enabled (Settings → Detection → "Save activity log"), Cairn
   records compact foreground spans — app name, a **redacted** window-title
@@ -34,6 +42,18 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Signals
 
+- `[browser]` The browser signal source is now an opt-in **plugin** (#37).
+  Its local-IPC receiver (the per-user socket that a browser extension pushes
+  the active tab to) moved out of core's always-on path into
+  `plugins/browser/*`, behind the same plugin boundary as calendar. Settings →
+  Plugins lists **Browser** with a toggle; enabling it binds the socket,
+  disabling it stops the listener (aborting in-flight connections) and clears
+  `browser_domain` from matching, and the choice persists in `plugin_state`.
+  Browser is **fully local** — it only receives over a loopback socket, so it
+  declares **no** Network/Secrets capabilities; nothing leaves the machine.
+  Domain/incognito/exclusion gating and the no-URL-persistence contract are
+  unchanged. The Safari/Firefox/Chrome extension wrappers remain a separate,
+  out-of-scope slice.
 - `[rules]` New `app.category` rule condition (#189). Matches the _category_
   of the foreground app — `meeting` · `editor` · `terminal` · `browser` —
   rather than its exact name, so a single "Meetings" rule covers Zoom, Teams,

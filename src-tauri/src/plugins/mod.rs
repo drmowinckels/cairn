@@ -13,6 +13,7 @@
 //! so a user who turns a networked plugin off stays opted out across
 //! launches. `Capability::Paid` lands with billing (#109).
 
+pub mod browser;
 pub mod calendar;
 pub mod store;
 
