@@ -135,12 +135,13 @@ pub enum SignalEvent {
     /// projection ships with the snapshot stream.
     Git(Option<GitContext>),
     /// Browser context derived from a local-IPC push by a small
-    /// browser extension (issue #35, M7). Carries only the domain —
+    /// browser extension (issues #35, #37). Carries only the domain —
     /// path and title are dropped at the collector boundary per
     /// `docs/PRIVACY.md`. The exclusion list is applied BEFORE the
     /// event reaches the stream, so any value seen here is allowed
-    /// to participate in matching.
-    Browser(Option<crate::signals::browser::BrowserContext>),
+    /// to participate in matching. Produced by the opt-in `browser`
+    /// signal-source plugin (`crate::plugins::browser`).
+    Browser(Option<crate::plugins::browser::BrowserContext>),
     /// Active calendar events, pushed by the calendar source on each
     /// tick. Carries its payload like every other source so the
     /// driver never reaches back into a `CalendarRegistry` — this is
@@ -232,12 +233,12 @@ impl SnapshotStream {
 struct LiveState {
     front: Option<FrontWindow>,
     git: Option<GitContext>,
-    /// Latest browser context from the local-IPC collector (#35),
-    /// or `None` when no extension has reported recently. The
-    /// `apply_event` arm for `SignalEvent::Browser` writes this
-    /// straight through — the exclusion + privacy filters fire
-    /// *before* the event reaches the stream.
-    browser: Option<crate::signals::browser::BrowserContext>,
+    /// Latest browser context from the `browser` plugin's local-IPC
+    /// listener (#35, #37), or `None` when no extension has reported
+    /// recently. The `apply_event` arm for `SignalEvent::Browser`
+    /// writes this straight through — the exclusion + privacy filters
+    /// fire *before* the event reaches the stream.
+    browser: Option<crate::plugins::browser::BrowserContext>,
     /// Latest active calendar events from the calendar source's last
     /// tick. The driver reads this on publish instead of pulling from
     /// a `CalendarRegistry` — keeping the driver origin-agnostic.
@@ -477,10 +478,11 @@ fn apply_event(
             state.git = git;
         }
         SignalEvent::Browser(browser) => {
-            // The collector at `signals/browser` has already applied
-            // the privacy gates (incognito / unfocused / empty) and
-            // the exclusion list before sending the event. Any value
-            // we see here is allowed to drive the snapshot directly.
+            // The `browser` plugin's listener (`plugins/browser`) has
+            // already applied the privacy gates (incognito / unfocused /
+            // empty) and the exclusion list before sending the event.
+            // Any value we see here is allowed to drive the snapshot
+            // directly.
             state.browser = browser;
         }
         SignalEvent::Calendar(events) => {
@@ -1234,7 +1236,7 @@ mod tests {
         // through to LiveState.browser, which `publish` projects to
         // SignalSnapshot.browser_domain. A None Browser event after
         // a Some clears the field — same shape as the Git arm.
-        use crate::signals::browser::BrowserContext;
+        use crate::plugins::browser::BrowserContext;
         let (_dir, stream) = fresh_stream(Duration::from_millis(50)).await;
         let tx = stream.event_sender();
         let mut rx = stream.subscribe();

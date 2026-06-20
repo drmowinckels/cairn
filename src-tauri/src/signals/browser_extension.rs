@@ -1,11 +1,12 @@
 //! Browser-extension liveness tracker.
 //!
-//! The browser collector itself lands in M7 — it speaks to a thin
-//! browser-shipped helper over a local IPC socket. Until then this
-//! module is the public surface the rest of the app talks to: a tiny
-//! in-memory ledger of "we last heard from the extension at T" that
-//! the Settings → Integrations card consumes. M7 just calls
-//! [`BrowserExtensionState::record_heartbeat`].
+//! A tiny in-memory ledger of "we last heard from the extension at T"
+//! that the Settings → Integrations card consumes. The `browser`
+//! signal-source plugin (`plugins::browser`) calls
+//! [`BrowserExtensionState::record_heartbeat`] on every push from its
+//! local-IPC socket. It lives in `signals/` rather than the plugin
+//! because the Settings → Integrations IPC (`browser_extension_status`)
+//! reads it independently of whether the plugin is enabled.
 
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
@@ -38,10 +39,9 @@ impl BrowserExtensionState {
         Self::default()
     }
 
-    /// Called by the browser collector each time it receives a push
-    /// from the extension. Recording a `None` label clears the label
-    /// (e.g. extension disconnected explicitly).
-    #[allow(dead_code)] // wired in by M7's collector
+    /// Called by the `browser` plugin's listener each time it receives a
+    /// push from the extension. Recording a `None` label leaves the
+    /// existing label intact (only a non-empty label overwrites it).
     pub fn record_heartbeat(&self, browser_label: Option<String>, at: DateTime<Utc>) {
         let mut guard = self.inner.lock().expect("browser-extension lock");
         guard.last_seen = Some(at);

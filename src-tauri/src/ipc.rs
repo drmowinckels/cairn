@@ -6484,11 +6484,11 @@ pub(crate) async fn persist_discovery_roots(
 }
 
 /// Settings → Integrations card status for the browser extension.
-/// Today this returns `{connected: false, lastSeen: null}` because the
-/// browser collector lands in M7 — see `signals::browser_extension`.
-/// The frontend renders whatever this IPC returns; once M7 wires the
-/// extension's heartbeat into `BrowserExtensionState::record_heartbeat`,
-/// the same IPC starts returning live values without any UI changes.
+/// Returns live connectivity from the `browser` plugin's local-IPC
+/// listener: every push calls `BrowserExtensionState::record_heartbeat`
+/// (see `plugins::browser` + `signals::browser_extension`), so this
+/// reflects whether the extension has reported recently. Stays
+/// disconnected until the plugin is enabled and an extension connects.
 #[tauri::command]
 pub fn browser_extension_status(
     state: State<'_, AppState>,

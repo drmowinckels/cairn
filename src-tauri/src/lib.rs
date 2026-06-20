@@ -364,8 +364,8 @@ pub struct AppState {
     /// when the event is emitted. Cleared by `dismiss_idle`.
     pub last_idle: std::sync::Mutex<Option<IdleResume>>,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
-    /// here on every push from the local-IPC socket collector in
-    /// `signals::browser`; the IPC handler `browser_extension_status`
+    /// here on every push from the `browser` plugin's local-IPC listener
+    /// (`plugins::browser`); the IPC handler `browser_extension_status`
     /// reads from it for Settings → Integrations.
     pub browser_extension: Arc<BrowserExtensionState>,
     /// Serializes auto-backup snapshots so the periodic scheduler and a
@@ -622,6 +622,11 @@ pub fn run() {
             // the spawned driver/collector tasks live on Tauri's
             // runtime for the app's lifetime, and `block_on` returns as
             // soon as they're spawned.
+            // Browser-extension liveness ledger (#34, #35): created
+            // before the plugin host so the `browser` signal-source
+            // plugin can record heartbeats into it, and shared with the
+            // Settings → Integrations IPC via `AppState`.
+            let browser_extension_state = Arc::new(BrowserExtensionState::new());
             let (stream, plugin_host) = tauri::async_runtime::block_on(async {
                 let stream = signals::stream::spawn_full(
                     exclusions.clone(),
@@ -630,13 +635,20 @@ pub fn run() {
                     discovered_repos.clone(),
                 );
                 signals::stream::spawn_default_sources(&stream);
-                // Calendar is a signal-source plugin (#111): start it
-                // through the plugin host, applying any persisted
-                // enable/disable choice, so it goes through the same
-                // boundary PM/billing plugins will.
+                // Opt-in signal-source plugins (calendar #111, browser
+                // #37): start them through the plugin host, applying any
+                // persisted enable/disable choice, so they go through the
+                // same boundary PM/billing plugins will. Calendar is
+                // networked + secrets-bearing; browser is fully local (it
+                // only receives over a per-user loopback socket).
                 let mut plugin_host = plugins::SignalSourceHost::new();
                 plugin_host.register(Box::new(plugins::calendar::CalendarPlugin::new(
                     calendar.clone(),
+                )));
+                plugin_host.register(Box::new(plugins::browser::BrowserPlugin::new(
+                    data_dir.clone(),
+                    exclusions.clone(),
+                    browser_extension_state.clone(),
                 )));
                 let enabled_flags = plugins::store::load_enabled(&db.pool).await;
                 plugin_host.start_with(&enabled_flags, stream.event_sender());
@@ -670,40 +682,13 @@ pub fn run() {
                 signals::git_watcher::spawn_watcher_task(stream.event_sender(), discovered_repos)
             });
 
-            // Browser-signal IPC socket (M7 #35). Listens on
-            // `<data_dir>/ipc/sock` (Unix; owner-only `chmod 0700`
-            // parent + `chmod 0600` socket) or `\\.\pipe\cairn`
-            // (Windows; `reject_remote_clients(true)`) for pushes
-            // from a small browser extension. Heartbeats are
-            // recorded on `browser_extension_state` so the
-            // Settings → Integrations card reflects connectivity;
-            // a focused, non-incognito, non-excluded message produces
-            // a `SignalEvent::Browser` that feeds the snapshot
-            // stream's `browser_domain` field. A bind failure is
-            // logged but never fatal — Cairn still runs without the
-            // browser collector.
-            let browser_extension_state = Arc::new(BrowserExtensionState::new());
-            {
-                let event_tx = stream.event_sender();
-                let exclusions_for_browser = exclusions.clone();
-                let state_for_browser = browser_extension_state.clone();
-                let data_dir_for_browser = data_dir.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = signals::browser::spawn_listener(
-                        data_dir_for_browser,
-                        event_tx,
-                        exclusions_for_browser,
-                        state_for_browser,
-                    )
-                    .await
-                    {
-                        log::warn!(
-                            "browser: socket listener failed to bind: {e}; \
-                             browser_domain will stay None"
-                        );
-                    }
-                });
-            }
+            // The browser signal source's local-IPC socket is now owned
+            // by the `browser` plugin and started through the plugin host
+            // above (#37) — when enabled it binds `<data_dir>/ipc/sock`
+            // (Unix; owner-only 0700 parent + 0600 socket) or
+            // `\\.\pipe\cairn` (Windows; `reject_remote_clients(true)`)
+            // and clears its contribution when disabled. A bind failure
+            // is logged, never fatal.
 
             // Rules cache: load once, refreshed by `save_rule` /
             // `delete_rule` IPC mutators. The fanout reads this on
