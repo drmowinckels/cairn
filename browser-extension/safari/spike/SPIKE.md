@@ -26,15 +26,15 @@ That socket lives **outside any sandbox container**:
 > … this is the single biggest unknown — spike it before committing to the
 > slice plan."_
 
-So: **does the App Sandbox permit `connect(2)` to an AF_UNIX socket at a
+So: **does the App Sandbox permit `connect(2)` to an `AF_UNIX` socket at a
 path outside the process's container?**
 
 ## Method — why a signed CLI tool is a faithful proxy
 
 We do **not** need full Xcode or Safari's GUI enable flow to answer this.
-The reachability of an out-of-container AF*UNIX socket is decided by the
+The reachability of an out-of-container `AF_UNIX` socket is decided by the
 App Sandbox's **filesystem policy**, which keys off the
-`com.apple.security.app-sandbox` entitlement — \_not* off whether the
+`com.apple.security.app-sandbox` entitlement — not off whether the
 sandboxed Mach-O is a real `.appex` or a plain executable. So we:
 
 1. Compile a tiny Swift probe ([`socket_probe.swift`](socket_probe.swift))
@@ -64,8 +64,8 @@ bash browser-extension/safari/spike/run-spike.sh
 
 ## Evidence
 
-Verbatim output of `run-spike.sh` on macOS 26 (Apple Silicon, Command
-Line Tools, Swift 6.3.1):
+Output of `run-spike.sh` on macOS 26 (Apple Silicon, Command Line Tools,
+Swift 6.3.1), with the home directory abbreviated to `~`:
 
 ```
 == 2. sign: control (no entitlements) vs treatment (app-sandbox) ==
@@ -75,13 +75,13 @@ Line Tools, Swift 6.3.1):
    		[Bool] true
 
 == 4. CONTROL — unsandboxed ==
-   diag: NSHomeDirectory=/Users/athanasm HOME=/Users/athanasm sandboxed=false
+   diag: NSHomeDirectory=~ HOME=~ sandboxed=false
    [connect app-support] OK connected + wrote 60 bytes to …/io.drmowinckels.cairn-spike/ipc/sock; exit=0
 
 == 5. TREATMENT — App Sandbox ==
    diag (proves the sandbox engaged — HOME should be a Containers path):
-      NSHomeDirectory=/Users/athanasm/Library/Containers/io.drmowinckels.cairn.spike.probe/Data
-      HOME=/Users/athanasm/Library/Containers/io.drmowinckels.cairn.spike.probe/Data
+      NSHomeDirectory=~/Library/Containers/io.drmowinckels.cairn.spike.probe/Data
+      HOME=~/Library/Containers/io.drmowinckels.cairn.spike.probe/Data
       sandboxed=true
    [connect app-support] CONNECT_FAIL errno=1 (Operation not permitted) path=…/io.drmowinckels.cairn-spike/ipc/sock; exit=20
    [connect /tmp]        CONNECT_FAIL errno=1 (Operation not permitted) path=/tmp/cairn-spike.nRVTcl; exit=20
