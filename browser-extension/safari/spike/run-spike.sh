@@ -26,7 +26,9 @@ mkdir -p "$build"
 appsup="$HOME/Library/Application Support/io.drmowinckels.cairn-spike/ipc"
 out_sock="$appsup/sock"
 out_log="$build/listener-appsupport.log"
-tmp_sock="$(mktemp -u /tmp/cairn-spike.XXXXXX.sock)"
+# Trailing X's only — BSD mktemp won't substitute X's that aren't at the
+# end of the template, so a `.sock` suffix would leave the name literal.
+tmp_sock="$(mktemp -u /tmp/cairn-spike.XXXXXX)"
 tmp_log="$build/listener-tmp.log"
 
 cleanup() {
@@ -90,7 +92,17 @@ echo "== 4. CONTROL — unsandboxed =="
 echo -n "   diag: "
 "$build/probe_plain" diag 2>&1 | tr '\n' ' '
 echo
-run "connect app-support" "$build/probe_plain" connect "$out_sock"
+# The whole experiment hinges on the control reaching the socket: if the
+# unsandboxed probe can't connect, the treatment's EPERM proves nothing
+# (it could be a bad path / unbound listener, not the sandbox). Gate on it.
+ctl_out="$("$build/probe_plain" connect "$out_sock" 2>&1)"
+ctl_rc=$?
+echo "   [connect app-support] $ctl_out; exit=$ctl_rc"
+if [[ $ctl_rc -ne 0 ]]; then
+  echo "EXPERIMENT INVALID: the unsandboxed control could not reach the socket," >&2
+  echo "so a sandboxed EPERM would be uninterpretable. Aborting." >&2
+  exit 1
+fi
 
 echo "== 5. TREATMENT — App Sandbox =="
 echo "   diag (proves the sandbox engaged — HOME should be a Containers path):"

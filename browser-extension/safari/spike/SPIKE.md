@@ -32,9 +32,9 @@ path outside the process's container?**
 ## Method — why a signed CLI tool is a faithful proxy
 
 We do **not** need full Xcode or Safari's GUI enable flow to answer this.
-The reachability of an out-of-container AF_UNIX socket is decided by the
+The reachability of an out-of-container AF*UNIX socket is decided by the
 App Sandbox's **filesystem policy**, which keys off the
-`com.apple.security.app-sandbox` entitlement — _not_ off whether the
+`com.apple.security.app-sandbox` entitlement — \_not* off whether the
 sandboxed Mach-O is a real `.appex` or a plain executable. So we:
 
 1. Compile a tiny Swift probe ([`socket_probe.swift`](socket_probe.swift))
@@ -84,7 +84,7 @@ Line Tools, Swift 6.3.1):
       HOME=/Users/athanasm/Library/Containers/io.drmowinckels.cairn.spike.probe/Data
       sandboxed=true
    [connect app-support] CONNECT_FAIL errno=1 (Operation not permitted) path=…/io.drmowinckels.cairn-spike/ipc/sock; exit=20
-   [connect /tmp]        CONNECT_FAIL errno=1 (Operation not permitted) path=/tmp/cairn-spike.XXXXXX.sock; exit=20
+   [connect /tmp]        CONNECT_FAIL errno=1 (Operation not permitted) path=/tmp/cairn-spike.nRVTcl; exit=20
 
 == 6. what the listeners received ==
    app-support: 1 line(s)
@@ -104,6 +104,10 @@ end-to-end. The treatment is provably sandboxed (HOME was rewritten) and
 the **only** thing changed is the entitlement. The `/tmp` data point shows
 the denial isn't specific to `Application Support` — it's _any_
 out-of-container path.
+
+The result is deterministic, not a lucky run: the harness aborts unless
+the unsandboxed control connects first, so a sandboxed EPERM can only mean
+the sandbox, and re-running `run-spike.sh` reproduces it every time.
 
 ## Verdict
 
@@ -127,6 +131,11 @@ extension is an **App Group container**. The fix:
    non-sandboxed main app and the sandboxed extension.)
 2. **Move — or additionally expose — the IPC socket inside the group
    container**: `~/Library/Group Containers/<group>/ipc/sock`.
+   _Not_ a `com.apple.security.temporary-exception.files.*` entitlement
+   pointed at the current path: those are Apple-discouraged, App-Store-
+   rejected, and brittle (they hard-code an absolute path the sandbox
+   would still scope to the real home). The group container is the
+   supported mechanism, so we don't pursue the temporary-exception route.
 3. Point every socket producer/consumer at the new path:
    - `src-tauri/src/plugins/browser/listener.rs` (`socket_path`, the bind),
    - `browser-extension/native-host/src/main.rs` (`socket_path`, the Chrome/
