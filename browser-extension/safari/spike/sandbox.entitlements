@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The single entitlement every Safari Web Extension app-extension
+	     carries. Adding it (and code-signing) puts the process under the
+	     App Sandbox at launch, with the default container-only filesystem
+	     policy — the exact constraint a real SafariWebExtensionHandler
+	     faces. We deliberately grant NOTHING else: the spike asks whether
+	     the bare sandbox can reach the out-of-container IPC socket. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+</dict>
+</plist>

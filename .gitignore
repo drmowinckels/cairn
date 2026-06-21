@@ -27,6 +27,8 @@ Cargo.lock.bak
 
 # Browser extension (M7)
 /browser-extension/native-host/target/
+# Throwaway Safari sandbox spike (#37): compiled probe + listener logs
+/browser-extension/safari/spike/build/
 
 # Editor / OS
 .DS_Store

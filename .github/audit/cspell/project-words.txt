@@ -10,6 +10,7 @@ DTEND
 DTSTART
 Datelike
 ENAMETOOLONG
+EPERM
 EXDATE
 Eggshell
 Entracte
@@ -60,6 +61,7 @@ WCAG
 WebdriverIO
 acks
 anyhow
+appex
 appindicator
 appleid
 apricot
@@ -87,6 +89,7 @@ dataviz
 dplyr
 drmowinckels
 eggshell
+errno
 evictable
 fnv
 focusables
@@ -155,6 +158,7 @@ roxygen2
 rrggbb
 rustdoc
 rustup
+secinit
 serde
 shm
 size-limit
@@ -189,6 +193,7 @@ unlisten
 unlisteners
 unlistens
 unparseable
+unsandboxed
 unsnooze
 unstaged
 unstub
