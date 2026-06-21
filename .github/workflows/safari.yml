@@ -1,0 +1,67 @@
+name: Safari wrapper (generate-in-CI)
+
+# Builds the Safari Web Extension wrapper WITHOUT committing a generated
+# Xcode project (#37, "generate-in-CI" approach). The macOS runner has full
+# Xcode + `safari-web-extension-converter`; this job regenerates the wrapper
+# from `browser-extension/src/`, injects the custom SafariWebExtensionHandler
+# (which reuses BridgeCore's gate logic and writes to the App Group socket),
+# and does an UNSIGNED smoke build. Signing + notarization land later in
+# release.yml.
+#
+# BRING-UP: a branch-scoped `push` trigger lets this iterate on the feature
+# branch (a `workflow_dispatch` workflow can't be dispatched until it's on
+# the default branch). Before merge this trigger is replaced with a
+# `pull_request` path filter (extension / bridge / this workflow) so changes
+# are gated.
+
+on:
+  push:
+    branches: [feat/37-safari-generate-in-ci]
+  workflow_dispatch:
+
+concurrency:
+  group: safari-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          echo "--- converter ---"
+          xcrun --find safari-web-extension-converter
+
+      # Round-1 discovery: regenerate the wrapper and dump exactly what the
+      # converter produces (tree, schemes, targets, the stock handler) so the
+      # injection + build steps can be written against reality, not guesses.
+      - name: Generate wrapper from the MV3 extension
+        run: |
+          set -x
+          xcrun safari-web-extension-converter browser-extension/src \
+            --project-location "$RUNNER_TEMP/safari" \
+            --app-name Cairn \
+            --bundle-identifier io.drmowinckels.cairn \
+            --macos-only --no-open --no-prompt --force --copy-resources
+
+      - name: Inspect generated project
+        run: |
+          echo "===== tree ====="
+          find "$RUNNER_TEMP/safari" -maxdepth 5 -not -path '*/.git/*' | sort
+          proj="$(find "$RUNNER_TEMP/safari" -maxdepth 3 -name '*.xcodeproj' | head -1)"
+          echo "===== xcodeproj: $proj ====="
+          echo "===== xcodebuild -list ====="
+          xcodebuild -list -project "$proj" || true
+          echo "===== stock SafariWebExtensionHandler.swift ====="
+          find "$RUNNER_TEMP/safari" -name 'SafariWebExtensionHandler.swift' -exec echo '--- {} ---' \; -exec cat {} \;
+          echo "===== generated entitlements ====="
+          find "$RUNNER_TEMP/safari" -name '*.entitlements' -exec echo '--- {} ---' \; -exec cat {} \;
+          echo "===== Info.plists ====="
+          find "$RUNNER_TEMP/safari" -name 'Info.plist' -print
