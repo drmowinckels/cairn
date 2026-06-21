@@ -8,15 +8,15 @@ name: Safari wrapper (generate-in-CI)
 # and does an UNSIGNED smoke build. Signing + notarization land later in
 # release.yml.
 #
-# BRING-UP: a branch-scoped `push` trigger lets this iterate on the feature
-# branch (a `workflow_dispatch` workflow can't be dispatched until it's on
-# the default branch). Before merge this trigger is replaced with a
-# `pull_request` path filter (extension / bridge / this workflow) so changes
-# are gated.
-
+# Gated on PRs that touch the extension, the bridge/handler, or this
+# workflow — the wrapper is regenerated from those sources, so nothing else
+# can affect the smoke build. `workflow_dispatch` allows manual re-runs.
 on:
-  push:
-    branches: [feat/37-safari-generate-in-ci]
+  pull_request:
+    paths:
+      - "browser-extension/src/**"
+      - "browser-extension/safari/**"
+      - ".github/workflows/safari.yml"
   workflow_dispatch:
 
 concurrency:
