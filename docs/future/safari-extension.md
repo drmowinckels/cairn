@@ -1,7 +1,13 @@
 # Safari Web Extension (macOS) — scope (#37)
 
-Status: **scoping** (no code yet). This captures the shape of the work,
-the one architectural fork that makes it non-trivial, and a slice plan.
+Status: **slice 1 (spike) done — it BLOCKED option 1.** The throwaway
+spike ran (`browser-extension/safari/spike/SPIKE.md`, merged in #249) and
+proved a sandboxed handler gets `EPERM` connecting to the IPC socket at
+its current out-of-container path. So the option-1 recommendation below is
+**contingent on the socket moving into an App Group container** — tracked
+as the prerequisite **#250**, which now gates slice 2. This doc still
+captures the shape of the work and the slice plan; read it with that
+correction in mind.
 
 ## Goal (from #37)
 
@@ -43,13 +49,17 @@ So the existing `cairn-browser-host` Rust binary **cannot be the bridge
 for Safari**. The wrapper app must carry the bridge itself. Two options:
 
 1. **Swift handler connects to the IPC socket directly.** The
-   `SafariWebExtensionHandler` opens the Unix socket
-   (`~/Library/Application Support/io.drmowinckels.cairn/ipc/sock`) and
-   writes the same newline-delimited JSON line, re-implementing the
-   native host's privacy gates (field allowlist, 64 KiB cap) in Swift.
+   `SafariWebExtensionHandler` opens the Unix socket and writes the same
+   newline-delimited JSON line, re-implementing the native host's privacy
+   gates (field allowlist, 64 KiB cap) in Swift.
    - Pro: self-contained app, no embedded binary, no spawn.
    - Con: the privacy-gate logic is duplicated in a second language and
      must be kept in lockstep with the Rust host + `docs/PRIVACY.md`.
+   - **Caveat proven by the spike (#249):** the handler is sandboxed and
+     **cannot** reach the socket at the current
+     `~/Library/Application Support/io.drmowinckels.cairn/ipc/sock` path
+     (`EPERM`). This option only works once the socket lives in an **App
+     Group container** — the #250 prerequisite.
 2. **Swift handler shells out to / embeds `cairn-browser-host`.** Bundle
    the existing Rust binary in the app and pipe to it.
    - Pro: one source of truth for the gates.
@@ -59,7 +69,9 @@ for Safari**. The wrapper app must carry the bridge itself. Two options:
 
 **Recommendation: option 1**, with the Swift bridge kept deliberately
 tiny and a shared test vector (the documented allowed-field set) asserted
-on both the Rust and Swift sides so they can't drift.
+on both the Rust and Swift sides so they can't drift. **Precondition
+(post-spike): the socket must first move into an App Group container
+(#250); option 1 is unreachable until then.**
 
 ## Approach
 
@@ -103,12 +115,13 @@ in-app Swift handler, not the Rust native host.
 
 ## Risks
 
-- App-extension sandbox may restrict opening an arbitrary Unix socket
-  outside the app group container. **Validate early** with a throwaway
-  handler that just connects + writes one line; if blocked, the socket
-  may need to move into / be reachable via an app group, which touches
-  the main app's socket path (a core change). This is the single biggest
-  unknown — spike it before committing to the slice plan.
+- ~~App-extension sandbox may restrict opening an arbitrary Unix socket
+  outside the app group container.~~ **Resolved by the spike (#249): it
+  does.** A sandboxed handler gets `EPERM` connecting to the current
+  out-of-container path. The socket must move into / be reachable via an
+  App Group container — a core change to the main app's socket path,
+  tracked as **#250** and gating slice 2. This was the single biggest
+  unknown; it fired.
 - Duplicated privacy gates in Swift drifting from the Rust host.
 - `safari-web-extension-converter` output is a large generated Xcode
   project; committing it adds noise and a maintenance surface.
@@ -118,11 +131,17 @@ in-app Swift handler, not the Rust native host.
 
 ## Proposed slices (stacked PRs)
 
-1. **Spike (throwaway):** Swift handler opens the IPC socket and writes
-   one line — confirm the sandbox allows it. Decide option 1 vs. escalate
-   to app-group socket. (Gate everything below on this.)
+**Prerequisite — App Group socket move (#250):** surfaced by the spike and
+gating slice 2. Relocate/expose the IPC socket in an App Group container
+so a sandboxed handler can reach it, repointing `listener.rs`, the Rust
+native host, and the docs. Must land before the wrapper.
+
+1. ~~**Spike (throwaway):** Swift handler opens the IPC socket and writes
+   one line — confirm the sandbox allows it.~~ **DONE (#249) — BLOCKED.**
+   The sandbox does not allow it; escalated to the App Group socket move
+   (#250 above), which now gates everything below.
 2. **Generated wrapper + Swift bridge** with the privacy gates + Swift
-   unit tests; manual local Safari smoke test.
+   unit tests; manual local Safari smoke test. **Blocked on #250.**
 3. **Release integration:** `xcodebuild` + sign + notarize + upload in
    `release.yml`.
 4. **Docs:** `docs/guide/install.md` Safari section + `docs/PRIVACY.md`
