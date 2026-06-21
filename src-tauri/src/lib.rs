@@ -646,7 +646,11 @@ pub fn run() {
                     calendar.clone(),
                 )));
                 plugin_host.register(Box::new(plugins::browser::BrowserPlugin::new(
-                    data_dir.clone(),
+                    // macOS binds the socket in the App Group container so
+                    // the sandboxed Safari handler can reach it (#250);
+                    // Linux/Windows keep the data dir. See
+                    // `plugins::browser::browser_socket_base`.
+                    plugins::browser::browser_socket_base(&data_dir),
                     exclusions.clone(),
                     browser_extension_state.clone(),
                 )));
@@ -684,11 +688,12 @@ pub fn run() {
 
             // The browser signal source's local-IPC socket is now owned
             // by the `browser` plugin and started through the plugin host
-            // above (#37) — when enabled it binds `<data_dir>/ipc/sock`
+            // above (#37) — when enabled it binds `<base>/ipc/sock`
             // (Unix; owner-only 0700 parent + 0600 socket) or
             // `\\.\pipe\cairn` (Windows; `reject_remote_clients(true)`)
-            // and clears its contribution when disabled. A bind failure
-            // is logged, never fatal.
+            // and clears its contribution when disabled. The base is the
+            // App Group container on macOS (#250) and the data dir
+            // elsewhere. A bind failure is logged, never fatal.
 
             // Rules cache: load once, refreshed by `save_rule` /
             // `delete_rule` IPC mutators. The fanout reads this on
