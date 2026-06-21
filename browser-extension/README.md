@@ -49,10 +49,12 @@ permissions it requests are:
 - `nativeMessaging` — to launch and pipe to the native host
 
 The native host in turn talks to **one socket** — Cairn's local IPC
-endpoint at `~/Library/Application Support/io.drmowinckels.cairn/ipc/sock`
-on macOS, `$XDG_DATA_HOME/io.drmowinckels.cairn/ipc/sock` on Linux,
-or `\\.\pipe\cairn` on Windows. The Unix socket lives inside an
-owner-only `0700` directory; the named pipe rejects remote clients.
+endpoint at `~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock`
+on macOS (the App Group container, shared with the Safari extension so a
+sandboxed handler can reach it — #250),
+`$XDG_DATA_HOME/io.drmowinckels.cairn/ipc/sock` on Linux, or
+`\\.\pipe\cairn` on Windows. The Unix socket lives inside an owner-only
+`0700` directory; the named pipe rejects remote clients.
 
 Both halves are Apache-2.0 licensed. The source is small enough to
 audit in one sitting — that's by design.

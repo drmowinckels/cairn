@@ -6,8 +6,9 @@
 // and forwards them to the Cairn native messaging host
 // (`io.drmowinckels.cairn`). The host writes newline-delimited JSON to
 // the local IPC socket the main app listens on
-// (`~/Library/Application Support/io.drmowinckels.cairn/ipc/sock` on
-// macOS, `$XDG_DATA_HOME/io.drmowinckels.cairn/ipc/sock` on Linux,
+// (`~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock` on
+// macOS — the App Group container, so a sandboxed Safari handler can reach
+// it (#250); `$XDG_DATA_HOME/io.drmowinckels.cairn/ipc/sock` on Linux,
 // `\\.\pipe\cairn` on Windows).
 //
 // Per `docs/PRIVACY.md` and the manifest description:

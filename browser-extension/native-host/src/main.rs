@@ -14,7 +14,8 @@
 //! `app_data_dir` for the `io.drmowinckels.cairn` bundle identifier
 //! (see [`socket_path`]):
 //!
-//! - macOS: `~/Library/Application Support/io.drmowinckels.cairn/ipc/sock`
+//! - macOS: `~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock`
+//!   (the App Group container, so the Safari handler can reach it — #250)
 //! - Linux: `<XDG_DATA_HOME or ~/.local/share>/io.drmowinckels.cairn/ipc/sock`
 //! - Windows: `\\.\pipe\cairn`
 //!
@@ -46,6 +47,13 @@ use serde::{Deserialize, Serialize};
 /// `BrowserMessage` payloads are well under 1 KiB. A larger frame is
 /// dropped silently (browser side is presumed to be malicious or buggy).
 const MAX_INBOUND_BYTES: u32 = 64 * 1024;
+
+/// macOS App Group whose container holds the IPC socket (#250). The main
+/// app hard-codes the SAME id in `src-tauri/src/plugins/browser/mod.rs`
+/// (`APP_GROUP_ID`); change one without the other and the macOS browser
+/// signal silently stops reaching Cairn.
+#[cfg(target_os = "macos")]
+const MACOS_APP_GROUP_ID: &str = "group.io.drmowinckels.cairn";
 
 /// Maximum size of any frame we emit back to the browser. Today we
 /// never reply (the extension is fire-and-forget), but Chrome reads
@@ -300,12 +308,16 @@ fn socket_path(debug: bool) -> PathBuf {
     }
     #[cfg(target_os = "macos")]
     {
+        // #250: the socket lives in the App Group container so the
+        // sandboxed Safari handler can reach it. Chrome/Firefox hosts
+        // reach the same path (no sandbox), so this single move keeps
+        // every macOS browser working off one socket.
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"));
         home.join("Library")
-            .join("Application Support")
-            .join("io.drmowinckels.cairn")
+            .join("Group Containers")
+            .join(MACOS_APP_GROUP_ID)
             .join("ipc")
             .join("sock")
     }
@@ -450,6 +462,19 @@ mod tests {
         let dev = socket_path(true);
         assert_eq!(dev, PathBuf::from("/tmp/cairn-test-socket"));
         unsafe { std::env::remove_var("CAIRN_HOST_SOCKET") };
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn socket_path_is_in_the_app_group_container_on_macos() {
+        // #250: the production macOS path is the App Group container, not
+        // the old app-support dir — so the sandboxed Safari handler can
+        // reach the same socket. Must match the main app's APP_GROUP_ID.
+        let p = socket_path(false);
+        assert!(
+            p.ends_with("Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock"),
+            "expected the App Group container path, got {p:?}"
+        );
     }
 
     // ---- security-review #87 follow-ups ----------------------------

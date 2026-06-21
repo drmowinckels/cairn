@@ -11,12 +11,15 @@
 //! can reach the path may write to it. The transport is non-networked by
 //! construction and gated to the current user:
 //!
-//! - **Unix**: `<data_dir>/ipc/sock`. The parent `ipc/` directory is
-//!   `chmod 0700` (owner-only-traverse) so a concurrent local user can't
-//!   even reach the path during the bind-before-chmod window; the socket
-//!   file itself is `chmod 0600` after bind. A stale file from a crashed
-//!   previous run is unlinked before bind. A Unix-domain socket has no
-//!   network address, so a remote/TCP client cannot connect.
+//! - **Unix**: `<base>/ipc/sock`, where `base` is the App Group container
+//!   on macOS (#250, so the sandboxed Safari handler can reach it) and the
+//!   app data dir on Linux — see `super::browser_socket_base`. The parent
+//!   `ipc/` directory is `chmod 0700` (owner-only-traverse) so a
+//!   concurrent local user can't even reach the path during the
+//!   bind-before-chmod window; the socket file itself is `chmod 0600`
+//!   after bind. A stale file from a crashed previous run is unlinked
+//!   before bind. A Unix-domain socket has no network address, so a
+//!   remote/TCP client cannot connect.
 //! - **Windows**: `\\.\pipe\cairn`, `reject_remote_clients(true)`. That
 //!   blocks network access but does NOT restrict local-other-user access
 //!   — the default DACL can include `Everyone`-traverse depending on
