@@ -39,29 +39,23 @@ jobs:
           echo "--- converter ---"
           xcrun --find safari-web-extension-converter
 
-      # Round-1 discovery: regenerate the wrapper and dump exactly what the
-      # converter produces (tree, schemes, targets, the stock handler) so the
-      # injection + build steps can be written against reality, not guesses.
-      - name: Generate wrapper from the MV3 extension
-        run: |
-          set -x
-          xcrun safari-web-extension-converter browser-extension/src \
-            --project-location "$RUNNER_TEMP/safari" \
-            --app-name Cairn \
-            --bundle-identifier io.drmowinckels.cairn \
-            --macos-only --no-open --no-prompt --force --copy-resources
+      # Generate the wrapper, inject Cairn's handler + BridgeCore + the App
+      # Group entitlement, and run an unsigned smoke build. All the moving
+      # parts live in the committed script so it's reproducible + reviewable.
+      - name: Generate, inject, and smoke-build the wrapper
+        run: bash browser-extension/safari/build-wrapper.sh "$RUNNER_TEMP/safari"
 
-      - name: Inspect generated project
+      # On failure, dump what the converter produced + the injected handler
+      # so a build break is diagnosable from the log alone.
+      - name: Diagnostics on failure
+        if: failure()
         run: |
           echo "===== tree ====="
-          find "$RUNNER_TEMP/safari" -maxdepth 5 -not -path '*/.git/*' | sort
+          find "$RUNNER_TEMP/safari" -maxdepth 5 -not -path '*/.git/*' | sort || true
           proj="$(find "$RUNNER_TEMP/safari" -maxdepth 3 -name '*.xcodeproj' | head -1)"
-          echo "===== xcodeproj: $proj ====="
           echo "===== xcodebuild -list ====="
           xcodebuild -list -project "$proj" || true
-          echo "===== stock SafariWebExtensionHandler.swift ====="
-          find "$RUNNER_TEMP/safari" -name 'SafariWebExtensionHandler.swift' -exec echo '--- {} ---' \; -exec cat {} \;
-          echo "===== generated entitlements ====="
-          find "$RUNNER_TEMP/safari" -name '*.entitlements' -exec echo '--- {} ---' \; -exec cat {} \;
-          echo "===== Info.plists ====="
-          find "$RUNNER_TEMP/safari" -name 'Info.plist' -print
+          echo "===== injected SafariWebExtensionHandler.swift ====="
+          find "$RUNNER_TEMP/safari" -name 'SafariWebExtensionHandler.swift' -exec cat {} \; || true
+          echo "===== entitlements ====="
+          find "$RUNNER_TEMP/safari" -name '*.entitlements' -exec echo '--- {} ---' \; -exec cat {} \; || true

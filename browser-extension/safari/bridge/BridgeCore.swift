@@ -153,4 +153,27 @@ public enum BridgeCore {
         }
         return !label.unicodeScalars.contains { $0.properties.generalCategory == .control }
     }
+
+    /// Serialize an `.emit` outcome to the newline-delimited wire line the
+    /// in-app receiver (`plugins::browser::parser::BrowserMessage`) reads —
+    /// the four allowlisted fields, `browserLabel` omitted when nil
+    /// (matching the Rust host's `skip_serializing_if`). Key order is
+    /// irrelevant: the receiver parses JSON, not a fixed string. The
+    /// caller appends the `\n`.
+    public static func encode(
+        domain: String, incognito: Bool, focused: Bool, browserLabel: String?
+    ) -> String {
+        var object: [String: Any] = [
+            "domain": domain,
+            "incognito": incognito,
+            "focused": focused,
+        ]
+        if let label = browserLabel {
+            object["browserLabel"] = label
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return ""
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
 }
