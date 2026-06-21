@@ -42,7 +42,9 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         case let .emit(domain, incognito, focused, browserLabel):
             let line = BridgeCore.encode(
                 domain: domain, incognito: incognito, focused: focused, browserLabel: browserLabel)
-            writeLineToSocket(line + "\n")
+            if !line.isEmpty {
+                writeLineToSocket(line + "\n")
+            }
         }
     }
 
@@ -68,6 +70,16 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         if fd < 0 { return }
         defer { close(fd) }
+
+        // Match the Rust host's defensive 1s timeout (it sets a write
+        // timeout for the same reason): a wedged Cairn that is bound but
+        // not reading must not stall the extension thread until the
+        // app-extension watchdog kills us. `connect` to a listening UDS
+        // returns promptly, so the send timeout is the load-bearing one.
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        let tvLen = socklen_t(MemoryLayout<timeval>.size)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, tvLen)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, tvLen)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
