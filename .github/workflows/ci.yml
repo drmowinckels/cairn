@@ -134,3 +134,11 @@ jobs:
         run: cargo clippy --manifest-path browser-extension/native-host/Cargo.toml --all-targets -- -D warnings
       - name: native-host test
         run: cargo test --manifest-path browser-extension/native-host/Cargo.toml --release
+
+      # Safari bridge gate-parity (#37). The Swift bridge re-implements the
+      # native host's privacy gates; both assert the same test-vectors.json
+      # (the Rust side runs in `native-host test` above). swiftc ships with
+      # the macOS runner's tooling — no full Xcode needed for the pure logic.
+      - name: Safari bridge gate-parity (Swift)
+        if: matrix.platform == 'macos-latest'
+        run: bash browser-extension/safari/bridge/run-tests.sh

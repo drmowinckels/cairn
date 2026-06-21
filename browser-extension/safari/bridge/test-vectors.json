@@ -1,0 +1,143 @@
+{
+  "_comment": "Shared gate-parity vector for the browser bridge. Asserted on BOTH the Rust Native Messaging host (browser-extension/native-host, project_inbound) and the Swift Safari bridge (BridgeCore.process) so the two privacy gates can't drift. See BridgeCore.swift. `expect.kind` is `emit` (the four allowlisted fields cross) or `drop` (with a language-neutral `reason`). For emit, a null `browserLabel` means absent.",
+  "maxBytes": 65536,
+  "cases": [
+    {
+      "name": "normal frame passes with its label",
+      "input": "{\"domain\":\"github.com\",\"browserLabel\":\"Chrome 120\"}",
+      "expect": {
+        "kind": "emit",
+        "domain": "github.com",
+        "incognito": false,
+        "focused": true,
+        "browserLabel": "Chrome 120"
+      }
+    },
+    {
+      "name": "field allowlist drops path and title",
+      "input": "{\"domain\":\"x.com\",\"focused\":true,\"path\":\"/leaked\",\"title\":\"oops\"}",
+      "expect": {
+        "kind": "emit",
+        "domain": "x.com",
+        "incognito": false,
+        "focused": true,
+        "browserLabel": null
+      }
+    },
+    {
+      "name": "focused defaults to true when absent",
+      "input": "{\"domain\":\"x.com\"}",
+      "expect": {
+        "kind": "emit",
+        "domain": "x.com",
+        "incognito": false,
+        "focused": true,
+        "browserLabel": null
+      }
+    },
+    {
+      "name": "incognito is FORWARDED by the bridge (the collector drops it later)",
+      "input": "{\"domain\":\"x.com\",\"incognito\":true}",
+      "expect": {
+        "kind": "emit",
+        "domain": "x.com",
+        "incognito": true,
+        "focused": true,
+        "browserLabel": null
+      }
+    },
+    {
+      "name": "unfocused empty-domain heartbeat is kept",
+      "input": "{\"domain\":\"\",\"focused\":false}",
+      "expect": {
+        "kind": "emit",
+        "domain": "",
+        "incognito": false,
+        "focused": false,
+        "browserLabel": null
+      }
+    },
+    {
+      "name": "phantom empty focused domain is dropped",
+      "input": "{\"domain\":\"\"}",
+      "expect": { "kind": "drop", "reason": "empty_focused_domain" }
+    },
+    {
+      "name": "browserLabel at the 64-byte boundary is kept",
+      "input": "{\"domain\":\"x.com\",\"browserLabel\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+      "expect": {
+        "kind": "emit",
+        "domain": "x.com",
+        "incognito": false,
+        "focused": true,
+        "browserLabel": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "browserLabel of 65 bytes is dropped",
+      "input": "{\"domain\":\"x.com\",\"browserLabel\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+      "expect": { "kind": "drop", "reason": "bad_browser_label" }
+    },
+    {
+      "name": "browserLabel length is UTF-8 BYTES not graphemes (35 euros = 105 bytes)",
+      "input": "{\"domain\":\"x.com\",\"browserLabel\":\"€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€\"}",
+      "expect": { "kind": "drop", "reason": "bad_browser_label" }
+    },
+    {
+      "name": "control char in browserLabel is dropped",
+      "input": "{\"domain\":\"x.com\",\"browserLabel\":\"Chrome\\n120\"}",
+      "expect": { "kind": "drop", "reason": "bad_browser_label" }
+    },
+    {
+      "name": "missing domain field is malformed",
+      "input": "{\"focused\":true}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "empty object is malformed (domain has no default)",
+      "input": "{}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "non-JSON is malformed",
+      "input": "not json at all",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "numeric 1 for focused is malformed (not coerced to bool)",
+      "input": "{\"domain\":\"x.com\",\"focused\":1}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "explicit null focused is malformed (default fills absent, not null)",
+      "input": "{\"domain\":\"x.com\",\"focused\":null}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "explicit null incognito is malformed",
+      "input": "{\"domain\":\"x.com\",\"incognito\":null}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "null browserLabel is absorbed to absent (Option<String>), still emits",
+      "input": "{\"domain\":\"x.com\",\"browserLabel\":null}",
+      "expect": {
+        "kind": "emit",
+        "domain": "x.com",
+        "incognito": false,
+        "focused": true,
+        "browserLabel": null
+      }
+    },
+    {
+      "name": "null domain is malformed (required field)",
+      "input": "{\"domain\":null}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "wrong type for focused is malformed",
+      "input": "{\"domain\":\"x.com\",\"focused\":\"yes\"}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    }
+  ]
+}
