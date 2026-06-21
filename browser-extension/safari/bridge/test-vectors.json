@@ -104,6 +104,37 @@
       "expect": { "kind": "drop", "reason": "malformed" }
     },
     {
+      "name": "numeric 1 for focused is malformed (not coerced to bool)",
+      "input": "{\"domain\":\"x.com\",\"focused\":1}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "explicit null focused is malformed (default fills absent, not null)",
+      "input": "{\"domain\":\"x.com\",\"focused\":null}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "explicit null incognito is malformed",
+      "input": "{\"domain\":\"x.com\",\"incognito\":null}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
+      "name": "null browserLabel is absorbed to absent (Option<String>), still emits",
+      "input": "{\"domain\":\"x.com\",\"browserLabel\":null}",
+      "expect": {
+        "kind": "emit",
+        "domain": "x.com",
+        "incognito": false,
+        "focused": true,
+        "browserLabel": null
+      }
+    },
+    {
+      "name": "null domain is malformed (required field)",
+      "input": "{\"domain\":null}",
+      "expect": { "kind": "drop", "reason": "malformed" }
+    },
+    {
       "name": "wrong type for focused is malformed",
       "input": "{\"domain\":\"x.com\",\"focused\":\"yes\"}",
       "expect": { "kind": "drop", "reason": "malformed" }

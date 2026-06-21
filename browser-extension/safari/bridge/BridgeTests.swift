@@ -60,9 +60,19 @@ enum BridgeTests {
             }
         }
 
-        let total = vector.cases.count
+        // The 64 KiB cap is too bulky to carry as a JSON literal, so
+        // exercise it directly (the Rust side has its own oversize test).
+        let oversize = String(repeating: "a", count: BridgeCore.maxBytes + 1)
+        if BridgeCore.process(oversize) == .drop(.tooLarge) {
+            print("ok    oversize frame (>maxBytes) drops as tooLarge")
+        } else {
+            failures += 1
+            FileHandle.standardError.write(Data("FAIL  oversize frame not dropped as tooLarge\n".utf8))
+        }
+
+        let total = vector.cases.count + 1
         if failures == 0 {
-            print("\nBridgeCore parity: \(total)/\(total) cases pass (maxBytes=\(vector.maxBytes))")
+            print("\nBridgeCore parity: \(total)/\(total) checks pass (maxBytes=\(vector.maxBytes))")
             exit(0)
         }
         FileHandle.standardError.write(Data("\n\(failures)/\(total) case(s) FAILED\n".utf8))

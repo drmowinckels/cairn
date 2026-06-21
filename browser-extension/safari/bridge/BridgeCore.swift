@@ -62,14 +62,53 @@ public enum BridgeCore {
     /// `MAX_INBOUND_BYTES` and the socket's `MAX_LINE_BYTES` (64 KiB).
     public static let maxBytes = 64 * 1024
 
-    /// The allowlisted inbound shape. `Decodable` ignores unknown keys, so
-    /// `path` / `title` / anything else never survives — the field
-    /// allowlist is enforced by the type, not by hand.
+    /// The allowlisted inbound shape. A hand-written `init(from:)` keeps
+    /// the decode rules byte-identical to the Rust host's serde — the
+    /// shared `test-vectors.json` proves it. The subtle parts:
+    ///   - `domain` is required: missing / null / non-string → malformed.
+    ///   - `incognito` / `focused` are bools with a default: an ABSENT key
+    ///     uses the default, but an explicit `null` or a non-bool is
+    ///     malformed. (`#[serde(default)]` fills absent fields only, and a
+    ///     serde `bool` rejects `null` and numbers.) A plain `Bool?`
+    ///     would silently absorb `null` and DRIFT from the Rust host.
+    ///   - `browserLabel` is `Option<String>`: absent OR null → nil, a
+    ///     non-string → malformed (serde's `Option<String>` absorbs null
+    ///     into `None`).
+    /// Unknown keys are ignored, exactly as serde drops unknown fields, so
+    /// the field allowlist is the type — not a hand-rolled filter.
     private struct Inbound: Decodable {
         let domain: String
         let incognito: Bool?
         let focused: Bool?
         let browserLabel: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case domain, incognito, focused, browserLabel
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            domain = try c.decode(String.self, forKey: .domain)
+            incognito = try Self.decodeDefaultedBool(c, .incognito)
+            focused = try Self.decodeDefaultedBool(c, .focused)
+            browserLabel = try c.decodeIfPresent(String.self, forKey: .browserLabel)
+        }
+
+        /// Absent → nil (the caller applies the default); explicit null →
+        /// throw; non-bool → throw; bool → the value. Mirrors a serde
+        /// `bool` field carrying `#[serde(default)]`.
+        private static func decodeDefaultedBool(
+            _ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+        ) throws -> Bool? {
+            guard c.contains(key) else { return nil }
+            if try c.decodeNil(forKey: key) {
+                throw DecodingError.valueNotFound(
+                    Bool.self,
+                    .init(codingPath: c.codingPath, debugDescription: "null for \(key.rawValue)")
+                )
+            }
+            return try c.decode(Bool.self, forKey: key)
+        }
     }
 
     /// Run every gate over a raw inbound frame.

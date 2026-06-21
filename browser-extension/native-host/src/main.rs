@@ -611,7 +611,10 @@ mod gate_parity {
 
     /// The full inbound pipeline as a single function, so it lines up with
     /// `BridgeCore.process`: size cap, then serde decode (malformed), then
-    /// `project_inbound`, each drop mapped to its shared token.
+    /// `project_inbound`, each drop mapped to its shared token. This
+    /// re-derives the steps `run()` performs separately (read_frame size
+    /// check + decode + project) — the building blocks are production, the
+    /// composition is test-only.
     fn process_frame(raw: &[u8]) -> Outcome {
         if raw.len() > MAX_INBOUND_BYTES as usize {
             return Outcome::Drop("too_large".into());
@@ -696,5 +699,13 @@ mod gate_parity {
                 c.name
             );
         }
+    }
+
+    #[test]
+    fn process_frame_drops_oversize_input() {
+        // The 64 KiB cap (too bulky for the JSON vector) — the Swift side
+        // has the mirror check in run-tests.sh.
+        let oversize = vec![b'a'; MAX_INBOUND_BYTES as usize + 1];
+        assert_eq!(process_frame(&oversize), Outcome::Drop("too_large".into()));
     }
 }
