@@ -581,3 +581,120 @@ mod tests {
         assert!(!s.contains("leaked"));
     }
 }
+
+// -----------------------------------------------------------------
+// Cross-language gate parity (#37 Safari bridge)
+// -----------------------------------------------------------------
+//
+// Safari can't use this Rust host — its handler is Swift compiled into the
+// containing app (`browser-extension/safari/bridge/BridgeCore.swift`). To
+// stop the two privacy gates from drifting, both sides assert the SAME
+// `browser-extension/safari/bridge/test-vectors.json`: the Swift runner via
+// `run-tests.sh`, and the Rust host here.
+#[cfg(test)]
+mod gate_parity {
+    use super::*;
+    use serde::Deserialize;
+
+    /// Language-neutral outcome, mirroring `BridgeCore.Outcome`. Drop
+    /// reasons are the shared tokens used in the vector.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Outcome {
+        Emit {
+            domain: String,
+            incognito: bool,
+            focused: bool,
+            browser_label: Option<String>,
+        },
+        Drop(String),
+    }
+
+    /// The full inbound pipeline as a single function, so it lines up with
+    /// `BridgeCore.process`: size cap, then serde decode (malformed), then
+    /// `project_inbound`, each drop mapped to its shared token.
+    fn process_frame(raw: &[u8]) -> Outcome {
+        if raw.len() > MAX_INBOUND_BYTES as usize {
+            return Outcome::Drop("too_large".into());
+        }
+        let Ok(msg) = serde_json::from_slice::<Inbound>(raw) else {
+            return Outcome::Drop("malformed".into());
+        };
+        match project_inbound(&msg) {
+            Ok(out) => Outcome::Emit {
+                domain: out.domain.to_string(),
+                incognito: out.incognito,
+                focused: out.focused,
+                browser_label: out.browser_label.map(str::to_string),
+            },
+            Err(DropReason::PhantomEmptyDomain) => Outcome::Drop("empty_focused_domain".into()),
+            Err(DropReason::BadBrowserLabel) => Outcome::Drop("bad_browser_label".into()),
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct Vector {
+        #[serde(rename = "maxBytes")]
+        max_bytes: u32,
+        cases: Vec<Case>,
+    }
+
+    #[derive(Deserialize)]
+    struct Case {
+        name: String,
+        input: String,
+        expect: Expect,
+    }
+
+    #[derive(Deserialize)]
+    struct Expect {
+        kind: String,
+        reason: Option<String>,
+        domain: Option<String>,
+        incognito: Option<bool>,
+        focused: Option<bool>,
+        #[serde(rename = "browserLabel")]
+        browser_label: Option<String>,
+    }
+
+    fn load_vector() -> Vector {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("safari")
+            .join("bridge")
+            .join("test-vectors.json");
+        let raw = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        serde_json::from_slice(&raw).expect("parse test-vectors.json")
+    }
+
+    #[test]
+    fn rust_host_matches_the_shared_gate_vector() {
+        let vector = load_vector();
+        assert_eq!(
+            vector.max_bytes, MAX_INBOUND_BYTES,
+            "maxBytes drift between the vector and the Rust host"
+        );
+        for c in &vector.cases {
+            let actual = process_frame(c.input.as_bytes());
+            let expected = match c.expect.kind.as_str() {
+                "drop" => Outcome::Drop(
+                    c.expect
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| panic!("drop case {:?} has no reason", c.name)),
+                ),
+                "emit" => Outcome::Emit {
+                    domain: c.expect.domain.clone().unwrap_or_default(),
+                    incognito: c.expect.incognito.unwrap_or(false),
+                    focused: c.expect.focused.unwrap_or(true),
+                    browser_label: c.expect.browser_label.clone(),
+                },
+                other => panic!("case {:?} has unknown expect kind {other:?}", c.name),
+            };
+            assert_eq!(
+                actual, expected,
+                "gate parity mismatch in case {:?}",
+                c.name
+            );
+        }
+    }
+}
