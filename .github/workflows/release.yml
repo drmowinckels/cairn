@@ -245,16 +245,21 @@ jobs:
   # ⚠️ NOT YET VALIDATED on a real release run. The load-bearing unknown is
   # whether `com.apple.security.application-groups` signs + notarizes under
   # Developer ID without an explicit provisioning profile (the App Group may
-  # need to be registered to the team in the developer portal). Confirm on
-  # the first `workflow_dispatch` release before relying on this artifact.
+  # need to be registered to the team in the developer portal; if export
+  # fails on it, register the group, generate a Developer ID profile that
+  # includes it, and add a `provisioningProfiles` key to ExportOptions).
+  # Confirm on the first `workflow_dispatch` release before relying on this.
   safari:
     needs: prepare
     runs-on: macos-latest
-    # Exposed job-wide solely so each step's `if:` can test for the cert's
-    # presence (the `env` context isn't available in a step's own `env:`).
-    # Mirrors the Windows-signing pattern above.
+    # One discriminator for the whole signed path — the signing identity —
+    # so the unsigned fallback is coherent end to end (gating import/notarize
+    # on a different secret than the sign step risks notarizing an unsigned
+    # app). Exposed job-wide so each step's `if:` can read it (the `env`
+    # context isn't available in a step's own `env:`). Mirrors the
+    # Windows-signing pattern above.
     env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -267,8 +272,9 @@ jobs:
       # xcodebuild can sign. Skipped (→ unsigned build below) when the secret
       # is absent.
       - name: Import Developer ID certificate (optional)
-        if: env.APPLE_CERTIFICATE != ''
+        if: env.APPLE_SIGNING_IDENTITY != ''
         env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
@@ -314,7 +320,7 @@ jobs:
           fi
 
       - name: Notarize + staple (optional)
-        if: env.APPLE_CERTIFICATE != ''
+        if: env.APPLE_SIGNING_IDENTITY != ''
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
