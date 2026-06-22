@@ -42,6 +42,21 @@ export function projectTab(tab, focused) {
   };
 }
 
+/** Choose the native-messaging transport for the host browser.
+ *
+ *  Chrome / Edge / Brave / Firefox expose `runtime.connectNative`, a
+ *  persistent Port — preferred, because one long-lived connection absorbs
+ *  high-frequency tab switches without re-spawning the host. Safari has no
+ *  native ports: it routes `runtime.sendNativeMessage` to the in-app
+ *  `SafariWebExtensionHandler` (#37), so we fall back to that (one delivery
+ *  per message). `connectNative` is the discriminator — it is undefined in
+ *  Safari, defined elsewhere. Returns `"none"` when neither exists. */
+export function pickNativeTransport(runtime) {
+  if (runtime?.connectNative) return "port";
+  if (runtime?.sendNativeMessage) return "sendNativeMessage";
+  return "none";
+}
+
 /** Parse a friendly browser label out of a Chromium-family user-agent
  *  string. Firefox is handled separately via `runtime.getBrowserInfo`;
  *  this covers Chrome / Edge / Brave. Returns the generic `"browser"`
