@@ -3,8 +3,12 @@
 // This service worker is the entire extension. It listens for
 // `tabs.onActivated`, `tabs.onUpdated`, and `windows.onFocusChanged`,
 // projects the events down to `{domain, focused, incognito, browserLabel}`,
-// and forwards them to the Cairn native messaging host
-// (`io.drmowinckels.cairn`). The host writes newline-delimited JSON to
+// and forwards them to the native side over whichever transport the host
+// browser supports (see `pickNativeTransport`): a persistent `connectNative`
+// Port on Chrome/Edge/Brave/Firefox, or per-message `sendNativeMessage` to
+// the in-app SafariWebExtensionHandler on Safari (#37). Either way it
+// reaches the Cairn native host (`io.drmowinckels.cairn`), which writes
+// newline-delimited JSON to
 // the local IPC socket the main app listens on
 // (`~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock` on
 // macOS — the App Group container, so a sandboxed Safari handler can reach
@@ -28,12 +32,18 @@
 // subsequent messages are dropped silently until we re-open on the next
 // event.
 
-import { projectTab, parseBrowserLabel } from "./lib.js";
+import { projectTab, parseBrowserLabel, pickNativeTransport } from "./lib.js";
 
 const NATIVE_HOST = "io.drmowinckels.cairn";
 
+/** How this browser reaches the native side. Chrome/Edge/Brave/Firefox use
+ *  a persistent `connectNative` Port; Safari has no native ports and routes
+ *  `sendNativeMessage` to the in-app SafariWebExtensionHandler (#37).
+ *  Decided once at load — the host browser doesn't change mid-session. */
+const NATIVE_TRANSPORT = pickNativeTransport(chrome.runtime);
+
 /** Bridge to the native messaging host. Lazily opened; re-opens after
- *  any disconnect. */
+ *  any disconnect. Only used on the `port` transport. */
 let port = null;
 /** Cached `runtime.getBrowserInfo()` (Firefox) or UA string (Chromium)
  *  used to label the connection in Settings → Integrations. */
@@ -93,14 +103,39 @@ function getPort() {
 
 /** Best-effort send of a single message. Returns silently on failure;
  *  the main app's heartbeat sidebar surfaces "extension disconnected"
- *  if no message arrives within 60s. */
+ *  if no message arrives within 60s. Dispatches over whichever native
+ *  transport this browser supports. */
 function sendMessage(payload) {
-  const p = getPort();
-  if (!p) return;
+  if (NATIVE_TRANSPORT === "port") {
+    const p = getPort();
+    if (!p) return;
+    try {
+      p.postMessage(payload);
+    } catch {
+      port = null;
+    }
+  } else if (NATIVE_TRANSPORT === "sendNativeMessage") {
+    sendNativeOnce(payload);
+  }
+  // "none": no native side on this browser — nothing to do.
+}
+
+/** Safari path: no persistent port, so each message is a one-shot delivery
+ *  to the SafariWebExtensionHandler. Fire-and-forget — `sendNativeMessage`
+ *  returns a Promise on Safari/Firefox; swallow its rejection (and any
+ *  synchronous throw) so an absent app (Cairn not running) stays silent,
+ *  matching the Port path. */
+function sendNativeOnce(payload) {
   try {
-    p.postMessage(payload);
+    const result = chrome.runtime.sendNativeMessage(NATIVE_HOST, payload);
+    if (result && typeof result.then === "function") {
+      result.then(
+        () => {},
+        () => {},
+      );
+    }
   } catch {
-    port = null;
+    /* host unavailable; drop silently */
   }
 }
 
@@ -183,5 +218,6 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
 
 // Open the port eagerly so a freshly-launched Cairn sees the extension
 // immediately. If the app isn't running yet the connect will fail and
-// `port` resets to null — the next event re-opens.
-getPort();
+// `port` resets to null — the next event re-opens. Port transport only;
+// Safari's `sendNativeMessage` has nothing to pre-open.
+if (NATIVE_TRANSPORT === "port") getPort();

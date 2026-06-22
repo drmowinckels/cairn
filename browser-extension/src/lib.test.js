@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { projectTab, parseBrowserLabel } from "./lib.js";
+import { projectTab, parseBrowserLabel, pickNativeTransport } from "./lib.js";
 
 describe("projectTab", () => {
   it("keeps only the lowercased hostname from a normal URL", () => {
@@ -87,5 +87,28 @@ describe("parseBrowserLabel", () => {
     expect(parseBrowserLabel(null)).toBe("browser");
     expect(parseBrowserLabel(undefined)).toBe("browser");
     expect(parseBrowserLabel("")).toBe("browser");
+  });
+});
+
+describe("pickNativeTransport", () => {
+  it("prefers the persistent Port when connectNative exists", () => {
+    // Chrome/Firefox expose both; the Port wins.
+    const runtime = { connectNative: () => {}, sendNativeMessage: () => {} };
+    expect(pickNativeTransport(runtime)).toBe("port");
+  });
+
+  it("falls back to sendNativeMessage when only it exists (Safari)", () => {
+    expect(pickNativeTransport({ sendNativeMessage: () => {} })).toBe(
+      "sendNativeMessage",
+    );
+  });
+
+  it("reports none when neither native API is available", () => {
+    expect(pickNativeTransport({})).toBe("none");
+  });
+
+  it("reports none for a missing runtime", () => {
+    expect(pickNativeTransport(null)).toBe("none");
+    expect(pickNativeTransport(undefined)).toBe("none");
   });
 });
