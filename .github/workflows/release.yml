@@ -227,3 +227,116 @@ jobs:
           # rather than each matrix job creating its own. No race.
           releaseId: ${{ needs.prepare.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  # Safari Web Extension wrapper (#37). Separate from the tauri-action
+  # matrix because it is a hand-built Xcode app (containing app + extension),
+  # not the Tauri bundle. Generated in CI — no committed Xcode project:
+  # build-wrapper.sh runs the converter and injects the handler + BridgeCore
+  # + the App Group entitlement (SMOKE_BUILD=0 = generate/inject only); this
+  # job then signs (Developer ID), notarizes, and uploads a .dmg to the same
+  # draft release.
+  #
+  # Optional-signing, like the main app: with the APPLE_* secrets unset it
+  # produces an UNSIGNED .app so the pipeline is exercisable before the cert
+  # is provisioned. It is its OWN job (parallel to `release`), so a failure
+  # here is isolated and never blocks the macOS/Windows/Linux artifacts —
+  # the draft release is reviewed by hand before publishing.
+  #
+  # ⚠️ NOT YET VALIDATED on a real release run. The load-bearing unknown is
+  # whether `com.apple.security.application-groups` signs + notarizes under
+  # Developer ID without an explicit provisioning profile (the App Group may
+  # need to be registered to the team in the developer portal). Confirm on
+  # the first `workflow_dispatch` release before relying on this artifact.
+  safari:
+    needs: prepare
+    runs-on: macos-latest
+    # Exposed job-wide solely so each step's `if:` can test for the cert's
+    # presence (the `env` context isn't available in a step's own `env:`).
+    # Mirrors the Windows-signing pattern above.
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Generate + inject the wrapper (no build)
+        run: SMOKE_BUILD=0 bash browser-extension/safari/build-wrapper.sh "$RUNNER_TEMP/safari"
+
+      # Import the Developer ID Application cert into a throwaway keychain so
+      # xcodebuild can sign. Skipped (→ unsigned build below) when the secret
+      # is absent.
+      - name: Import Developer ID certificate (optional)
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/cairn-safari.keychain-db"
+          kpw="ci-${GITHUB_RUN_ID}"
+          security create-keychain -p "$kpw" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$kpw" "$keychain"
+          cert="$RUNNER_TEMP/cert.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode >"$cert"
+          security import "$cert" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kpw" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" "$(security default-keychain | tr -d ' \"')"
+          rm -f "$cert"
+
+      - name: Archive, sign, and export the app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          proj="$RUNNER_TEMP/safari/Cairn/Cairn.xcodeproj"
+          export_dir="$RUNNER_TEMP/export"
+          mkdir -p "$export_dir"
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            archive="$RUNNER_TEMP/Cairn.xcarchive"
+            xcodebuild -project "$proj" -scheme Cairn -configuration Release \
+              -archivePath "$archive" archive \
+              CODE_SIGN_STYLE=Manual \
+              CODE_SIGN_IDENTITY="$APPLE_SIGNING_IDENTITY" \
+              DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+              OTHER_CODE_SIGN_FLAGS="--timestamp --options runtime"
+            printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>method</key><string>developer-id</string><key>teamID</key><string>%s</string><key>signingStyle</key><string>manual</string></dict></plist>\n' \
+              "$APPLE_TEAM_ID" >"$RUNNER_TEMP/ExportOptions.plist"
+            xcodebuild -exportArchive -archivePath "$archive" \
+              -exportPath "$export_dir" \
+              -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+          else
+            # Unsigned fallback: plain build, copy the .app out.
+            xcodebuild -project "$proj" -scheme Cairn -configuration Release \
+              -derivedDataPath "$RUNNER_TEMP/dd" build CODE_SIGNING_ALLOWED=NO
+            cp -R "$RUNNER_TEMP/dd/Build/Products/Release/Cairn.app" "$export_dir/"
+          fi
+
+      - name: Notarize + staple (optional)
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/export/Cairn.app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/Cairn.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/Cairn.zip" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$app"
+
+      - name: Package the .dmg
+        run: |
+          set -euo pipefail
+          hdiutil create -volname Cairn \
+            -srcfolder "$RUNNER_TEMP/export/Cairn.app" \
+            -ov -format UDZO "$RUNNER_TEMP/Cairn-safari.dmg"
+
+      - name: Upload to the draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP/Cairn-safari.dmg" --clobber
