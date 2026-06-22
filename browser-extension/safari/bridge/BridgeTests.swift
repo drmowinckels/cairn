@@ -70,7 +70,29 @@ enum BridgeTests {
             FileHandle.standardError.write(Data("FAIL  oversize frame not dropped as tooLarge\n".utf8))
         }
 
-        let total = vector.cases.count + 1
+        // encode() must round-trip back through process() to the same
+        // emit — the handler writes encode()'s output to the socket, so it
+        // has to survive re-parsing by the receiver. Covers a label and the
+        // omitted-label case.
+        let roundTrips: [(String, Bool, Bool, String?)] = [
+            ("github.com", false, true, "Chrome 120"),
+            ("x.com", true, false, nil),
+        ]
+        for (domain, incognito, focused, label) in roundTrips {
+            let line = BridgeCore.encode(
+                domain: domain, incognito: incognito, focused: focused, browserLabel: label)
+            if BridgeCore.process(line) == .emit(
+                domain: domain, incognito: incognito, focused: focused, browserLabel: label)
+            {
+                print("ok    encode round-trips for \(domain)")
+            } else {
+                failures += 1
+                FileHandle.standardError.write(
+                    Data("FAIL  encode round-trip for \(domain)\n".utf8))
+            }
+        }
+
+        let total = vector.cases.count + 1 + roundTrips.count
         if failures == 0 {
             print("\nBridgeCore parity: \(total)/\(total) checks pass (maxBytes=\(vector.maxBytes))")
             exit(0)

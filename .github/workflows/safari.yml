@@ -1,0 +1,61 @@
+name: Safari wrapper (generate-in-CI)
+
+# Builds the Safari Web Extension wrapper WITHOUT committing a generated
+# Xcode project (#37, "generate-in-CI" approach). The macOS runner has full
+# Xcode + `safari-web-extension-converter`; this job regenerates the wrapper
+# from `browser-extension/src/`, injects the custom SafariWebExtensionHandler
+# (which reuses BridgeCore's gate logic and writes to the App Group socket),
+# and does an UNSIGNED smoke build. Signing + notarization land later in
+# release.yml.
+#
+# Gated on PRs that touch the extension, the bridge/handler, or this
+# workflow — the wrapper is regenerated from those sources, so nothing else
+# can affect the smoke build. `workflow_dispatch` allows manual re-runs.
+on:
+  pull_request:
+    paths:
+      - "browser-extension/src/**"
+      - "browser-extension/safari/**"
+      - ".github/workflows/safari.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: safari-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          echo "--- converter ---"
+          xcrun --find safari-web-extension-converter
+
+      # Generate the wrapper, inject Cairn's handler + BridgeCore + the App
+      # Group entitlement, and run an unsigned smoke build. All the moving
+      # parts live in the committed script so it's reproducible + reviewable.
+      - name: Generate, inject, and smoke-build the wrapper
+        run: bash browser-extension/safari/build-wrapper.sh "$RUNNER_TEMP/safari"
+
+      # On failure, dump what the converter produced + the injected handler
+      # so a build break is diagnosable from the log alone.
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "===== tree ====="
+          find "$RUNNER_TEMP/safari" -maxdepth 5 -not -path '*/.git/*' | sort || true
+          proj="$(find "$RUNNER_TEMP/safari" -maxdepth 3 -name '*.xcodeproj' | head -1)"
+          echo "===== xcodebuild -list ====="
+          xcodebuild -list -project "$proj" || true
+          echo "===== injected SafariWebExtensionHandler.swift ====="
+          find "$RUNNER_TEMP/safari" -name 'SafariWebExtensionHandler.swift' -exec cat {} \; || true
+          echo "===== entitlements ====="
+          find "$RUNNER_TEMP/safari" -name '*.entitlements' -exec echo '--- {} ---' \; -exec cat {} \; || true
