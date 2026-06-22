@@ -17,7 +17,24 @@ out="${1:?usage: build-wrapper.sh <output-dir>}"
 group="group.io.drmowinckels.cairn"
 
 rm -rf "$out"
-xcrun safari-web-extension-converter "$repo/browser-extension/src" \
+mkdir -p "$out"
+
+# Feed the converter a Safari-tuned COPY of the extension: drop the
+# Chrome/Firefox-only manifest bits Safari doesn't use — the
+# `nativeMessaging` permission (Safari routes `sendNativeMessage` to the
+# in-app handler, no permission needed) and the Firefox `gecko` block. Done
+# on a copy so the SHARED src/ (which Chrome/Firefox DO need) is untouched.
+# `incognito` is left as-is: the converter accepts it and the JS + in-app
+# collector drop incognito regardless; its Safari runtime behaviour is a
+# manual-tail check, not a build concern.
+src="$out/.src-safari"
+cp -R "$repo/browser-extension/src/." "$src/"
+jq '
+  .permissions = ((.permissions // []) - ["nativeMessaging"])
+  | del(.browser_specific_settings)
+' "$repo/browser-extension/src/manifest.json" >"$src/manifest.json"
+
+xcrun safari-web-extension-converter "$src" \
   --project-location "$out" \
   --app-name Cairn \
   --bundle-identifier io.drmowinckels.cairn \
