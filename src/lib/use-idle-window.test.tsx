@@ -191,6 +191,53 @@ describe("useIdleWindow", () => {
     expect(result.current.prompt).toBeNull();
   });
 
+  it("acks paint to the backend once a prompt is shown (#261)", async () => {
+    const idleWindowPainted = vi.fn().mockResolvedValue(undefined);
+    renderHook(() =>
+      useIdleWindow({
+        enabled: true,
+        listen: noopListen(),
+        pendingIdle: vi.fn().mockResolvedValue(RESUME) as never,
+        idleWindowPainted: idleWindowPainted as never,
+      }),
+    );
+    await waitFor(() => expect(idleWindowPainted).toHaveBeenCalled());
+  });
+
+  it("does not ack paint while disabled", async () => {
+    const idleWindowPainted = vi.fn();
+    renderHook(() =>
+      useIdleWindow({
+        enabled: false,
+        listen: noopListen(),
+        pendingIdle: vi.fn().mockResolvedValue(RESUME) as never,
+        idleWindowPainted: idleWindowPainted as never,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(idleWindowPainted).not.toHaveBeenCalled();
+  });
+
+  it("logs but does not throw if the paint ack fails", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const idleWindowPainted = vi.fn().mockRejectedValue(new Error("nope"));
+    renderHook(() =>
+      useIdleWindow({
+        enabled: true,
+        listen: noopListen(),
+        pendingIdle: vi.fn().mockResolvedValue(RESUME) as never,
+        idleWindowPainted: idleWindowPainted as never,
+      }),
+    );
+    await waitFor(() =>
+      expect(err).toHaveBeenCalledWith(
+        "idle_window_painted failed",
+        expect.any(Error),
+      ),
+    );
+    err.mockRestore();
+  });
+
   it("is inert when disabled (outside Tauri)", async () => {
     const pending = vi.fn();
     renderHook(() =>

@@ -622,6 +622,15 @@ export async function dismissIdle(): Promise<void> {
   await invoke("dismiss_idle");
 }
 
+/** Confirm the idle window's webview has painted (#261). The backend shows
+ *  the idle prompt click-through until this lands, then makes it interactive
+ *  and cancels the paint watchdog — so a webview that never renders can't
+ *  become an invisible, always-on-top input trap. */
+export async function idleWindowPainted(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("idle_window_painted");
+}
+
 export interface SnoozeSnapshot {
   rules: Array<[string, string]>;
   global: string | null;

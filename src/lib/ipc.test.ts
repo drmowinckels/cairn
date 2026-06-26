@@ -59,6 +59,13 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("idle_seconds");
   });
 
+  it("idleWindowPainted invokes the paint-ack command", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { idleWindowPainted } = await import("./ipc");
+    await idleWindowPainted();
+    expect(invokeMock).toHaveBeenCalledWith("idle_window_painted");
+  });
+
   it("listAppCategories invokes the command and returns the table", async () => {
     const table = [
       { category: "meeting", label: "Meeting apps", apps: ["Zoom"] },
@@ -463,6 +470,12 @@ describe("ipc helpers (outside Tauri)", () => {
   it("setPopoverSize short-circuits without the backend", async () => {
     const { setPopoverSize } = await import("./ipc");
     await setPopoverSize(560, 760);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("idleWindowPainted short-circuits without the backend", async () => {
+    const { idleWindowPainted } = await import("./ipc");
+    await idleWindowPainted();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
