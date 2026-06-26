@@ -470,7 +470,12 @@ mod tests {
     use super::*;
     use crate::rules::{CalendarEvent, Op};
     use serde_json::json;
+    // Only the MockRuntime window tests use these, and those are gated off
+    // Windows (see `mock_app_with_db`); keep the imports gated too so the
+    // Windows `-D warnings` build doesn't trip on them as unused.
+    #[cfg(not(target_os = "windows"))]
     use std::time::Duration;
+    #[cfg(not(target_os = "windows"))]
     use tauri::Manager;
 
     fn snap_with_app(app: &str) -> SignalSnapshot {
