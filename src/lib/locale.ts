@@ -19,17 +19,14 @@ export async function initLocale(): Promise<void> {
   } catch {
     resolved = undefined;
   }
-  const lang = appLocale();
-  if (lang && typeof document !== "undefined") {
-    document.documentElement.lang = lang;
-  }
+  document.documentElement.lang = appLocale();
 }
 
-/** The locale to pass to `Intl` / `toLocale*`. Prefers the OS locale; falls
- *  back to the webview's `navigator.language`, then `undefined` (Intl's own
- *  default). */
-export function appLocale(): string | undefined {
-  return resolved ?? globalThis.navigator?.language ?? undefined;
+/** The locale to pass to `Intl` / `toLocale*`. Prefers the OS locale, falling
+ *  back to the webview's `navigator.language` (always present in a webview,
+ *  so this is never empty). */
+export function appLocale(): string {
+  return resolved ?? globalThis.navigator.language;
 }
 
 /** Test-only: override the resolved locale so formatter tests are
