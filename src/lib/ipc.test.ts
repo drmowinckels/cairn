@@ -66,6 +66,20 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("idle_window_painted");
   });
 
+  it("autostartEnabled invokes the probe command", async () => {
+    invokeMock.mockResolvedValue(true);
+    const { autostartEnabled } = await import("./ipc");
+    expect(await autostartEnabled()).toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith("autostart_enabled");
+  });
+
+  it("setAutostart forwards the enable flag and returns the resulting state", async () => {
+    invokeMock.mockResolvedValue(true);
+    const { setAutostart } = await import("./ipc");
+    expect(await setAutostart(true)).toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith("set_autostart", { enable: true });
+  });
+
   it("listAppCategories invokes the command and returns the table", async () => {
     const table = [
       { category: "meeting", label: "Meeting apps", apps: ["Zoom"] },
@@ -476,6 +490,19 @@ describe("ipc helpers (outside Tauri)", () => {
   it("idleWindowPainted short-circuits without the backend", async () => {
     const { idleWindowPainted } = await import("./ipc");
     await idleWindowPainted();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("autostartEnabled returns false without the backend", async () => {
+    const { autostartEnabled } = await import("./ipc");
+    expect(await autostartEnabled()).toBe(false);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("setAutostart echoes the request without the backend", async () => {
+    const { setAutostart } = await import("./ipc");
+    expect(await setAutostart(true)).toBe(true);
+    expect(await setAutostart(false)).toBe(false);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

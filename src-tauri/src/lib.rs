@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 
 use tauri::{Manager, WindowEvent};
-use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -203,6 +203,33 @@ async fn delete_activity_log(state: tauri::State<'_, AppState>) -> Result<(), St
 #[tauri::command]
 fn idle_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
     ipc::idle_window_painted_impl(&app, &state);
+}
+
+/// Whether launch-at-login is currently registered. Thin OS wiring over the
+/// autostart plugin's manager.
+#[tauri::command]
+fn autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Enable/disable launch-at-login, refusing to register a dev/unpackaged
+/// build (#261) — the plugin would bake the current `target/debug` path
+/// into a persistent login item. Returns the resulting enabled state. The
+/// refusal decision lives in the testable `ipc::autostart_refusal`; this
+/// shim is the OS-touching wiring (current_exe + the plugin manager).
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enable: bool) -> Result<bool, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    if let Some(reason) = ipc::autostart_refusal(enable, &exe) {
+        return Err(reason);
+    }
+    let manager = app.autolaunch();
+    if enable {
+        manager.enable().map_err(|e| e.to_string())?;
+    } else {
+        manager.disable().map_err(|e| e.to_string())?;
+    }
+    manager.is_enabled().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -510,6 +537,8 @@ pub fn run() {
             ipc::pending_idle,
             ipc::dismiss_idle,
             idle_window_painted,
+            autostart_enabled,
+            set_autostart,
             ipc::idle_seconds,
             ipc::hide_popover,
             ipc::set_pinned,

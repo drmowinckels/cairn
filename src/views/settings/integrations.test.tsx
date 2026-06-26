@@ -6,14 +6,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
 }));
 
-const autostartIsEnabled = vi.fn().mockResolvedValue(false);
-const autostartEnable = vi.fn().mockResolvedValue(undefined);
-const autostartDisable = vi.fn().mockResolvedValue(undefined);
-vi.mock("@tauri-apps/plugin-autostart", () => ({
-  isEnabled: (...args: unknown[]) => autostartIsEnabled(...args),
-  enable: (...args: unknown[]) => autostartEnable(...args),
-  disable: (...args: unknown[]) => autostartDisable(...args),
-}));
+const autostartEnabledMock = vi.fn().mockResolvedValue(false);
+const setAutostartMock = vi
+  .fn()
+  .mockImplementation(async (next: boolean) => next);
 
 const listCalendarSources = vi.fn();
 const getGitWatcherStatus = vi.fn();
@@ -27,6 +23,8 @@ vi.mock("../../lib/ipc", async () => {
   return {
     ...actual,
     inTauri: true,
+    autostartEnabled: (...args: unknown[]) => autostartEnabledMock(...args),
+    setAutostart: (...args: unknown[]) => setAutostartMock(...args),
     listCalendarSources: (...args: unknown[]) => listCalendarSources(...args),
     getGitWatcherStatus: (...args: unknown[]) => getGitWatcherStatus(...args),
     getGitDiscoveryRoots: (...args: unknown[]) => getGitDiscoveryRoots(...args),
@@ -443,20 +441,19 @@ describe("BrowserStatusLine", () => {
 
 describe("AutostartStatusLine", () => {
   beforeEach(() => {
-    autostartIsEnabled.mockReset().mockResolvedValue(false);
-    autostartEnable.mockReset().mockResolvedValue(undefined);
-    autostartDisable.mockReset().mockResolvedValue(undefined);
+    autostartEnabledMock.mockReset().mockResolvedValue(false);
+    setAutostartMock.mockReset().mockImplementation(async (n: boolean) => n);
   });
 
   it("renders a platform-correct label and reflects the probed state", async () => {
-    autostartIsEnabled.mockResolvedValue(true);
+    autostartEnabledMock.mockResolvedValue(true);
     render(
       <ul>
         <AutostartStatusLine />
       </ul>,
     );
     // The label is platform-derived; the switch must reach the on state
-    // once the plugin probe resolves.
+    // once the backend probe resolves.
     await waitFor(() =>
       expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
         "true",
@@ -476,12 +473,12 @@ describe("AutostartStatusLine", () => {
     const sw = screen.getByRole("switch");
     await waitFor(() => expect(sw.hasAttribute("disabled")).toBe(false));
     await user.click(sw);
-    await waitFor(() => expect(autostartEnable).toHaveBeenCalledOnce());
+    await waitFor(() => expect(setAutostartMock).toHaveBeenCalledWith(true));
     expect(sw.getAttribute("aria-checked")).toBe("true");
   });
 
   it("surfaces a probe failure in the status line", async () => {
-    autostartIsEnabled.mockRejectedValue(new Error("registry denied"));
+    autostartEnabledMock.mockRejectedValue(new Error("registry denied"));
     render(
       <ul>
         <AutostartStatusLine />
@@ -504,7 +501,7 @@ describe("IntegrationsCard", () => {
       lastSeen: null,
       browserLabel: null,
     });
-    autostartIsEnabled.mockReset().mockResolvedValue(false);
+    autostartEnabledMock.mockReset().mockResolvedValue(false);
   });
 
   it("composes all four integration rows", async () => {
