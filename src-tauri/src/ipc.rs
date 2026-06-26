@@ -2758,7 +2758,7 @@ mod tests {
     fn system_locale_is_none_or_nonempty() {
         // Reads the runner's OS locale — we can only assert the shape: either
         // the OS exposes none, or it's a non-empty BCP-47-ish string.
-        assert!(system_locale().map_or(true, |s| !s.is_empty()));
+        assert!(system_locale().is_none_or(|s| !s.is_empty()));
     }
 
     #[test]

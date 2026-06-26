@@ -4776,6 +4776,7 @@ select.rule-conf {
   border-radius: var(--radius-sm);
   padding: 7px 9px;
   outline: none;
+
   /* Fill the field and allow shrinking below intrinsic width, so a wide
      control (e.g. the native `datetime-local` picker) can never push past
      its container and trigger a horizontal scroll. */
