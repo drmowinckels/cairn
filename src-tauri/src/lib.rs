@@ -505,6 +505,7 @@ pub fn run() {
         // otherwise. See docs/PRIVACY.md.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            ipc::system_locale,
             ipc::list_clients,
             ipc::save_client,
             ipc::delete_client,

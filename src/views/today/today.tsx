@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../lib/icon";
 import { isoLocalDate } from "../../lib/report-math";
+import { appLocale } from "../../lib/locale";
 import { Empty, ErrorBanner, ProjectChip, Tag } from "../../lib/components";
 import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
@@ -194,7 +195,7 @@ export function TodayView({
   };
   const dateLabel = isToday
     ? "Today"
-    : new Date(viewDate + "T00:00:00").toLocaleDateString(undefined, {
+    : new Date(viewDate + "T00:00:00").toLocaleDateString(appLocale(), {
         weekday: "short",
         month: "short",
         day: "numeric",
