@@ -2209,6 +2209,45 @@ pub fn idle_window_painted_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>, st
     }
 }
 
+/// Whether `exe` is a Cargo dev/release build run in place — i.e. it lives
+/// under a `target/{debug,release}/…` directory rather than a packaged or
+/// installed bundle. Used to refuse registering launch-at-login for a dev
+/// binary (#261): the autostart plugin bakes the *current* executable path
+/// into a persistent login item, so enabling it from `cargo tauri dev`
+/// pins `…/target/debug/cairn`, which relaunches a bare binary that breaks
+/// webview painting at every login.
+pub fn is_dev_executable(exe: &std::path::Path) -> bool {
+    let names: Vec<&str> = exe
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+    match names.iter().position(|&n| n == "target") {
+        // A profile dir somewhere below `target/` (covers cross-compile
+        // layouts like `target/<triple>/debug/`).
+        Some(i) => names[i + 1..]
+            .iter()
+            .any(|&n| n == "debug" || n == "release"),
+        None => false,
+    }
+}
+
+/// Decide whether to refuse a launch-at-login change, returning the
+/// user-facing reason when so (#261). We only block *enabling* from a dev
+/// build; disabling is always allowed (so a previously-baked dev login item
+/// can still be cleared), and a packaged build registers normally.
+pub fn autostart_refusal(enable: bool, exe: &std::path::Path) -> Option<String> {
+    if enable && is_dev_executable(exe) {
+        Some(format!(
+            "Won't enable launch-at-login for a development build ({}). \
+             Install Cairn (e.g. to /Applications) and turn it on from there — \
+             otherwise the login item would relaunch this dev binary every login.",
+            exe.display()
+        ))
+    } else {
+        None
+    }
+}
+
 /// Seconds since the last user input, as last polled by the idle source, or
 /// `None` if the host can't report idle (permission denied / unsupported).
 ///
@@ -8366,5 +8405,46 @@ mod budget_tests {
         idle_window_painted_impl(app.handle(), &state);
 
         assert!(state.idle_painted.load(SeqCst));
+    }
+
+    // ---- #261: autostart dev-build guard ----
+
+    #[test]
+    fn dev_build_paths_are_recognized() {
+        use std::path::Path;
+        assert!(is_dev_executable(Path::new(
+            "/Users/me/code/cairn/src-tauri/target/debug/cairn"
+        )));
+        assert!(is_dev_executable(Path::new("/proj/target/release/app")));
+        // Cross-compile layout: profile dir below a target triple.
+        assert!(is_dev_executable(Path::new(
+            "/proj/target/x86_64-apple-darwin/debug/app"
+        )));
+    }
+
+    #[test]
+    fn installed_bundle_paths_are_not_dev() {
+        use std::path::Path;
+        assert!(!is_dev_executable(Path::new(
+            "/Applications/Cairn.app/Contents/MacOS/cairn"
+        )));
+        assert!(!is_dev_executable(Path::new("/usr/bin/cairn")));
+        // A literal "debug" component that isn't under `target/` is fine.
+        assert!(!is_dev_executable(Path::new("/opt/debug/cairn")));
+    }
+
+    #[test]
+    fn autostart_refuses_to_enable_a_dev_build_only() {
+        use std::path::Path;
+        let dev = Path::new("/proj/target/debug/cairn");
+        let installed = Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+
+        // Enabling a dev build is refused, with the path in the message.
+        let reason = autostart_refusal(true, dev).expect("dev enable refused");
+        assert!(reason.contains("target/debug/cairn"));
+        // Disabling a dev build is allowed (clear a stale login item).
+        assert!(autostart_refusal(false, dev).is_none());
+        // A packaged build registers normally.
+        assert!(autostart_refusal(true, installed).is_none());
     }
 }

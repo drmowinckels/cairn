@@ -631,6 +631,22 @@ export async function idleWindowPainted(): Promise<void> {
   await invoke("idle_window_painted");
 }
 
+/** Whether launch-at-login is currently registered. */
+export async function autostartEnabled(): Promise<boolean> {
+  if (!inTauri) return false;
+  return invoke<boolean>("autostart_enabled");
+}
+
+/** Enable/disable launch-at-login, returning the resulting state. The
+ *  backend refuses to register a dev/unpackaged build — which would bake a
+ *  `target/debug` path into the login item (#261) — and rejects with an
+ *  explanatory message. Outside Tauri this just echoes the request so the
+ *  dev-harness toggle still reflects the user's intent. */
+export async function setAutostart(enable: boolean): Promise<boolean> {
+  if (!inTauri) return enable;
+  return invoke<boolean>("set_autostart", { enable });
+}
+
 export interface SnoozeSnapshot {
   rules: Array<[string, string]>;
   global: string | null;
