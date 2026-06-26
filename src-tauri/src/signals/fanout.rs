@@ -303,6 +303,101 @@ pub(crate) async fn running_entry_exists(pool: &SqlitePool) -> bool {
     }
 }
 
+/// How long the idle window may stay shown without the frontend
+/// confirming its webview painted before the watchdog hides it (#261).
+/// Generous because the window is click-through until the paint ack
+/// lands, so a slow-but-working paint is harmless — only a webview that
+/// never renders reaches the timeout, and hiding it beats leaving an
+/// invisible, undismissable, always-on-top overlay.
+const IDLE_PAINT_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Present the idle window safely and arm the paint watchdog (#261).
+/// Returns the show generation the watchdog guards, or `None` when app
+/// state is unavailable (then nothing is armed). The window is shown
+/// click-through (input passes through) and the painted flag is cleared,
+/// so a webview that never renders can't trap input; `idle_window_painted`
+/// later makes it interactive once it confirms paint.
+pub(crate) fn show_idle_with_watchdog<R: Runtime>(
+    app: &AppHandle<R>,
+    win: &tauri::WebviewWindow<R>,
+    timeout: std::time::Duration,
+) -> Option<u64> {
+    use std::sync::atomic::Ordering::SeqCst;
+    use tauri::Manager;
+
+    let _ = win.set_ignore_cursor_events(true);
+    // `center()` returns a `Result` (no monitor → `Err`), unlike the
+    // positioner's `move_window`, which unwraps the monitor and panics.
+    let _ = win.center();
+    let _ = win.show();
+
+    let state = app.try_state::<crate::AppState>()?;
+    state.idle_painted.store(false, SeqCst);
+    let generation = state.idle_show_gen.fetch_add(1, SeqCst) + 1;
+    spawn_idle_watchdog(app.clone(), generation, timeout);
+    Some(generation)
+}
+
+/// Spawn the paint watchdog for a given show generation. Split from its
+/// body (`idle_watchdog_task`) so the timing-free decision is unit-tested
+/// directly without waiting on the real timeout.
+fn spawn_idle_watchdog<R: Runtime>(
+    app: AppHandle<R>,
+    generation: u64,
+    timeout: std::time::Duration,
+) {
+    tauri::async_runtime::spawn(idle_watchdog_task(app, generation, timeout));
+}
+
+async fn idle_watchdog_task<R: Runtime>(
+    app: AppHandle<R>,
+    generation: u64,
+    timeout: std::time::Duration,
+) {
+    tokio::time::sleep(timeout).await;
+    enforce_idle_watchdog(&app, generation);
+}
+
+/// Watchdog action after the timeout (#261): if this show is still the
+/// current one and the webview never confirmed paint, hide the idle window
+/// (and drop its click-through state) so it can't linger as an invisible
+/// overlay. Returns whether it hid the window.
+pub(crate) fn enforce_idle_watchdog<R: Runtime>(app: &AppHandle<R>, generation: u64) -> bool {
+    use std::sync::atomic::Ordering::SeqCst;
+    use tauri::Manager;
+
+    let Some(state) = app.try_state::<crate::AppState>() else {
+        return false;
+    };
+    if !idle_watchdog_should_hide(
+        generation,
+        state.idle_show_gen.load(SeqCst),
+        state.idle_painted.load(SeqCst),
+    ) {
+        return false;
+    }
+    let Some(win) = app.get_webview_window(IDLE_LABEL) else {
+        return false;
+    };
+    log::warn!(
+        "fanout: idle window never confirmed paint within {IDLE_PAINT_WATCHDOG:?}; hiding to avoid an invisible input trap (#261)"
+    );
+    let _ = win.set_ignore_cursor_events(false);
+    let _ = win.hide();
+    true
+}
+
+/// Pure decision for the paint watchdog: hide only when this show is still
+/// the latest (not superseded by a newer show) and the webview never
+/// confirmed paint.
+pub(crate) fn idle_watchdog_should_hide(
+    shown_generation: u64,
+    current_generation: u64,
+    painted: bool,
+) -> bool {
+    shown_generation == current_generation && !painted
+}
+
 pub async fn run_idle_resume<R: Runtime>(
     mut rx: broadcast::Receiver<IdleResume>,
     app: AppHandle<R>,
@@ -332,14 +427,13 @@ pub async fn run_idle_resume<R: Runtime>(
                 // (The window also re-checks current_running at resolve
                 // time — see use-idle-window.ts — to cover the timer being
                 // stopped between this show and the user's choice.)
-                // Present the dedicated idle prompt window (#93),
-                // centered + focused so it lands where the user's
-                // attention is on return.
+                // Present the dedicated idle prompt window (#93), centered.
+                // Shown click-through and unfocused until the frontend
+                // confirms paint (#261) so a non-painting webview can't
+                // become an invisible input trap; a watchdog hides it if no
+                // paint lands. `set_focus` happens in `idle_window_painted`.
                 if let Some(win) = app.get_webview_window(IDLE_LABEL) {
-                    use tauri_plugin_positioner::{Position, WindowExt};
-                    let _ = win.move_window(Position::Center);
-                    let _ = win.show();
-                    let _ = win.set_focus();
+                    show_idle_with_watchdog(&app, &win, IDLE_PAINT_WATCHDOG);
                 } else {
                     log::warn!("fanout: idle window missing; idle prompt not shown");
                 }
@@ -376,6 +470,8 @@ mod tests {
     use super::*;
     use crate::rules::{CalendarEvent, Op};
     use serde_json::json;
+    use std::time::Duration;
+    use tauri::Manager;
 
     fn snap_with_app(app: &str) -> SignalSnapshot {
         SignalSnapshot {
@@ -671,8 +767,11 @@ mod tests {
     #[tokio::test]
     async fn run_idle_resume_only_prompts_when_a_timer_is_running() {
         use crate::AppState;
-        use tauri::Manager;
         let (_dir, _app, db) = crate::test_support::mock_app_with_db().await;
+        // An idle window so the running-timer path actually presents it
+        // (exercising the `Some(win)` arm + watchdog wiring), not just the
+        // "window missing" warning.
+        let _idle = idle_window(_app.handle()).await;
         let app = _app.handle().clone();
         let (tx, rx) = broadcast::channel::<IdleResume>(8);
         let task = tokio::spawn(async move { run_idle_resume(rx, app).await });
@@ -721,5 +820,165 @@ mod tests {
 
         drop(tx);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task).await;
+    }
+
+    // ---- #261: idle-window paint watchdog / click-through-until-painted ----
+
+    #[test]
+    fn idle_watchdog_hides_only_when_current_and_unpainted() {
+        // Current show, never painted → hide.
+        assert!(idle_watchdog_should_hide(3, 3, false));
+        // Current show but painted → leave it (the prompt is up).
+        assert!(!idle_watchdog_should_hide(3, 3, true));
+        // Superseded by a newer show → this watchdog is stale, do nothing.
+        assert!(!idle_watchdog_should_hide(2, 3, false));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    async fn idle_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::WebviewWindow<R> {
+        tauri::WebviewWindowBuilder::new(app, IDLE_LABEL, tauri::WebviewUrl::default())
+            .visible(false)
+            .build()
+            .expect("idle window builds")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn show_idle_presents_click_through_and_arms_watchdog() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let handle = app.handle().clone();
+        let win = idle_window(&handle).await;
+
+        let generation = show_idle_with_watchdog(&handle, &win, IDLE_PAINT_WATCHDOG)
+            .expect("state present → watchdog armed");
+
+        assert_eq!(generation, 1, "first show is generation 1");
+        assert!(win.is_visible().unwrap(), "window is shown");
+        let state = app.try_state::<crate::AppState>().unwrap();
+        assert_eq!(state.idle_show_gen.load(SeqCst), 1);
+        assert!(
+            !state.idle_painted.load(SeqCst),
+            "painted is cleared until the frontend confirms"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn show_idle_without_app_state_arms_nothing() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("bare mock app");
+        let win = idle_window(app.handle()).await;
+        assert!(
+            show_idle_with_watchdog(app.handle(), &win, IDLE_PAINT_WATCHDOG).is_none(),
+            "no AppState → no generation, no watchdog"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn watchdog_leaves_a_painted_window_up() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let handle = app.handle().clone();
+        let win = idle_window(&handle).await;
+        let generation =
+            show_idle_with_watchdog(&handle, &win, IDLE_PAINT_WATCHDOG).expect("armed");
+        // Frontend confirmed paint before the timeout.
+        app.try_state::<crate::AppState>()
+            .unwrap()
+            .idle_painted
+            .store(true, SeqCst);
+
+        assert!(
+            !enforce_idle_watchdog(&handle, generation),
+            "painted → not hidden"
+        );
+        assert!(win.is_visible().unwrap(), "the prompt stays up");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn watchdog_ignores_a_superseded_generation() {
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let handle = app.handle().clone();
+        let win = idle_window(&handle).await;
+        let first = show_idle_with_watchdog(&handle, &win, IDLE_PAINT_WATCHDOG).expect("armed");
+        // A newer show bumps the generation; the first watchdog is now stale.
+        let _second = show_idle_with_watchdog(&handle, &win, IDLE_PAINT_WATCHDOG).expect("armed");
+
+        assert!(
+            !enforce_idle_watchdog(&handle, first),
+            "stale generation → no-op"
+        );
+        assert!(win.is_visible().unwrap());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn watchdog_without_app_state_is_a_noop() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("bare mock app");
+        assert!(
+            !enforce_idle_watchdog(app.handle(), 1),
+            "no AppState → nothing to enforce"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn watchdog_without_a_window_is_a_noop() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        // State says "shown, unpainted" but no idle window exists.
+        let state = app.try_state::<crate::AppState>().unwrap();
+        state.idle_show_gen.store(1, SeqCst);
+        state.idle_painted.store(false, SeqCst);
+        assert!(
+            !enforce_idle_watchdog(app.handle(), 1),
+            "no idle window → nothing to hide"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn watchdog_hides_a_current_unpainted_window() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let handle = app.handle().clone();
+        let _win = idle_window(&handle).await;
+        let state = app.try_state::<crate::AppState>().unwrap();
+        state.idle_show_gen.store(1, SeqCst);
+        state.idle_painted.store(false, SeqCst);
+
+        // Assert on the return value, not `is_visible()`: MockRuntime's
+        // `hide()` doesn't synchronously flip visibility, but `enforce`
+        // returns `true` exactly when it ran the hide path.
+        assert!(
+            enforce_idle_watchdog(&handle, 1),
+            "current + unpainted → hidden"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn watchdog_task_runs_enforce_after_the_timeout() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let handle = app.handle().clone();
+        let win = idle_window(&handle).await;
+        let _ = win.show();
+        let state = app.try_state::<crate::AppState>().unwrap();
+        state.idle_show_gen.store(1, SeqCst);
+        // Painted before the timeout → the task's enforce must leave it up.
+        // `show()` reliably reports visible under MockRuntime (unlike hide).
+        state.idle_painted.store(true, SeqCst);
+
+        idle_watchdog_task(handle.clone(), 1, Duration::from_millis(20)).await;
+        assert!(win.is_visible().unwrap(), "painted → task left it up");
     }
 }

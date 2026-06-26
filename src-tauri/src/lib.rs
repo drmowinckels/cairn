@@ -30,7 +30,7 @@ fn pin_mock_keyring_for_linux_tests() {
     keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
 }
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 
 use tauri::{Manager, WindowEvent};
@@ -192,6 +192,17 @@ async fn set_activity_log_settings(
 #[tauri::command]
 async fn delete_activity_log(state: tauri::State<'_, AppState>) -> Result<(), String> {
     ipc::delete_activity_log_impl(state).await
+}
+
+/// The idle prompt window's frontend calls this once its webview has
+/// rendered (#261), confirming the overlay actually painted. Marks the
+/// current show painted (cancelling the watchdog) and makes the window
+/// interactive — it is shown click-through so a non-painting webview can
+/// never become an invisible input trap. Thin shim over the testable
+/// `ipc::idle_window_painted_impl`.
+#[tauri::command]
+fn idle_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    ipc::idle_window_painted_impl(&app, &state);
 }
 
 #[tauri::command]
@@ -363,6 +374,16 @@ pub struct AppState {
     /// cold-start race where the window's webview isn't yet listening
     /// when the event is emitted. Cleared by `dismiss_idle`.
     pub last_idle: std::sync::Mutex<Option<IdleResume>>,
+    /// Idle-window paint coordination (#261). The idle prompt window is
+    /// transparent + always-on-top + undecorated; if its webview never
+    /// paints it is an invisible input trap. Each show bumps
+    /// `idle_show_gen` and clears `idle_painted`; the window is presented
+    /// click-through until the frontend confirms first paint via
+    /// `idle_window_painted` (which sets `idle_painted`). A watchdog hides
+    /// the window if no paint lands before the timeout — failing safe
+    /// rather than leaving an undismissable overlay.
+    pub idle_show_gen: AtomicU64,
+    pub idle_painted: AtomicBool,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
     /// here on every push from the `browser` plugin's local-IPC listener
     /// (`plugins::browser`); the IPC handler `browser_extension_status`
@@ -488,6 +509,7 @@ pub fn run() {
             ipc::resolve_idle,
             ipc::pending_idle,
             ipc::dismiss_idle,
+            idle_window_painted,
             ipc::idle_seconds,
             ipc::hide_popover,
             ipc::set_pinned,
@@ -812,6 +834,8 @@ pub fn run() {
                 git_watcher_handle: std::sync::Mutex::new(Some(git_watcher_handle)),
                 git_roots_mutator: tokio::sync::Mutex::new(()),
                 last_idle: std::sync::Mutex::new(None),
+                idle_show_gen: AtomicU64::new(0),
+                idle_painted: AtomicBool::new(false),
                 browser_extension: browser_extension_state,
                 auto_backup_lock,
             });

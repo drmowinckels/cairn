@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   currentRunning,
   dismissIdle,
+  idleWindowPainted,
   inTauri,
   listProjects,
   pendingIdle,
@@ -43,6 +44,7 @@ export interface UseIdleWindowOpts {
   listProjects?: typeof listProjects;
   resolveIdle?: typeof resolveIdle;
   dismissIdle?: typeof dismissIdle;
+  idleWindowPainted?: typeof idleWindowPainted;
 }
 
 export interface UseIdleWindow {
@@ -73,6 +75,7 @@ export function useIdleWindow(opts: UseIdleWindowOpts = {}): UseIdleWindow {
   const fetchProjects = opts.listProjects ?? listProjects;
   const resolveFn = opts.resolveIdle ?? resolveIdle;
   const dismissFn = opts.dismissIdle ?? dismissIdle;
+  const notifyPainted = opts.idleWindowPainted ?? idleWindowPainted;
 
   const [prompt, setPrompt] = useState<IdleResumeEvent | null>(null);
   const [tracking, setTracking] = useState<IdleTracking | null>(null);
@@ -119,6 +122,22 @@ export function useIdleWindow(opts: UseIdleWindowOpts = {}): UseIdleWindow {
       cancelled = true;
     };
   }, [enabled, prompt, fetchRunning, fetchProjects]);
+
+  // Once a prompt is on screen, confirm to the backend that the idle
+  // window's webview actually painted (#261). Until this ack lands the
+  // window is shown click-through with a watchdog poised to hide it, so a
+  // webview that never renders can't become an invisible input trap. Wait
+  // for a paint frame so the ack reflects real rendering, not just a
+  // committed React render. Re-fires per prompt to cover each new idle show.
+  useEffect(() => {
+    if (!enabled || !prompt) return;
+    const raf = requestAnimationFrame(() => {
+      void notifyPainted().catch((e) =>
+        console.error("idle_window_painted failed", e),
+      );
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [enabled, prompt, notifyPainted]);
 
   const dismiss = useCallback(async () => {
     setPrompt(null);

@@ -2194,6 +2194,21 @@ pub fn dismiss_idle(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     Ok(())
 }
 
+/// Confirm the idle prompt window's webview has painted (#261). The idle
+/// window is shown click-through (input passes through) until this lands,
+/// so a webview that never renders can't become an invisible, always-on-top
+/// input trap. Marking the show painted cancels the paint watchdog; clearing
+/// `ignore_cursor_events` makes the now-visible prompt interactive.
+pub fn idle_window_painted_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) {
+    state
+        .idle_painted
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Some(win) = app.get_webview_window(crate::signals::fanout::IDLE_LABEL) {
+        let _ = win.set_ignore_cursor_events(false);
+        let _ = win.set_focus();
+    }
+}
+
 /// Seconds since the last user input, as last polled by the idle source, or
 /// `None` if the host can't report idle (permission denied / unsupported).
 ///
@@ -8312,5 +8327,44 @@ mod budget_tests {
             .await
             .unwrap();
         assert!(budget_status_for(pool, "pq", Utc::now()).await.is_err());
+    }
+
+    // ---- #261: idle paint ack ----
+
+    #[tokio::test]
+    async fn idle_window_painted_marks_painted_and_clears_click_through() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let win = tauri::WebviewWindowBuilder::new(
+            app.handle(),
+            crate::signals::fanout::IDLE_LABEL,
+            tauri::WebviewUrl::default(),
+        )
+        .visible(true)
+        .build()
+        .expect("idle window builds");
+        let _ = win.set_ignore_cursor_events(true);
+        let state = app.state::<AppState>();
+        state.idle_painted.store(false, SeqCst);
+
+        idle_window_painted_impl(app.handle(), &state);
+
+        assert!(
+            state.idle_painted.load(SeqCst),
+            "the show is marked painted, cancelling the watchdog"
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_window_painted_is_safe_without_a_window() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        state.idle_painted.store(false, SeqCst);
+
+        // No idle window exists — must not panic and still record the ack.
+        idle_window_painted_impl(app.handle(), &state);
+
+        assert!(state.idle_painted.load(SeqCst));
     }
 }

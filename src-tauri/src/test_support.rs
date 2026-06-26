@@ -182,6 +182,8 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         git_watcher_handle: std::sync::Mutex::new(None),
         git_roots_mutator: tokio::sync::Mutex::new(()),
         last_idle: std::sync::Mutex::new(None),
+        idle_show_gen: std::sync::atomic::AtomicU64::new(0),
+        idle_painted: AtomicBool::new(false),
         browser_extension: Arc::new(
             crate::signals::browser_extension::BrowserExtensionState::new(),
         ),
