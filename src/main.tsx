@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { initLocale } from "./lib/locale";
 // Self-hosted fonts (#146): vendored woff2 bundled by Vite, no Google
 // Fonts CDN request at runtime. Newsreader uses its optical-size axis
 // (normal + italic); Geist and Geist Mono are weight-axis variable.
@@ -21,6 +22,11 @@ try {
 } catch {
   document.documentElement.dataset.win = "popover";
 }
+
+// Resolve the OS locale before first paint so dates render in the right
+// format from the start (the WKWebView's own locale is en-US). A failure
+// degrades to that default rather than blocking the app.
+await initLocale();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

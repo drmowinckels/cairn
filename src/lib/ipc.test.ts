@@ -80,6 +80,13 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("set_autostart", { enable: true });
   });
 
+  it("systemLocale invokes the command and returns the OS locale", async () => {
+    invokeMock.mockResolvedValue("nb-NO");
+    const { systemLocale } = await import("./ipc");
+    expect(await systemLocale()).toBe("nb-NO");
+    expect(invokeMock).toHaveBeenCalledWith("system_locale");
+  });
+
   it("listAppCategories invokes the command and returns the table", async () => {
     const table = [
       { category: "meeting", label: "Meeting apps", apps: ["Zoom"] },
@@ -503,6 +510,12 @@ describe("ipc helpers (outside Tauri)", () => {
     const { setAutostart } = await import("./ipc");
     expect(await setAutostart(true)).toBe(true);
     expect(await setAutostart(false)).toBe(false);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("systemLocale returns null without the backend", async () => {
+    const { systemLocale } = await import("./ipc");
+    expect(await systemLocale()).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

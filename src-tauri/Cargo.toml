@@ -41,6 +41,9 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 anyhow = "1"
 thiserror = "2"
+# OS locale (e.g. "nb-NO") for date/time formatting — the WKWebView defaults
+# to en-US and can't see the macOS region, so we read it on the Rust side.
+sys-locale = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono"] }
 uuid = { version = "1", features = ["v4", "serde"] }

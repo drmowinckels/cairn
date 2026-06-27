@@ -4776,6 +4776,13 @@ select.rule-conf {
   border-radius: var(--radius-sm);
   padding: 7px 9px;
   outline: none;
+
+  /* Fill the field and allow shrinking below intrinsic width, so a wide
+     control (e.g. the native `datetime-local` picker) can never push past
+     its container and trigger a horizontal scroll. */
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .field-input:focus-visible {
@@ -4784,8 +4791,11 @@ select.rule-conf {
 }
 
 .field-row {
+  /* Stack fields (e.g. the Start/End pickers) rather than placing them
+     side by side — two `datetime-local` inputs don't fit the modal width
+     and would force a horizontal scroll. We never side-scroll. */
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 

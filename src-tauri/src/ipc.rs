@@ -299,6 +299,15 @@ pub struct ResolveIdleInput {
     pub choice: IdleChoice,
 }
 
+/// The OS locale (BCP-47, e.g. `"nb-NO"`) for date/time formatting. The
+/// WKWebView reports `en-US` regardless of the macOS region, so the frontend
+/// reads the real locale through this rather than `navigator.language`.
+/// `None` when the OS exposes no locale; the frontend then falls back.
+#[tauri::command]
+pub fn system_locale() -> Option<String> {
+    sys_locale::get_locale()
+}
+
 #[tauri::command]
 pub async fn list_clients(state: State<'_, AppState>) -> Result<Vec<Client>, String> {
     let rows = sqlx::query(
@@ -2744,6 +2753,13 @@ mod tests {
     use super::*;
     use crate::test_support::mock_app_with_db;
     use tauri::Manager;
+
+    #[test]
+    fn system_locale_is_none_or_nonempty() {
+        // Reads the runner's OS locale — we can only assert the shape: either
+        // the OS exposes none, or it's a non-empty BCP-47-ish string.
+        assert!(system_locale().is_none_or(|s| !s.is_empty()));
+    }
 
     #[test]
     fn list_app_categories_returns_the_bundled_table() {

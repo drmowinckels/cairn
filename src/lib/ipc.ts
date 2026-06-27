@@ -27,6 +27,14 @@ export const inTauri =
   typeof (window as unknown as { __TAURI_INTERNALS__?: unknown })
     .__TAURI_INTERNALS__ !== "undefined";
 
+/** The OS locale (e.g. `"nb-NO"`), or `null`. The WKWebView reports `en-US`
+ *  regardless of the macOS region, so date/time formatting reads the real
+ *  locale from the backend instead of `navigator.language`. */
+export async function systemLocale(): Promise<string | null> {
+  if (!inTauri) return null;
+  return invoke<string | null>("system_locale");
+}
+
 export async function listClients(): Promise<Client[]> {
   if (!inTauri) return [];
   return invoke<Client[]>("list_clients");
