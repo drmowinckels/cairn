@@ -258,6 +258,13 @@ jobs:
   # job means a failure can't block the other artifacts meanwhile.
   safari:
     needs: prepare
+    # Dormant by default (#37): the Safari wrapper is built + signing-wired
+    # but not shipped pending demand — Chrome/Firefox cover most users at a
+    # fraction of the maintenance cost. This job is skipped unless the repo
+    # variable `SAFARI_RELEASE` is set to `true`. To ACTIVATE: register the
+    # App Group on both App IDs, add the APPLE_API_* secrets (see below),
+    # set `vars.SAFARI_RELEASE=true`, then dispatch a release.
+    if: vars.SAFARI_RELEASE == 'true'
     runs-on: macos-latest
     # One discriminator for the whole signed path — the signing identity —
     # so the unsigned fallback is coherent end to end (gating import/notarize

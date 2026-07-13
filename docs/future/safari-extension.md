@@ -1,13 +1,25 @@
 # Safari Web Extension (macOS) — scope (#37)
 
-Status: **slice 1 (spike) done — it BLOCKED option 1.** The throwaway
-spike ran (`browser-extension/safari/spike/SPIKE.md`, merged in #249) and
-proved a sandboxed handler gets `EPERM` connecting to the IPC socket at
-its current out-of-container path. So the option-1 recommendation below is
-**contingent on the socket moving into an App Group container** — tracked
-as the prerequisite **#250**, which now gates slice 2. This doc still
-captures the shape of the work and the slice plan; read it with that
-correction in mind.
+Status: **built, merged, and DORMANT pending demand.** The full path
+shipped to `main` across #249–#259: the spike (which proved a sandboxed
+handler gets `EPERM` on an out-of-container socket → the App Group socket
+move, #250/#252), the Swift↔Rust gate-parity core (#253), the generate-in-CI
+wrapper + handler (#254), the Safari `sendNativeMessage` transport (#255),
+the manifest cleanup (#256), and the signed-release pipeline (#257/#259). A
+real release run confirmed the App Groups capability needs a provisioning
+profile, so signing uses App Store Connect API-key auto-signing.
+
+**Decision:** Safari is **not shipped by default.** Chrome/Firefox cover
+most users at a fraction of the cost; Safari is the expensive tail. The
+code stays merged but inert — the release `safari` job is gated behind
+`vars.SAFARI_RELEASE`, so it's skipped until someone opts in.
+
+**To activate** (when there's demand): register the App Group
+`group.io.drmowinckels.cairn` on both App IDs (app + extension), add the
+`APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER_ID` secrets
+(Admin/App-Manager key), set `vars.SAFARI_RELEASE=true`, dispatch a release,
+then do the GUI tab-switch confirmation. The rest of this doc is the
+historical slice plan.
 
 ## Goal (from #37)
 
