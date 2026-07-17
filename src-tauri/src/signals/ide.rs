@@ -13,10 +13,10 @@
 //! ## Two-stage derivation
 //!
 //! 1. **Title parsing.** Recognises common IDE title formats: VS
-//!    Code (`file - project - Visual Studio Code`), Zed (`file —
-//!    project`), JetBrains / Sublime (`file – project [path]` with
-//!    EN-dash, plus the `file — project` EM-dash variant some setups
-//!    emit), Xcode, RStudio, Nova, Emacs. Returns the project /
+//!    Code (`file - project - Visual Studio Code`), Zed / Positron
+//!    (`file — project`), JetBrains / Sublime (`file – project [path]`
+//!    with EN-dash, plus the `file — project` EM-dash variant some
+//!    setups emit), Xcode, RStudio, Nova, Emacs. Returns the project /
 //!    folder name as it appears in the title.
 //! 2. **Longest-prefix fallback.** When the title doesn't fit any
 //!    known pattern but the user has configured *discovery roots*
@@ -58,8 +58,10 @@ pub fn derive_ide_folder(app_name: &str, title: &str, repo_paths: &[PathBuf]) ->
 /// fallback (e.g. cold-start `snapshot::build`).
 pub fn derive_from_title(app_name: &str, title: &str) -> Option<PathBuf> {
     let candidate = match app_name {
-        // Zed / Nova / Emacs: `file — project` with EM-dash.
-        "Zed" | "Nova" | "Emacs" | "GNU Emacs" => extract_after_em_dash(title),
+        // Zed / Nova / Emacs / Positron: `file — project` with EM-dash.
+        // Positron (Posit's VS Code fork) uses this shape rather than
+        // VS Code's own `file - project - App` hyphen format.
+        "Zed" | "Nova" | "Emacs" | "GNU Emacs" | "Positron" => extract_after_em_dash(title),
         // JetBrains family + Sublime Text: default title is
         // `file – project [path]` with EN-dash (U+2013). Some setups
         // (older versions or with custom title plugins) emit
@@ -228,6 +230,16 @@ mod tests {
         // still the segment after the em-dash.
         assert_eq!(
             from_title("Zed", "rules.tsx ● — cairn"),
+            Some(PathBuf::from("cairn"))
+        );
+    }
+
+    #[test]
+    fn positron_pattern() {
+        // Positron (Posit's VS Code fork) uses Zed-style EM-dash
+        // titles, not VS Code's own hyphen-separated format.
+        assert_eq!(
+            from_title("Positron", "[Preview] README.md — cairn"),
             Some(PathBuf::from("cairn"))
         );
     }
