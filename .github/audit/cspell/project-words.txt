@@ -86,6 +86,7 @@ crash-reporting
 crate
 cspell
 dataviz
+dpkg
 dplyr
 drmowinckels
 eggshell

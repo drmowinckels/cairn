@@ -1,10 +1,33 @@
 # Install
 
-::: warning Pre-release
-Cairn does not yet publish tagged binaries. The only install path today is [building from source](/guide/getting-started).
+::: warning Public beta
+Cairn is in public beta (`v0.0.1-beta`). Expect rough edges — see the [known beta limitations](https://github.com/drmowinckels/cairn/releases/tag/v0.0.1-beta) in the release notes.
 :::
 
-When the first release ships, install instructions for macOS, Windows, and Linux will land here.
+Grab the build for your platform from the [latest release](https://github.com/drmowinckels/cairn/releases/latest) — asset names are versioned (e.g. `Cairn_0.0.1_universal.dmg`), so look for the pattern below rather than a fixed link.
+
+## macOS
+
+Download the `*_universal.dmg` (Intel + Apple Silicon in one file). Open it and drag Cairn to Applications.
+
+The build is signed and notarized when release signing secrets are configured for that build — if macOS still shows a "cannot be opened because the developer cannot be verified" dialog, right-click the app and choose **Open** once to bypass it.
+
+Reading window titles needs Accessibility permission — Cairn prompts for it on first launch (**System Settings → Privacy & Security → Accessibility**). Without it, window-title matching silently degrades to "no signal"; nothing crashes.
+
+## Windows
+
+Download the `*_x64_en-US.msi` and run it. Signing is optional per build — if SmartScreen warns, click **More info → Run anyway**.
+
+## Linux
+
+- **`.deb`** (Debian 12 / Ubuntu 22.04+): `sudo dpkg -i Cairn_*_amd64.deb`
+- **`.AppImage`** (universal; verified on Ubuntu 22.04 LTS and Fedora 39+): `chmod +x Cairn_*_amd64.AppImage && ./Cairn_*_amd64.AppImage`
+
+Linux bundles aren't code-signed in the conventional sense; integrity is via the release checksums.
+
+## Building from source
+
+Prefer to build it yourself, or on a platform without a prebuilt bundle? See [Getting started](/guide/getting-started).
 
 ## Browser extension (optional)
 
@@ -19,11 +42,9 @@ state shows in **Settings → Integrations** ("Connected").
 
 ### Safari (macOS)
 
-Safari extensions ship as a small wrapped app rather than a store add-on.
+Safari extensions ship as a small wrapped app rather than a store add-on. The Safari build is currently **dormant** — implemented, but not published as a release asset pending demand — so there's no `Cairn-safari.dmg` to download yet. If you need it now, build it from source (`browser-extension/`); otherwise Chrome/Edge/Brave/Firefox below are ready today. Once published, the flow will be:
 
-1. Install **Cairn for Safari** (`Cairn-safari.dmg`) from the
-   [latest release](https://github.com/drmowinckels/cairn/releases) and drag
-   it to Applications.
+1. Install **Cairn for Safari** and drag it to Applications.
 2. Open **Safari → Settings → Extensions** and turn on **Cairn**.
 3. Click **Edit Websites** (or the per-site prompt) and grant access — choose
    **Allow** on the sites you want time tracked. Cairn only ever receives the

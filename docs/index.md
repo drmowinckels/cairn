@@ -11,11 +11,11 @@ hero:
     alt: Cairn logo
   actions:
     - theme: brand
-      text: Get started
-      link: /guide/getting-started
-    - theme: alt
-      text: Install
+      text: Download
       link: /guide/install
+    - theme: alt
+      text: See all features
+      link: /features
     - theme: alt
       text: Rules engine
       link: /RULES_ENGINE
@@ -28,31 +28,37 @@ features:
     linkText: The privacy contract
   - icon: 🛰️
     title: Passive signal detection
-    details: Cairn watches your window title, git branch, browser domain, and calendar — then matches them against rules you define to assign time automatically.
-    link: /RULES_ENGINE
+    details: Cairn watches your window title, git branch, IDE folder, and idle state — core signals, always local — then matches them against rules you define to assign time automatically.
+    link: /features#passive-signal-detection
     linkText: How matching works
   - icon: 🤔
     title: Asks when it isn't sure
     details: A subtle "Working on X?" banner instead of a guess. Strict-confidence rules can auto-start; everything else proposes.
     link: /RULES_ENGINE#ambiguity
     linkText: Ambiguity handling
+  - icon: 🔌
+    title: Opt-in plugins, not defaults
+    details: Calendar (ICS), a browser-domain extension, and read-only GitHub/GitLab/Trello connectors — each behind an explicit toggle with a Network/Secrets badge, never on by default.
+    link: /features#plugins-you-opt-into
+    linkText: What each plugin touches
   - icon: 🚫
     title: Exclusions before rules
     details: Apps and domains you exclude never reach the rules engine and never appear in any log. The collector drops them at the source.
     link: /PRIVACY
     linkText: What gets dropped
-  - icon: 🎨
-    title: Designed, not just built
-    details: A hi-fi prototype settled the visual decisions before any code shipped — palette, typography, spacing, and interaction states are all locked in.
-    link: /DESIGN_SPEC
-    linkText: Design spec
   - icon: 🦀
     title: Native and lightweight
-    details: Tauri 2 with a Rust backend and React/TypeScript popover. Small binary, low idle CPU, no Electron.
+    details: Tauri 2 with a Rust backend and React/TypeScript popover. Small binary, low idle CPU, no Electron — macOS, Windows, and Linux from one codebase.
     link: /architecture/
     linkText: Architecture overview
 ---
 
-::: warning Pre-release
-Cairn is in early development. There are no tagged binaries yet — see [Getting started](/guide/getting-started) to build from source.
+::: warning Public beta
+Cairn is in public beta (`v0.0.1-beta`) — [download a build](/guide/install) for macOS, Windows, or Linux, or [build from source](/guide/getting-started).
 :::
+
+## See it in action
+
+![Cairn's Today view: a live timer, the day's timeline, and recent entries](/img/screenshots/today-timer.png)
+
+[See every feature →](/features)
