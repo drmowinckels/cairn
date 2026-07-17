@@ -10,10 +10,16 @@ export default withMermaid({
   srcExclude: ["future/**", "**/README.md"],
   ignoreDeadLinks: [/^\.?\/?future\//],
   head: [
-    ["link", { rel: "icon", href: "/img/logo-favicon.svg", type: "image/svg+xml" }],
+    [
+      "link",
+      { rel: "icon", href: "/img/logo-favicon.svg", type: "image/svg+xml" },
+    ],
     ["meta", { name: "theme-color", content: "#3d405b" }],
     ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
-    ["link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }],
+    [
+      "link",
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
+    ],
     [
       "link",
       {
@@ -29,6 +35,7 @@ export default withMermaid({
       alt: "Cairn",
     },
     nav: [
+      { text: "Features", link: "/features" },
       { text: "Guide", link: "/guide/getting-started" },
       { text: "Architecture", link: "/architecture/" },
       { text: "Install", link: "/guide/install" },
@@ -38,6 +45,18 @@ export default withMermaid({
       },
     ],
     sidebar: {
+      "/features": [
+        {
+          text: "Features",
+          items: [
+            { text: "Overview", link: "/features" },
+            { text: "Privacy contract", link: "/PRIVACY" },
+            { text: "Rules engine", link: "/RULES_ENGINE" },
+            { text: "Plugin architecture", link: "/PLUGINS" },
+            { text: "PM connectors", link: "/PM_CONNECTORS" },
+          ],
+        },
+      ],
       "/guide/": [
         {
           text: "Guide",

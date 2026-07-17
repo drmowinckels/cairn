@@ -1,6 +1,6 @@
 # Getting started
 
-Cairn is in early development — there are no tagged binaries yet. To try it, build from source.
+Just want to run Cairn? Grab a prebuilt binary from [Install](/guide/install) instead — this page is for building from source (contributing, or a platform without a prebuilt bundle).
 
 ## Prerequisites
 
