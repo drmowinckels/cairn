@@ -436,6 +436,150 @@ fn ensure_data_dir(data_dir: &std::path::Path) -> Result<(), String> {
     })
 }
 
+/// macOS-only startup repair for a stale launch-at-login LaunchAgent
+/// (#264). Detection/decision logic lives in `ipc` (pure, unit-tested);
+/// this module is the OS-wiring shim — real paths under
+/// `~/Library/LaunchAgents` and `launchctl` subprocess calls, neither of
+/// which has a mockable surface, so — like every other `.setup()` step
+/// in this file — it's exercised by the running app, never `--lib`
+/// tests. Every failure here is logged and never fatal: Cairn always
+/// finishes starting regardless of whether the repair itself succeeds.
+#[cfg(target_os = "macos")]
+mod autostart_repair {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    use crate::ipc::{self, AutostartRepairDecision};
+
+    fn launch_agent_plist_path() -> Option<PathBuf> {
+        let home = dirs::home_dir()?;
+        Some(
+            home.join("Library")
+                .join("LaunchAgents")
+                .join(format!("{}.plist", ipc::MACOS_LAUNCH_AGENT_LABEL)),
+        )
+    }
+
+    /// The current user's numeric uid, for addressing `launchctl bootout`'s
+    /// `gui/<uid>/<label>` domain-target.
+    fn current_uid() -> u32 {
+        // SAFETY: `getuid()` takes no arguments, reads no user-supplied
+        // pointers, and per POSIX cannot fail.
+        unsafe { libc::getuid() }
+    }
+
+    /// Best-effort unload of a currently-loaded LaunchAgent job, so a
+    /// dead/relocated one isn't left resident for the rest of this login
+    /// session. Deliberately never reloads it afterwards: bootstrapping a
+    /// corrected job whose plist has `RunAtLoad = true` would immediately
+    /// relaunch Cairn a second time, from inside the very startup we're
+    /// repairing. The plist rewrite/removal that follows is what actually
+    /// matters — launchd re-reads the directory fresh at the next real
+    /// login regardless of whether this unload succeeds.
+    fn launchctl_bootout() {
+        let target = format!("gui/{}/{}", current_uid(), ipc::MACOS_LAUNCH_AGENT_LABEL);
+        match Command::new("launchctl")
+            .args(["bootout", &target])
+            .output()
+        {
+            Ok(output) if !output.status.success() => {
+                // Not fatal — a job that was never loaded this session
+                // (e.g. the plist is stale on disk but launchd hasn't
+                // booted it) exits non-zero here, which is expected.
+                log::debug!(
+                    "autostart repair: launchctl bootout {target} exited {:?}: {}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+            }
+            Err(e) => log::warn!("autostart repair: failed to run launchctl: {e}"),
+            _ => {}
+        }
+    }
+
+    /// Detect + repair a stale LaunchAgent baked before #263's dev-build
+    /// guard existed (#264). Runs once at startup; see the module doc
+    /// for why every failure here is logged rather than propagated.
+    pub fn repair_stale_launch_agent(pool: &sqlx::SqlitePool) {
+        let Some(plist_path) = launch_agent_plist_path() else {
+            log::warn!("autostart repair: could not resolve the home directory; skipping");
+            return;
+        };
+        if !plist_path.exists() {
+            return; // Nothing registered — nothing to repair.
+        }
+
+        let Some(program_path) = ipc::read_launch_agent_program_path(&plist_path) else {
+            // Missing, invalid XML, or an unexpected shape — leave an
+            // agent we don't understand alone rather than guess (mirrors
+            // `decide_autostart_repair`'s own `None` handling), and skip
+            // resolving `current_exe`/the install candidate below since
+            // they'd be unused either way.
+            return;
+        };
+        let program_path_exists = program_path.exists();
+
+        let current_exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                log::warn!("autostart repair: could not resolve current_exe: {e}");
+                return;
+            }
+        };
+        let candidate = ipc::installed_bundle_candidate(&current_exe);
+        // `tauri-plugin-autostart` canonicalizes the exe path before baking
+        // it into the plist (see its `Builder::build()`), so compare against
+        // an equally-canonicalized candidate — otherwise a symlink/aliasing
+        // difference (e.g. macOS's `/var` -> `/private/var`) between this
+        // raw path and the one already correctly registered would read as
+        // "mismatched" and repoint a perfectly healthy LaunchAgent on every
+        // single launch. `canonicalize()` fails exactly when the candidate
+        // doesn't exist (or is otherwise unreachable), which we correctly
+        // treat the same as "no known-good install to compare against."
+        let installed_bundle_exe = candidate.canonicalize().ok();
+
+        let decision = ipc::decide_autostart_repair(
+            Some((&program_path, program_path_exists)),
+            installed_bundle_exe.as_deref(),
+        );
+
+        let message = match decision {
+            AutostartRepairDecision::NoAction => return,
+            AutostartRepairDecision::Repoint(new_path) => {
+                if let Err(e) = ipc::repoint_launch_agent_program_path(&plist_path, &new_path) {
+                    log::warn!("autostart repair: failed to repoint stale LaunchAgent: {e}");
+                    return;
+                }
+                launchctl_bootout();
+                let old = program_path.display().to_string();
+                log::info!(
+                    "autostart repair: repointed stale LaunchAgent {old} -> {}",
+                    new_path.display()
+                );
+                format!(
+                    "Launch-at-login was pointing at a removed/dev build ({old}) and has \
+                     been repointed to the installed app."
+                )
+            }
+            AutostartRepairDecision::Clear => {
+                launchctl_bootout();
+                if let Err(e) = std::fs::remove_file(&plist_path) {
+                    log::warn!("autostart repair: failed to remove stale LaunchAgent plist: {e}");
+                }
+                let old = program_path.display().to_string();
+                log::info!("autostart repair: cleared stale LaunchAgent ({old})");
+                "Launch-at-login was reset because it pointed at a removed/dev build.".to_string()
+            }
+        };
+
+        tauri::async_runtime::block_on(async {
+            if let Err(e) = ipc::set_autostart_repair_notice(pool, &message).await {
+                log::warn!("autostart repair: failed to persist the repair notice: {e}");
+            }
+        });
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let log_level = if cfg!(debug_assertions) {
@@ -571,6 +715,8 @@ pub fn run() {
             ipc::get_onboarding_state,
             ipc::complete_onboarding,
             ipc::reset_onboarding,
+            ipc::get_autostart_repair_notice,
+            ipc::dismiss_autostart_repair_notice,
             list_plugins,
             set_plugin_enabled,
             list_connectors,
@@ -631,6 +777,16 @@ pub fn run() {
             let db = tauri::async_runtime::block_on(async {
                 open_db_for_setup(&backup::db_path(&data_dir)).await
             })?;
+
+            // Detect + repair a stale launch-at-login LaunchAgent (#264):
+            // one baked before #263's dev-build guard existed, still
+            // pointing at a since-removed `target/debug` binary or a
+            // relocated/uninstalled bundle. macOS only for this PR —
+            // Windows' startup registry key and Linux's `.desktop`
+            // autostart entry are the same class of bug, tracked as
+            // separate follow-up work rather than silently dropped.
+            #[cfg(target_os = "macos")]
+            autostart_repair::repair_stale_launch_agent(&db.pool);
 
             let calendar = calendar_registry_for_setup(
                 db.pool.clone(),
