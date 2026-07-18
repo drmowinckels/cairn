@@ -2420,8 +2420,15 @@ pub struct AutostartRepairNotice {
     pub message: Option<String>,
 }
 
-async fn read_autostart_repair_notice(
-    state: &State<'_, AppState>,
+/// Read the pending autostart-repair notice, if any. Plain (non-command)
+/// function tested directly; the `#[tauri::command]` shim is in the
+/// codecov-ignored `lib.rs` — a bare `pub async fn` here avoids the
+/// macro-generated IPC wrapper's coverage region (attributed back to the
+/// `#[tauri::command]` line, and only reachable through a real Tauri IPC
+/// round-trip that no unit test in this file drives) from counting as an
+/// uncoverable "missed" line against this function.
+pub async fn get_autostart_repair_notice_impl(
+    state: State<'_, AppState>,
 ) -> Result<AutostartRepairNotice, String> {
     let row = sqlx::query("SELECT autostart_repair_notice FROM app_state WHERE singleton = 1")
         .fetch_optional(&state.db.pool)
@@ -2431,18 +2438,13 @@ async fn read_autostart_repair_notice(
     Ok(AutostartRepairNotice { message })
 }
 
-/// Read the pending autostart-repair notice, if any.
-#[tauri::command]
-pub async fn get_autostart_repair_notice(
-    state: State<'_, AppState>,
-) -> Result<AutostartRepairNotice, String> {
-    read_autostart_repair_notice(&state).await
-}
-
 /// Dismiss the autostart-repair notice. It won't reappear unless a
-/// future startup repairs another stale agent.
-#[tauri::command]
-pub async fn dismiss_autostart_repair_notice(state: State<'_, AppState>) -> Result<(), String> {
+/// future startup repairs another stale agent. The `#[tauri::command]`
+/// shim is in the codecov-ignored `lib.rs` (see
+/// [`get_autostart_repair_notice_impl`] for why).
+pub async fn dismiss_autostart_repair_notice_impl(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     sqlx::query("UPDATE app_state SET autostart_repair_notice = NULL WHERE singleton = 1")
         .execute(&state.db.pool)
         .await
@@ -8911,11 +8913,44 @@ mod budget_tests {
         assert!(repoint_launch_agent_program_path(&plist_path, new_path).is_err());
     }
 
+    #[test]
+    fn repoint_launch_agent_program_path_populates_an_empty_array() {
+        // Isolates the `args.is_empty()` branch: a plist with a present
+        // but empty `ProgramArguments` array (distinct from the array
+        // being absent entirely, which errors instead) gets the new path
+        // pushed in rather than indexed into a nonexistent slot 0.
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("Cairn.plist");
+        std::fs::write(
+            &plist_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>Cairn</string>
+    <key>ProgramArguments</key>
+    <array></array>
+  </dict>
+</plist>
+"#,
+        )
+        .unwrap();
+
+        let new_path = std::path::Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        repoint_launch_agent_program_path(&plist_path, new_path).expect("repoint succeeds");
+
+        assert_eq!(
+            read_launch_agent_program_path(&plist_path),
+            Some(new_path.to_path_buf())
+        );
+    }
+
     #[tokio::test]
     async fn autostart_repair_notice_defaults_to_none() {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<AppState>();
-        let notice = get_autostart_repair_notice(state).await.unwrap();
+        let notice = get_autostart_repair_notice_impl(state).await.unwrap();
         assert!(notice.message.is_none());
     }
 
@@ -8928,13 +8963,15 @@ mod budget_tests {
             .unwrap();
 
         let state = app.state::<AppState>();
-        let notice = get_autostart_repair_notice(state.clone()).await.unwrap();
-        assert_eq!(notice.message.as_deref(), Some("repaired the thing"));
-
-        dismiss_autostart_repair_notice(state.clone())
+        let notice = get_autostart_repair_notice_impl(state.clone())
             .await
             .unwrap();
-        let notice = get_autostart_repair_notice(state).await.unwrap();
+        assert_eq!(notice.message.as_deref(), Some("repaired the thing"));
+
+        dismiss_autostart_repair_notice_impl(state.clone())
+            .await
+            .unwrap();
+        let notice = get_autostart_repair_notice_impl(state).await.unwrap();
         assert!(notice.message.is_none());
     }
 
@@ -8949,7 +8986,7 @@ mod budget_tests {
             .unwrap();
 
         let state = app.state::<AppState>();
-        let notice = get_autostart_repair_notice(state).await.unwrap();
+        let notice = get_autostart_repair_notice_impl(state).await.unwrap();
         assert_eq!(notice.message.as_deref(), Some("second"));
     }
 }

@@ -232,6 +232,26 @@ fn set_autostart(app: tauri::AppHandle, enable: bool) -> Result<bool, String> {
     manager.is_enabled().map_err(|e| e.to_string())
 }
 
+/// Read the pending autostart-repair notice (#264). Thin shim over the
+/// testable `ipc::get_autostart_repair_notice_impl` — kept here (rather
+/// than `#[tauri::command]` directly in `ipc.rs`) so the macro-generated
+/// IPC wrapper's coverage region lands in this codecov-ignored file, not
+/// on a line codecov would otherwise count as untested.
+#[tauri::command]
+async fn get_autostart_repair_notice(
+    state: tauri::State<'_, AppState>,
+) -> Result<ipc::AutostartRepairNotice, String> {
+    ipc::get_autostart_repair_notice_impl(state).await
+}
+
+/// Dismiss the autostart-repair notice (#264). Thin shim over the
+/// testable `ipc::dismiss_autostart_repair_notice_impl` — see
+/// `get_autostart_repair_notice` for why it lives here.
+#[tauri::command]
+async fn dismiss_autostart_repair_notice(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    ipc::dismiss_autostart_repair_notice_impl(state).await
+}
+
 #[tauri::command]
 async fn list_activity_log(
     state: tauri::State<'_, AppState>,
@@ -715,8 +735,8 @@ pub fn run() {
             ipc::get_onboarding_state,
             ipc::complete_onboarding,
             ipc::reset_onboarding,
-            ipc::get_autostart_repair_notice,
-            ipc::dismiss_autostart_repair_notice,
+            get_autostart_repair_notice,
+            dismiss_autostart_repair_notice,
             list_plugins,
             set_plugin_enabled,
             list_connectors,
