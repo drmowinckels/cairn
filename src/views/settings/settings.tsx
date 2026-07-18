@@ -137,7 +137,7 @@ const TEXT_SCALES: Array<{ value: TextScale; label: string }> = [
 const DETECTION_OPTIONS: Array<{ value: DetectionPrompts; label: string }> = [
   { value: "off", label: "Off" },
   { value: "subtle", label: "Subtle" },
-  { value: "modal", label: "Modal" },
+  { value: "notification", label: "Notification" },
 ];
 
 const REMINDER_THROTTLES = [15, 30, 60, 120];
@@ -386,7 +386,7 @@ export function SettingsView({
 
         <SetRow
           label="Detection prompts"
-          hint="How insistent should auto-detection be?"
+          hint="Subtle shows an inline banner in Today; Notification pops a small always-on-top window instead, so a match isn't missed while you're on another tab or the popover is closed."
         >
           <div
             className="seg seg--sm"

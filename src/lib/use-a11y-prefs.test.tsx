@@ -43,14 +43,23 @@ describe("useA11yPrefs", () => {
       JSON.stringify({
         textScale: "lg",
         colorblindSafe: true,
-        detectionPrompts: "modal",
+        detectionPrompts: "notification",
       }),
     );
     const { result } = renderHook(() => useA11yPrefs());
     expect(result.current.textScale).toBe("lg");
     expect(result.current.colorblindSafe).toBe(true);
-    expect(result.current.detectionPrompts).toBe("modal");
+    expect(result.current.detectionPrompts).toBe("notification");
     expect(result.current.announce).toBe(true);
+  });
+
+  it("migrates a legacy 'modal' detectionPrompts to 'notification' (#267)", () => {
+    localStorage.setItem(
+      "cairn:a11y-prefs:v1",
+      JSON.stringify({ detectionPrompts: "modal" }),
+    );
+    const { result } = renderHook(() => useA11yPrefs());
+    expect(result.current.detectionPrompts).toBe("notification");
   });
 
   it("ignores corrupted localStorage and falls back to defaults", () => {

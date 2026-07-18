@@ -17,19 +17,24 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 const confirmMock = vi.fn().mockResolvedValue(undefined);
 const dismissMock = vi.fn().mockResolvedValue(undefined);
 
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: {
-      ruleId: "r1",
-      ruleName: "Cairn dev",
-      confidence: "suggestive" as const,
-      project: "cairn",
-      tags: ["dev"],
-    },
-    confirm: confirmMock,
-    dismiss: dismissMock,
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: {
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive" as const,
+        project: "cairn",
+        tags: ["dev"],
+      },
+      confirm: confirmMock,
+      dismiss: dismissMock,
+    }),
+  };
+});
 
 import { Popover } from "./popover";
 

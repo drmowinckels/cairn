@@ -1,11 +1,14 @@
 import { Icon } from "../../lib/icon";
 import { ProjectChip } from "../../lib/components";
-import type {
-  DetectionPrompts,
-  Project,
-  ProjectId,
-  RuleMatchEvent,
-} from "../../lib/types";
+import type { Project, ProjectId, RuleMatchEvent } from "../../lib/types";
+
+/**
+ * Presentation-only style variant, independent of the user-facing
+ * `DetectionPrompts` setting. This banner is not converted to the
+ * dedicated overlay window (#267) — "modal" keeps meaning "heavier CSS
+ * treatment of this same inline banner", same as before the rename.
+ */
+export type BannerStyle = "subtle" | "modal";
 
 interface Props {
   /** The switch suggestion to render, or null to render nothing. */
@@ -13,7 +16,7 @@ interface Props {
   /** Live project lookup so the chip resolves the matched project's name. */
   projectsById: Record<ProjectId, Project>;
   /** Reuses the detection-prompt presentation setting (subtle/modal). */
-  style: Exclude<DetectionPrompts, "off">;
+  style: BannerStyle;
   announce: boolean;
   onConfirm: () => void;
   onDismiss: () => void;

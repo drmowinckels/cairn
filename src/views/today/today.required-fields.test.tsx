@@ -2,13 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { BackendEntry } from "../../lib/ipc";
 
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: null,
-    confirm: vi.fn(),
-    dismiss: vi.fn(),
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: null,
+      confirm: vi.fn(),
+      dismiss: vi.fn(),
+    }),
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),

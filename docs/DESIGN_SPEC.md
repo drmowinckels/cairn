@@ -116,7 +116,7 @@ The default view. Top-to-bottom:
 
 #### a. Auto-detect suggestion (`.suggest`)
 
-Shown when a rule has matched at non-strict confidence and the user hasn't confirmed yet.
+Shown inline in the Today view when a rule has matched at non-strict confidence and the user hasn't confirmed yet — **only** for the "Subtle" detection-prompt tier (Settings → Accessibility). The "Notification" tier does not render this inline; see §3.1h.
 
 - Background: `linear-gradient(180deg, var(--apricot-soft) 0%, rgba(242,204,143,.12) 100%)`
 - Border: `.5px solid rgba(242, 204, 143, .55)`
@@ -125,6 +125,8 @@ Shown when a rule has matched at non-strict confidence and the user hasn't confi
 - "Why" line: small text `because feat/rules-ui · folder ~/code/cairn`, where the values are in mono inside a faint code chip (`rgba(61,64,91,.06)` background, 1px 5px padding, 3px radius). On the right, a `view rule` link button (`--accent`, underline) that jumps to Rules and expands the rule.
 - Actions row: a primary "Confirm" button (✓ icon + label) and a ghost "Change…" button.
 - Keyboard: `↵` confirms, `Esc` or × dismisses.
+
+> The task-switch (§3.1 "switched task?" banner, #105) and working-hours-reminder (#99) banners still reuse a heavier `.suggest--modal` CSS variant for the "Notification" tier (unchanged by #267 — they were not converted to the dedicated window; see the #267 PR notes for the scope call).
 
 #### b. Idle modal (`.idle`)
 
@@ -161,6 +163,16 @@ List of last 4 entries: time, project dot, task, duration, source icon (✦ for 
 
 A small list of the next 2–3 calendar items / focus blocks. Each row: time · label · duration.
 
+#### h. Suggestion notification window (`.notify-win`, separate window — #267)
+
+The "Notification" detection-prompt tier's presentation surface. Not part of the popover — a dedicated, small, undecorated, always-on-top Tauri window (`?win=notify`, 380×240, transparent, positioned at the screen's top-right corner), shown/hidden by the backend independently of whether the popover is open or which tab is active. Mirrors the idle-prompt window's card chrome and its click-through-until-painted hardening (#261/#262), but is **not** a forced choice:
+
+- No backdrop, no focus trap, no `aria-modal` — a dismissible proposal the user can ignore, marked up the same non-dialog way as `.suggest` (`aria-label` + `aria-live="assertive"`, no `role="dialog"`/`"alertdialog"`).
+- The backend never steals OS focus when showing or painting it (unlike the idle window, which does).
+- Content mirrors `.suggest`'s body (project chip + rule name + tags + "why" evidence line) but drops the "Change…" action — only **Confirm** and **Dismiss**. Picking a different project requires opening the popover.
+- Card chrome: `var(--surface)` background, `var(--hairline-strong)` border, `var(--radius-lg)`, `var(--shadow-soft)` — same tokens as `.idle-win`.
+- Re-showing while already on screen (the same rule keeps matching on the ~2Hz snapshot tick) only refreshes its content, not its position — no re-arm flicker.
+
 ### 3.2 Reports
 
 - **Header**: a serif view title that tracks the range ("Today" / "This week" / "This month") with a date-range subtitle beneath; the Day / Week / Month segmented control sits on the right. (The implementation uses this `view-head` + subtitle pattern rather than the prototype's inline `rep-big` number; the headline figures live in the totals grid below.)
@@ -196,7 +208,7 @@ Ordered to put the most important things first.
 
 1. **Privacy card** — large card, teal tint, shield icon + "Your data stays here" serif title, 4-bullet list of guarantees, three actions: "Export all data…", "View what's stored", "Delete everything…".
 2. **Never track these** — exclusion list. Each row: lock icon + value in mono code + kind label (app/domain/window) + × remove. Last row is an inline add input. Below: checkbox "Pause tracking on private/incognito browser windows" (default on).
-3. **Accessibility** — toggles for text size (4-position segmented), high contrast, reduce motion, colorblind-safe palette, screen reader announcements, focus rings always visible, detection prompts (segmented: Off / Subtle / Modal).
+3. **Accessibility** — toggles for text size (4-position segmented), high contrast, reduce motion, colorblind-safe palette, screen reader announcements, focus rings always visible, detection prompts (segmented: Off / Subtle / Notification — renamed from "Modal" in #267: "Notification" opens the dedicated overlay window in §3.1h rather than a heavier CSS treatment of the inline banner).
 4. **Shortcuts** — list of keyboard shortcuts with `<Kbd>` chips.
 5. **Foot** — version, Apache-2.0, GitHub link.
 

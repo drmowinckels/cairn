@@ -6,13 +6,18 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: null,
-    confirm: vi.fn(),
-    dismiss: vi.fn(),
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: null,
+      confirm: vi.fn(),
+      dismiss: vi.fn(),
+    }),
+  };
+});
 
 const reminder = {
   active: true,
@@ -45,7 +50,7 @@ afterEach(() => {
   reminder.active = true;
 });
 
-function renderToday(detectionPrompts: "subtle" | "modal" = "subtle") {
+function renderToday(detectionPrompts: "subtle" | "notification" = "subtle") {
   return render(
     <TodayView
       density="comfy"
@@ -95,8 +100,8 @@ describe("TodayView working-hours reminder (#99)", () => {
     expect(reminder.dismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("uses an assertive live region (not a dialog) when detection prompts are modal", () => {
-    renderToday("modal");
+  it("uses an assertive live region (not a dialog) when detection prompts are notification", () => {
+    renderToday("notification");
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(
       screen

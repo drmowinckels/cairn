@@ -25,13 +25,18 @@ const confirmMock = vi.fn();
 const dismissMock = vi.fn();
 let suggestionOverride: SuggestionFixture | null = SUGGESTION_FIXTURE;
 
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: suggestionOverride,
-    confirm: confirmMock,
-    dismiss: dismissMock,
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: suggestionOverride,
+      confirm: confirmMock,
+      dismiss: dismissMock,
+    }),
+  };
+});
 
 import { TodayView } from "./index";
 
@@ -1370,21 +1375,39 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     }
   });
 
-  it("suggestion banner is an assertive live region (not a dialog) when detectionPrompts=modal", () => {
+  it("suggestion banner is a polite live region (not a dialog) when detectionPrompts=subtle", () => {
     suggestionOverride = SUGGESTION_FIXTURE;
     render(
       <TodayView
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        detectionPrompts="modal"
+        detectionPrompts="subtle"
       />,
     );
-    // The "modal" style is visual only — a non-blocking inline
-    // notification, never an actual dialog (no focus trap / aria-modal).
+    // A non-blocking inline notification, never an actual dialog (no
+    // focus trap / aria-modal).
     expect(screen.queryByRole("alertdialog")).toBeNull();
     const region = screen.getByRole("region", { name: /auto-detected work/i });
-    expect(region.getAttribute("aria-live")).toBe("assertive");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("does not render the inline suggestion banner when detectionPrompts=notification (#267)", () => {
+    // The "notification" tier presents via the dedicated overlay window
+    // (`useSuggestionNotifier`) instead of this inline banner — rendering
+    // both would double-present the same suggestion.
+    suggestionOverride = SUGGESTION_FIXTURE;
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        detectionPrompts="notification"
+      />,
+    );
+    expect(
+      screen.queryByRole("region", { name: /auto-detected work/i }),
+    ).toBeNull();
   });
 
   it("suggestion banner renders generic 'Detected' label when suggestion has no project", () => {

@@ -16,6 +16,7 @@ import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { useWorkingHours } from "../../lib/use-working-hours";
 import { useTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
 import { useRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
+import { useSuggestionNotifier } from "../../lib/use-suggestion-notifier";
 import { useUpdatePrefs } from "../../lib/use-update-prefs";
 import { useUpdateCheck } from "../../lib/use-update-check";
 import { useTimer } from "../../lib/use-timer";
@@ -122,6 +123,16 @@ function PopoverShell({
   useToggleTimerShortcut({ announce });
   usePaletteShortcut({ onOpen: palette.requestOpen });
   useTrayListeners({ announce });
+
+  // Routes Suggestive/"prompt" rule matches to the notification overlay
+  // window (#267) when "Detection prompts" is "notification". Mounted here
+  // (not inside TodayView) so it keeps listening regardless of the active
+  // tab or whether the popover window is hidden — this is what fixes the
+  // "suggestion silently lost while on Rules/Settings" bug: the listener no
+  // longer depends on the Today tab being mounted.
+  useSuggestionNotifier({
+    enabled: a11y.detectionPrompts === "notification",
+  });
 
   // Clear any stale palette-action error when the palette reopens —
   // the user is starting a fresh attempt.

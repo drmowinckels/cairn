@@ -62,7 +62,7 @@ import {
   type TaskSwitchPrefs,
 } from "../../lib/task-switch";
 import { useTaskSwitchPrompt } from "../../lib/use-task-switch-prompt";
-import { TaskSwitchBanner } from "./task-switch-banner";
+import { TaskSwitchBanner, type BannerStyle } from "./task-switch-banner";
 import type {
   Density,
   DetectionPrompts,
@@ -278,6 +278,14 @@ export function TodayView({
   const runningTask = timer.running?.description ?? "";
   const runningSource = timer.running ? deriveSource(timer.running) : "manual";
 
+  // The task-switch and working-hours banners keep the pre-#267 heavier-CSS
+  // "modal" presentation for the "notification" tier — they are not
+  // converted to the dedicated overlay window in this change (out of scope;
+  // see the #267 PR notes). `BannerStyle` is its own presentation-only
+  // variant, independent of `DetectionPrompts`.
+  const bannerStyle: BannerStyle =
+    detectionPrompts === "notification" ? "modal" : "subtle";
+
   const totalSec = Math.floor(timer.elapsedMs / 1000);
   const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
   const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
@@ -411,7 +419,12 @@ export function TodayView({
   }, [suggestion, announceMsg]);
 
   useEffect(() => {
-    if (!suggestion || detectionPrompts === "off") return;
+    // Only wired while the inline banner is actually on screen ("subtle").
+    // "off" shows nothing; "notification" presents via the dedicated
+    // overlay window instead (`useSuggestionNotifier`), which owns its own
+    // Escape handling — this document-level listener must not silently
+    // dismiss/snooze a suggestion the user can't see here (#267).
+    if (!suggestion || detectionPrompts !== "subtle") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // Cascade contract (#27): if a modal is open, Esc closes it
@@ -791,24 +804,21 @@ export function TodayView({
           </button>
         )}
       </header>
+      {/* Only the "subtle" tier renders inline here. "off" shows nothing;
+          "notification" presents via the dedicated overlay window
+          (`useSuggestionNotifier` + the `notify` webview) instead of a
+          heavier CSS treatment of this same banner — see #267. */}
       {isToday &&
-        detectionPrompts !== "off" &&
+        detectionPrompts === "subtle" &&
         suggestion &&
         !switchCandidate && (
           <section
-            className={`suggest suggest--${detectionPrompts}`}
+            className="suggest suggest--subtle"
             aria-label="Auto-detected work"
             // A non-blocking inline notification, not a dialog: announce via
-            // the live region (assertive for the heavier "modal" style,
-            // polite otherwise) rather than claiming an `alertdialog` role it
+            // the live region rather than claiming an `alertdialog` role it
             // doesn't honor (no focus trap / aria-modal / Escape).
-            aria-live={
-              announce
-                ? detectionPrompts === "modal"
-                  ? "assertive"
-                  : "polite"
-                : "off"
-            }
+            aria-live={announce ? "polite" : "off"}
           >
             <div className="suggest-head">
               <Icon name="sparkle" size={13} />
@@ -883,7 +893,7 @@ export function TodayView({
         <TaskSwitchBanner
           match={switchPrompt.active}
           projectsById={projectsById}
-          style={detectionPrompts === "modal" ? "modal" : "subtle"}
+          style={bannerStyle}
           announce={announce}
           onConfirm={() => void switchPrompt.confirm()}
           onDismiss={switchPrompt.dismiss}
@@ -894,7 +904,7 @@ export function TodayView({
 
       {reminder.active && !timer.running && !suggestion && (
         <WorkingHoursReminder
-          style={detectionPrompts === "modal" ? "modal" : "subtle"}
+          style={bannerStyle}
           announce={announce}
           onStart={onReminderStart}
           onDismiss={reminder.dismiss}

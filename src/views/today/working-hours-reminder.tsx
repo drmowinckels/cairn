@@ -1,9 +1,9 @@
 import { Icon } from "../../lib/icon";
-import type { DetectionPrompts } from "../../lib/types";
+import type { BannerStyle } from "./task-switch-banner";
 
 interface Props {
   /** Reuses the detection-prompt presentation setting (subtle/modal). */
-  style: Exclude<DetectionPrompts, "off">;
+  style: BannerStyle;
   announce: boolean;
   onStart: () => void;
   onDismiss: () => void;

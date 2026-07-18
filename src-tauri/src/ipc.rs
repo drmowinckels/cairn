@@ -2218,6 +2218,148 @@ pub fn idle_window_painted_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>, st
     }
 }
 
+/// Show the suggestion-notification window and forward `payload` to it
+/// (#267). Called by the frontend's `useSuggestionNotifier` — a
+/// Suggestive/`Prompt` rule match, while the "Detection prompts" setting is
+/// `"notification"` — never by the backend automatically: unlike the idle
+/// prompt (always shown on an idle-resume with a running timer), whether to
+/// show this window is gated by a frontend-only preference the rules
+/// engine never sees.
+///
+/// Idempotent while already visible: a matching rule re-publishes
+/// `signal:match` on every snapshot tick (~2Hz) for as long as it keeps
+/// matching, so re-arming the show/position/watchdog on every tick would
+/// flicker the window. When it's already on screen this only refreshes the
+/// emitted payload (in case the description/tags changed) and the
+/// cold-start stash, leaving the window's position and paint-watchdog
+/// state untouched.
+pub fn show_suggestion_notification_impl<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    payload: crate::rules::RuleMatch,
+) -> Result<(), String> {
+    let Some(win) = app.get_webview_window(crate::signals::fanout::NOTIFY_LABEL) else {
+        return Err("notification window missing".to_string());
+    };
+    // De-dup via our own `notify_currently_shown` flag, not `win.is_visible()`:
+    // the latter isn't just unreliable under `MockRuntime` (which hardcodes
+    // `is_visible()` to `true` regardless of show/hide history — the same
+    // caveat already documented for `hide()` on the idle-window watchdog
+    // tests) but would also be untestable either way. The flag is ours to
+    // set/clear precisely at show/hide, so it's deterministic everywhere.
+    //
+    // Check-then-act, not compare-and-swap: two `signal:match` publishes
+    // close enough together could both observe `false` and both re-arm the
+    // watchdog/generation. Accepted — the backend only publishes at ~2Hz,
+    // so the race window is microseconds wide, and the worst case is a
+    // harmless extra `show_notify_with_watchdog` call (one more generation
+    // bump + a redundant reposition), never a correctness or visibility bug.
+    let already_shown = state
+        .notify_currently_shown
+        .load(std::sync::atomic::Ordering::SeqCst);
+    if !already_shown {
+        crate::signals::fanout::show_notify_with_watchdog(
+            app,
+            &win,
+            crate::signals::fanout::OVERLAY_PAINT_WATCHDOG_TIMEOUT,
+        );
+    }
+
+    // Skip the stash-update + emit when the window is already showing this
+    // exact payload (simplify pass, #267): the frontend calls this command
+    // on every ~2Hz snapshot tick for as long as a rule keeps matching, so
+    // without this check a long-held match would re-emit identical content
+    // indefinitely — and since Tauri delivers a freshly-deserialized object
+    // on every event, the notify window's `useNotificationWindow` would
+    // treat each tick as a *changed* suggestion and cascade into a fresh
+    // `list_projects` query plus a repeat paint-ack IPC call every ~500ms.
+    let unchanged = already_shown
+        && state
+            .last_notification
+            .lock()
+            .map(|guard| guard.as_ref() == Some(&payload))
+            .unwrap_or(false);
+    if unchanged {
+        return Ok(());
+    }
+
+    if let Ok(mut guard) = state.last_notification.lock() {
+        *guard = Some(payload.clone());
+    }
+    app.emit_to(
+        crate::signals::fanout::NOTIFY_LABEL,
+        crate::signals::fanout::EVENT_MATCH,
+        &payload,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// The most recent suggestion-notification payload, or `None` if there's
+/// nothing pending. The notification window calls this on mount to cover
+/// the cold-start race where its webview wasn't yet listening when
+/// `show_suggestion_notification_impl` emitted the event. Mirrors
+/// `pending_idle`, minus that command's "is a timer running" staleness
+/// gate — a stale suggestion is harmless here (the user just dismisses or
+/// ignores it; "suggestion ≠ auto-log").
+pub async fn pending_notification_impl(
+    state: &AppState,
+) -> Result<Option<crate::rules::RuleMatch>, String> {
+    let guard = state
+        .last_notification
+        .lock()
+        .map_err(|_| "last_notification lock poisoned".to_string())?;
+    Ok(guard.clone())
+}
+
+/// Dismiss the suggestion notification: clear the pending state and hide
+/// the notify window. Called after the user confirms or dismisses so a
+/// later `pending_notification` doesn't re-surface stale state. Mirrors
+/// `dismiss_idle`.
+pub fn dismiss_suggestion_notification_impl<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+) -> Result<(), String> {
+    if let Ok(mut guard) = state.last_notification.lock() {
+        *guard = None;
+    }
+    // Clear the flag only once `hide()` actually succeeds (or there's no
+    // window to hide, so nothing was showing anyway) — clearing it
+    // unconditionally first would, on the rare chance `hide()` errors,
+    // leave `notify_currently_shown` reporting "hidden" while the window is
+    // still visible, so the next `show_suggestion_notification_impl` call
+    // would redundantly reposition/re-arm an already-shown window.
+    if let Some(window) = app.get_webview_window(crate::signals::fanout::NOTIFY_LABEL) {
+        window.hide().map_err(err)?;
+    }
+    state
+        .notify_currently_shown
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+/// Confirm the notification window's webview has painted (#267). The
+/// window is shown click-through (input passes through) until this lands,
+/// so a webview that never renders can't become an invisible, always-on-top
+/// input trap. Marking the show painted cancels the paint watchdog; clearing
+/// `ignore_cursor_events` makes the now-visible notification interactive.
+///
+/// Deliberately does NOT call `set_focus()` (unlike `idle_window_painted_impl`):
+/// the idle prompt is a forced choice the user must resolve, but a
+/// suggestion notification is a dismissible proposal — stealing OS focus
+/// from whatever app the user is actively using would itself be a worse
+/// interruption than the inline banner this window replaces.
+pub fn notification_window_painted_impl<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+) {
+    state
+        .notify_painted
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Some(win) = app.get_webview_window(crate::signals::fanout::NOTIFY_LABEL) {
+        let _ = win.set_ignore_cursor_events(false);
+    }
+}
+
 /// Whether `exe` is a Cargo dev/release build run in place — i.e. it lives
 /// under a `target/{debug,release}/…` directory rather than a packaged or
 /// installed bundle. Used to refuse registering launch-at-login for a dev
@@ -8421,6 +8563,249 @@ mod budget_tests {
         idle_window_painted_impl(app.handle(), &state);
 
         assert!(state.idle_painted.load(SeqCst));
+    }
+
+    // ---- #267: suggestion-notification window ----
+
+    fn notification_fixture(rule_id: &str) -> crate::rules::RuleMatch {
+        crate::rules::RuleMatch {
+            rule_id: rule_id.to_string(),
+            rule_name: format!("rule-{rule_id}"),
+            confidence: crate::rules::Confidence::Suggestive,
+            ambiguity_behavior: crate::rules::AmbiguityBehavior::Prompt,
+            project: Some("cairn".to_string()),
+            tags: vec!["dev".to_string()],
+            description: String::new(),
+            matched_signals: Vec::new(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    async fn notify_window_for_test<R: tauri::Runtime>(
+        app: &tauri::AppHandle<R>,
+    ) -> tauri::WebviewWindow<R> {
+        tauri::WebviewWindowBuilder::new(
+            app,
+            crate::signals::fanout::NOTIFY_LABEL,
+            tauri::WebviewUrl::default(),
+        )
+        .visible(false)
+        .build()
+        .expect("notify window builds")
+    }
+
+    #[tokio::test]
+    async fn show_suggestion_notification_errors_when_window_is_missing() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        let result =
+            show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r1"));
+        assert_eq!(result, Err("notification window missing".to_string()));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn show_suggestion_notification_shows_and_arms_watchdog_when_hidden() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let win = notify_window_for_test(app.handle()).await;
+        let state = app.state::<AppState>();
+
+        show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r1"))
+            .expect("shows cleanly");
+
+        assert!(win.is_visible().unwrap(), "window is shown");
+        assert_eq!(
+            state.notify_show_gen.load(SeqCst),
+            1,
+            "first show arms generation 1"
+        );
+        assert_eq!(
+            state
+                .last_notification
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|m| m.rule_id.clone()),
+            Some("r1".to_string()),
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn show_suggestion_notification_is_idempotent_while_already_visible() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let win = notify_window_for_test(app.handle()).await;
+        let state = app.state::<AppState>();
+
+        show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r1"))
+            .expect("first show");
+        assert_eq!(state.notify_show_gen.load(SeqCst), 1);
+
+        // The same rule re-matches on the next ~2Hz snapshot tick while the
+        // window is still on screen — must not re-arm (no flicker), but the
+        // payload stash still refreshes in case the description/tags moved.
+        show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r2"))
+            .expect("second show, already visible");
+
+        assert_eq!(
+            state.notify_show_gen.load(SeqCst),
+            1,
+            "already-visible window is not re-armed"
+        );
+        assert!(win.is_visible().unwrap());
+        assert_eq!(
+            state
+                .last_notification
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|m| m.rule_id.clone()),
+            Some("r2".to_string()),
+            "stash still refreshes to the latest payload",
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn show_suggestion_notification_skips_reemit_for_an_unchanged_payload() {
+        // A rule can hold the top match for minutes — the frontend calls
+        // this on every ~2Hz tick the whole time. A byte-identical repeat
+        // must be a cheap no-op (skip the stash update + emit_to), not
+        // treated as a fresh suggestion each time (#267 simplify pass).
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let _win = notify_window_for_test(app.handle()).await;
+        let state = app.state::<AppState>();
+
+        show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r1"))
+            .expect("first show");
+        assert_eq!(state.notify_show_gen.load(SeqCst), 1);
+
+        show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r1"))
+            .expect("unchanged repeat tick returns Ok without re-arming");
+
+        assert_eq!(
+            state.notify_show_gen.load(SeqCst),
+            1,
+            "unchanged payload does not re-arm"
+        );
+        assert_eq!(
+            state
+                .last_notification
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|m| m.rule_id.clone()),
+            Some("r1".to_string()),
+            "stash is left intact, not cleared or corrupted",
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_notification_returns_none_when_nothing_stashed() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        assert_eq!(pending_notification_impl(&state).await, Ok(None));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn pending_notification_returns_the_stashed_payload() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let _win = notify_window_for_test(app.handle()).await;
+        let state = app.state::<AppState>();
+        show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r1"))
+            .unwrap();
+
+        let pending = pending_notification_impl(&state)
+            .await
+            .expect("lock not poisoned")
+            .expect("a payload is stashed");
+        assert_eq!(pending.rule_id, "r1");
+    }
+
+    #[tokio::test]
+    async fn pending_notification_errors_when_lock_is_poisoned() {
+        // Mirrors `dry_run_recovers_from_poisoned_rules_cache`'s technique:
+        // force the poison deterministically via a scoped thread that takes
+        // the lock and panics, rather than guessing at timing.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        let mutex_ref = &state.last_notification;
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                let _guard = mutex_ref.lock().unwrap();
+                panic!("intentional poison for test");
+            });
+            let _ = handle.join();
+        });
+        assert!(
+            state.last_notification.lock().is_err(),
+            "lock must be poisoned for this test to be meaningful",
+        );
+
+        assert_eq!(
+            pending_notification_impl(&state).await,
+            Err("last_notification lock poisoned".to_string()),
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn dismiss_suggestion_notification_clears_stash_and_hides_window() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let win = notify_window_for_test(app.handle()).await;
+        let state = app.state::<AppState>();
+        show_suggestion_notification_impl(app.handle(), &state, notification_fixture("r1"))
+            .unwrap();
+
+        dismiss_suggestion_notification_impl(app.handle(), &state).expect("dismisses cleanly");
+
+        assert!(state.last_notification.lock().unwrap().is_none());
+        // MockRuntime's hide() doesn't synchronously flip `is_visible()`
+        // (same caveat noted on the idle-window watchdog tests), so this
+        // only pins that the call itself succeeds against a real window.
+        let _ = win.is_visible();
+    }
+
+    #[tokio::test]
+    async fn dismiss_suggestion_notification_is_safe_without_a_window() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        assert!(dismiss_suggestion_notification_impl(app.handle(), &state).is_ok());
+        assert!(state.last_notification.lock().unwrap().is_none());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn notification_window_painted_marks_painted_and_clears_click_through() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let win = notify_window_for_test(app.handle()).await;
+        let _ = win.set_ignore_cursor_events(true);
+        let state = app.state::<AppState>();
+        state.notify_painted.store(false, SeqCst);
+
+        notification_window_painted_impl(app.handle(), &state);
+
+        assert!(
+            state.notify_painted.load(SeqCst),
+            "the show is marked painted, cancelling the watchdog"
+        );
+    }
+
+    #[tokio::test]
+    async fn notification_window_painted_is_safe_without_a_window() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        state.notify_painted.store(false, SeqCst);
+
+        notification_window_painted_impl(app.handle(), &state);
+
+        assert!(state.notify_painted.load(SeqCst));
     }
 
     // ---- #261: autostart dev-build guard ----

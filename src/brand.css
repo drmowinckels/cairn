@@ -112,7 +112,9 @@ body {
 html[data-win="idle"],
 html[data-win="idle"] body,
 html[data-win="about"],
-html[data-win="about"] body {
+html[data-win="about"] body,
+html[data-win="notify"],
+html[data-win="notify"] body {
   background: transparent;
 }
 
@@ -961,8 +963,9 @@ body {
   color: var(--ink-mute);
 }
 
-/* ─── IDLE PROMPT WINDOW (#93) ──────────────────────────────────────── */
-.idle-win {
+/* ─── IDLE PROMPT WINDOW (#93) — also the notify window's chrome (#267) ── */
+.idle-win,
+.notify-win {
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -974,6 +977,7 @@ body {
   box-shadow: var(--shadow-soft);
   font-size: var(--font-base);
   overflow: hidden;
+  position: relative;
 }
 
 .idle-win-head {
@@ -1077,6 +1081,13 @@ body {
   font-size: var(--font-tiny);
   color: var(--ink-mute);
 }
+
+/* The "Notification" detection-prompt tier's window (#267) reuses
+   `.idle-win`'s card chrome (below) plus `.suggest-head` / `.suggest-x` /
+   `.suggest-body` / `.suggest-tags` / `.suggest-why` / `.suggest-actions`
+   for its content — no dedicated `.notify-win-*` rules, to keep this a
+   real window, not a bigger stylesheet. Deliberately not styled as a
+   modal: no backdrop, no focus-trap affordance implied. */
 
 /* ─── BUTTONS ───────────────────────────────────────────────────────── */
 .btn {
@@ -5097,7 +5108,21 @@ select.rule-conf {
   );
 }
 
-/* Modal-style detection prompt — wraps suggestion in a centered overlay */
+/* Heavier inline presentation reused by the task-switch (#105) and
+   working-hours-reminder (#99) banners for the "notification" detection-
+   prompt tier (`BannerStyle="modal"` — an internal style-variant name,
+   independent of the `DetectionPrompts` setting since #267). The primary
+   rule-match suggestion banner no longer uses this: under "notification"
+   it presents via the dedicated `.notify-win` overlay window instead (see
+   `today.tsx`). Not converted to a real window here — kept as the
+   existing heavier CSS treatment; see the #267 PR notes.
+   Bleed-clipping check (#267): the `::before` halo bleeds 8px outside its
+   box, and `.pop-body` clips overflow-x. Verified empirically (a static
+   harness reproducing `.pop-body > .view > .suggest` with the real
+   tokens) that the halo sits comfortably inside `.view`'s 18–24px padding
+   on every side in both densities — it is not actually clipped today. No
+   change made; left as a documented non-issue rather than "fixed" code
+   with nothing to fix. */
 .suggest--modal {
   position: relative;
   border-width: 1px !important;

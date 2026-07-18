@@ -4,6 +4,7 @@ import {
   A11Y_DEFAULTS,
   A11Y_STORAGE_KEY,
   applyA11yChrome,
+  coerceDetectionPrompts,
   loadA11yPrefs,
   matchesReduceMotion,
   resolveTheme,
@@ -46,6 +47,22 @@ describe("loadA11yPrefs", () => {
     expect(loadA11yPrefs().ambiguityDefault).toBe("prompt");
   });
 
+  it("migrates a legacy 'modal' detectionPrompts to 'notification' (#267)", () => {
+    localStorage.setItem(
+      A11Y_STORAGE_KEY,
+      JSON.stringify({ detectionPrompts: "modal" }),
+    );
+    expect(loadA11yPrefs().detectionPrompts).toBe("notification");
+  });
+
+  it("coerces a tampered detectionPrompts to 'subtle'", () => {
+    localStorage.setItem(
+      A11Y_STORAGE_KEY,
+      JSON.stringify({ detectionPrompts: "loud-and-proud" }),
+    );
+    expect(loadA11yPrefs().detectionPrompts).toBe("subtle");
+  });
+
   it("returns defaults without touching storage when window is undefined", () => {
     vi.stubGlobal("window", undefined);
     try {
@@ -53,6 +70,25 @@ describe("loadA11yPrefs", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("coerceDetectionPrompts", () => {
+  it("passes through every valid value", () => {
+    expect(coerceDetectionPrompts("off")).toBe("off");
+    expect(coerceDetectionPrompts("subtle")).toBe("subtle");
+    expect(coerceDetectionPrompts("notification")).toBe("notification");
+  });
+
+  it("migrates the legacy 'modal' value to 'notification' (#267)", () => {
+    expect(coerceDetectionPrompts("modal")).toBe("notification");
+  });
+
+  it("falls back to 'subtle' for anything else unrecognized", () => {
+    expect(coerceDetectionPrompts("loud")).toBe("subtle");
+    expect(coerceDetectionPrompts(null)).toBe("subtle");
+    expect(coerceDetectionPrompts(undefined)).toBe("subtle");
+    expect(coerceDetectionPrompts(42)).toBe("subtle");
   });
 });
 
@@ -116,7 +152,7 @@ describe("applyA11yChrome", () => {
       reduceMotion: true,
       colorblindSafe: true,
       alwaysFocusRing: true,
-      detectionPrompts: "modal",
+      detectionPrompts: "notification",
     });
     const ds = document.documentElement.dataset;
     expect(ds.theme).toBe("dark");
@@ -125,7 +161,7 @@ describe("applyA11yChrome", () => {
     expect(ds.reduceMotion).toBe("on");
     expect(ds.colorblind).toBe("on");
     expect(ds.focusRing).toBe("always");
-    expect(ds.detectionPrompts).toBe("modal");
+    expect(ds.detectionPrompts).toBe("notification");
     cleanup();
   });
 

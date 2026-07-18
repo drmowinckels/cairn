@@ -10,6 +10,9 @@ vi.mock("./views/idle/idle-window", () => ({
 vi.mock("./views/about/about-window", () => ({
   AboutWindow: () => <div data-testid="about" />,
 }));
+vi.mock("./views/notify/notification-window", () => ({
+  NotificationWindow: () => <div data-testid="notify" />,
+}));
 
 import App from "./App";
 
@@ -36,6 +39,11 @@ describe("App window routing", () => {
   it("renders the About window under ?win=about", () => {
     setWin("about");
     expect(render(<App />).getByTestId("about")).toBeTruthy();
+  });
+
+  it("renders the Notification window under ?win=notify", () => {
+    setWin("notify");
+    expect(render(<App />).getByTestId("notify")).toBeTruthy();
   });
 
   it("falls back to the Popover when the query can't be parsed", () => {

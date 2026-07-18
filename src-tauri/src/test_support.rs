@@ -184,6 +184,10 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         last_idle: std::sync::Mutex::new(None),
         idle_show_gen: std::sync::atomic::AtomicU64::new(0),
         idle_painted: AtomicBool::new(false),
+        last_notification: std::sync::Mutex::new(None),
+        notify_show_gen: std::sync::atomic::AtomicU64::new(0),
+        notify_painted: AtomicBool::new(false),
+        notify_currently_shown: AtomicBool::new(false),
         browser_extension: Arc::new(
             crate::signals::browser_extension::BrowserExtensionState::new(),
         ),

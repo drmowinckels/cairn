@@ -43,6 +43,21 @@
         "hiddenTitle": true
       },
       {
+        "label": "notify",
+        "title": "Cairn — suggestion",
+        "url": "index.html?win=notify",
+        "width": 380,
+        "height": 240,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "hiddenTitle": true
+      },
+      {
         "label": "about",
         "title": "About Cairn",
         "url": "index.html?win=about",

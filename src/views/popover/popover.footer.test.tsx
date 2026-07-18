@@ -1,11 +1,32 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   cleanup,
+  configure,
   render,
   screen,
   waitFor,
   type RenderResult,
 } from "@testing-library/react";
+
+// Every test in this file does a `vi.resetModules()` + dynamic-import
+// remount of the whole Popover tree (its own React root) — the heaviest
+// mount in the suite. Under full-suite parallel load the default 1000ms
+// `waitFor`/`findBy*` timeout can occasionally be too tight for that to
+// settle (isolated runs are fast); this is a file-scoped timing allowance,
+// not a masked bug. Restored after this file so it doesn't affect any
+// other spec sharing the default config.
+const DEFAULT_ASYNC_UTIL_TIMEOUT = 1000;
+beforeAll(() => configure({ asyncUtilTimeout: 5000 }));
+afterAll(() => configure({ asyncUtilTimeout: DEFAULT_ASYNC_UTIL_TIMEOUT }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
@@ -18,13 +39,18 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: null,
-    confirm: vi.fn(),
-    dismiss: vi.fn(),
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: null,
+      confirm: vi.fn(),
+      dismiss: vi.fn(),
+    }),
+  };
+});
 
 import type { BackendEntry, BackendRule } from "../../lib/ipc";
 import type { Project } from "../../lib/types";

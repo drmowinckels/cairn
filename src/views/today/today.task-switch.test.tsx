@@ -44,14 +44,19 @@ const SUGGESTION: RuleMatchEvent = {
   description: "",
 };
 let suggestionOverride: RuleMatchEvent | null = SUGGESTION;
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: suggestionOverride,
-    confirm: vi.fn(),
-    dismiss: vi.fn(),
-    snoozeEverything: vi.fn(),
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: suggestionOverride,
+      confirm: vi.fn(),
+      dismiss: vi.fn(),
+      snoozeEverything: vi.fn(),
+    }),
+  };
+});
 
 const switchConfirm = vi.fn();
 const switchDismiss = vi.fn();
@@ -79,7 +84,7 @@ const OFF: TaskSwitchPrefs = {
 
 function renderToday(
   taskSwitch: TaskSwitchPrefs,
-  detectionPrompts: "subtle" | "modal" | "off" = "subtle",
+  detectionPrompts: "subtle" | "notification" | "off" = "subtle",
 ) {
   return render(
     <TodayView
@@ -134,7 +139,7 @@ describe("TodayView task-switch wiring (#105)", () => {
 
   it("renders the switch banner as an assertive live region (not a dialog) in modal style", () => {
     activeOverride = SUGGESTION;
-    renderToday(ON, "modal");
+    renderToday(ON, "notification");
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(
       screen

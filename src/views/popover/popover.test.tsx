@@ -21,18 +21,31 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 // suggestion banner via useSuggestion(). Mock the hook with a
 // fixed Suggestive match so the "view rule" / dismissal flows
 // have something to click on.
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: {
-      ruleId: "r1",
-      ruleName: "Cairn dev",
-      confidence: "suggestive" as const,
-      project: "cairn",
-      tags: ["dev"],
-    },
-    confirm: vi.fn(),
-    dismiss: vi.fn(),
-  }),
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: {
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive" as const,
+        project: "cairn",
+        tags: ["dev"],
+      },
+      confirm: vi.fn(),
+      dismiss: vi.fn(),
+    }),
+  };
+});
+
+// #267: PopoverShell mounts useSuggestionNotifier directly (not inside
+// TodayView) so it stays subscribed regardless of the active tab. Spy on
+// it to assert the `enabled` wiring below without needing a Tauri runtime.
+const suggestionNotifierSpy = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/use-suggestion-notifier", () => ({
+  useSuggestionNotifier: (opts: unknown) => suggestionNotifierSpy(opts),
 }));
 
 import { Popover } from "./popover";
@@ -521,5 +534,37 @@ describe("Popover — command palette (#32)", () => {
         screen.queryByRole("textbox", { name: /command palette/i }),
       ).toBeNull(),
     );
+  });
+});
+
+describe("Detection-prompt notification tier wiring (#267)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    suggestionNotifierSpy.mockClear();
+  });
+
+  it("mounts useSuggestionNotifier disabled for the default 'Subtle' tier", () => {
+    render(<Popover />);
+    expect(suggestionNotifierSpy).toHaveBeenLastCalledWith({ enabled: false });
+  });
+
+  it("enables useSuggestionNotifier once 'Notification' is selected in Settings", () => {
+    render(<Popover initialView="settings" />);
+    fireEvent.click(screen.getByRole("radio", { name: "Notification" }));
+    expect(suggestionNotifierSpy).toHaveBeenLastCalledWith({ enabled: true });
+  });
+
+  it("stays mounted (and re-evaluates) across a tab switch away from Today", () => {
+    // The whole point of #267: the hook lives at the shell level, not
+    // inside TodayView, so switching tabs must not unmount it.
+    render(<Popover initialView="settings" />);
+    fireEvent.click(screen.getByRole("radio", { name: "Notification" }));
+    const callsOnSettings = suggestionNotifierSpy.mock.calls.length;
+    fireEvent.keyDown(window, { key: "1" });
+    expect(screen.getByText(/today's path/i)).toBeTruthy();
+    expect(suggestionNotifierSpy.mock.calls.length).toBeGreaterThanOrEqual(
+      callsOnSettings,
+    );
+    expect(suggestionNotifierSpy).toHaveBeenLastCalledWith({ enabled: true });
   });
 });
