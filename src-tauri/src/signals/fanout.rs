@@ -34,10 +34,10 @@ pub const POPOVER_LABEL: &str = "popover";
 pub const IDLE_LABEL: &str = "idle";
 
 /// Window label for the detection-suggestion notification overlay (#267).
-/// Shown at the screen's top-right corner, click-through-until-painted
-/// like the idle window, when the "Detection prompts" setting is
-/// `"notification"`. Unlike the idle prompt, this window never steals OS
-/// focus — it's a dismissible proposal, not a forced choice (see
+/// Shown centered on screen, click-through-until-painted like the idle
+/// window, when the "Detection prompts" setting is `"notification"`.
+/// Unlike the idle prompt, this window never steals OS focus — it's a
+/// dismissible proposal, not a forced choice (see
 /// `ipc::notification_window_painted_impl`).
 pub const NOTIFY_LABEL: &str = "notify";
 
@@ -398,39 +398,25 @@ pub(crate) fn enforce_idle_watchdog<R: Runtime>(app: &AppHandle<R>, generation: 
     true
 }
 
-/// Move `win` to the top-right corner of its current monitor. A deliberate
-/// hand-rolled alternative to `tauri_plugin_positioner`'s `Position::TopRight`
-/// (used safely elsewhere in this codebase only via native `.center()`):
-/// the plugin's `calculate_position` does `window.current_monitor()?.unwrap()`
-/// — it panics outright when no monitor is available, which is exactly the
-/// `MockRuntime` test environment this codebase's Rust test suite runs
-/// under (see `show_idle_with_watchdog`'s own note on why it uses the
-/// native `.center()` instead of the plugin for the same reason). This
-/// helper mirrors the plugin's top-right math but fails soft: a missing
-/// monitor/size query just leaves the window wherever it last was, which
-/// only happens under a runtime with no real display.
-fn position_top_right<R: Runtime>(win: &tauri::WebviewWindow<R>) {
-    let Ok(Some(monitor)) = win.current_monitor() else {
-        return;
-    };
-    let Ok(size) = win.outer_size() else {
-        return;
-    };
-    let screen_pos = monitor.position();
-    let screen_size = monitor.size();
-    let x = screen_pos.x + (screen_size.width as i32 - size.width as i32);
-    let y = screen_pos.y;
-    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
-}
-
 /// Present the suggestion-notification window safely and arm its paint
 /// watchdog (#267) — the notify window mirrors the idle window's
 /// click-through-until-painted hardening (#261/#262) since it is the same
 /// kind of foot-gun: a new transparent, always-on-top, undecorated window.
 /// Returns the show generation the watchdog guards, or `None` when app
-/// state is unavailable. Positioned at the screen's top-right corner via
-/// `position_top_right` — see its doc comment for why this isn't the
-/// positioner plugin's `Position::TopRight`/`Position::Tray*`.
+/// state is unavailable.
+///
+/// Positioned via the same native `.center()` `show_idle_with_watchdog`
+/// uses, not `tauri_plugin_positioner`'s `Position::TopRight`/`Position::Tray*`
+/// — that plugin's `calculate_position` does `window.current_monitor()?.unwrap()`,
+/// which panics outright when no monitor/tray rect is available. An earlier
+/// version of this function hand-rolled top-right placement instead, but
+/// `WebviewWindow::current_monitor()` returns `Ok(None)` unconditionally
+/// under `MockRuntime` with no test hook to override it (confirmed by
+/// reading the Tauri source), so *any* branch gated on monitor availability
+/// is structurally unreachable under this codebase's Rust test harness —
+/// there is no way to cover it, no matter how it's written. `.center()`
+/// has no such branch (it's a single opaque native call, already proven by
+/// the idle/about windows), so that's what this window uses too.
 pub(crate) fn show_notify_with_watchdog<R: Runtime>(
     app: &AppHandle<R>,
     win: &tauri::WebviewWindow<R>,
@@ -440,7 +426,7 @@ pub(crate) fn show_notify_with_watchdog<R: Runtime>(
     use tauri::Manager;
 
     let _ = win.set_ignore_cursor_events(true);
-    position_top_right(win);
+    let _ = win.center();
     let _ = win.show();
 
     let state = app.try_state::<crate::AppState>()?;

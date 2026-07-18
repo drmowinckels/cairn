@@ -562,9 +562,9 @@ pub fn run() {
             }
         })
         // Persist + restore the popover's position and size across
-        // launches (#100). The idle window is centered, and the
-        // notification window (#267) is anchored top-right, on every show —
-        // both are excluded from state management.
+        // launches (#100). The idle window and the notification window
+        // (#267) are both centered on every show, so both are excluded
+        // from state management.
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Only geometry — NOT visibility. The default flags

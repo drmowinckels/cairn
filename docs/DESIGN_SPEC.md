@@ -165,7 +165,7 @@ A small list of the next 2–3 calendar items / focus blocks. Each row: time · 
 
 #### h. Suggestion notification window (`.notify-win`, separate window — #267)
 
-The "Notification" detection-prompt tier's presentation surface. Not part of the popover — a dedicated, small, undecorated, always-on-top Tauri window (`?win=notify`, 380×240, transparent, positioned at the screen's top-right corner), shown/hidden by the backend independently of whether the popover is open or which tab is active. Mirrors the idle-prompt window's card chrome and its click-through-until-painted hardening (#261/#262), but is **not** a forced choice:
+The "Notification" detection-prompt tier's presentation surface. Not part of the popover — a dedicated, small, undecorated, always-on-top Tauri window (`?win=notify`, 380×240, transparent, centered on screen — same native `.center()` the idle window uses, not a hand-rolled corner position, since `tauri_plugin_positioner`'s `Position::TopRight`/`Position::Tray*` panics without a monitor/tray rect), shown/hidden by the backend independently of whether the popover is open or which tab is active. Mirrors the idle-prompt window's card chrome and its click-through-until-painted hardening (#261/#262), but is **not** a forced choice:
 
 - No backdrop, no focus trap, no `aria-modal` — a dismissible proposal the user can ignore, marked up the same non-dialog way as `.suggest` (`aria-label` + `aria-live="assertive"`, no `role="dialog"`/`"alertdialog"`).
 - The backend never steals OS focus when showing or painting it (unlike the idle window, which does).

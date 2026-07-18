@@ -245,11 +245,11 @@ export type TextScale = "sm" | "md" | "lg" | "xl";
 /**
  * How insistent auto-detection is (Settings → Accessibility → "Detection
  * prompts"). `"off"` shows nothing; `"subtle"` shows the inline `.suggest`
- * banner in the Today view; `"notification"` shows a real, separate
- * always-on-top overlay window (top-right corner of the screen) instead of
- * an inline banner (#267) — it doesn't depend on the Today tab being
- * mounted, so a suggestion firing while the user is on another tab (or the
- * popover is hidden) is never silently lost.
+ * banner in the Today view; `"notification"` shows a real, separate,
+ * centered, always-on-top overlay window instead of an inline banner
+ * (#267) — it doesn't depend on the Today tab being mounted, so a
+ * suggestion firing while the user is on another tab (or the popover is
+ * hidden) is never silently lost.
  *
  * Renamed from `"modal"` in #267: the old name implied a blocking dialog
  * the tier never actually was (same inline banner, just heavier CSS). See
