@@ -2284,6 +2284,14 @@ pub fn autostart_refusal(enable: bool, exe: &std::path::Path) -> Option<String> 
 /// plist's `Label` key and its filename,
 /// `~/Library/LaunchAgents/{app_name}.plist` — verified against that
 /// crate's source rather than assumed from the bundle identifier.
+///
+/// Kept cross-platform (not `#[cfg(target_os = "macos")]`) along with the
+/// rest of this section so it's compiled and unit-tested on every CI
+/// platform, even though its only production caller
+/// (`autostart_repair::repair_stale_launch_agent`) is macOS-only —
+/// `#[allow(dead_code)]` is scoped to non-macOS targets specifically, so a
+/// genuinely-unused item would still be caught on macOS itself.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const MACOS_LAUNCH_AGENT_LABEL: &str = "Cairn";
 
 /// Conventional install location for the packaged macOS build: Tauri's
@@ -2292,6 +2300,7 @@ pub const MACOS_LAUNCH_AGENT_LABEL: &str = "Cairn";
 /// only as a fallback repoint target when the process currently running
 /// this code is itself a dev build (see [`installed_bundle_candidate`]);
 /// the caller still confirms it exists on disk before trusting it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const MACOS_INSTALLED_BUNDLE_EXE: &str = "/Applications/Cairn.app/Contents/MacOS/cairn";
 
 /// Pick the path a stale LaunchAgent should be repointed at, given the
@@ -2303,6 +2312,7 @@ pub const MACOS_INSTALLED_BUNDLE_EXE: &str = "/Applications/Cairn.app/Contents/M
 /// which is exactly the scenario a stale plist survives from) fall back
 /// to the conventional install location; the caller still checks that
 /// candidate exists on disk before repointing.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn installed_bundle_candidate(current_exe: &std::path::Path) -> std::path::PathBuf {
     if is_dev_executable(current_exe) {
         std::path::PathBuf::from(MACOS_INSTALLED_BUNDLE_EXE)
@@ -2312,6 +2322,7 @@ pub fn installed_bundle_candidate(current_exe: &std::path::Path) -> std::path::P
 }
 
 /// What startup should do about a macOS LaunchAgent plist (#264).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutostartRepairDecision {
     /// No LaunchAgent registered, or the one registered looks healthy.
@@ -2342,6 +2353,7 @@ pub enum AutostartRepairDecision {
 /// only applies when we *have* a verified install to compare against, so
 /// an unfamiliar-but-present, non-dev path isn't cleared on a guess when
 /// we can't tell either way.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn decide_autostart_repair(
     registered: Option<(&std::path::Path, bool)>,
     installed_bundle_exe: Option<&std::path::Path>,
@@ -2367,6 +2379,7 @@ pub fn decide_autostart_repair(
 /// path `auto-launch` bakes in there (see [`MACOS_LAUNCH_AGENT_LABEL`]).
 /// Returns `None` for a missing file, invalid XML, or an unexpected
 /// shape, which [`decide_autostart_repair`] treats as nothing to repair.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn read_launch_agent_program_path(plist_path: &std::path::Path) -> Option<std::path::PathBuf> {
     let value = plist::Value::from_file(plist_path).ok()?;
     let args = value.as_dictionary()?.get("ProgramArguments")?.as_array()?;
@@ -2377,6 +2390,7 @@ pub fn read_launch_agent_program_path(plist_path: &std::path::Path) -> Option<st
 /// Rewrite an on-disk LaunchAgent plist's `ProgramArguments[0]` to
 /// `new_path`, leaving every other key (`Label`, `RunAtLoad`, ...)
 /// exactly as `auto-launch` wrote it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn repoint_launch_agent_program_path(
     plist_path: &std::path::Path,
     new_path: &std::path::Path,
@@ -2440,6 +2454,7 @@ pub async fn dismiss_autostart_repair_notice(state: State<'_, AppState>) -> Resu
 /// can surface `message` once. Called from the macOS-only OS-wiring shim
 /// in `lib.rs`'s `.setup()` — takes a bare pool rather than `AppState`
 /// because it runs before `AppState` is managed.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub async fn set_autostart_repair_notice(
     pool: &sqlx::SqlitePool,
     message: &str,
