@@ -206,7 +206,7 @@ pub struct MatchedSignal {
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleMatch {
     pub rule_id: String,

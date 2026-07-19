@@ -15,13 +15,18 @@ const h = vi.hoisted(() => ({
   suggestion: null as RuleMatchEvent | null,
 }));
 
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: h.suggestion,
-    confirm: h.confirm,
-    dismiss: h.dismiss,
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: h.suggestion,
+      confirm: h.confirm,
+      dismiss: h.dismiss,
+    }),
+  };
+});
 vi.mock("../../lib/use-task-switch-prompt", () => ({
   useTaskSwitchPrompt: () => ({
     active: null,
@@ -123,8 +128,13 @@ async function renderToday({
       onOpenRule={onOpenRule}
     />,
   );
-  await waitFor(() =>
-    expect(screen.getByLabelText(/review inbox/i)).toBeTruthy(),
+  // Generous timeout: this helper does a `vi.resetModules()` +
+  // dynamic-import remount of TodayView (its own React root) on every
+  // call; under full-suite parallel load the default 1000ms can
+  // occasionally be too tight for that to settle (isolated runs are fast).
+  await waitFor(
+    () => expect(screen.getByLabelText(/review inbox/i)).toBeTruthy(),
+    { timeout: 5000 },
   );
   return { ...utils, onOpenRule, invoke };
 }

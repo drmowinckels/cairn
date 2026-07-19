@@ -205,6 +205,60 @@ fn idle_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>)
     ipc::idle_window_painted_impl(&app, &state);
 }
 
+/// Show the suggestion-notification overlay window and forward the match
+/// payload to it (#267). Called by the always-mounted `useSuggestionNotifier`
+/// hook when the "Detection prompts" setting is `"notification"` and a
+/// Suggestive/`Prompt` rule match arrives — the frontend, not the backend,
+/// owns the tier decision (`DetectionPrompts` is a frontend-only preference
+/// the rules engine never sees). Thin shim over the testable
+/// `ipc::show_suggestion_notification_impl`.
+#[tauri::command]
+fn show_suggestion_notification(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    payload: rules::RuleMatch,
+) -> Result<(), String> {
+    ipc::show_suggestion_notification_impl(&app, &state, payload)
+}
+
+/// The most recent suggestion-notification payload, or `None`. The
+/// notification window calls this on mount to cover the cold-start race
+/// where its webview wasn't yet listening when `show_suggestion_notification`
+/// emitted the event (#267, same rationale as `pending_idle`). Thin shim
+/// over the testable `ipc::pending_notification_impl`.
+#[tauri::command]
+async fn pending_notification(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<rules::RuleMatch>, String> {
+    ipc::pending_notification_impl(&state).await
+}
+
+/// Dismiss the suggestion notification: clear the pending state and hide
+/// the notify window. Called after the user confirms or dismisses the
+/// notification (#267, mirrors `dismiss_idle`). Thin shim over the
+/// testable `ipc::dismiss_suggestion_notification_impl`.
+#[tauri::command]
+fn dismiss_suggestion_notification(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    ipc::dismiss_suggestion_notification_impl(&app, &state)
+}
+
+/// The notification window's frontend calls this once its webview has
+/// rendered, confirming the overlay actually painted (#267, mirrors
+/// `idle_window_painted`). Marks the current show painted (cancelling the
+/// watchdog) and makes the window interactive. Deliberately does NOT call
+/// `set_focus()` — unlike the idle prompt's forced choice, a suggestion
+/// notification is a dismissible proposal the user can ignore, and
+/// stealing OS focus from whatever they're doing would be a worse
+/// interruption than the banner it replaces. Thin shim over the testable
+/// `ipc::notification_window_painted_impl`.
+#[tauri::command]
+fn notification_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    ipc::notification_window_painted_impl(&app, &state);
+}
+
 /// Whether launch-at-login is currently registered. Thin OS wiring over the
 /// autostart plugin's manager.
 #[tauri::command]
@@ -419,6 +473,42 @@ pub struct AppState {
     /// rather than leaving an undismissable overlay.
     pub idle_show_gen: AtomicU64,
     pub idle_painted: AtomicBool,
+    /// Most recent suggestion-notification payload, stored so the
+    /// notification window (#267) can fetch it on mount via
+    /// `pending_notification` — covering the cold-start race where the
+    /// window's webview isn't yet listening when
+    /// `show_suggestion_notification` emits the event. Cleared by
+    /// `dismiss_suggestion_notification`. Mirrors `last_idle`.
+    ///
+    /// This field plus the `notify_*` trio below duplicate the shape of
+    /// `last_idle`/`idle_show_gen`/`idle_painted` one-for-one (see
+    /// `signals::fanout`'s `show_idle_with_watchdog`/`show_notify_with_watchdog`
+    /// pair for the same duplication in the show/watchdog functions — kept
+    /// separate deliberately for now since idle and notify diverge in
+    /// positioning, focus behavior, and the notify-only `currently_shown`
+    /// dedup). If a third overlay window is ever added, that's the signal
+    /// to stop duplicating and factor a shared `OverlayWindowState { show_gen,
+    /// painted, currently_shown }` both windows embed instead.
+    pub last_notification: std::sync::Mutex<Option<rules::RuleMatch>>,
+    /// Notification-window paint coordination (#267). Same pattern as
+    /// `idle_show_gen` / `idle_painted`: the window is transparent +
+    /// always-on-top + undecorated, so an unpainted webview would be an
+    /// invisible input trap. Each show bumps `notify_show_gen` and clears
+    /// `notify_painted`; the window is presented click-through until the
+    /// frontend confirms first paint via `notification_window_painted`
+    /// (which sets `notify_painted`). A watchdog hides the window if no
+    /// paint lands before the timeout.
+    pub notify_show_gen: AtomicU64,
+    pub notify_painted: AtomicBool,
+    /// Whether the notify window is currently shown, maintained by
+    /// `show_notify_with_watchdog` / the watchdog hide path /
+    /// `dismiss_suggestion_notification_impl` — NOT read from
+    /// `Window::is_visible()`. A matching rule re-publishes `signal:match`
+    /// on every snapshot tick (~2Hz) while it keeps matching;
+    /// `show_suggestion_notification_impl` checks this flag to skip
+    /// re-arming the show/position/watchdog on every tick (no flicker),
+    /// only refreshing the emitted payload and cold-start stash.
+    pub notify_currently_shown: AtomicBool,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
     /// here on every push from the `browser` plugin's local-IPC listener
     /// (`plugins::browser`); the IPC handler `browser_extension_status`
@@ -480,8 +570,9 @@ pub fn run() {
             }
         })
         // Persist + restore the popover's position and size across
-        // launches (#100). The idle window is centered on demand, so it
-        // is excluded from state management.
+        // launches (#100). The idle window and the notification window
+        // (#267) are both centered on every show, so both are excluded
+        // from state management.
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Only geometry — NOT visibility. The default flags
@@ -491,7 +582,7 @@ pub fn run() {
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION,
                 )
-                .with_denylist(&["idle"])
+                .with_denylist(&["idle", "notify"])
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -546,6 +637,10 @@ pub fn run() {
             ipc::pending_idle,
             ipc::dismiss_idle,
             idle_window_painted,
+            show_suggestion_notification,
+            pending_notification,
+            dismiss_suggestion_notification,
+            notification_window_painted,
             autostart_enabled,
             set_autostart,
             ipc::idle_seconds,
@@ -875,6 +970,10 @@ pub fn run() {
                 last_idle: std::sync::Mutex::new(None),
                 idle_show_gen: AtomicU64::new(0),
                 idle_painted: AtomicBool::new(false),
+                last_notification: std::sync::Mutex::new(None),
+                notify_show_gen: AtomicU64::new(0),
+                notify_painted: AtomicBool::new(false),
+                notify_currently_shown: AtomicBool::new(false),
                 browser_extension: browser_extension_state,
                 auto_backup_lock,
             });

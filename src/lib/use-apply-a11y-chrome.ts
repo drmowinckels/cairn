@@ -1,5 +1,5 @@
 import { useLayoutEffect } from "react";
-import type { A11yPrefs, Theme, ThemePref } from "./types";
+import type { A11yPrefs, DetectionPrompts, Theme, ThemePref } from "./types";
 import { coerceAmbiguity } from "./use-rules";
 
 export const A11Y_STORAGE_KEY = "cairn:a11y-prefs:v1";
@@ -20,6 +20,29 @@ export const A11Y_DEFAULTS: A11yPrefs = {
   detectionPrompts: "subtle",
   ambiguityDefault: "prompt",
 };
+
+const DETECTION_PROMPTS_OPTIONS: readonly DetectionPrompts[] = [
+  "off",
+  "subtle",
+  "notification",
+] as const;
+
+/**
+ * Coerce a persisted `detectionPrompts` value into a valid
+ * `DetectionPrompts`, migrating the pre-#267 `"modal"` tier name to
+ * `"notification"` (the tier now opens a real overlay window instead of a
+ * heavier inline banner — same underlying preference, new name) and
+ * falling back to the safe `"subtle"` default for anything else
+ * unrecognized (a hand-edited/corrupted blob, or a value from a future
+ * version this build doesn't know about).
+ */
+export function coerceDetectionPrompts(raw: unknown): DetectionPrompts {
+  if (raw === "modal") return "notification";
+  return typeof raw === "string" &&
+    DETECTION_PROMPTS_OPTIONS.includes(raw as DetectionPrompts)
+    ? (raw as DetectionPrompts)
+    : "subtle";
+}
 
 function darkSchemeQuery(): MediaQueryList | null {
   if (typeof window === "undefined" || !window.matchMedia) return null;
@@ -49,6 +72,7 @@ export function loadA11yPrefs(): A11yPrefs {
       ...A11Y_DEFAULTS,
       ...parsed,
       ambiguityDefault: coerceAmbiguity(parsed?.ambiguityDefault),
+      detectionPrompts: coerceDetectionPrompts(parsed?.detectionPrompts),
     };
   } catch {
     return A11Y_DEFAULTS;

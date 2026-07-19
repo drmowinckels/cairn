@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Client, IdleResumeEvent, Project, Task } from "./types";
+import type {
+  Client,
+  IdleResumeEvent,
+  Project,
+  RuleMatchEvent,
+  Task,
+} from "./types";
 import { ROUNDING_OFF, type Rounding } from "./rounding";
 import type { TrayMenuModel } from "./tray-menu";
 
@@ -641,6 +647,45 @@ export async function dismissIdle(): Promise<void> {
 export async function idleWindowPainted(): Promise<void> {
   if (!inTauri) return;
   await invoke("idle_window_painted");
+}
+
+/** Show the suggestion-notification overlay window and forward `payload`
+ *  to it (#267). Called by `useSuggestionNotifier` when the "Detection
+ *  prompts" setting is `"notification"` and a Suggestive/`Prompt` rule
+ *  match arrives — the backend never decides this on its own, since
+ *  `DetectionPrompts` is a frontend-only preference. */
+export async function showSuggestionNotification(
+  payload: RuleMatchEvent,
+): Promise<void> {
+  if (!inTauri) return;
+  await invoke("show_suggestion_notification", { payload });
+}
+
+/** The most recent suggestion-notification payload, or `null`. The
+ *  notification window fetches this on mount to cover the cold-start race
+ *  where its webview wasn't yet listening when `showSuggestionNotification`
+ *  emitted the event (#267, mirrors `pendingIdle`). */
+export async function pendingNotification(): Promise<RuleMatchEvent | null> {
+  if (!inTauri) return null;
+  return invoke<RuleMatchEvent | null>("pending_notification");
+}
+
+/** Dismiss the suggestion notification: clears the pending state and hides
+ *  the notify window (#267, mirrors `dismissIdle`). */
+export async function dismissSuggestionNotification(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("dismiss_suggestion_notification");
+}
+
+/** Confirm the notification window's webview has painted (#267). The
+ *  backend shows the notification click-through until this lands, then
+ *  makes it interactive and cancels the paint watchdog — mirrors
+ *  `idleWindowPainted`, but the backend deliberately does not steal OS
+ *  focus for this window (it's a dismissible proposal, not a forced
+ *  choice). */
+export async function notificationWindowPainted(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("notification_window_painted");
 }
 
 /** Whether launch-at-login is currently registered. */

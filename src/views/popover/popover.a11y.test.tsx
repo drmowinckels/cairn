@@ -14,19 +14,24 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
-vi.mock("../../lib/use-suggestion", () => ({
-  useSuggestion: () => ({
-    suggestion: {
-      ruleId: "r1",
-      ruleName: "Cairn dev",
-      confidence: "suggestive" as const,
-      project: "cairn",
-      tags: ["dev"],
-    },
-    confirm: vi.fn(),
-    dismiss: vi.fn(),
-  }),
-}));
+vi.mock("../../lib/use-suggestion", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../lib/use-suggestion")>();
+  return {
+    ...actual,
+    useSuggestion: () => ({
+      suggestion: {
+        ruleId: "r1",
+        ruleName: "Cairn dev",
+        confidence: "suggestive" as const,
+        project: "cairn",
+        tags: ["dev"],
+      },
+      confirm: vi.fn(),
+      dismiss: vi.fn(),
+    }),
+  };
+});
 
 import { Popover } from "./popover";
 import type { View } from "../../lib/types";
