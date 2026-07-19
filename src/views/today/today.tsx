@@ -55,6 +55,7 @@ import {
   type WorkingHours,
 } from "../../lib/use-working-hours";
 import { useWorkingHoursReminder } from "../../lib/use-working-hours-reminder";
+import { useWorkdayReview } from "../../lib/use-workday-review";
 import {
   isSwitchCandidate,
   runningRefOf,
@@ -79,6 +80,7 @@ import { useMinuteClock } from "../../lib/use-minute-clock";
 import { SuggestWhy } from "./suggest-why";
 import { UpcomingList, type UpcomingEvent } from "./upcoming-list";
 import { WorkingHoursReminder } from "./working-hours-reminder";
+import { WorkdayReviewBanner } from "./workday-review-banner";
 import {
   isoToLocal,
   ManualEntryModal,
@@ -164,6 +166,8 @@ interface Props {
   taskSwitch?: TaskSwitchPrefs;
   /** Required-fields-on-stop config (#108). Defaults to off. */
   requiredFields?: RequiredFieldsPrefs;
+  /** "Workday in Review" banner toggle (#190 follow-up). Defaults to off. */
+  workdayReviewEnabled?: boolean;
 }
 
 export function TodayView({
@@ -176,6 +180,7 @@ export function TodayView({
   workingHours = WORKING_HOURS_OFF,
   taskSwitch = TASK_SWITCH_OFF,
   requiredFields = REQUIRED_FIELDS_OFF,
+  workdayReviewEnabled = false,
 }: Props) {
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
@@ -387,6 +392,21 @@ export function TodayView({
   const activityAvailable = activityLog.settings.enabled;
   const effectiveView =
     entriesView === "activity" && !activityAvailable ? "list" : entriesView;
+  // Workday-in-Review banner (#190 follow-up): once working hours end, offer
+  // a pointer to the Activity view when there's unreviewed activity-log data.
+  // Gated on this view's own `activityAvailable` (not a separate instance)
+  // so the banner and the toggle it points at never disagree about whether
+  // the log is on. It only offers — tapping "Review" switches the view, it
+  // never assigns or discards anything on its own.
+  const workdayReview = useWorkdayReview({
+    enabled: workdayReviewEnabled,
+    activityLogEnabled: activityAvailable,
+    workingHours,
+  });
+  const onWorkdayReview = useCallback(() => {
+    workdayReview.acknowledge();
+    setEntriesView("activity");
+  }, [workdayReview, setEntriesView]);
   const announceMsg = useAnnounce();
   const prevRunningIdRef = useRef<string | null>(timer.running?.id ?? null);
 
@@ -898,6 +918,20 @@ export function TodayView({
           announce={announce}
           onStart={onReminderStart}
           onDismiss={reminder.dismiss}
+        />
+      )}
+
+      {/* Yields to the working-hours reminder above rather than stacking —
+          only relevant for the brief window where both hooks' independent
+          polls could momentarily agree, since their trigger windows are
+          otherwise adjacent, not overlapping (both anchored on the same
+          `workingHours.endMinute`). */}
+      {isToday && workdayReview.active && !suggestion && !reminder.active && (
+        <WorkdayReviewBanner
+          style={detectionPrompts === "modal" ? "modal" : "subtle"}
+          announce={announce}
+          onReview={onWorkdayReview}
+          onDismiss={workdayReview.dismiss}
         />
       )}
 

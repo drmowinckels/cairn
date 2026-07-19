@@ -12,6 +12,7 @@ import type { UseRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs
 import type { UseUpdatePrefs } from "../../lib/use-update-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type { UseActivityLog } from "../../lib/use-activity-log";
+import type { UseWorkdayReviewPrefs } from "../../lib/use-workday-review-prefs";
 import { ActivityLogCard } from "./activity-log-card";
 import {
   ROUNDING_INTERVALS,
@@ -57,6 +58,12 @@ interface Props {
    * without it; when absent the Activity log section is hidden.
    */
   activityLog?: UseActivityLog;
+  /**
+   * "Workday in Review" banner preference (#190 follow-up). Optional so
+   * tests can render without it; when absent the row is hidden. Only ever
+   * shown inside the Activity log section (nothing to review otherwise).
+   */
+  workdayReview?: UseWorkdayReviewPrefs;
   /**
    * Re-arm the first-run onboarding overlay (issue #31). Settings
    * shells the action as "Run onboarding again"; the parent popover
@@ -188,6 +195,7 @@ export function SettingsView({
   a11y,
   capture,
   activityLog,
+  workdayReview,
   onRerunOnboarding,
   scrollToSection = null,
   scrollNonce = 0,
@@ -558,7 +566,12 @@ export function SettingsView({
         </section>
       )}
 
-      {activityLog && <ActivityLogCard activityLog={activityLog} />}
+      {activityLog && (
+        <ActivityLogCard
+          activityLog={activityLog}
+          workdayReview={workdayReview}
+        />
+      )}
 
       <section
         className="settings-block"

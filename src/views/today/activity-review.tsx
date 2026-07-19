@@ -20,7 +20,6 @@ interface Props {
 export function ActivityReview({ date, onCreated }: Props) {
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [added, setAdded] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,8 +48,11 @@ export function ActivityReview({ date, onCreated }: Props) {
           endedAt: row.endedAt,
           description: row.titleHint ?? "",
           source: "activity_log",
+          activityRowId: row.id,
         });
-        setAdded((prev) => new Set(prev).add(row.id));
+        setRows((prev) =>
+          prev.map((r) => (r.id === row.id ? { ...r, hasEntry: true } : r)),
+        );
         await onCreated();
       } catch (e) {
         setError(String(e));
@@ -88,7 +90,7 @@ export function ActivityReview({ date, onCreated }: Props) {
             const label = r.titleHint
               ? `${r.appName} · ${r.titleHint}`
               : r.appName;
-            const isAdded = added.has(r.id);
+            const isAdded = r.hasEntry;
             return (
               <li className="act-row" key={r.id}>
                 <span className="act-time">{fmtClockFromIso(r.startedAt)}</span>

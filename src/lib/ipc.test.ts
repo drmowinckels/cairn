@@ -146,6 +146,21 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(await listActivityLog("2026-06-16")).toEqual([]);
   });
 
+  it("countUncategorizedActivity forwards the date and returns the count", async () => {
+    invokeMock.mockResolvedValue(3);
+    const { countUncategorizedActivity } = await import("./ipc");
+    expect(await countUncategorizedActivity("2026-06-16")).toBe(3);
+    expect(invokeMock).toHaveBeenCalledWith("count_uncategorized_activity", {
+      date: "2026-06-16",
+    });
+  });
+
+  it("countUncategorizedActivity coerces a null response to 0", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { countUncategorizedActivity } = await import("./ipc");
+    expect(await countUncategorizedActivity("2026-06-16")).toBe(0);
+  });
+
   it("exportActivityLogCsv forwards the destination and returns the path", async () => {
     invokeMock.mockResolvedValue("/tmp/cairn-activity.csv");
     const { exportActivityLogCsv } = await import("./ipc");
@@ -472,12 +487,14 @@ describe("ipc helpers (outside Tauri)", () => {
       setActivityLogSettings,
       deleteActivityLog,
       listActivityLog,
+      countUncategorizedActivity,
       ACTIVITY_LOG_DEFAULTS,
     } = await import("./ipc");
     expect(await getActivityLogSettings()).toEqual(ACTIVITY_LOG_DEFAULTS);
     await setActivityLogSettings({ enabled: true, retentionDays: 1 });
     await deleteActivityLog();
     expect(await listActivityLog("2026-06-16")).toEqual([]);
+    expect(await countUncategorizedActivity("2026-06-16")).toBe(0);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

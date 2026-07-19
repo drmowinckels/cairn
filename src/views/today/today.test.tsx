@@ -33,6 +33,31 @@ vi.mock("../../lib/use-suggestion", () => ({
   }),
 }));
 
+// Deterministic control over the Workday-in-Review banner (#190 follow-up)
+// without wiring `count_uncategorized_activity` through every other test's
+// invoke mock — mirrors the use-suggestion override above.
+let workdayReviewActive = false;
+const workdayReviewDismiss = vi.fn();
+const workdayReviewAcknowledge = vi.fn();
+vi.mock("../../lib/use-workday-review", () => ({
+  useWorkdayReview: () => ({
+    active: workdayReviewActive,
+    dismiss: workdayReviewDismiss,
+    acknowledge: workdayReviewAcknowledge,
+  }),
+}));
+
+// Deterministic control over the #99 working-hours reminder, only needed to
+// exercise the two banners' mutual-exclusion guard — off in every other test.
+let workingHoursReminderActive = false;
+vi.mock("../../lib/use-working-hours-reminder", () => ({
+  useWorkingHoursReminder: () => ({
+    active: workingHoursReminderActive,
+    dismiss: vi.fn(),
+    acknowledge: vi.fn(),
+  }),
+}));
+
 import { TodayView } from "./index";
 
 interface RenderArgs {
@@ -59,6 +84,8 @@ function renderToday({
 afterEach(() => {
   vi.clearAllMocks();
   suggestionOverride = SUGGESTION_FIXTURE;
+  workdayReviewActive = false;
+  workingHoursReminderActive = false;
   window.localStorage.clear();
 });
 
@@ -672,6 +699,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       appName: "Zoom",
       titleHint: "Standup",
       source: "window",
+      hasEntry: false,
     };
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "current_running") return null;
@@ -705,6 +733,115 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       await screen.findByRole("button", { name: /activity view/i }),
     );
     expect(await screen.findByText("Standup")).toBeTruthy();
+  });
+
+  it("Workday in Review banner's Review action acknowledges and switches to the Activity view (#190 follow-up)", async () => {
+    workdayReviewActive = true;
+    suggestionOverride = null; // the banner is suppressed while a suggestion is showing
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [];
+      if (cmd === "list_projects") return [];
+      if (cmd === "get_activity_log_settings")
+        return { enabled: true, retentionDays: 7 };
+      if (cmd === "list_activity_log") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^review$/i }));
+    expect(workdayReviewAcknowledge).toHaveBeenCalledTimes(1);
+    expect(await screen.findByLabelText(/activity review/i)).toBeTruthy();
+  });
+
+  it("Workday in Review banner is hidden while a suggestion is showing", async () => {
+    workdayReviewActive = true;
+    // suggestionOverride keeps its truthy default — the two banners
+    // shouldn't stack.
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [];
+      if (cmd === "list_projects") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    await screen.findByText(/cairn dev/i); // suggestion banner is up
+    expect(screen.queryByLabelText(/workday review reminder/i)).toBeNull();
+  });
+
+  it("Workday in Review banner is hidden while viewing a past day", async () => {
+    workdayReviewActive = true;
+    suggestionOverride = null;
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [];
+      if (cmd === "list_projects") return [];
+      if (cmd === "get_activity_log_settings")
+        return { enabled: true, retentionDays: 7 };
+      if (cmd === "list_activity_log") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    // Visible on today...
+    await screen.findByRole("region", { name: /workday review reminder/i });
+    // ...gone once the user steps back to a past day.
+    fireEvent.click(screen.getByRole("button", { name: /previous day/i }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: /workday review reminder/i }),
+      ).toBeNull(),
+    );
+  });
+
+  it("Workday in Review banner yields to the working-hours reminder rather than stacking", async () => {
+    workdayReviewActive = true;
+    workingHoursReminderActive = true;
+    suggestionOverride = null;
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [];
+      if (cmd === "list_projects") return [];
+      if (cmd === "get_activity_log_settings")
+        return { enabled: true, retentionDays: 7 };
+      if (cmd === "list_activity_log") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    await screen.findByRole("region", { name: /start tracking reminder/i });
+    expect(
+      screen.queryByRole("region", { name: /workday review reminder/i }),
+    ).toBeNull();
   });
 
   it("timeline legend pairs each project dot with its name (#30 a11y dual-signal)", async () => {

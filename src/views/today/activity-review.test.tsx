@@ -23,6 +23,7 @@ const SPAN = {
   appName: "Zoom",
   titleHint: "Standup",
   source: "window",
+  hasEntry: false,
 };
 
 describe("ActivityReview (#190)", () => {
@@ -62,6 +63,7 @@ describe("ActivityReview (#190)", () => {
       endedAt: SPAN.endedAt,
       description: "Standup",
       source: "activity_log",
+      activityRowId: SPAN.id,
     });
     await waitFor(() => expect(onCreated).toHaveBeenCalled());
     // The span's button flips to "Added" + disabled, so a second click can't
@@ -70,6 +72,14 @@ describe("ActivityReview (#190)", () => {
     expect((btn as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(btn);
     expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a span already linked to an entry (hasEntry) renders Added on load, not after a click", async () => {
+    listMock.mockResolvedValue([{ ...SPAN, hasEntry: true }]);
+    render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    const btn = await screen.findByRole("button", { name: /already added/i });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("renders whole-minute Time-by-app totals for a non-minute-aligned span", async () => {

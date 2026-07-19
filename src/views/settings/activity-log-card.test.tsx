@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ActivityLogCard } from "./activity-log-card";
 import type { UseActivityLog } from "../../lib/use-activity-log";
+import type { UseWorkdayReviewPrefs } from "../../lib/use-workday-review-prefs";
 
 function stub(over: Partial<UseActivityLog> = {}): UseActivityLog {
   return {
@@ -11,6 +12,16 @@ function stub(over: Partial<UseActivityLog> = {}): UseActivityLog {
     setRetentionDays: vi.fn().mockResolvedValue(undefined),
     deleteAll: vi.fn().mockResolvedValue(undefined),
     exportToFile: vi.fn().mockResolvedValue(undefined),
+    ...over,
+  };
+}
+
+function workdayStub(
+  over: Partial<UseWorkdayReviewPrefs> = {},
+): UseWorkdayReviewPrefs {
+  return {
+    enabled: false,
+    setEnabled: vi.fn(),
     ...over,
   };
 }
@@ -92,5 +103,41 @@ describe("ActivityLogCard (#190)", () => {
   it("renders an error banner when the hook reports one", () => {
     render(<ActivityLogCard activityLog={stub({ error: "db locked" })} />);
     expect(screen.getByRole("alert").textContent).toContain("db locked");
+  });
+
+  it("hides the Workday in review row when the log is off, even if the prop is passed", () => {
+    render(
+      <ActivityLogCard activityLog={stub()} workdayReview={workdayStub()} />,
+    );
+    expect(
+      screen.queryByRole("switch", { name: /workday in review/i }),
+    ).toBeNull();
+  });
+
+  it("hides the Workday in review row when the prop is absent, even while the log is on", () => {
+    render(
+      <ActivityLogCard
+        activityLog={stub({ settings: { enabled: true, retentionDays: 7 } })}
+      />,
+    );
+    expect(
+      screen.queryByRole("switch", { name: /workday in review/i }),
+    ).toBeNull();
+  });
+
+  it("shows and toggles Workday in review once the log is on", () => {
+    const workdayReview = workdayStub();
+    render(
+      <ActivityLogCard
+        activityLog={stub({ settings: { enabled: true, retentionDays: 7 } })}
+        workdayReview={workdayReview}
+      />,
+    );
+    const toggle = screen.getByRole("switch", {
+      name: /workday in review/i,
+    }) as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    expect(workdayReview.setEnabled).toHaveBeenCalledWith(true);
   });
 });

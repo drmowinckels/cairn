@@ -14,6 +14,7 @@ import { usePopoverSize } from "../../lib/use-popover-size";
 import { useTrayDetail } from "../../lib/use-tray-detail";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { useWorkingHours } from "../../lib/use-working-hours";
+import { useWorkdayReviewPrefs } from "../../lib/use-workday-review-prefs";
 import { useTaskSwitchPrefs } from "../../lib/use-task-switch-prefs";
 import { useRequiredFieldsPrefs } from "../../lib/use-required-fields-prefs";
 import { useUpdatePrefs } from "../../lib/use-update-prefs";
@@ -101,6 +102,7 @@ function PopoverShell({
   const trayDetail = useTrayDetail();
   const rounding = useRoundingPrefs();
   const workingHours = useWorkingHours();
+  const workdayReview = useWorkdayReviewPrefs();
   const taskSwitch = useTaskSwitchPrefs();
   const requiredFields = useRequiredFieldsPrefs();
   const updatePrefs = useUpdatePrefs();
@@ -436,6 +438,7 @@ function PopoverShell({
               workingHours={workingHours.workingHours}
               taskSwitch={taskSwitch.prefs}
               requiredFields={requiredFields.prefs}
+              workdayReviewEnabled={workdayReview.enabled}
             />
           </ErrorBoundary>
         )}
@@ -467,6 +470,7 @@ function PopoverShell({
               a11y={a11y}
               capture={capture}
               activityLog={activityLog}
+              workdayReview={workdayReview}
               scrollToSection={settingsSection}
               popoverSize={popoverSize}
               trayDetail={trayDetail}

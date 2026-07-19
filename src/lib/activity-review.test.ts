@@ -10,6 +10,7 @@ function row(over: Partial<ActivityRow> = {}): ActivityRow {
     appName: "Zoom",
     titleHint: null,
     source: "window",
+    hasEntry: false,
     ...over,
   };
 }

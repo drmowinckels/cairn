@@ -28,6 +28,10 @@ pub struct ActivityRow {
     pub app_name: String,
     pub title_hint: Option<String>,
     pub source: String,
+    /// True when an `entries` row already links back to this span
+    /// (`entries.activity_row_id`) — the "Add" in the review UI already ran
+    /// for it. Computed, not stored.
+    pub has_entry: bool,
 }
 
 /// User-controlled activity-log settings, stored on the singleton app_state
@@ -122,10 +126,11 @@ pub async fn list_in_range(
     end: &str,
 ) -> Result<Vec<ActivityRow>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, started_at, ended_at, app_name, title_hint, source \
-           FROM activity_log \
-          WHERE started_at >= ?1 AND started_at < ?2 \
-          ORDER BY started_at ASC",
+        "SELECT a.id, a.started_at, a.ended_at, a.app_name, a.title_hint, a.source, \
+                EXISTS(SELECT 1 FROM entries e WHERE e.activity_row_id = a.id) AS has_entry \
+           FROM activity_log a \
+          WHERE a.started_at >= ?1 AND a.started_at < ?2 \
+          ORDER BY a.started_at ASC",
     )
     .bind(start)
     .bind(end)
@@ -140,8 +145,29 @@ pub async fn list_in_range(
             app_name: r.get("app_name"),
             title_hint: r.get("title_hint"),
             source: r.get("source"),
+            has_entry: r.get::<i64, _>("has_entry") != 0,
         })
         .collect())
+}
+
+/// Count of spans in `[start, end)` with no linked `entries` row yet — the
+/// cheap check the "Workday in Review" banner trigger polls, so it doesn't
+/// need to pull every row just to know whether anything's left to review.
+pub async fn count_uncategorized_in_range(
+    pool: &SqlitePool,
+    start: &str,
+    end: &str,
+) -> Result<i64, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT COUNT(*) AS n FROM activity_log a \
+          WHERE a.started_at >= ?1 AND a.started_at < ?2 \
+            AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.activity_row_id = a.id)",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.get::<i64, _>("n"))
 }
 
 /// Hard-delete every row (the "Delete activity log now" action). Returns the
@@ -345,6 +371,85 @@ mod tests {
             rows.iter().map(|r| r.app_name.as_str()).collect::<Vec<_>>(),
             ["Zoom", "Code"], // oldest first; the previous day is excluded
         );
+    }
+
+    /// Links `entry_id`'s `activity_row_id` to `row_id` via a minimal raw
+    /// `entries` insert — mirrors the `createEntry` call the "Add" button
+    /// makes, without pulling in the whole `ipc` module.
+    async fn link_entry(pool: &SqlitePool, entry_id: &str, row_id: i64) {
+        sqlx::query(
+            "INSERT INTO entries \
+                (id, project_id, task_id, description, started_at, ended_at, source, activity_row_id, created_at, updated_at) \
+             VALUES (?1, NULL, NULL, '', '2026-06-16T09:00:00+00:00', '2026-06-16T09:05:00+00:00', 'activity_log', ?2, '2026-06-16T09:05:00+00:00', '2026-06-16T09:05:00+00:00')",
+        )
+        .bind(entry_id)
+        .bind(row_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_in_range_marks_has_entry_only_for_linked_spans() {
+        let (_dir, db) = test_db().await;
+        insert(
+            &db.pool,
+            "2026-06-16T09:00:00+00:00",
+            "2026-06-16T09:05:00+00:00",
+            "Code",
+            None,
+            "window",
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        insert(
+            &db.pool,
+            "2026-06-16T10:00:00+00:00",
+            "2026-06-16T10:05:00+00:00",
+            "Zoom",
+            None,
+            "window",
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        link_entry(&db.pool, "e-linked", 1).await;
+
+        let rows = list_in_range(
+            &db.pool,
+            "2026-06-16T00:00:00+00:00",
+            "2026-06-17T00:00:00+00:00",
+        )
+        .await
+        .unwrap();
+        assert!(rows.iter().find(|r| r.id == 1).unwrap().has_entry);
+        assert!(!rows.iter().find(|r| r.id == 2).unwrap().has_entry);
+    }
+
+    #[tokio::test]
+    async fn count_uncategorized_in_range_excludes_linked_spans_and_out_of_window_ones() {
+        let (_dir, db) = test_db().await;
+        for start in [
+            "2026-06-16T09:00:00+00:00",
+            "2026-06-16T10:00:00+00:00",
+            "2026-06-15T23:00:00+00:00", // previous day, out of window
+        ] {
+            insert(&db.pool, start, start, "Code", None, "window", Utc::now())
+                .await
+                .unwrap();
+        }
+        link_entry(&db.pool, "e-linked", 1).await;
+
+        let n = count_uncategorized_in_range(
+            &db.pool,
+            "2026-06-16T00:00:00+00:00",
+            "2026-06-17T00:00:00+00:00",
+        )
+        .await
+        .unwrap();
+        // Row 1 is linked, row 3 is outside the window — only row 2 counts.
+        assert_eq!(n, 1);
     }
 
     #[tokio::test]
