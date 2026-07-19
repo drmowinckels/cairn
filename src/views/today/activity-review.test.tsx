@@ -49,13 +49,16 @@ describe("ActivityReview (#190)", () => {
     expect(await screen.findByText(/no activity recorded/i)).toBeTruthy();
   });
 
-  it("Add turns a span into a time entry and refreshes", async () => {
-    listMock.mockResolvedValue([SPAN]);
+  it("Add turns a span into a time entry, refreshes, and leaves other spans untouched", async () => {
+    const OTHER_SPAN = { ...SPAN, id: 2, appName: "Code", titleHint: null };
+    listMock.mockResolvedValue([SPAN, OTHER_SPAN]);
     createMock.mockResolvedValue({ id: "e1" });
     const onCreated = vi.fn().mockResolvedValue(undefined);
     render(<ActivityReview date="2026-06-16" onCreated={onCreated} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /add a time entry/i }),
+      await screen.findByRole("button", {
+        name: /add a time entry from zoom/i,
+      }),
     );
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
     expect(createMock.mock.calls[0][0]).toEqual({
@@ -72,6 +75,10 @@ describe("ActivityReview (#190)", () => {
     expect((btn as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(btn);
     expect(createMock).toHaveBeenCalledTimes(1);
+    // The other span is untouched — only the added row's state flips.
+    expect(
+      screen.getByRole("button", { name: /add a time entry from code/i }),
+    ).toBeTruthy();
   });
 
   it("a span already linked to an entry (hasEntry) renders Added on load, not after a click", async () => {

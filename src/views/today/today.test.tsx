@@ -844,6 +844,35 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     ).toBeNull();
   });
 
+  it("Workday in Review banner is an assertive live region (not a dialog) when detectionPrompts=modal", async () => {
+    workdayReviewActive = true;
+    suggestionOverride = null;
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [];
+      if (cmd === "list_projects") return [];
+      if (cmd === "get_activity_log_settings")
+        return { enabled: true, retentionDays: 7 };
+      if (cmd === "list_activity_log") return [];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+        detectionPrompts="modal"
+      />,
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const region = await screen.findByRole("region", {
+      name: /workday review reminder/i,
+    });
+    expect(region.getAttribute("aria-live")).toBe("assertive");
+  });
+
   it("timeline legend pairs each project dot with its name (#30 a11y dual-signal)", async () => {
     // Color is not the only signal: every dot in the legend must be
     // accompanied by the project's name so a grayscale render still
