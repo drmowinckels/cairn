@@ -4,6 +4,20 @@ All notable changes to Cairn are documented here. The release pipeline
 (`.github/workflows/release.yml`) auto-extracts the topmost `##` section
 as the GitHub Release body, so keep the most recent version at the top.
 
+## Unreleased
+
+### Fixed
+
+- `[autostart]` Startup now detects and repairs a stale macOS
+  launch-at-login LaunchAgent left over from before #263's dev-build
+  guard existed — one still pointing at a removed `target/debug`
+  binary, or at a relocated/uninstalled bundle. It's repointed at the
+  installed app when one is found, or cleared otherwise, with a
+  one-time notice in Settings → Integrations explaining what happened
+  (#264). Scoped to macOS for this fix; Windows' startup registry key
+  and Linux's `.desktop` autostart entry are the same class of bug,
+  tracked as separate follow-up work (#270).
+
 ## v0.0.1-beta
 
 First public beta. Local-first time tracking with passive auto-detection.

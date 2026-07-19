@@ -69,6 +69,13 @@ getrandom = "0.2"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 dirs = "5"
 async-trait = "0.1"
+# Parses/rewrites macOS LaunchAgent plists for the stale-autostart repair
+# (#264). Not target-gated: the pure parse/rewrite helpers in `ipc.rs` are
+# unit-tested against tempdir fixtures on every platform (only the real
+# `~/Library/LaunchAgents` + `launchctl` wiring in `lib.rs` is macOS-only).
+# Already resolved transitively via `tauri` itself, so this adds no new
+# crate to the dependency graph.
+plist = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

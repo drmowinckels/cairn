@@ -2427,6 +2427,218 @@ pub fn autostart_refusal(enable: bool, exe: &std::path::Path) -> Option<String> 
     }
 }
 
+// ----------------------------------------------------------------------
+// Stale autostart LaunchAgent detection + repair (#264, follow-up to
+// #261/#263).
+//
+// `autostart_refusal` above stops *new* dev-build registrations going
+// forward, but a user who enabled launch-at-login from a dev build
+// before that fix existed can still have a LaunchAgent plist baked with
+// a `target/{debug,release}` path — or one that's since been relocated
+// or uninstalled. Startup (the macOS-only step in `lib.rs`'s `.setup()`)
+// detects that case and either repoints the plist at the installed
+// bundle, or clears it when there's no known-good install to repoint at
+// — see `decide_autostart_repair`. Scoped to macOS only for this PR;
+// Windows' startup registry key and Linux's `.desktop` autostart entry
+// are the same class of bug but tracked as separate follow-up work
+// (#270), not silently dropped.
+// ----------------------------------------------------------------------
+
+/// Where `tauri-plugin-autostart` registers Cairn's macOS LaunchAgent.
+/// Cairn initializes the plugin via `tauri_plugin_autostart::init(
+/// MacosLauncher::LaunchAgent, None)` in `lib.rs` without ever using its
+/// `Builder::app_name` override, so the login item's app name defaults
+/// to `app.package_info().name` — `tauri.conf.json`'s `productName`,
+/// "Cairn". The plugin's `auto-launch` backend (pinned at 2.5.1 / 0.5.0
+/// respectively in `Cargo.lock`) uses that same string as both the
+/// plist's `Label` key and its filename,
+/// `~/Library/LaunchAgents/{app_name}.plist` — verified against that
+/// crate's source rather than assumed from the bundle identifier.
+///
+/// Kept cross-platform (not `#[cfg(target_os = "macos")]`) along with the
+/// rest of this section so it's compiled and unit-tested on every CI
+/// platform, even though its only production caller
+/// (`autostart_repair::repair_stale_launch_agent`) is macOS-only —
+/// `#[allow(dead_code)]` is scoped to non-macOS targets specifically, so a
+/// genuinely-unused item would still be caught on macOS itself.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const MACOS_LAUNCH_AGENT_LABEL: &str = "Cairn";
+
+/// Conventional install location for the packaged macOS build: Tauri's
+/// bundler names the `.app` after `productName` ("Cairn") with the
+/// executable at `Contents/MacOS/<cargo package name>` ("cairn"). Used
+/// only as a fallback repoint target when the process currently running
+/// this code is itself a dev build (see [`installed_bundle_candidate`]);
+/// the caller still confirms it exists on disk before trusting it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const MACOS_INSTALLED_BUNDLE_EXE: &str = "/Applications/Cairn.app/Contents/MacOS/cairn";
+
+/// Pick the path a stale LaunchAgent should be repointed at, given the
+/// executable currently running this code. If it's already a properly
+/// installed build (not a dev/`target` build — reuses
+/// [`is_dev_executable`]), its own path is definitionally the freshest
+/// known-good location, so use it directly rather than guessing at an
+/// install path. Otherwise (we're running as a dev build right now,
+/// which is exactly the scenario a stale plist survives from) fall back
+/// to the conventional install location; the caller still checks that
+/// candidate exists on disk before repointing.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn installed_bundle_candidate(current_exe: &std::path::Path) -> std::path::PathBuf {
+    if is_dev_executable(current_exe) {
+        std::path::PathBuf::from(MACOS_INSTALLED_BUNDLE_EXE)
+    } else {
+        current_exe.to_path_buf()
+    }
+}
+
+/// What startup should do about a macOS LaunchAgent plist (#264).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AutostartRepairDecision {
+    /// No LaunchAgent registered, or the one registered looks healthy.
+    NoAction,
+    /// Rewrite `ProgramArguments[0]` to point at this installed bundle.
+    Repoint(std::path::PathBuf),
+    /// No known-good install to repoint at — unload and remove the plist.
+    Clear,
+}
+
+/// Decide what to do with a possibly-stale LaunchAgent (#264).
+///
+/// - `registered` — the currently-registered agent, as `(path, exists)`
+///   where `path` is the first `ProgramArguments` entry (see
+///   [`read_launch_agent_program_path`]) and `exists` is whether that path
+///   still exists on disk — coupled in one param (rather than two separate
+///   ones) so a caller can't pass a path without saying whether it exists.
+///   `None` means there's no plist, or one exists but couldn't be parsed;
+///   either way we leave it alone rather than guess at an agent we don't
+///   understand.
+/// - `installed_bundle_exe` — the currently-known-good install path (see
+///   [`installed_bundle_candidate`]), if one was confirmed to exist.
+///
+/// A registered path is stale if it's a dev/`target` build (#261's guard
+/// only stops *new* registrations — this catches ones baked before that
+/// fix shipped), if the file it names no longer exists, or if it simply
+/// doesn't match the install we can currently verify. That last check
+/// only applies when we *have* a verified install to compare against, so
+/// an unfamiliar-but-present, non-dev path isn't cleared on a guess when
+/// we can't tell either way.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn decide_autostart_repair(
+    registered: Option<(&std::path::Path, bool)>,
+    installed_bundle_exe: Option<&std::path::Path>,
+) -> AutostartRepairDecision {
+    let Some((path, exists)) = registered else {
+        return AutostartRepairDecision::NoAction;
+    };
+
+    let mismatched_known_install = installed_bundle_exe.is_some_and(|installed| installed != path);
+    let stale = is_dev_executable(path) || !exists || mismatched_known_install;
+
+    if !stale {
+        return AutostartRepairDecision::NoAction;
+    }
+
+    match installed_bundle_exe {
+        Some(installed) => AutostartRepairDecision::Repoint(installed.to_path_buf()),
+        None => AutostartRepairDecision::Clear,
+    }
+}
+
+/// Parse a LaunchAgent plist's `ProgramArguments[0]` — the executable
+/// path `auto-launch` bakes in there (see [`MACOS_LAUNCH_AGENT_LABEL`]).
+/// Returns `None` for a missing file, invalid XML, or an unexpected
+/// shape, which [`decide_autostart_repair`] treats as nothing to repair.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn read_launch_agent_program_path(plist_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let value = plist::Value::from_file(plist_path).ok()?;
+    let args = value.as_dictionary()?.get("ProgramArguments")?.as_array()?;
+    let first = args.first()?.as_string()?;
+    Some(std::path::PathBuf::from(first))
+}
+
+/// Rewrite an on-disk LaunchAgent plist's `ProgramArguments[0]` to
+/// `new_path`, leaving every other key (`Label`, `RunAtLoad`, ...)
+/// exactly as `auto-launch` wrote it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn repoint_launch_agent_program_path(
+    plist_path: &std::path::Path,
+    new_path: &std::path::Path,
+) -> Result<(), String> {
+    let mut value = plist::Value::from_file(plist_path).map_err(err)?;
+    let args = value
+        .as_dictionary_mut()
+        .and_then(|d| d.get_mut("ProgramArguments"))
+        .and_then(|v| v.as_array_mut())
+        .ok_or_else(|| "plist has no ProgramArguments array".to_string())?;
+    let new_value = plist::Value::String(new_path.display().to_string());
+    if args.is_empty() {
+        args.push(new_value);
+    } else {
+        args[0] = new_value;
+    }
+    value.to_file_xml(plist_path).map_err(err)
+}
+
+/// One-time notice for a stale LaunchAgent that startup detected and
+/// repaired (#264) — persisted in `app_state.autostart_repair_notice` so
+/// it survives across restarts until dismissed in Settings. `None` means
+/// nothing to show (nothing has ever been repaired, or it was dismissed).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutostartRepairNotice {
+    pub message: Option<String>,
+}
+
+/// Read the pending autostart-repair notice, if any. Plain (non-command)
+/// function tested directly; the `#[tauri::command]` shim is in the
+/// codecov-ignored `lib.rs` — a bare `pub async fn` here avoids the
+/// macro-generated IPC wrapper's coverage region (attributed back to the
+/// `#[tauri::command]` line, and only reachable through a real Tauri IPC
+/// round-trip that no unit test in this file drives) from counting as an
+/// uncoverable "missed" line against this function.
+pub async fn get_autostart_repair_notice_impl(
+    state: State<'_, AppState>,
+) -> Result<AutostartRepairNotice, String> {
+    let row = sqlx::query("SELECT autostart_repair_notice FROM app_state WHERE singleton = 1")
+        .fetch_optional(&state.db.pool)
+        .await
+        .map_err(err)?;
+    let message = row.and_then(|r| r.get::<Option<String>, _>("autostart_repair_notice"));
+    Ok(AutostartRepairNotice { message })
+}
+
+/// Dismiss the autostart-repair notice. It won't reappear unless a
+/// future startup repairs another stale agent. The `#[tauri::command]`
+/// shim is in the codecov-ignored `lib.rs` (see
+/// [`get_autostart_repair_notice_impl`] for why).
+pub async fn dismiss_autostart_repair_notice_impl(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    sqlx::query("UPDATE app_state SET autostart_repair_notice = NULL WHERE singleton = 1")
+        .execute(&state.db.pool)
+        .await
+        .map_err(err)?;
+    Ok(())
+}
+
+/// Record that startup repaired a stale LaunchAgent (#264) so Settings
+/// can surface `message` once. Called from the macOS-only OS-wiring shim
+/// in `lib.rs`'s `.setup()` — takes a bare pool rather than `AppState`
+/// because it runs before `AppState` is managed.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub async fn set_autostart_repair_notice(
+    pool: &sqlx::SqlitePool,
+    message: &str,
+) -> Result<(), String> {
+    sqlx::query("UPDATE app_state SET autostart_repair_notice = ?1 WHERE singleton = 1")
+        .bind(message)
+        .execute(pool)
+        .await
+        .map_err(err)?;
+    Ok(())
+}
+
 /// Seconds since the last user input, as last polled by the idle source, or
 /// `None` if the host can't report idle (permission denied / unsupported).
 ///
@@ -9032,5 +9244,319 @@ mod budget_tests {
         assert!(autostart_refusal(false, dev).is_none());
         // A packaged build registers normally.
         assert!(autostart_refusal(true, installed).is_none());
+    }
+
+    // ---- #264: stale-autostart LaunchAgent repair ----
+
+    #[test]
+    fn installed_bundle_candidate_prefers_a_non_dev_running_exe() {
+        use std::path::Path;
+        let installed = Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        assert_eq!(installed_bundle_candidate(installed), installed);
+    }
+
+    #[test]
+    fn installed_bundle_candidate_falls_back_for_a_dev_running_exe() {
+        use std::path::Path;
+        let dev = Path::new("/proj/target/debug/cairn");
+        assert_eq!(
+            installed_bundle_candidate(dev),
+            std::path::PathBuf::from(MACOS_INSTALLED_BUNDLE_EXE)
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_no_plist_is_no_action() {
+        assert_eq!(
+            decide_autostart_repair(None, None),
+            AutostartRepairDecision::NoAction
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_healthy_match_is_no_action() {
+        use std::path::Path;
+        let installed = Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        assert_eq!(
+            decide_autostart_repair(Some((installed, true)), Some(installed)),
+            AutostartRepairDecision::NoAction
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_unverifiable_but_present_is_left_alone() {
+        use std::path::Path;
+        // Not a dev path, the file exists, but there's no known-good
+        // install to compare against — don't clear on a guess.
+        let some_path = Path::new("/opt/homebrew/cairn/cairn");
+        assert_eq!(
+            decide_autostart_repair(Some((some_path, true)), None),
+            AutostartRepairDecision::NoAction
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_repoints_a_dev_path_when_installed_exists() {
+        use std::path::Path;
+        let dev = Path::new("/proj/target/debug/cairn");
+        let installed = Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        assert_eq!(
+            decide_autostart_repair(Some((dev, true)), Some(installed)),
+            AutostartRepairDecision::Repoint(installed.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_clears_a_dev_path_with_no_installed_bundle() {
+        use std::path::Path;
+        let dev = Path::new("/proj/target/debug/cairn");
+        assert_eq!(
+            decide_autostart_repair(Some((dev, true)), None),
+            AutostartRepairDecision::Clear
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_repoints_when_missing_even_if_path_matches_installed() {
+        use std::path::Path;
+        // Isolates the "no longer exists on disk" branch specifically:
+        // the registered path is literally the installed reference, but
+        // the file it names is gone (e.g. deleted mid-reinstall).
+        let installed = Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        assert_eq!(
+            decide_autostart_repair(Some((installed, false)), Some(installed)),
+            AutostartRepairDecision::Repoint(installed.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_clears_a_removed_path_with_no_installed_bundle() {
+        use std::path::Path;
+        let removed = Path::new("/Applications/OldCairn.app/Contents/MacOS/cairn");
+        assert_eq!(
+            decide_autostart_repair(Some((removed, false)), None),
+            AutostartRepairDecision::Clear
+        );
+    }
+
+    #[test]
+    fn decide_autostart_repair_repoints_on_mismatch_even_when_not_dev_and_present() {
+        use std::path::Path;
+        // Present, not a dev path, but doesn't match the verified
+        // install — e.g. an old, relocated `.app` still sitting there.
+        let relocated = Path::new("/Users/me/Applications/Cairn.app/Contents/MacOS/cairn");
+        let installed = Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        assert_eq!(
+            decide_autostart_repair(Some((relocated, true)), Some(installed)),
+            AutostartRepairDecision::Repoint(installed.to_path_buf())
+        );
+    }
+
+    fn sample_launch_agent_plist(program_path: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>Cairn</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>{program_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+  </dict>
+</plist>
+"#
+        )
+    }
+
+    #[test]
+    fn read_launch_agent_program_path_parses_the_first_arg() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("Cairn.plist");
+        std::fs::write(
+            &plist_path,
+            sample_launch_agent_plist("/proj/target/debug/cairn"),
+        )
+        .unwrap();
+        assert_eq!(
+            read_launch_agent_program_path(&plist_path),
+            Some(std::path::PathBuf::from("/proj/target/debug/cairn"))
+        );
+    }
+
+    #[test]
+    fn read_launch_agent_program_path_is_none_for_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("does-not-exist.plist");
+        assert!(read_launch_agent_program_path(&plist_path).is_none());
+    }
+
+    #[test]
+    fn read_launch_agent_program_path_is_none_for_invalid_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("Cairn.plist");
+        std::fs::write(&plist_path, "not a plist").unwrap();
+        assert!(read_launch_agent_program_path(&plist_path).is_none());
+    }
+
+    #[test]
+    fn read_launch_agent_program_path_is_none_without_program_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("Cairn.plist");
+        std::fs::write(
+            &plist_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>Cairn</string>
+  </dict>
+</plist>
+"#,
+        )
+        .unwrap();
+        assert!(read_launch_agent_program_path(&plist_path).is_none());
+    }
+
+    #[test]
+    fn repoint_launch_agent_program_path_rewrites_only_the_first_arg() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("Cairn.plist");
+        std::fs::write(
+            &plist_path,
+            sample_launch_agent_plist("/proj/target/debug/cairn"),
+        )
+        .unwrap();
+
+        let new_path = std::path::Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        repoint_launch_agent_program_path(&plist_path, new_path).expect("repoint succeeds");
+
+        assert_eq!(
+            read_launch_agent_program_path(&plist_path),
+            Some(new_path.to_path_buf())
+        );
+        // Label survives the rewrite untouched.
+        let value = plist::Value::from_file(&plist_path).unwrap();
+        let label = value
+            .as_dictionary()
+            .unwrap()
+            .get("Label")
+            .unwrap()
+            .as_string()
+            .unwrap();
+        assert_eq!(label, "Cairn");
+    }
+
+    #[test]
+    fn repoint_launch_agent_program_path_errors_without_program_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("Cairn.plist");
+        std::fs::write(
+            &plist_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>Cairn</string>
+  </dict>
+</plist>
+"#,
+        )
+        .unwrap();
+
+        let new_path = std::path::Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        let err = repoint_launch_agent_program_path(&plist_path, new_path)
+            .expect_err("no ProgramArguments to rewrite");
+        assert!(err.contains("ProgramArguments"));
+    }
+
+    #[test]
+    fn repoint_launch_agent_program_path_errors_for_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("does-not-exist.plist");
+        let new_path = std::path::Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        assert!(repoint_launch_agent_program_path(&plist_path, new_path).is_err());
+    }
+
+    #[test]
+    fn repoint_launch_agent_program_path_populates_an_empty_array() {
+        // Isolates the `args.is_empty()` branch: a plist with a present
+        // but empty `ProgramArguments` array (distinct from the array
+        // being absent entirely, which errors instead) gets the new path
+        // pushed in rather than indexed into a nonexistent slot 0.
+        let dir = tempfile::tempdir().unwrap();
+        let plist_path = dir.path().join("Cairn.plist");
+        std::fs::write(
+            &plist_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>Cairn</string>
+    <key>ProgramArguments</key>
+    <array></array>
+  </dict>
+</plist>
+"#,
+        )
+        .unwrap();
+
+        let new_path = std::path::Path::new("/Applications/Cairn.app/Contents/MacOS/cairn");
+        repoint_launch_agent_program_path(&plist_path, new_path).expect("repoint succeeds");
+
+        assert_eq!(
+            read_launch_agent_program_path(&plist_path),
+            Some(new_path.to_path_buf())
+        );
+    }
+
+    #[tokio::test]
+    async fn autostart_repair_notice_defaults_to_none() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        let notice = get_autostart_repair_notice_impl(state).await.unwrap();
+        assert!(notice.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn autostart_repair_notice_round_trips_through_set_get_dismiss() {
+        let (_dir, app, db) = mock_app_with_db().await;
+
+        set_autostart_repair_notice(&db.pool, "repaired the thing")
+            .await
+            .unwrap();
+
+        let state = app.state::<AppState>();
+        let notice = get_autostart_repair_notice_impl(state.clone())
+            .await
+            .unwrap();
+        assert_eq!(notice.message.as_deref(), Some("repaired the thing"));
+
+        dismiss_autostart_repair_notice_impl(state.clone())
+            .await
+            .unwrap();
+        let notice = get_autostart_repair_notice_impl(state).await.unwrap();
+        assert!(notice.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn autostart_repair_notice_set_overwrites_a_prior_message() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        set_autostart_repair_notice(&db.pool, "first")
+            .await
+            .unwrap();
+        set_autostart_repair_notice(&db.pool, "second")
+            .await
+            .unwrap();
+
+        let state = app.state::<AppState>();
+        let notice = get_autostart_repair_notice_impl(state).await.unwrap();
+        assert_eq!(notice.message.as_deref(), Some("second"));
     }
 }

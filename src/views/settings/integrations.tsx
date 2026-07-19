@@ -10,6 +10,7 @@ import {
   type GitWatcherStatus,
 } from "../../lib/ipc";
 import { useAutostart } from "../../lib/use-autostart";
+import { useAutostartRepairNotice } from "../../lib/use-autostart-repair-notice";
 import { autostartCopy, detectPlatform } from "../../lib/autostart-copy";
 import { CalendarManager } from "./calendar-manager";
 import { GitRootsManager } from "./git-roots-manager";
@@ -39,6 +40,7 @@ export function IntegrationsCard() {
         <BrowserStatusLine installHref={EXTENSION_INSTALL_URL} />
         <AutostartStatusLine />
       </ul>
+      <AutostartRepairNoticeBanner />
       {calendarOpen && (
         <CalendarManager
           onClose={() => {
@@ -207,5 +209,32 @@ export function AutostartStatusLine() {
         <span className="tgl-dot" />
       </button>
     </li>
+  );
+}
+
+/**
+ * One-time notice (#264): startup detected and repaired a stale
+ * launch-at-login LaunchAgent — one baked before #263's dev-build guard
+ * existed, pointing at a since-removed dev build or a
+ * relocated/uninstalled bundle. Backend-driven and persisted, so it
+ * survives across restarts until dismissed (mirrors the pending-restore
+ * banner in Data → Local storage).
+ */
+export function AutostartRepairNoticeBanner() {
+  const { message, dismiss } = useAutostartRepairNotice();
+  if (!message) return null;
+
+  return (
+    <div
+      className="privacy-banner privacy-banner--pending"
+      role="status"
+      data-integration="autostart-repair-notice"
+    >
+      <Icon name="info" size={13} />
+      <span>{message}</span>
+      <button className="link-btn" onClick={() => void dismiss()}>
+        Dismiss
+      </button>
+    </div>
   );
 }

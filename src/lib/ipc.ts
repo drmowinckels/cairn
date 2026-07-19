@@ -873,6 +873,27 @@ export async function resetOnboarding(): Promise<OnboardingState> {
   return invoke<OnboardingState>("reset_onboarding");
 }
 
+/**
+ * One-time notice (#264) surfaced in Settings → Integrations when
+ * startup detected and repaired a stale launch-at-login LaunchAgent —
+ * one baked before #263's dev-build guard existed, still pointing at a
+ * since-removed dev build or a relocated/uninstalled bundle. `message`
+ * is `null` once nothing was ever repaired, or after it's dismissed.
+ */
+export interface AutostartRepairNotice {
+  message: string | null;
+}
+
+export async function getAutostartRepairNotice(): Promise<AutostartRepairNotice> {
+  if (!inTauri) return { message: null };
+  return invoke<AutostartRepairNotice>("get_autostart_repair_notice");
+}
+
+export async function dismissAutostartRepairNotice(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("dismiss_autostart_repair_notice");
+}
+
 export async function setTrayTitle(title: string): Promise<void> {
   if (!inTauri) return;
   await invoke("set_tray_title", { title });

@@ -16,6 +16,10 @@ const getGitWatcherStatus = vi.fn();
 const getGitDiscoveryRoots = vi.fn();
 const setGitDiscoveryRoots = vi.fn();
 const browserExtensionStatus = vi.fn();
+const getAutostartRepairNoticeMock = vi
+  .fn()
+  .mockResolvedValue({ message: null });
+const dismissAutostartRepairNoticeMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../../lib/ipc", async () => {
   const actual =
@@ -31,10 +35,15 @@ vi.mock("../../lib/ipc", async () => {
     setGitDiscoveryRoots: (...args: unknown[]) => setGitDiscoveryRoots(...args),
     browserExtensionStatus: (...args: unknown[]) =>
       browserExtensionStatus(...args),
+    getAutostartRepairNotice: (...args: unknown[]) =>
+      getAutostartRepairNoticeMock(...args),
+    dismissAutostartRepairNotice: (...args: unknown[]) =>
+      dismissAutostartRepairNoticeMock(...args),
   };
 });
 
 import {
+  AutostartRepairNoticeBanner,
   AutostartStatusLine,
   BrowserStatusLine,
   CalendarStatusLine,
@@ -49,6 +58,8 @@ beforeEach(() => {
   getGitDiscoveryRoots.mockReset();
   setGitDiscoveryRoots.mockReset();
   browserExtensionStatus.mockReset();
+  getAutostartRepairNoticeMock.mockReset().mockResolvedValue({ message: null });
+  dismissAutostartRepairNoticeMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("CalendarStatusLine", () => {
@@ -489,6 +500,37 @@ describe("AutostartStatusLine", () => {
   });
 });
 
+describe("AutostartRepairNoticeBanner", () => {
+  it("renders nothing when there's no pending notice", async () => {
+    getAutostartRepairNoticeMock.mockResolvedValue({ message: null });
+    const { container } = render(<AutostartRepairNoticeBanner />);
+    await waitFor(() =>
+      expect(getAutostartRepairNoticeMock).toHaveBeenCalled(),
+    );
+    expect(
+      container.querySelector('[data-integration="autostart-repair-notice"]'),
+    ).toBeNull();
+  });
+
+  it("renders the repair message and dismisses it on click", async () => {
+    getAutostartRepairNoticeMock.mockResolvedValue({
+      message:
+        "Launch-at-login was reset because it pointed at a removed/dev build.",
+    });
+    render(<AutostartRepairNoticeBanner />);
+    await waitFor(() =>
+      expect(screen.getByText(/Launch-at-login was reset/)).toBeTruthy(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+
+    await waitFor(() =>
+      expect(dismissAutostartRepairNoticeMock).toHaveBeenCalled(),
+    );
+    expect(screen.queryByText(/Launch-at-login was reset/)).toBeNull();
+  });
+});
+
 describe("IntegrationsCard", () => {
   beforeEach(() => {
     listCalendarSources.mockResolvedValue([]);
@@ -516,6 +558,18 @@ describe("IntegrationsCard", () => {
         container.querySelector(`[data-integration="${id}"]`),
       ).toBeTruthy();
     }
+  });
+
+  it("surfaces the autostart-repair notice when one is pending", async () => {
+    getAutostartRepairNoticeMock.mockResolvedValue({
+      message: "Launch-at-login was repointed to the installed app.",
+    });
+    render(<IntegrationsCard />);
+    await waitFor(() =>
+      expect(
+        screen.getByText("Launch-at-login was repointed to the installed app."),
+      ).toBeTruthy(),
+    );
   });
 
   it("refreshes the calendar status line after the manager closes", async () => {

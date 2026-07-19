@@ -486,6 +486,20 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(await setConnectorSecret("x", null, "t")).toEqual([]);
     expect(await clearConnectorSecret("x", null)).toEqual([]);
   });
+
+  it("getAutostartRepairNotice invokes the command and returns the notice", async () => {
+    invokeMock.mockResolvedValue({ message: "repaired" });
+    const { getAutostartRepairNotice } = await import("./ipc");
+    expect(await getAutostartRepairNotice()).toEqual({ message: "repaired" });
+    expect(invokeMock).toHaveBeenCalledWith("get_autostart_repair_notice");
+  });
+
+  it("dismissAutostartRepairNotice invokes the command", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { dismissAutostartRepairNotice } = await import("./ipc");
+    await dismissAutostartRepairNotice();
+    expect(invokeMock).toHaveBeenCalledWith("dismiss_autostart_repair_notice");
+  });
 });
 
 describe("ipc helpers (outside Tauri)", () => {
@@ -685,6 +699,18 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(await listConnectors()).toEqual([]);
     expect(await listConnectorProjects("x")).toEqual(emptyList);
     expect(await listConnectorTasks("x", "y")).toEqual(emptyList);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("getAutostartRepairNotice returns a null message without the backend", async () => {
+    const { getAutostartRepairNotice } = await import("./ipc");
+    expect(await getAutostartRepairNotice()).toEqual({ message: null });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("dismissAutostartRepairNotice short-circuits without the backend", async () => {
+    const { dismissAutostartRepairNotice } = await import("./ipc");
+    await dismissAutostartRepairNotice();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
