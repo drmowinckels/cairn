@@ -249,6 +249,14 @@ async fn export_activity_log_csv(
 }
 
 #[tauri::command]
+async fn count_uncategorized_activity(
+    state: tauri::State<'_, AppState>,
+    date: String,
+) -> Result<i64, String> {
+    ipc::count_uncategorized_activity_impl(state, date).await
+}
+
+#[tauri::command]
 async fn preview_connector_manifest(path: String) -> Result<connectors::ConnectorManifest, String> {
     ipc::preview_connector_manifest_impl(path).await
 }
@@ -567,6 +575,7 @@ pub fn run() {
             delete_activity_log,
             list_activity_log,
             export_activity_log_csv,
+            count_uncategorized_activity,
             ipc::signal_capture_status,
             ipc::get_onboarding_state,
             ipc::complete_onboarding,

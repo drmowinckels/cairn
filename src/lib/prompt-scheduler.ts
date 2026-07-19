@@ -43,7 +43,7 @@ export const SCHEDULE_OFF: PromptSchedule = {
   throttleMinutes: 30,
 };
 
-function normalize(cfg: PromptSchedule): PromptSchedule {
+export function normalize(cfg: PromptSchedule): PromptSchedule {
   return {
     enabled: cfg.enabled,
     startMinute: Math.min(
@@ -63,7 +63,7 @@ function normalize(cfg: PromptSchedule): PromptSchedule {
  * incl. the all-zero malformed case) is empty: never in window. Same-day
  * windows only — overnight shifts are a documented follow-up.
  */
-function inWindow(cfg: PromptSchedule, minuteOfDay: number): boolean {
+export function inWindow(cfg: PromptSchedule, minuteOfDay: number): boolean {
   return (
     cfg.startMinute < cfg.endMinute &&
     minuteOfDay >= cfg.startMinute &&

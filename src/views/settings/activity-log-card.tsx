@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Icon } from "../../lib/icon";
 import type { UseActivityLog } from "../../lib/use-activity-log";
+import type { UseWorkdayReviewPrefs } from "../../lib/use-workday-review-prefs";
 import { SetRow, Toggle } from "./settings";
 
 const RETENTION_OPTIONS: Array<{ value: number; label: string }> = [
@@ -12,6 +13,9 @@ const RETENTION_OPTIONS: Array<{ value: number; label: string }> = [
 
 interface Props {
   activityLog: UseActivityLog;
+  /** "Workday in Review" banner preference (#190 follow-up). Optional so
+   *  tests can render without it; when absent the row is hidden. */
+  workdayReview?: UseWorkdayReviewPrefs;
 }
 
 /**
@@ -20,7 +24,7 @@ interface Props {
  * default; turning it off purges the log (handled in the backend). The full
  * privacy contract is in `docs/PRIVACY.md`.
  */
-export function ActivityLogCard({ activityLog }: Props) {
+export function ActivityLogCard({ activityLog, workdayReview }: Props) {
   const {
     settings,
     error,
@@ -73,6 +77,19 @@ export function ActivityLogCard({ activityLog }: Props) {
               </option>
             ))}
           </select>
+        </SetRow>
+      )}
+
+      {settings.enabled && workdayReview && (
+        <SetRow
+          label="Workday in review"
+          hint="A dismissible reminder once your working hours end, if there's activity you haven't reviewed yet."
+        >
+          <Toggle
+            on={workdayReview.enabled}
+            onChange={workdayReview.setEnabled}
+            label="Workday in review"
+          />
         </SetRow>
       )}
 

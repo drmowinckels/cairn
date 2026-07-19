@@ -250,6 +250,11 @@ pub struct CreateEntryInput {
     /// the backend would default it anyway.
     #[serde(default)]
     pub source: Option<String>,
+    /// Set when this entry was created from the "Add" action on an
+    /// activity-log span (#190 follow-up), linking back to it so the review
+    /// surface can tell the span is now categorized.
+    #[serde(default)]
+    pub activity_row_id: Option<i64>,
 }
 
 /// How the user resolved the idle-detection modal. Mirrors the three
@@ -1389,6 +1394,28 @@ pub async fn list_activity_log_impl(
         .map_err(err)
 }
 
+/// Count of the day's activity-log spans with no linked entry yet — the
+/// cheap poll behind the "Workday in Review" banner trigger (#190 follow-up),
+/// so it doesn't need to pull full rows just to know whether there's
+/// anything left to review. Logic here (tested); the thin `#[tauri::command]`
+/// shim is in the codecov-ignored `lib.rs`.
+pub async fn count_uncategorized_activity_impl(
+    state: State<'_, AppState>,
+    date: String,
+) -> Result<i64, String> {
+    let day = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|e| format!("invalid date '{date}': {e}"))?;
+    let start = local_midnight_utc(day);
+    let end = local_midnight_utc(day + Duration::days(1));
+    crate::activity_log::count_uncategorized_in_range(
+        &state.db.pool,
+        &start.to_rfc3339(),
+        &end.to_rfc3339(),
+    )
+    .await
+    .map_err(err)
+}
+
 /// Write the whole activity log to `dest` as CSV ("Export activity log"; #190),
 /// returning the path written. Separate from the entries export (`export_csv`),
 /// which never reads this table. Logic here (tested); the thin
@@ -1698,8 +1725,8 @@ pub async fn create_entry(
 
     sqlx::query(
         r#"
-        INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?8)
+        INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, activity_row_id, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?9)
         "#,
     )
     .bind(&id)
@@ -1709,6 +1736,7 @@ pub async fn create_entry(
     .bind(&started_str)
     .bind(ended_str.as_deref())
     .bind(&source)
+    .bind(input.activity_row_id)
     .bind(&now_str)
     .execute(&mut *tx)
     .await
@@ -2868,6 +2896,67 @@ mod tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
         let err = list_activity_log_impl(state, "not-a-date".into())
+            .await
+            .unwrap_err();
+        assert!(err.contains("invalid date"));
+    }
+
+    #[tokio::test]
+    async fn count_uncategorized_activity_excludes_linked_spans() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let today = Local::now().date_naive();
+        let start = local_midnight_utc(today) + Duration::hours(9);
+        // One span with a linked entry, one without — only the latter counts.
+        crate::activity_log::insert(
+            &db.pool,
+            &start.to_rfc3339(),
+            &(start + Duration::minutes(5)).to_rfc3339(),
+            "Zoom",
+            None,
+            "window",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        crate::activity_log::insert(
+            &db.pool,
+            &(start + Duration::hours(1)).to_rfc3339(),
+            &(start + Duration::hours(1) + Duration::minutes(5)).to_rfc3339(),
+            "Code",
+            None,
+            "window",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        let state = app.state::<crate::AppState>();
+        create_entry(
+            state,
+            CreateEntryInput {
+                project_id: None,
+                task_id: None,
+                description: String::new(),
+                started_at: start.to_rfc3339(),
+                ended_at: Some((start + Duration::minutes(5)).to_rfc3339()),
+                source: Some("activity_log".into()),
+                activity_row_id: Some(1),
+            },
+        )
+        .await
+        .unwrap();
+
+        let state = app.state::<crate::AppState>();
+        let n = count_uncategorized_activity_impl(state, today.format("%Y-%m-%d").to_string())
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn count_uncategorized_activity_rejects_a_bad_date() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = count_uncategorized_activity_impl(state, "not-a-date".into())
             .await
             .unwrap_err();
         assert!(err.contains("invalid date"));
@@ -5169,6 +5258,7 @@ mod tests {
             started_at: started.into(),
             ended_at: Some(ended.into()),
             source: None,
+            activity_row_id: None,
         }
     }
 
@@ -5219,6 +5309,7 @@ mod tests {
                 started_at: started,
                 ended_at: None,
                 source: Some("manual".into()),
+                activity_row_id: None,
             },
         )
         .await
@@ -5282,11 +5373,104 @@ mod tests {
                 started_at: "not-a-timestamp".into(),
                 ended_at: None,
                 source: None,
+                activity_row_id: None,
             },
         )
         .await
         .unwrap_err();
         assert!(err.to_lowercase().contains("started_at"));
+    }
+
+    #[tokio::test]
+    async fn create_entry_persists_the_activity_row_link() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        crate::activity_log::insert(
+            &db.pool,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T08:05:00+00:00",
+            "Code",
+            None,
+            "window",
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        let state = app.state::<crate::AppState>();
+        let entry = create_entry(
+            state,
+            CreateEntryInput {
+                project_id: None,
+                task_id: None,
+                description: "".into(),
+                started_at: "2026-05-23T08:00:00+00:00".into(),
+                ended_at: Some("2026-05-23T08:05:00+00:00".into()),
+                source: Some("activity_log".into()),
+                activity_row_id: Some(1),
+            },
+        )
+        .await
+        .unwrap();
+
+        let linked: i64 = sqlx::query("SELECT activity_row_id FROM entries WHERE id = ?1")
+            .bind(&entry.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+            .get("activity_row_id");
+        assert_eq!(linked, 1);
+    }
+
+    #[tokio::test]
+    async fn create_entry_rejects_an_unknown_activity_row_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let err = create_entry(
+            state,
+            CreateEntryInput {
+                project_id: None,
+                task_id: None,
+                description: "".into(),
+                started_at: "2026-05-23T08:00:00+00:00".into(),
+                ended_at: Some("2026-05-23T08:05:00+00:00".into()),
+                source: Some("activity_log".into()),
+                activity_row_id: Some(999),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("foreign key"));
+    }
+
+    #[tokio::test]
+    async fn create_entry_rejects_a_second_link_to_the_same_activity_row() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        crate::activity_log::insert(
+            &db.pool,
+            "2026-05-23T08:00:00+00:00",
+            "2026-05-23T08:05:00+00:00",
+            "Code",
+            None,
+            "window",
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        let input = || CreateEntryInput {
+            project_id: None,
+            task_id: None,
+            description: "".into(),
+            started_at: "2026-05-23T08:00:00+00:00".into(),
+            ended_at: Some("2026-05-23T08:05:00+00:00".into()),
+            source: Some("activity_log".into()),
+            activity_row_id: Some(1),
+        };
+        let state = app.state::<crate::AppState>();
+        create_entry(state, input()).await.unwrap();
+
+        // A second "Add" click racing the first must not double-log the span.
+        let state = app.state::<crate::AppState>();
+        let err = create_entry(state, input()).await.unwrap_err();
+        assert!(err.to_lowercase().contains("unique"));
     }
 
     // ---------------- list_week aggregation ----------------
@@ -7880,6 +8064,7 @@ mod connector_tests {
                 started_at: "2026-05-23T08:00:00+00:00".into(),
                 ended_at: Some("2026-05-23T09:00:00+00:00".into()),
                 source: None,
+                activity_row_id: None,
             },
         )
         .await

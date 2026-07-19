@@ -276,6 +276,10 @@ export interface CreateEntryInput {
   /** RFC 3339 timestamp. `null` / omitted ⇒ open-ended (running). */
   endedAt?: string | null;
   source?: string;
+  /** Links this entry back to the activity-log span it was created from
+   *  (#190 follow-up), so the review surface can tell the span is now
+   *  categorized. */
+  activityRowId?: number | null;
 }
 
 export async function createEntry(
@@ -767,6 +771,9 @@ export interface ActivityRow {
   appName: string;
   titleHint: string | null;
   source: string;
+  /** True when an entry already links back to this span — the "Add" in the
+   *  review UI already ran for it. */
+  hasEntry: boolean;
 }
 
 /** The recorded spans for a local day (`YYYY-MM-DD`), oldest first. Empty
@@ -774,6 +781,16 @@ export interface ActivityRow {
 export async function listActivityLog(date: string): Promise<ActivityRow[]> {
   if (!inTauri) return [];
   return (await invoke<ActivityRow[]>("list_activity_log", { date })) ?? [];
+}
+
+/** Count of the local day's activity-log spans with no linked entry yet —
+ *  the cheap poll behind the "Workday in Review" banner trigger. `0` outside
+ *  Tauri. */
+export async function countUncategorizedActivity(
+  date: string,
+): Promise<number> {
+  if (!inTauri) return 0;
+  return (await invoke<number>("count_uncategorized_activity", { date })) ?? 0;
 }
 
 /** Write the whole activity log to `dest` as CSV; returns the path written.
