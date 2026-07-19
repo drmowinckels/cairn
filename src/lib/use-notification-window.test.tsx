@@ -38,6 +38,15 @@ afterEach(() => vi.clearAllMocks());
 // convention.
 
 describe("useNotificationWindow", () => {
+  it("uses its default opts (enabled/listen/pendingNotification) when none are provided", () => {
+    // Outside Tauri (the vitest env), `enabled` defaults to `inTauri`
+    // (false), so the hook's effects no-op — this only pins that calling
+    // it with no opts at all doesn't throw and falls back sanely.
+    const { result } = renderHook(() => useNotificationWindow());
+    expect(result.current.suggestion).toBeNull();
+    expect(result.current.projectsById).toEqual({});
+  });
+
   it("seeds the suggestion from pending_notification on mount", async () => {
     const opts = {
       enabled: true,
@@ -77,6 +86,59 @@ describe("useNotificationWindow", () => {
       ),
     );
     err.mockRestore();
+  });
+
+  it("ignores a late listen() resolution after an immediate unmount", async () => {
+    // Counterpart to the other listen()-related tests, which all unmount
+    // (or never unmount) after listen() has already resolved. Here,
+    // unmount runs first, so the effect cleanup finds `unlisten` still
+    // null; the late resolution must instead see `cancelled` and call
+    // `un()` itself rather than stashing it.
+    let resolveListen!: (fn: () => void) => void;
+    const listen = vi.fn(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveListen = resolve;
+        }),
+    );
+    const unlistenSpy = vi.fn();
+    const opts = {
+      enabled: true,
+      listen: listen as never,
+      pendingNotification: vi.fn().mockResolvedValue(null) as never,
+    };
+    const { unmount } = renderHook(() => useNotificationWindow(opts));
+    unmount();
+    resolveListen(unlistenSpy);
+    await vi.waitFor(() => expect(unlistenSpy).toHaveBeenCalled());
+  });
+
+  it("ignores a late list_projects resolution after an immediate unmount", async () => {
+    // Same "cancelled" guard as above, for the projects-lookup effect:
+    // unmounting before list_projects resolves must not call setState on
+    // the unmounted hook.
+    let resolveProjects!: (list: Project[]) => void;
+    const listProjects = vi.fn(
+      () =>
+        new Promise<Project[]>((resolve) => {
+          resolveProjects = resolve;
+        }),
+    );
+    const opts = {
+      enabled: true,
+      listen: noopListen(),
+      pendingNotification: vi.fn().mockResolvedValue(SUGGESTION) as never,
+      listProjects: listProjects as never,
+    };
+    const { result, unmount } = renderHook(() => useNotificationWindow(opts));
+    await waitFor(() => expect(result.current.suggestion).toEqual(SUGGESTION));
+    await vi.waitFor(() => expect(listProjects).toHaveBeenCalled());
+    unmount();
+    resolveProjects([PROJECT]);
+    // Nothing to assert on `result.current` post-unmount — the point is
+    // that resolving after unmount doesn't throw or warn about setting
+    // state on an unmounted component.
+    await new Promise((r) => setTimeout(r, 0));
   });
 
   it("updates the suggestion from a live signal:match event", async () => {
@@ -125,6 +187,41 @@ describe("useNotificationWindow", () => {
     expect(result.current.suggestion).toBeNull();
   });
 
+  it("confirm() falls back to a null project and undefined description", async () => {
+    const startEntry = vi.fn().mockResolvedValue({});
+    const noProjectSuggestion: RuleMatchEvent = {
+      ...SUGGESTION,
+      project: null,
+      description: "",
+    };
+    const opts = {
+      enabled: true,
+      listen: noopListen(),
+      pendingNotification: vi
+        .fn()
+        .mockResolvedValue(noProjectSuggestion) as never,
+      startEntry: startEntry as never,
+      dismissSuggestionNotification: vi
+        .fn()
+        .mockResolvedValue(undefined) as never,
+    };
+    const { result } = renderHook(() => useNotificationWindow(opts));
+    await waitFor(() =>
+      expect(result.current.suggestion).toEqual(noProjectSuggestion),
+    );
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    expect(startEntry).toHaveBeenCalledWith({
+      projectId: null,
+      source: "rule",
+      ruleId: "r1",
+      description: undefined,
+    });
+  });
+
   it("confirm() is a no-op when there is no suggestion", async () => {
     const startEntry = vi.fn();
     const opts = {
@@ -160,6 +257,29 @@ describe("useNotificationWindow", () => {
       expect.any(Error),
     );
     expect(dismissSuggestionNotification).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it("confirm() logs but does not throw when dismiss_suggestion_notification fails", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const opts = {
+      enabled: true,
+      listen: noopListen(),
+      pendingNotification: vi.fn().mockResolvedValue(SUGGESTION) as never,
+      startEntry: vi.fn().mockResolvedValue({}) as never,
+      dismissSuggestionNotification: vi
+        .fn()
+        .mockRejectedValue(new Error("nope")) as never,
+    };
+    const { result } = renderHook(() => useNotificationWindow(opts));
+    await waitFor(() => expect(result.current.suggestion).toEqual(SUGGESTION));
+    await act(async () => {
+      await result.current.confirm();
+    });
+    expect(err).toHaveBeenCalledWith(
+      "dismiss_suggestion_notification failed",
+      expect.any(Error),
+    );
     err.mockRestore();
   });
 

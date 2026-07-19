@@ -86,6 +86,12 @@ describe("NotificationWindow", () => {
     expect(dismiss).toHaveBeenCalledTimes(3);
   });
 
+  it("ignores keys other than Escape", () => {
+    render(<NotificationWindow />);
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(dismiss).not.toHaveBeenCalled();
+  });
+
   it("renders nothing when there is no suggestion", () => {
     suggestion = null;
     const { container } = render(<NotificationWindow />);

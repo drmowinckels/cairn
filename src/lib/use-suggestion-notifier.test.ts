@@ -176,4 +176,30 @@ describe("useSuggestionNotifier", () => {
     unmount();
     await vi.waitFor(() => expect(unlisten).toHaveBeenCalled());
   });
+
+  it("unsubscribes immediately once listen() resolves after an early unmount", async () => {
+    // The counterpart to the test above: there, listen() had already
+    // resolved (unlisten was set) by the time unmount ran, so cleanup
+    // called it directly. Here, unmount runs *before* listen() resolves,
+    // so cleanup finds nothing to call yet (`unlisten` still null) — the
+    // late resolution must instead see `cancelled` and call `un()` itself.
+    let resolveListen!: (fn: () => void) => void;
+    const listen = vi.fn(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveListen = resolve;
+        }),
+    );
+    const unlistenSpy = vi.fn();
+    const { unmount } = renderHook(() =>
+      useSuggestionNotifier({
+        enabled: true,
+        runtimeEnabled: true,
+        listen: listen as never,
+      }),
+    );
+    unmount();
+    resolveListen(unlistenSpy);
+    await vi.waitFor(() => expect(unlistenSpy).toHaveBeenCalled());
+  });
 });

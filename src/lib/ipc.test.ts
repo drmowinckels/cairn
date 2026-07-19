@@ -66,6 +66,45 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("idle_window_painted");
   });
 
+  it("showSuggestionNotification forwards the payload (#267)", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { showSuggestionNotification } = await import("./ipc");
+    const payload = {
+      ruleId: "r1",
+      ruleName: "Cairn dev",
+      confidence: "suggestive" as const,
+      ambiguityBehavior: "prompt" as const,
+      project: "cairn",
+      tags: [],
+      description: "",
+    };
+    await showSuggestionNotification(payload);
+    expect(invokeMock).toHaveBeenCalledWith("show_suggestion_notification", {
+      payload,
+    });
+  });
+
+  it("pendingNotification invokes the cold-start-stash command (#267)", async () => {
+    invokeMock.mockResolvedValue(null);
+    const { pendingNotification } = await import("./ipc");
+    expect(await pendingNotification()).toBeNull();
+    expect(invokeMock).toHaveBeenCalledWith("pending_notification");
+  });
+
+  it("dismissSuggestionNotification invokes the dismiss command (#267)", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { dismissSuggestionNotification } = await import("./ipc");
+    await dismissSuggestionNotification();
+    expect(invokeMock).toHaveBeenCalledWith("dismiss_suggestion_notification");
+  });
+
+  it("notificationWindowPainted invokes the paint-ack command (#267)", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { notificationWindowPainted } = await import("./ipc");
+    await notificationWindowPainted();
+    expect(invokeMock).toHaveBeenCalledWith("notification_window_painted");
+  });
+
   it("autostartEnabled invokes the probe command", async () => {
     invokeMock.mockResolvedValue(true);
     const { autostartEnabled } = await import("./ipc");
@@ -497,6 +536,38 @@ describe("ipc helpers (outside Tauri)", () => {
   it("idleWindowPainted short-circuits without the backend", async () => {
     const { idleWindowPainted } = await import("./ipc");
     await idleWindowPainted();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("showSuggestionNotification short-circuits without the backend (#267)", async () => {
+    const { showSuggestionNotification } = await import("./ipc");
+    await showSuggestionNotification({
+      ruleId: "r1",
+      ruleName: "Cairn dev",
+      confidence: "suggestive",
+      ambiguityBehavior: "prompt",
+      project: null,
+      tags: [],
+      description: "",
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("pendingNotification returns null without the backend (#267)", async () => {
+    const { pendingNotification } = await import("./ipc");
+    expect(await pendingNotification()).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("dismissSuggestionNotification short-circuits without the backend (#267)", async () => {
+    const { dismissSuggestionNotification } = await import("./ipc");
+    await dismissSuggestionNotification();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("notificationWindowPainted short-circuits without the backend (#267)", async () => {
+    const { notificationWindowPainted } = await import("./ipc");
+    await notificationWindowPainted();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
