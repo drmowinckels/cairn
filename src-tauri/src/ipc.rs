@@ -4,7 +4,7 @@ use sqlx::Row;
 use tauri::{Emitter, Manager, State};
 
 use crate::plugins::calendar::{ActiveEvent, CalendarKind, CalendarSource, SyncStatus};
-use crate::rounding::Rounding;
+use crate::rounding::{project_rounding_from_row, rounding_to_columns, Rounding};
 use crate::signals::browser_extension::BrowserExtensionStatus;
 use crate::signals::git_watcher::GitWatcherStatus;
 use crate::AppState;
@@ -43,6 +43,10 @@ pub struct Project {
     /// preference. `Some(Rounding { interval_minutes: 0, … })` explicitly
     /// disables rounding for this project even when the global is active.
     pub rounding: Option<Rounding>,
+    /// New entries on this project snapshot this flag at creation (#109).
+    /// The flag is semantic categorization only — rates and amounts live
+    /// in the billing plugin, never in core.
+    pub billable_default: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,6 +65,8 @@ pub struct ProjectInput {
     /// `None` = inherit global; `Some(…)` = project-level override.
     #[serde(default)]
     pub rounding: Option<Rounding>,
+    #[serde(default)]
+    pub billable_default: bool,
 }
 
 /// How a project's tracked hours compare to its estimate.
@@ -382,7 +388,7 @@ pub async fn delete_client(state: State<'_, AppState>, id: String) -> Result<(),
 pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
     let rows = sqlx::query(
         "SELECT id, name, client_id, color, archived, estimate_hours, \
-         rounding_interval_minutes, rounding_mode \
+         rounding_interval_minutes, rounding_mode, billable_default \
          FROM projects WHERE archived = 0 ORDER BY name",
     )
     .fetch_all(&state.db.pool)
@@ -398,6 +404,7 @@ pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, S
             archived: r.get::<i64, _>("archived") != 0,
             estimate_hours: r.get("estimate_hours"),
             rounding: project_rounding_from_row(&r),
+            billable_default: r.get::<i64, _>("billable_default") != 0,
         })
         .collect())
 }
@@ -415,9 +422,9 @@ pub async fn save_project(
     sqlx::query(
         r#"
         INSERT INTO projects (id, name, client_id, color, archived, estimate_hours,
-                              rounding_interval_minutes, rounding_mode,
+                              rounding_interval_minutes, rounding_mode, billable_default,
                               created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             client_id = excluded.client_id,
@@ -426,6 +433,7 @@ pub async fn save_project(
             estimate_hours = excluded.estimate_hours,
             rounding_interval_minutes = excluded.rounding_interval_minutes,
             rounding_mode = excluded.rounding_mode,
+            billable_default = excluded.billable_default,
             updated_at = excluded.updated_at
         "#,
     )
@@ -437,6 +445,7 @@ pub async fn save_project(
     .bind(project.estimate_hours)
     .bind(rounding_minutes)
     .bind(rounding_mode)
+    .bind(project.billable_default as i64)
     .bind(&now)
     .execute(&state.db.pool)
     .await
@@ -449,6 +458,7 @@ pub async fn save_project(
         archived: project.archived,
         estimate_hours: project.estimate_hours,
         rounding: project.rounding,
+        billable_default: project.billable_default,
     })
 }
 
@@ -1606,8 +1616,10 @@ pub async fn start_entry<R: tauri::Runtime>(
     let source = input.source.clone().unwrap_or_else(|| "manual".into());
     sqlx::query(
         r#"
-        INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?5, ?5)
+        INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, billable, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7,
+                COALESCE((SELECT billable_default FROM projects WHERE id = ?2), 0),
+                ?5, ?5)
         "#,
     )
     .bind(&id)
@@ -1725,8 +1737,10 @@ pub async fn create_entry(
 
     sqlx::query(
         r#"
-        INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, activity_row_id, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?9)
+        INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, activity_row_id, billable, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8,
+                COALESCE((SELECT billable_default FROM projects WHERE id = ?2), 0),
+                ?9, ?9)
         "#,
     )
     .bind(&id)
@@ -1826,9 +1840,14 @@ pub async fn update_entry(
             .map_err(err)?;
     }
     if let Some(project_id) = &input.project_id {
-        // Changing project invalidates the linked task (tasks are project-scoped).
+        // Changing project invalidates the linked task (tasks are
+        // project-scoped) and re-snapshots `billable` from the new
+        // project — with no per-entry override control yet (#109),
+        // the flag always mirrors the project the entry ends up on.
         sqlx::query(
-            "UPDATE entries SET project_id = ?1, task_id = NULL, updated_at = ?2 WHERE id = ?3",
+            "UPDATE entries SET project_id = ?1, task_id = NULL, \
+             billable = COALESCE((SELECT billable_default FROM projects WHERE id = ?1), 0), \
+             updated_at = ?2 WHERE id = ?3",
         )
         .bind(project_id.as_deref())
         .bind(&now)
@@ -1944,7 +1963,7 @@ pub async fn resolve_idle(
     // task / description / started_at / ended_at we copy into the
     // resumed entry reflects the same snapshot we'll UPDATE below.
     let row = sqlx::query(
-        "SELECT project_id, task_id, description, started_at, ended_at \
+        "SELECT project_id, task_id, description, started_at, ended_at, billable \
          FROM entries WHERE id = ?1",
     )
     .bind(&input.entry_id)
@@ -1956,6 +1975,7 @@ pub async fn resolve_idle(
     let project_id: Option<String> = row.get("project_id");
     let task_id: Option<String> = row.get("task_id");
     let description: String = row.get("description");
+    let billable: i64 = row.get("billable");
     let started_at: DateTime<Utc> = parse_ts(row.get::<String, _>("started_at"))?;
     let prior_ended_at: Option<DateTime<Utc>> = row
         .get::<Option<String>, _>("ended_at")
@@ -2075,8 +2095,8 @@ pub async fn resolve_idle(
             let resumed_id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
                 r#"
-                INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'idle-resume', NULL, ?6, ?6)
+                INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, billable, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'idle-resume', NULL, ?6, ?7, ?7)
                 "#,
             )
             .bind(&resumed_id)
@@ -2084,6 +2104,7 @@ pub async fn resolve_idle(
             .bind(&task_id)
             .bind(&description)
             .bind(&until_str)
+            .bind(billable)
             .bind(&now_str)
             .execute(&mut *tx)
             .await
@@ -2147,10 +2168,11 @@ pub async fn resolve_idle(
                 String::new()
             };
             let resumed_source = if carry { "idle-resume" } else { "idle-new" };
+            let resumed_billable = if carry { billable } else { 0 };
             sqlx::query(
                 r#"
-                INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, NULL, ?7, ?7)
+                INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, billable, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, NULL, ?7, ?8, ?8)
                 "#,
             )
             .bind(&resumed_id)
@@ -2159,6 +2181,7 @@ pub async fn resolve_idle(
             .bind(&resumed_desc)
             .bind(&until_str)
             .bind(resumed_source)
+            .bind(resumed_billable)
             .bind(&now_str)
             .execute(&mut *tx)
             .await
@@ -2759,56 +2782,14 @@ pub fn set_popover_size(app: tauri::AppHandle, width: f64, height: f64) -> Resul
     Ok(())
 }
 
-fn parse_ts<S: AsRef<str>>(s: S) -> Result<DateTime<Utc>, String> {
+pub(crate) fn parse_ts<S: AsRef<str>>(s: S) -> Result<DateTime<Utc>, String> {
     DateTime::parse_from_rfc3339(s.as_ref())
         .map(|d| d.with_timezone(&Utc))
         .map_err(|e| e.to_string())
 }
 
-fn err<E: std::fmt::Display>(e: E) -> String {
+pub(crate) fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
-}
-
-/// Deserialise a project row's nullable rounding columns into `Option<Rounding>`.
-/// Returns `None` when either column is NULL (inherit global); returns `Some`
-/// only when both are present and the mode string is a recognised variant.
-fn project_rounding_from_row(row: &sqlx::sqlite::SqliteRow) -> Option<Rounding> {
-    use sqlx::Row;
-    let minutes: Option<i64> = row.get("rounding_interval_minutes");
-    let mode_str: Option<String> = row.get("rounding_mode");
-    match (minutes, mode_str) {
-        (Some(m), Some(s)) => {
-            let mode = match s.as_str() {
-                "up" => crate::rounding::RoundMode::Up,
-                "down" => crate::rounding::RoundMode::Down,
-                _ => crate::rounding::RoundMode::Nearest,
-            };
-            Some(Rounding {
-                interval_minutes: m.max(0) as u32,
-                mode,
-            })
-        }
-        _ => None,
-    }
-}
-
-/// Serialise `Option<Rounding>` into the two nullable DB columns.
-/// `None` produces `(None, None)` → NULLs in SQLite (inherit global).
-fn rounding_to_columns(r: Option<Rounding>) -> (Option<i64>, Option<String>) {
-    match r {
-        None => (None, None),
-        Some(rounding) => {
-            let mode = match rounding.mode {
-                crate::rounding::RoundMode::Up => "up",
-                crate::rounding::RoundMode::Down => "down",
-                crate::rounding::RoundMode::Nearest => "nearest",
-            };
-            (
-                Some(rounding.interval_minutes as i64),
-                Some(mode.to_string()),
-            )
-        }
-    }
 }
 
 #[cfg(test)]
@@ -4342,6 +4323,7 @@ mod tests {
             archived: false,
             estimate_hours: None,
             rounding: None,
+            billable_default: false,
         }
     }
 
@@ -5595,6 +5577,246 @@ mod tests {
         delete_entry(state.clone(), entry.id.clone()).await.unwrap();
         let today = list_today(state).await.unwrap();
         assert!(today.iter().all(|e| e.id != entry.id));
+    }
+
+    // ---------------- billable snapshot (#109) ----------------
+
+    async fn billable_of(pool: &sqlx::SqlitePool, id: &str) -> i64 {
+        sqlx::query("SELECT billable FROM entries WHERE id = ?1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .get("billable")
+    }
+
+    async fn make_billable_project(state: State<'_, crate::AppState>, name: &str) -> String {
+        save_project(
+            state,
+            ProjectInput {
+                billable_default: true,
+                ..project_input(None, name, "#00ff00", None)
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    #[tokio::test]
+    async fn save_project_round_trips_billable_default() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let id = make_billable_project(state.clone(), "Consulting").await;
+        let listed = list_projects(state.clone()).await.unwrap();
+        assert!(listed.iter().find(|p| p.id == id).unwrap().billable_default);
+
+        let cleared = save_project(
+            state.clone(),
+            project_input(Some(&id), "Consulting", "#00ff00", None),
+        )
+        .await
+        .unwrap();
+        assert!(!cleared.billable_default);
+        let relisted = list_projects(state).await.unwrap();
+        assert!(
+            !relisted
+                .iter()
+                .find(|p| p.id == id)
+                .unwrap()
+                .billable_default
+        );
+    }
+
+    #[tokio::test]
+    async fn start_entry_snapshots_the_project_billable_default() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let project_id = make_billable_project(state.clone(), "Consulting").await;
+
+        let billable_entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            StartEntryInput {
+                project_id: Some(project_id),
+                ..start_input(None, "client work")
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &billable_entry.id).await, 1);
+
+        // A project-less entry (and one on a default-off project) stays 0.
+        let plain = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            start_input(Some("cairn"), "internal"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &plain.id).await, 0);
+        let orphan = start_entry(app.handle().clone(), state.clone(), start_input(None, "x"))
+            .await
+            .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &orphan.id).await, 0);
+    }
+
+    #[tokio::test]
+    async fn create_entry_snapshot_survives_a_later_default_flip() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let project_id = make_billable_project(state.clone(), "Consulting").await;
+
+        let entry = create_entry(
+            state.clone(),
+            CreateEntryInput {
+                project_id: Some(project_id.clone()),
+                task_id: None,
+                description: "billed then".into(),
+                started_at: "2026-07-01T09:00:00+00:00".into(),
+                ended_at: Some("2026-07-01T10:00:00+00:00".into()),
+                source: None,
+                activity_row_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &entry.id).await, 1);
+
+        // Flipping the project default afterwards must not rewrite history.
+        save_project(
+            state.clone(),
+            project_input(Some(&project_id), "Consulting", "#00ff00", None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &entry.id).await, 1);
+    }
+
+    #[tokio::test]
+    async fn update_entry_project_change_resnapshots_billable() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let project_id = make_billable_project(state.clone(), "Consulting").await;
+
+        let entry = create_entry(
+            state.clone(),
+            CreateEntryInput {
+                project_id: None,
+                task_id: None,
+                description: "recategorized".into(),
+                started_at: "2026-07-01T09:00:00+00:00".into(),
+                ended_at: Some("2026-07-01T10:00:00+00:00".into()),
+                source: None,
+                activity_row_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &entry.id).await, 0);
+
+        // Moving onto a billable project picks up its default…
+        update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: Some(Some(project_id)),
+                task_id: None,
+                description: None,
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &entry.id).await, 1);
+
+        // …and moving off any project clears it back to 0.
+        update_entry(
+            state.clone(),
+            UpdateEntryInput {
+                id: entry.id.clone(),
+                project_id: Some(None),
+                task_id: None,
+                description: None,
+                started_at: None,
+                ended_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(billable_of(&state.db.pool, &entry.id).await, 0);
+    }
+
+    /// Start a running entry on a billable project, back-date it (start_entry
+    /// stamps started_at = now, and the idle window [since, until] must lie
+    /// inside the entry's lifetime), then resolve idle with `choice` and
+    /// return the entry the user is left running.
+    async fn resume_billable_entry_after_idle(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        choice: IdleChoice,
+    ) -> Entry {
+        let state = app.state::<crate::AppState>();
+        let project_id = make_billable_project(state.clone(), "Consulting").await;
+        let entry = start_entry(
+            app.handle().clone(),
+            state.clone(),
+            StartEntryInput {
+                project_id: Some(project_id),
+                ..start_input(None, "client work")
+            },
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE entries SET started_at = ?1 WHERE id = ?2")
+            .bind((Utc::now() - chrono::Duration::minutes(30)).to_rfc3339())
+            .bind(&entry.id)
+            .execute(&state.db.pool)
+            .await
+            .unwrap();
+        let since = Utc::now() - chrono::Duration::minutes(10);
+        let until = Utc::now() - chrono::Duration::minutes(1);
+        resolve_idle(
+            state,
+            ResolveIdleInput {
+                entry_id: entry.id.clone(),
+                since: since.to_rfc3339(),
+                until: until.to_rfc3339(),
+                choice,
+            },
+        )
+        .await
+        .unwrap()
+        .expect("resolution returns the running entry")
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_carries_billable_into_the_resumed_entry() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let resumed = resume_billable_entry_after_idle(&app, IdleChoice::Break).await;
+        assert_eq!(billable_of(&db.pool, &resumed.id).await, 1);
+
+        // The logged idle-break gap itself is never billable.
+        let break_id: String = sqlx::query("SELECT id FROM entries WHERE source = 'idle-break'")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+            .get("id");
+        assert_eq!(billable_of(&db.pool, &break_id).await, 0);
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_discard_continue_carries_billable() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let resumed = resume_billable_entry_after_idle(&app, IdleChoice::DiscardContinue).await;
+        assert_eq!(billable_of(&db.pool, &resumed.id).await, 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_idle_new_session_starts_non_billable() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let resumed = resume_billable_entry_after_idle(&app, IdleChoice::NewSession).await;
+        assert_eq!(billable_of(&db.pool, &resumed.id).await, 0);
     }
 
     // ---------------- create_entry (#21) ----------------

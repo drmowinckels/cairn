@@ -24,6 +24,48 @@ pub struct Rounding {
     pub mode: RoundMode,
 }
 
+/// Deserialise a project row's nullable rounding columns into `Option<Rounding>`.
+/// Returns `None` when either column is NULL (inherit global); returns `Some`
+/// only when both are present and the mode string is a recognised variant.
+pub(crate) fn project_rounding_from_row(row: &sqlx::sqlite::SqliteRow) -> Option<Rounding> {
+    use sqlx::Row;
+    let minutes: Option<i64> = row.get("rounding_interval_minutes");
+    let mode_str: Option<String> = row.get("rounding_mode");
+    match (minutes, mode_str) {
+        (Some(m), Some(s)) => {
+            let mode = match s.as_str() {
+                "up" => RoundMode::Up,
+                "down" => RoundMode::Down,
+                _ => RoundMode::Nearest,
+            };
+            Some(Rounding {
+                interval_minutes: m.max(0) as u32,
+                mode,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Serialise `Option<Rounding>` into the two nullable DB columns.
+/// `None` produces `(None, None)` → NULLs in SQLite (inherit global).
+pub(crate) fn rounding_to_columns(r: Option<Rounding>) -> (Option<i64>, Option<String>) {
+    match r {
+        None => (None, None),
+        Some(rounding) => {
+            let mode = match rounding.mode {
+                RoundMode::Up => "up",
+                RoundMode::Down => "down",
+                RoundMode::Nearest => "nearest",
+            };
+            (
+                Some(rounding.interval_minutes as i64),
+                Some(mode.to_string()),
+            )
+        }
+    }
+}
+
 /// Return the effective rounding for a given entry: the project-level override
 /// wins when present; falls back to the caller-supplied global otherwise.
 ///

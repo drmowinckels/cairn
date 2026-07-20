@@ -63,7 +63,7 @@ describe("useBackup (outside Tauri)", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("all six actions are no-ops outside Tauri", async () => {
+  it("all actions are no-ops outside Tauri", async () => {
     const { useBackup } = await import("./use-backup");
     const { result } = renderHook(() => useBackup());
     await act(async () => {
@@ -71,6 +71,7 @@ describe("useBackup (outside Tauri)", () => {
       await result.current.importBackupFromFile();
       await result.current.cancelImport();
       await result.current.exportCsvToFile();
+      await result.current.exportJsonToFile();
       await result.current.deleteAllData();
       await result.current.revealDataFolder();
       await result.current.refreshDataFiles();
@@ -401,6 +402,69 @@ describe("useBackup (inside Tauri)", () => {
       "export_csv",
       expect.anything(),
     );
+  });
+
+  it("exportJsonToFile flows through suggested-name → save dialog → export_entries_json (#109)", async () => {
+    mockInvoke({
+      suggested_json_name: () => "cairn-export.json",
+      export_entries_json: () => "/tmp/cairn-export.json",
+    });
+    saveMock.mockResolvedValue("/tmp/cairn-export.json");
+
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.exportJsonToFile({
+        intervalMinutes: 15,
+        mode: "up",
+      });
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("export_entries_json", {
+      dest: "/tmp/cairn-export.json",
+      rounding: { intervalMinutes: 15, mode: "up" },
+      from: null,
+      to: null,
+    });
+    expect(result.current.status.kind).toBe("done");
+  });
+
+  it("exportJsonToFile is a no-op when the save dialog is cancelled", async () => {
+    mockInvoke({ suggested_json_name: () => "cairn-export.json" });
+    saveMock.mockResolvedValue(null);
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.exportJsonToFile();
+    });
+
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "export_entries_json",
+      expect.anything(),
+    );
+  });
+
+  it("captures errors from export_entries_json as status.kind=error", async () => {
+    mockInvoke({
+      suggested_json_name: () => "cairn-export.json",
+      export_entries_json: () => {
+        throw new Error("disk full");
+      },
+    });
+    saveMock.mockResolvedValue("/tmp/cairn-export.json");
+    const { useBackup } = await import("./use-backup");
+    const { result } = renderHook(() => useBackup());
+    await waitFor(() => expect(result.current.paths).not.toBeNull());
+
+    await act(async () => {
+      await result.current.exportJsonToFile();
+    });
+
+    expect(result.current.status.kind).toBe("error");
   });
 
   it("captures errors from export_backup as status.kind=error", async () => {

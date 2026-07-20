@@ -38,6 +38,12 @@ describe("DataView", () => {
     expect(() => fireEvent.click(btn)).not.toThrow();
   });
 
+  it("Export JSON in the Storage section is wired (no-op outside Tauri) (#109)", () => {
+    render(<DataView density="comfy" />);
+    const btn = screen.getByRole("button", { name: /export json/i });
+    expect(() => fireEvent.click(btn)).not.toThrow();
+  });
+
   it("shows the data-privacy guarantees in the Storage section", () => {
     render(<DataView density="comfy" />);
     const storage = screen.getByRole("region", {
@@ -350,6 +356,10 @@ describe("DataView (inside Tauri)", () => {
     const clients = [{ id: "c1", name: "ACME", color: null, archived: false }];
     let listProjectsCalls = 0;
     invokeMock.mockImplementation((cmd: string) => {
+      if (cmd in overrides) {
+        const v = overrides[cmd];
+        return v instanceof Error ? Promise.reject(v) : Promise.resolve(v);
+      }
       if (cmd === "list_projects") {
         listProjectsCalls += 1;
         return Promise.resolve(projects);
@@ -372,10 +382,6 @@ describe("DataView (inside Tauri)", () => {
         });
       if (cmd === "auto_backup_status")
         return Promise.resolve({ lastBackupAt: null, count: 0 });
-      if (cmd in overrides) {
-        const v = overrides[cmd];
-        return v instanceof Error ? Promise.reject(v) : Promise.resolve(v);
-      }
       return Promise.resolve(null);
     });
     return {
@@ -469,6 +475,66 @@ describe("DataView (inside Tauri)", () => {
         "save_project",
         expect.objectContaining({
           project: expect.objectContaining({ estimateHours: null }),
+        }),
+      ),
+    );
+  });
+
+  it("saves billableDefault=true when the checkbox is ticked (#109)", async () => {
+    backend();
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const projects = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(
+      await within(projects).findByRole("button", { name: /^edit$/i }),
+    );
+    // The fixture project carries no billableDefault → the box starts clear.
+    const box = within(projects).getByRole("checkbox", {
+      name: /billable by default/i,
+    });
+    expect(box).toHaveProperty("checked", false);
+    fireEvent.click(box);
+    fireEvent.click(within(projects).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_project",
+        expect.objectContaining({
+          project: expect.objectContaining({ billableDefault: true }),
+        }),
+      ),
+    );
+  });
+
+  it("initialises the billable checkbox from the project and saves false when unticked (#109)", async () => {
+    backend({
+      list_projects: [
+        {
+          id: "p1",
+          name: "Cairn",
+          clientId: null,
+          color: "#81b29a",
+          archived: false,
+          billableDefault: true,
+        },
+      ],
+    });
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const region = screen.getByRole("region", { name: /^projects$/i });
+    fireEvent.click(
+      await within(region).findByRole("button", { name: /^edit$/i }),
+    );
+    const box = within(region).getByRole("checkbox", {
+      name: /billable by default/i,
+    });
+    expect(box).toHaveProperty("checked", true);
+    fireEvent.click(box);
+    fireEvent.click(within(region).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_project",
+        expect.objectContaining({
+          project: expect.objectContaining({ billableDefault: false }),
         }),
       ),
     );
