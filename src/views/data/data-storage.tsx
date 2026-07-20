@@ -181,6 +181,12 @@ export function DataStorageActions() {
         </button>
         <button
           className="btn btn--ghost btn--sm"
+          onClick={() => backup.exportJsonToFile(rounding)}
+        >
+          Export JSON…
+        </button>
+        <button
+          className="btn btn--ghost btn--sm"
           onClick={backup.revealDataFolder}
         >
           View what's stored

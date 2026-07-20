@@ -3,6 +3,7 @@ mod auto_backup;
 mod backup;
 mod connectors;
 mod db;
+mod export;
 mod ipc;
 mod plugins;
 mod popover;
@@ -863,6 +864,8 @@ pub fn run() {
             backup::stage_import,
             backup::cancel_pending_import,
             backup::export_csv,
+            export::export_entries_json,
+            export::suggested_json_name,
             backup::delete_everything,
             backup::suggested_backup_name,
             backup::suggested_csv_name,

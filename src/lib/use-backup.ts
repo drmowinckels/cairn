@@ -6,6 +6,7 @@ import {
   deleteEverything,
   exportBackup,
   exportCsv,
+  exportJson,
   inTauri,
   listDataFiles,
   revealDataFolder,
@@ -13,6 +14,7 @@ import {
   stageImport,
   suggestedBackupName,
   suggestedCsvName,
+  suggestedJsonName,
   type DataFileInfo,
   type DataPaths,
 } from "./ipc";
@@ -51,6 +53,7 @@ export interface BackupState {
   importBackupFromFile: () => Promise<void>;
   cancelImport: () => Promise<void>;
   exportCsvToFile: (rounding?: Rounding) => Promise<void>;
+  exportJsonToFile: (rounding?: Rounding) => Promise<void>;
   revealDataFolder: () => Promise<void>;
   refreshDataFiles: () => Promise<void>;
   deleteAllData: () => Promise<void>;
@@ -139,27 +142,60 @@ export function useBackup(): BackupState {
     }
   }, [refreshPaths]);
 
-  const exportCsvToFile = useCallback(
-    async (rounding: Rounding = ROUNDING_OFF) => {
+  /** Shared suggest-name → save-dialog → write → status flow behind the
+   *  entries exports (CSV and JSON differ only in dialog copy and the
+   *  command that writes the file). */
+  const exportEntriesViaDialog = useCallback(
+    async (format: {
+      suggestName: () => Promise<string>;
+      title: string;
+      filter: { name: string; extensions: string[] };
+      working: string;
+      write: (dest: string) => Promise<string>;
+    }) => {
       if (!inTauri) return;
       try {
-        const defaultPath = await suggestedCsvName();
+        const defaultPath = await format.suggestName();
         const dest = await withPopoverPinned(() =>
           save({
-            title: "Export entries as CSV",
+            title: format.title,
             defaultPath,
-            filters: [{ name: "CSV", extensions: ["csv"] }],
+            filters: [format.filter],
           }),
         );
         if (!dest) return;
-        setStatus({ kind: "working", message: "Writing CSV…" });
-        const written = await exportCsv(dest, rounding);
+        setStatus({ kind: "working", message: format.working });
+        const written = await format.write(dest);
         setStatus({ kind: "done", message: `Entries written to ${written}` });
       } catch (e) {
         setStatus({ kind: "error", message: String(e) });
       }
     },
     [],
+  );
+
+  const exportCsvToFile = useCallback(
+    (rounding: Rounding = ROUNDING_OFF) =>
+      exportEntriesViaDialog({
+        suggestName: suggestedCsvName,
+        title: "Export entries as CSV",
+        filter: { name: "CSV", extensions: ["csv"] },
+        working: "Writing CSV…",
+        write: (dest) => exportCsv(dest, rounding),
+      }),
+    [exportEntriesViaDialog],
+  );
+
+  const exportJsonToFile = useCallback(
+    (rounding: Rounding = ROUNDING_OFF) =>
+      exportEntriesViaDialog({
+        suggestName: suggestedJsonName,
+        title: "Export entries as JSON",
+        filter: { name: "JSON", extensions: ["json"] },
+        working: "Writing JSON…",
+        write: (dest) => exportJson(dest, rounding),
+      }),
+    [exportEntriesViaDialog],
   );
 
   const revealFolder = useCallback(async () => {
@@ -215,6 +251,7 @@ export function useBackup(): BackupState {
     importBackupFromFile,
     cancelImport,
     exportCsvToFile,
+    exportJsonToFile,
     revealDataFolder: revealFolder,
     refreshDataFiles,
     deleteAllData,

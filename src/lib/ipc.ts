@@ -75,6 +75,8 @@ export interface SaveProjectInput {
   estimateHours?: number | null;
   /** Per-project rounding override (#107). Omit/`null` = inherit global. */
   rounding?: Rounding | null;
+  /** New entries snapshot this at creation (#109). Omit = false. */
+  billableDefault?: boolean;
 }
 
 export async function saveProject(project: SaveProjectInput): Promise<Project> {
@@ -366,6 +368,29 @@ export async function suggestedBackupName(): Promise<string> {
 
 export async function suggestedCsvName(): Promise<string> {
   return invoke<string>("suggested_csv_name");
+}
+
+/**
+ * Versioned structured export (#109) — the contract downstream plugins
+ * consume. `from`/`to` are optional RFC 3339 bounds on `startedAt`
+ * (inclusive / exclusive).
+ */
+export async function exportJson(
+  dest: string,
+  rounding: Rounding = ROUNDING_OFF,
+  from?: string,
+  to?: string,
+): Promise<string> {
+  return invoke<string>("export_entries_json", {
+    dest,
+    rounding,
+    from: from ?? null,
+    to: to ?? null,
+  });
+}
+
+export async function suggestedJsonName(): Promise<string> {
+  return invoke<string>("suggested_json_name");
 }
 
 export async function deleteEverything(): Promise<void> {

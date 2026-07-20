@@ -21,6 +21,9 @@ export interface Project {
   /** Per-project rounding override (#107). `null`/absent = inherit the global
    *  rounding preference; a value (incl. `intervalMinutes: 0`) overrides it. */
   rounding?: Rounding | null;
+  /** New entries snapshot this at creation (#109). Semantic flag only —
+   *  rates and money never enter core. Absent = false. */
+  billableDefault?: boolean;
 }
 
 export interface ProjectBudgetStatus {

@@ -373,6 +373,7 @@ interface ProjectFormProps {
     clientId: string | null;
     estimateHours: number | null;
     rounding: Rounding | null;
+    billableDefault: boolean;
   }) => Promise<void>;
 }
 
@@ -391,6 +392,9 @@ function ProjectForm({
   const [rounding, setRounding] = useState<Rounding | null>(
     initial.rounding ?? null,
   );
+  const [billableDefault, setBillableDefault] = useState(
+    initial.billableDefault ?? false,
+  );
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -406,6 +410,7 @@ function ProjectForm({
         clientId,
         estimateHours,
         rounding,
+        billableDefault,
       });
     } finally {
       setBusy(false);
@@ -518,6 +523,15 @@ function ProjectForm({
           </select>
         )}
       </div>
+      <label className="settings-check">
+        <input
+          type="checkbox"
+          checked={billableDefault}
+          onChange={(e) => setBillableDefault(e.currentTarget.checked)}
+          disabled={busy}
+        />
+        <span>Billable by default</span>
+      </label>
       <div className="data-form-actions">
         <button
           type="button"

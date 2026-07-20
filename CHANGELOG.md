@@ -6,6 +6,20 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ## Unreleased
 
+### Added
+
+- `[billing]` Projects have a "Billable by default" setting; new entries
+  snapshot it at creation (changing the project default later never
+  rewrites existing entries). The flag is categorization only — rates,
+  currency, and invoicing stay out of core, reserved for the opt-in Pro
+  plugin (#109).
+- `[export]` "Export JSON…" in Data → Storage writes a versioned
+  structured export (`schemaVersion: 1`): clients, projects, tasks, and
+  entries with raw timestamps, raw + rounded durations (respecting
+  per-project rounding overrides), and the billable flag. This is the
+  stable contract downstream plugins consume instead of reading the
+  database (#109).
+
 ### Fixed
 
 - `[autostart]` Startup now detects and repairs a stale macOS
