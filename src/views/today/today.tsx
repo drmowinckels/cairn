@@ -938,7 +938,7 @@ export function TodayView({
           `workingHours.endMinute`). */}
       {isToday && workdayReview.active && !suggestion && !reminder.active && (
         <WorkdayReviewBanner
-          style={detectionPrompts === "modal" ? "modal" : "subtle"}
+          style={bannerStyle}
           announce={announce}
           onReview={onWorkdayReview}
           onDismiss={workdayReview.dismiss}

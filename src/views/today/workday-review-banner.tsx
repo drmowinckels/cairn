@@ -1,9 +1,11 @@
 import { Icon } from "../../lib/icon";
-import type { DetectionPrompts } from "../../lib/types";
+import type { BannerStyle } from "./task-switch-banner";
 
 interface Props {
-  /** Reuses the detection-prompt presentation setting (subtle/modal). */
-  style: Exclude<DetectionPrompts, "off">;
+  /** Presentation-only variant shared with the task-switch and
+   *  working-hours banners — mapped from `DetectionPrompts` in the Today
+   *  view (`"notification"` tier → the heavier `"modal"` CSS, see #267). */
+  style: BannerStyle;
   announce: boolean;
   onReview: () => void;
   onDismiss: () => void;
