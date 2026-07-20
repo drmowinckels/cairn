@@ -849,7 +849,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     ).toBeNull();
   });
 
-  it("Workday in Review banner is an assertive live region (not a dialog) when detectionPrompts=modal", async () => {
+  it("Workday in Review banner is an assertive live region (not a dialog) when detectionPrompts=notification", async () => {
     workdayReviewActive = true;
     suggestionOverride = null;
     const invoke = vi.fn(async (cmd: string) => {
@@ -868,7 +868,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
         density="comfy"
         layoutVariant="default"
         onOpenRule={vi.fn()}
-        detectionPrompts="modal"
+        detectionPrompts="notification"
       />,
     );
     expect(screen.queryByRole("alertdialog")).toBeNull();
