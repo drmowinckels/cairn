@@ -72,6 +72,10 @@ export function LocalBadge({ compact = false }: { compact?: boolean }) {
 const CAPABILITY = {
   network: { label: "Network", hint: "Makes network requests" },
   secrets: { label: "Secrets", hint: "Stores credentials in your keychain" },
+  paid: {
+    label: "Pro",
+    hint: "Requires a paid license, verified locally — never online",
+  },
 } as const;
 
 /** A capability surfaced to the user for a plugin or connector (mirrors the

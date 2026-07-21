@@ -54,17 +54,37 @@ What in-process still buys us:
 - **Testability.** Pure-Rust, no IPC, no ABI — plugins are unit-tested
   like any other module.
 
-## The two kinds of plugin
+## The three kinds of plugin
 
-| Kind               | Direction     | Feeds                                  | Examples                             |
-| ------------------ | ------------- | -------------------------------------- | ------------------------------------ |
-| **Signal source**  | inbound       | the rules engine, via `SignalSnapshot` | calendar, browser                    |
-| **Sync connector** | bidirectional | task list in / time-spent out          | PM connectors (#110), billing (#109) |
+| Kind               | Direction     | Feeds                                  | Examples             |
+| ------------------ | ------------- | -------------------------------------- | -------------------- |
+| **Signal source**  | inbound       | the rules engine, via `SignalSnapshot` | calendar, browser    |
+| **Sync connector** | bidirectional | task list in / time-spent out          | PM connectors (#110) |
+| **Feature plugin** | none          | gated capability inside the app        | billing (#109)       |
 
-They share the same host (register / enable / disable / manifest) but
-plug into different seams. This doc specifies the **signal-source**
-seam in full (it is the one #111 needs first); the sync-connector seam
-reuses the host and is sketched at the end.
+They share the same identity model (manifest / enable / disable,
+persisted in `plugin_state`) but plug into different seams. This doc
+specifies the **signal-source** seam in full (it is the one #111 needs
+first); the sync-connector seam is sketched at the end; the feature
+seam is below.
+
+### Feature plugins
+
+A feature plugin has no running task: nothing to start, stop, or
+supervise, so it is a static registry entry (`plugins::FEATURE_PLUGINS`)
+rather than a host citizen — the persisted enabled flag IS its whole
+runtime state. Unlike signal sources (where an absent `plugin_state` row
+means enabled, because calendar predates persistence), a feature plugin
+declares its own default; billing is opt-in and defaults **off**.
+
+Billing additionally declares `Capability::Paid`: its screens unlock
+only with a valid Pro license, verified **locally** — an Ed25519
+signature over the license payload checked against a public key baked
+into the build (`CAIRN_LICENSE_PUBKEY` at compile time; wiring it into
+the release workflow is part of the storefront go-live — no build
+carries a key yet). No license call-home, ever; a build without the
+key rejects all licenses and says so. See `plugins/billing/license.rs`
+for the token format the signing worker must emit.
 
 ## Signal-source plugins
 

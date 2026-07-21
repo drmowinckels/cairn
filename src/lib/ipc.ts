@@ -996,10 +996,11 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
   return invoke<UpdateInfo | null>("check_for_update");
 }
 
-/** A capability a signal-source plugin declares (mirrors the Rust
- *  `Capability` enum, kebab-serialized). Surfaced as a badge so the
- *  privacy posture of an optional plugin is visible (docs/PRIVACY.md). */
-export type PluginCapability = "network" | "secrets";
+/** A capability a plugin declares (mirrors the Rust `Capability` enum,
+ *  kebab-serialized). Surfaced as a badge so the privacy posture of an
+ *  optional plugin is visible (docs/PRIVACY.md). `paid` = requires a
+ *  Pro license, verified locally (#109). */
+export type PluginCapability = "network" | "secrets" | "paid";
 
 export interface Plugin {
   id: string;
@@ -1026,6 +1027,51 @@ export async function setPluginEnabled(
 ): Promise<Plugin[]> {
   if (!inTauri) return [];
   return (await invoke<Plugin[]>("set_plugin_enabled", { id, enabled })) ?? [];
+}
+
+/** What a valid Pro license attests to (#109). */
+export interface BillingLicenseInfo {
+  email: string;
+  orderId: string;
+  product: string;
+}
+
+/** The billing card's state in one round trip (#109). `keyConfigured`
+ *  is false in builds without a baked-in license public key, where the
+ *  card explains licensing isn't live yet. */
+export interface BillingStatus {
+  enabled: boolean;
+  keyConfigured: boolean;
+  license: BillingLicenseInfo | null;
+}
+
+export async function billingStatus(): Promise<BillingStatus | null> {
+  if (!inTauri) return null;
+  return invoke<BillingStatus>("billing_status");
+}
+
+/** Inert status for the dev harness: outside Tauri the mutators keep
+ *  the file's no-throw invariant by resolving to a keyless, unlicensed
+ *  state instead of hitting a missing `invoke`. */
+const BILLING_OUTSIDE_TAURI: BillingStatus = {
+  enabled: false,
+  keyConfigured: false,
+  license: null,
+};
+
+/** Verify + store a pasted license. Rejects (throws the verifier's
+ *  message) without persisting when the key is invalid. The license is
+ *  write-only: the reply is the refreshed status, never the token. */
+export async function setBillingLicense(
+  license: string,
+): Promise<BillingStatus> {
+  if (!inTauri) return BILLING_OUTSIDE_TAURI;
+  return invoke<BillingStatus>("set_billing_license", { license });
+}
+
+export async function clearBillingLicense(): Promise<BillingStatus> {
+  if (!inTauri) return BILLING_OUTSIDE_TAURI;
+  return invoke<BillingStatus>("clear_billing_license");
 }
 
 /** A capability a PM connector declares (mirrors the Rust `Capability`,

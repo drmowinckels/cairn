@@ -13,6 +13,7 @@
 //! so a user who turns a networked plugin off stays opted out across
 //! launches. `Capability::Paid` lands with billing (#109).
 
+pub mod billing;
 pub mod browser;
 pub mod calendar;
 pub mod store;
@@ -37,6 +38,10 @@ pub enum Capability {
     Network,
     /// Reads or writes credentials in the OS keychain.
     Secrets,
+    /// Requires a paid license. The license is verified locally
+    /// (offline Ed25519 signature — see `plugins::billing::license`);
+    /// this capability never implies network access.
+    Paid,
 }
 
 /// Static identity + declared capabilities for a plugin.
@@ -59,6 +64,60 @@ pub struct PluginStatus {
     pub name: String,
     pub capabilities: Vec<Capability>,
     pub enabled: bool,
+}
+
+/// A plugin with no signal-source lifecycle — nothing to start or stop,
+/// just an identity, an enabled flag, and (for `Paid`) a license gate.
+/// Billing (#109) is the first one. Kept as a static registry rather
+/// than a host: with no running task there is no state to supervise, so
+/// the enabled flag in `plugin_state` IS the whole runtime state.
+pub struct FeaturePlugin {
+    pub manifest: PluginManifest,
+    /// Unlike signal sources (absent flag ⇒ enabled, because calendar
+    /// predates its persistence row), a feature plugin declares its own
+    /// default. Billing is opt-in and must default off.
+    pub default_enabled: bool,
+}
+
+/// Every compiled-in feature plugin.
+pub const FEATURE_PLUGINS: &[FeaturePlugin] = &[FeaturePlugin {
+    manifest: PluginManifest {
+        id: "billing",
+        name: "Billing (Pro)",
+        capabilities: &[Capability::Paid],
+    },
+    default_enabled: false,
+}];
+
+pub fn is_feature_plugin(id: &str) -> bool {
+    FEATURE_PLUGINS.iter().any(|p| p.manifest.id == id)
+}
+
+/// Resolve a feature plugin's enabled state from the persisted flags:
+/// an absent row means the plugin's own declared default (false for
+/// unknown ids — fail closed). The single home of that rule; both the
+/// plugin list and `billing::status` go through here.
+pub fn feature_enabled(flags: &HashMap<String, bool>, id: &str) -> bool {
+    flags.get(id).copied().unwrap_or_else(|| {
+        FEATURE_PLUGINS
+            .iter()
+            .find(|p| p.manifest.id == id)
+            .is_some_and(|p| p.default_enabled)
+    })
+}
+
+/// Statuses for every feature plugin, resolving each one's enabled flag
+/// from the persisted map with the plugin's own default as fallback.
+pub fn feature_statuses(flags: &HashMap<String, bool>) -> Vec<PluginStatus> {
+    FEATURE_PLUGINS
+        .iter()
+        .map(|p| PluginStatus {
+            id: p.manifest.id.to_string(),
+            name: p.manifest.name.to_string(),
+            capabilities: p.manifest.capabilities.to_vec(),
+            enabled: feature_enabled(flags, p.manifest.id),
+        })
+        .collect()
 }
 
 /// Abort handle for a running source. The host keeps this so a source
