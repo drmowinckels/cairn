@@ -7436,7 +7436,16 @@ pub async fn reset_onboarding(state: State<'_, AppState>) -> Result<OnboardingSt
 pub async fn list_plugins_impl(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::plugins::PluginStatus>, String> {
-    Ok(state.plugin_host.lock().await.statuses())
+    let mut statuses = state.plugin_host.lock().await.statuses();
+    statuses.extend(feature_plugin_statuses(&state).await);
+    Ok(statuses)
+}
+
+/// Feature plugins (no signal-source lifecycle — billing today) with
+/// their persisted enabled flags applied. See `plugins::FEATURE_PLUGINS`.
+async fn feature_plugin_statuses(state: &State<'_, AppState>) -> Vec<crate::plugins::PluginStatus> {
+    let flags = crate::plugins::store::load_enabled(&state.db.pool).await;
+    crate::plugins::feature_statuses(&flags)
 }
 
 /// Enable or disable a signal-source plugin at runtime. Starts or stops
@@ -7451,11 +7460,56 @@ pub async fn set_plugin_enabled_impl(
     id: String,
     enabled: bool,
 ) -> Result<Vec<crate::plugins::PluginStatus>, String> {
+    // A feature plugin has no running task — its persisted flag IS the
+    // whole runtime state, so there is no host to start or stop.
+    if crate::plugins::is_feature_plugin(&id) {
+        crate::plugins::store::set_enabled(&state.db.pool, &id, enabled).await?;
+        return list_plugins_impl(state).await;
+    }
     let tx = state.stream.event_sender();
     let mut host = state.plugin_host.lock().await;
     host.set_enabled(&id, enabled, &tx)?;
     crate::plugins::store::set_enabled(&state.db.pool, &id, enabled).await?;
-    Ok(host.statuses())
+    let mut statuses = host.statuses();
+    drop(host);
+    statuses.extend(feature_plugin_statuses(&state).await);
+    Ok(statuses)
+}
+
+// ── Billing plugin (#109) ─────────────────────────────────────────────
+
+/// The billing card's state in one round trip. The verifier is injected
+/// (production shims pass `LicenseVerifier::from_build()`) so tests can
+/// exercise the licensed path with a fixture keypair. Invoke shim in
+/// `lib.rs` — see `list_plugins_impl`.
+pub async fn billing_status_impl(
+    state: State<'_, AppState>,
+    verifier: &crate::plugins::billing::license::LicenseVerifier,
+) -> Result<crate::plugins::billing::BillingStatus, String> {
+    crate::plugins::billing::status(&state.db.pool, verifier).await
+}
+
+/// Verify then store a pasted license. An invalid key is rejected with
+/// the verifier's user-showable message and nothing is persisted. The
+/// license string is write-only: never logged or echoed back — the
+/// reply is the refreshed status. Invoke shim in `lib.rs`.
+pub async fn set_billing_license_impl(
+    state: State<'_, AppState>,
+    verifier: &crate::plugins::billing::license::LicenseVerifier,
+    license: String,
+) -> Result<crate::plugins::billing::BillingStatus, String> {
+    verifier.verify(&license)?;
+    crate::plugins::billing::store_license(&state.db.pool, license.trim()).await?;
+    crate::plugins::billing::status(&state.db.pool, verifier).await
+}
+
+/// Remove the stored license. Invoke shim in `lib.rs`.
+pub async fn clear_billing_license_impl(
+    state: State<'_, AppState>,
+    verifier: &crate::plugins::billing::license::LicenseVerifier,
+) -> Result<crate::plugins::billing::BillingStatus, String> {
+    crate::plugins::billing::clear_license(&state.db.pool).await?;
+    crate::plugins::billing::status(&state.db.pool, verifier).await
 }
 
 /// A cheap snapshot of the connector registry: clones the inner `Arc` and
@@ -8951,6 +9005,93 @@ mod plugin_tests {
         // No row was written for the unknown id.
         let persisted = crate::plugins::store::load_enabled(&db.pool).await;
         assert!(!persisted.contains_key("nonesuch"));
+    }
+
+    // ---- billing feature plugin (#109) ----
+
+    #[tokio::test]
+    async fn feature_and_host_plugin_ids_are_disjoint() {
+        // list_plugins concatenates host statuses and feature statuses;
+        // a shared id would list twice and shadow the host's toggle.
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let plugins = list_plugins_impl(state).await.unwrap();
+        let mut ids: Vec<&str> = plugins.iter().map(|p| p.id.as_str()).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), before, "duplicate plugin id in {ids:?}");
+    }
+
+    #[tokio::test]
+    async fn list_plugins_includes_billing_disabled_by_default() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let plugins = list_plugins_impl(state).await.unwrap();
+        let billing = plugins
+            .iter()
+            .find(|p| p.id == "billing")
+            .expect("billing feature plugin is listed");
+        assert_eq!(billing.name, "Billing (Pro)");
+        assert!(!billing.enabled, "billing is opt-in and defaults off");
+        assert_eq!(billing.capabilities, vec![Capability::Paid]);
+    }
+
+    #[tokio::test]
+    async fn set_plugin_enabled_round_trips_billing_via_plugin_state() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let after = set_plugin_enabled_impl(state.clone(), "billing".into(), true)
+            .await
+            .unwrap();
+        assert!(after.iter().find(|p| p.id == "billing").unwrap().enabled);
+        let persisted = crate::plugins::store::load_enabled(&db.pool).await;
+        assert_eq!(persisted.get("billing"), Some(&true));
+
+        let after = set_plugin_enabled_impl(state.clone(), "billing".into(), false)
+            .await
+            .unwrap();
+        assert!(!after.iter().find(|p| p.id == "billing").unwrap().enabled);
+
+        // The signal-source list is unaffected by the feature toggle.
+        assert!(after.iter().any(|p| p.id == "calendar"));
+    }
+
+    #[tokio::test]
+    async fn billing_license_ipc_flow_locked_set_unlocked_clear() {
+        use crate::plugins::billing::license::test_keys::{fixture_verifier, sign_license};
+
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let verifier = fixture_verifier();
+
+        let s = billing_status_impl(state.clone(), &verifier).await.unwrap();
+        assert!(s.key_configured);
+        assert!(s.license.is_none(), "starts locked");
+
+        // An invalid key is rejected and nothing is stored.
+        let err = set_billing_license_impl(state.clone(), &verifier, "junk".into())
+            .await
+            .unwrap_err();
+        assert!(err.contains("two dot"), "{err}");
+        let s = billing_status_impl(state.clone(), &verifier).await.unwrap();
+        assert!(s.license.is_none());
+
+        // A signed key unlocks (and survives a fresh status read).
+        let license = sign_license("dev@example.com", "ord_9", "cairn-pro");
+        let s = set_billing_license_impl(state.clone(), &verifier, license)
+            .await
+            .unwrap();
+        assert_eq!(s.license.as_ref().unwrap().email, "dev@example.com");
+        let s = billing_status_impl(state.clone(), &verifier).await.unwrap();
+        assert_eq!(s.license.unwrap().order_id, "ord_9");
+
+        // Clearing locks again.
+        let s = clear_billing_license_impl(state.clone(), &verifier)
+            .await
+            .unwrap();
+        assert!(s.license.is_none());
     }
 }
 

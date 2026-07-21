@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 const listPlugins = vi.fn();
 const setPluginEnabled = vi.fn();
+const billingStatus = vi.fn();
 
 vi.mock("../../lib/ipc", async () => {
   const actual =
@@ -13,6 +14,7 @@ vi.mock("../../lib/ipc", async () => {
     inTauri: true,
     listPlugins: (...args: unknown[]) => listPlugins(...args),
     setPluginEnabled: (...args: unknown[]) => setPluginEnabled(...args),
+    billingStatus: (...args: unknown[]) => billingStatus(...args),
   };
 });
 
@@ -37,6 +39,7 @@ const browser = {
 beforeEach(() => {
   listPlugins.mockReset();
   setPluginEnabled.mockReset();
+  billingStatus.mockReset();
 });
 
 describe("PluginsCard", () => {
@@ -172,5 +175,41 @@ describe("PluginsCard", () => {
     unmount();
     reject(new Error("late"));
     await waitFor(() => expect(listPlugins).toHaveBeenCalled());
+  });
+
+  it("lists billing with a Pro badge and no license row while disabled (#109)", async () => {
+    listPlugins.mockResolvedValue([
+      {
+        id: "billing",
+        name: "Billing (Pro)",
+        capabilities: ["paid"] as const,
+        enabled: false,
+      },
+    ]);
+    render(<PluginsCard />);
+    const sw = await screen.findByRole("switch", {
+      name: "Enable Billing (Pro)",
+    });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText("Pro")).toBeTruthy();
+    expect(billingStatus).not.toHaveBeenCalled();
+  });
+
+  it("mounts the license row when billing is enabled (#109)", async () => {
+    listPlugins.mockResolvedValue([
+      {
+        id: "billing",
+        name: "Billing (Pro)",
+        capabilities: ["paid"] as const,
+        enabled: true,
+      },
+    ]);
+    billingStatus.mockResolvedValue({
+      enabled: true,
+      keyConfigured: true,
+      license: null,
+    });
+    render(<PluginsCard />);
+    expect(await screen.findByLabelText(/pro license key/i)).toBeTruthy();
   });
 });

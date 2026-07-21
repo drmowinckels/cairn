@@ -121,6 +121,43 @@ async fn set_plugin_enabled(
     ipc::set_plugin_enabled_impl(state, id, enabled).await
 }
 
+// Billing plugin shims (#109): the production license verifier (baked-in
+// public key) is bound here so the tested impls stay injectable.
+#[tauri::command]
+async fn billing_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<plugins::billing::BillingStatus, String> {
+    ipc::billing_status_impl(
+        state,
+        plugins::billing::license::LicenseVerifier::from_build(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn set_billing_license(
+    state: tauri::State<'_, AppState>,
+    license: String,
+) -> Result<plugins::billing::BillingStatus, String> {
+    ipc::set_billing_license_impl(
+        state,
+        plugins::billing::license::LicenseVerifier::from_build(),
+        license,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn clear_billing_license(
+    state: tauri::State<'_, AppState>,
+) -> Result<plugins::billing::BillingStatus, String> {
+    ipc::clear_billing_license_impl(
+        state,
+        plugins::billing::license::LicenseVerifier::from_build(),
+    )
+    .await
+}
+
 // Thin PM-connector command shims (#110), same coverage rationale.
 #[tauri::command]
 async fn list_connectors(
@@ -844,6 +881,9 @@ pub fn run() {
             dismiss_autostart_repair_notice,
             list_plugins,
             set_plugin_enabled,
+            billing_status,
+            set_billing_license,
+            clear_billing_license,
             list_connectors,
             set_connector_secret,
             clear_connector_secret,

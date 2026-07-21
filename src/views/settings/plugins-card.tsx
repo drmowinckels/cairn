@@ -1,11 +1,19 @@
 import { CapabilityBadges } from "../../lib/components";
 import { Icon } from "../../lib/icon";
 import { usePlugins } from "../../lib/use-plugins";
+import { BillingLicenseRow } from "./billing-license";
 
 /** Plugins surfaced elsewhere in the UI, hidden from this list to avoid
  *  listing them twice. Calendar has its own Integrations row (with the
  *  source-management flow), so it is not also shown as a plugin toggle. */
 const HIDDEN_PLUGIN_IDS = new Set(["calendar"]);
+
+/** Extra per-plugin detail rendered under the toggle while the plugin is
+ *  enabled — keeps the list renderer generic instead of special-casing
+ *  plugin ids inline. Billing's row manages the Pro license (#109). */
+const PLUGIN_DETAIL: Record<string, React.ComponentType> = {
+  billing: BillingLicenseRow,
+};
 
 /** Settings → Plugins (#111). Lists each registered signal-source
  *  plugin with the capabilities it declared (so a networked /
@@ -29,8 +37,8 @@ export function PluginsCard() {
     >
       <h3 className="settings-h">Plugins</h3>
       <p className="settings-sub">
-        Optional signal sources and what they can access. Turn one off to stop
-        it entirely.
+        Optional plugins — signal sources and Pro features — and what they can
+        access. Turn one off to stop it entirely.
       </p>
       {error && (
         <p className="privacy-banner privacy-banner--error" role="alert">
@@ -40,33 +48,37 @@ export function PluginsCard() {
         </p>
       )}
       <ul className="intg-list">
-        {plugins.map((plugin) => (
-          <li
-            key={plugin.id}
-            className="intg-row"
-            data-plugin={plugin.id}
-            data-enabled={plugin.enabled}
-          >
-            <Icon name="grid" size={14} />
-            <span className="intg-name">{plugin.name}</span>
-            <span className="cap-badges">
-              <CapabilityBadges capabilities={plugin.capabilities} />
-            </span>
-            <button
-              type="button"
-              className={`tgl${plugin.enabled ? " is-on" : ""}`}
-              role="switch"
-              aria-checked={plugin.enabled}
-              aria-label={`Enable ${plugin.name}`}
-              onClick={() => {
-                void toggle(plugin.id, !plugin.enabled);
-              }}
-              disabled={busyId === plugin.id}
+        {plugins.map((plugin) => {
+          const Detail = PLUGIN_DETAIL[plugin.id];
+          return (
+            <li
+              key={plugin.id}
+              className="intg-row"
+              data-plugin={plugin.id}
+              data-enabled={plugin.enabled}
             >
-              <span className="tgl-dot" />
-            </button>
-          </li>
-        ))}
+              <Icon name="grid" size={14} />
+              <span className="intg-name">{plugin.name}</span>
+              <span className="cap-badges">
+                <CapabilityBadges capabilities={plugin.capabilities} />
+              </span>
+              <button
+                type="button"
+                className={`tgl${plugin.enabled ? " is-on" : ""}`}
+                role="switch"
+                aria-checked={plugin.enabled}
+                aria-label={`Enable ${plugin.name}`}
+                onClick={() => {
+                  void toggle(plugin.id, !plugin.enabled);
+                }}
+                disabled={busyId === plugin.id}
+              >
+                <span className="tgl-dot" />
+              </button>
+              {Detail && plugin.enabled && <Detail />}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

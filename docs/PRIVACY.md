@@ -123,6 +123,15 @@ Connectors are **opt-in plugins** that read a task list from a project-managemen
 - **An offline cache** stores the last successful read of each connector's project names, task labels, and task URLs in `cairn.sqlite` (the `connector_cache` table), so attribution still works when the remote is unreachable; the card marks such data as cached. This is metadata Cairn already received over an authorized read — no new data leaves the machine — and "Delete everything" wipes it with the rest of the user tables.
 - Read-only v1: a connector only ever _reads_ its remote. Writing time back out is a separate, later, per-connector grant.
 
+## Billing (Pro plugin)
+
+Billing is an **opt-in feature plugin** (#109), off by default. It is **fully local**: it makes **no network calls** — not for licensing, not for rates, not for invoicing.
+
+- **The Pro license is verified offline.** The user pastes a license key bought outside the app; Cairn checks its Ed25519 signature against a public key baked into the build. There is no activation server, no call-home, and nothing about the license leaves the machine.
+- **What's stored:** the license token itself (in `cairn.sqlite` — it attests a purchase and is locally verifiable; it grants no remote access, so it is not keychain material) and, in later slices, rates and invoice data in billing-owned tables. "Delete everything" wipes it with the rest.
+- **The license is write-only across the IPC boundary once stored** — status replies carry only the attested identity (email, order id, product), never the token.
+- **Money never enters core.** Rates, currency, and amounts exist only inside the plugin's own tables; core entries carry a plain billable yes/no flag.
+
 ## Update checks
 
 Cairn can check whether a newer version exists. This is the one outbound request core makes besides user-configured calendar fetches, and it is **off by default**.

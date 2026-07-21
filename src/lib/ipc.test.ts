@@ -347,6 +347,30 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(await setPluginEnabled("calendar", true)).toEqual([]);
   });
 
+  it("billingStatus invokes the command and returns the status (#109)", async () => {
+    const status = { enabled: true, keyConfigured: true, license: null };
+    invokeMock.mockResolvedValue(status);
+    const { billingStatus } = await import("./ipc");
+    expect(await billingStatus()).toEqual(status);
+    expect(invokeMock).toHaveBeenCalledWith("billing_status");
+  });
+
+  it("setBillingLicense forwards the key and clearBillingLicense takes none (#109)", async () => {
+    const status = {
+      enabled: true,
+      keyConfigured: true,
+      license: { email: "dev@example.com", orderId: "o", product: "cairn-pro" },
+    };
+    invokeMock.mockResolvedValue(status);
+    const { setBillingLicense, clearBillingLicense } = await import("./ipc");
+    expect(await setBillingLicense("payload.sig")).toEqual(status);
+    expect(invokeMock).toHaveBeenCalledWith("set_billing_license", {
+      license: "payload.sig",
+    });
+    await clearBillingLicense();
+    expect(invokeMock).toHaveBeenCalledWith("clear_billing_license");
+  });
+
   it("listConnectors invokes the command and returns the list", async () => {
     const list = [
       {
@@ -512,6 +536,16 @@ describe("ipc helpers (outside Tauri)", () => {
     const { upcomingCalendarEvents } = await import("./ipc");
     const events = await upcomingCalendarEvents(5);
     expect(events).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("billing commands short-circuit to an inert status without the backend (#109)", async () => {
+    const { billingStatus, setBillingLicense, clearBillingLicense } =
+      await import("./ipc");
+    expect(await billingStatus()).toBeNull();
+    const inert = { enabled: false, keyConfigured: false, license: null };
+    expect(await setBillingLicense("x.y")).toEqual(inert);
+    expect(await clearBillingLicense()).toEqual(inert);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

@@ -328,6 +328,8 @@ pub enum ManifestError {
     MissingSection { section: &'static str },
     #[error("file connectors are fully local and must declare no capabilities (got {0:?})")]
     FileCapabilities(Vec<Capability>),
+    #[error("connectors cannot declare the {0:?} capability")]
+    UnsupportedCapability(Capability),
     #[error("http connector baseUrl must be an absolute https:// URL with a host (got {0:?})")]
     InsecureBaseUrl(String),
     #[error("http connector is missing the {0:?} operation")]
@@ -443,6 +445,12 @@ impl ConnectorManifest {
         }
         if raw.name.trim().is_empty() {
             return Err(ManifestError::Name);
+        }
+        // `Paid` belongs to the billing feature plugin (#109); a synced
+        // manifest declaring it would render a badge the connector host
+        // can't honour.
+        if raw.capabilities.contains(&Capability::Paid) {
+            return Err(ManifestError::UnsupportedCapability(Capability::Paid));
         }
 
         let kind = match raw.kind.as_str() {
@@ -761,6 +769,18 @@ mod tests {
         let json = FILE_JSON.replace("\"capabilities\": []", "\"capabilities\": [\"network\"]");
         let err = ConnectorManifest::from_json(&json).unwrap_err();
         assert!(matches!(err, ManifestError::FileCapabilities(_)));
+    }
+
+    #[test]
+    fn no_connector_may_declare_the_paid_capability() {
+        // `paid` belongs to the billing feature plugin (#109), not to
+        // synced connector manifests.
+        let json = FILE_JSON.replace("\"capabilities\": []", "\"capabilities\": [\"paid\"]");
+        let err = ConnectorManifest::from_json(&json).unwrap_err();
+        assert!(matches!(
+            err,
+            ManifestError::UnsupportedCapability(Capability::Paid)
+        ));
     }
 
     #[test]
