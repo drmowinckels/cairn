@@ -1029,49 +1029,56 @@ export async function setPluginEnabled(
   return (await invoke<Plugin[]>("set_plugin_enabled", { id, enabled })) ?? [];
 }
 
-/** What a valid Pro license attests to (#109). */
-export interface BillingLicenseInfo {
-  email: string;
-  orderId: string;
-  product: string;
+/** The Lemon Squeezy activation stored on this device (#109). Mirrors the
+ *  Rust `LicenseView`. `active` is the single flag Pro features gate on;
+ *  `status` is Lemon Squeezy's raw status for display. */
+export interface LicenseView {
+  status: string;
+  active: boolean;
+  customerEmail: string | null;
+  productName: string | null;
+  expiresAt: string | null;
+  lastValidatedAt: string;
 }
 
-/** The billing card's state in one round trip (#109). `keyConfigured`
- *  is false in builds without a baked-in license public key, where the
- *  card explains licensing isn't live yet. */
+/** The billing card's state in one round trip (#109). `license` is the
+ *  stored activation (read with no network); `null` means not activated
+ *  on this device. */
 export interface BillingStatus {
   enabled: boolean;
-  keyConfigured: boolean;
-  license: BillingLicenseInfo | null;
+  license: LicenseView | null;
 }
+
+/** Inert status for the dev harness: outside Tauri, the mutators keep the
+ *  file's no-throw invariant by resolving to an unlicensed state rather
+ *  than hitting a missing `invoke`. */
+const BILLING_OUTSIDE_TAURI: BillingStatus = { enabled: false, license: null };
 
 export async function billingStatus(): Promise<BillingStatus | null> {
   if (!inTauri) return null;
   return invoke<BillingStatus>("billing_status");
 }
 
-/** Inert status for the dev harness: outside Tauri the mutators keep
- *  the file's no-throw invariant by resolving to a keyless, unlicensed
- *  state instead of hitting a missing `invoke`. */
-const BILLING_OUTSIDE_TAURI: BillingStatus = {
-  enabled: false,
-  keyConfigured: false,
-  license: null,
-};
-
-/** Verify + store a pasted license. Rejects (throws the verifier's
- *  message) without persisting when the key is invalid. The license is
- *  write-only: the reply is the refreshed status, never the token. */
-export async function setBillingLicense(
+/** Activate a pasted key on this device via Lemon Squeezy (a network
+ *  call). Rejects (throws Lemon Squeezy's reason) without storing when the
+ *  key is invalid / over its device limit. */
+export async function activateBillingLicense(
   license: string,
 ): Promise<BillingStatus> {
   if (!inTauri) return BILLING_OUTSIDE_TAURI;
-  return invoke<BillingStatus>("set_billing_license", { license });
+  return invoke<BillingStatus>("activate_billing_license", { license });
 }
 
-export async function clearBillingLicense(): Promise<BillingStatus> {
+/** Re-check the stored license against Lemon Squeezy (a network call). */
+export async function refreshBillingLicense(): Promise<BillingStatus> {
   if (!inTauri) return BILLING_OUTSIDE_TAURI;
-  return invoke<BillingStatus>("clear_billing_license");
+  return invoke<BillingStatus>("refresh_billing_license");
+}
+
+/** Release this device's slot with Lemon Squeezy and clear local state. */
+export async function deactivateBillingLicense(): Promise<BillingStatus> {
+  if (!inTauri) return BILLING_OUTSIDE_TAURI;
+  return invoke<BillingStatus>("deactivate_billing_license");
 }
 
 /** A capability a PM connector declares (mirrors the Rust `Capability`,

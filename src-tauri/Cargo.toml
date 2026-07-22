@@ -53,7 +53,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 url = "2"
 percent-encoding = "2"
 base64 = "0.22"
-ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 # Encrypted-file fallback for calendar URL secrets when the OS keychain
 # (Secret Service on Linux) is unavailable (#40). Documented downgrade —

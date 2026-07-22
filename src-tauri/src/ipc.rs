@@ -7478,38 +7478,42 @@ pub async fn set_plugin_enabled_impl(
 
 // ── Billing plugin (#109) ─────────────────────────────────────────────
 
-/// The billing card's state in one round trip. The verifier is injected
-/// (production shims pass `LicenseVerifier::from_build()`) so tests can
-/// exercise the licensed path with a fixture keypair. Invoke shim in
-/// `lib.rs` — see `list_plugins_impl`.
+/// The billing card's state in one round trip — the stored activation, no
+/// network. Invoke shim in `lib.rs` — see `list_plugins_impl`.
 pub async fn billing_status_impl(
     state: State<'_, AppState>,
-    verifier: &crate::plugins::billing::license::LicenseVerifier,
 ) -> Result<crate::plugins::billing::BillingStatus, String> {
-    crate::plugins::billing::status(&state.db.pool, verifier).await
+    crate::plugins::billing::status(&state.db.pool).await
 }
 
-/// Verify then store a pasted license. An invalid key is rejected with
-/// the verifier's user-showable message and nothing is persisted. The
-/// license string is write-only: never logged or echoed back — the
-/// reply is the refreshed status. Invoke shim in `lib.rs`.
-pub async fn set_billing_license_impl(
+/// Activate a pasted license key on this device via Lemon Squeezy, then
+/// store it. A rejected key returns Lemon Squeezy's reason and stores
+/// nothing. The `api` is injected so tests drive activation with a fake
+/// instead of the network; the production shim passes a reqwest client.
+/// Invoke shim in `lib.rs`.
+pub async fn activate_billing_license_impl(
     state: State<'_, AppState>,
-    verifier: &crate::plugins::billing::license::LicenseVerifier,
+    api: &dyn crate::plugins::billing::lemonsqueezy::LicenseApi,
     license: String,
 ) -> Result<crate::plugins::billing::BillingStatus, String> {
-    verifier.verify(&license)?;
-    crate::plugins::billing::store_license(&state.db.pool, license.trim()).await?;
-    crate::plugins::billing::status(&state.db.pool, verifier).await
+    crate::plugins::billing::activate(&state.db.pool, api, &license).await
 }
 
-/// Remove the stored license. Invoke shim in `lib.rs`.
-pub async fn clear_billing_license_impl(
+/// Re-check the stored license against Lemon Squeezy. Invoke shim in `lib.rs`.
+pub async fn refresh_billing_license_impl(
     state: State<'_, AppState>,
-    verifier: &crate::plugins::billing::license::LicenseVerifier,
+    api: &dyn crate::plugins::billing::lemonsqueezy::LicenseApi,
 ) -> Result<crate::plugins::billing::BillingStatus, String> {
-    crate::plugins::billing::clear_license(&state.db.pool).await?;
-    crate::plugins::billing::status(&state.db.pool, verifier).await
+    crate::plugins::billing::refresh(&state.db.pool, api).await
+}
+
+/// Release this device's slot with Lemon Squeezy and clear local state.
+/// Invoke shim in `lib.rs`.
+pub async fn deactivate_billing_license_impl(
+    state: State<'_, AppState>,
+    api: &dyn crate::plugins::billing::lemonsqueezy::LicenseApi,
+) -> Result<crate::plugins::billing::BillingStatus, String> {
+    crate::plugins::billing::deactivate(&state.db.pool, api).await
 }
 
 /// A cheap snapshot of the connector registry: clones the inner `Arc` and
@@ -9034,7 +9038,10 @@ mod plugin_tests {
             .expect("billing feature plugin is listed");
         assert_eq!(billing.name, "Billing (Pro)");
         assert!(!billing.enabled, "billing is opt-in and defaults off");
-        assert_eq!(billing.capabilities, vec![Capability::Paid]);
+        assert_eq!(
+            billing.capabilities,
+            vec![Capability::Paid, Capability::Network]
+        );
     }
 
     #[tokio::test]
@@ -9059,36 +9066,56 @@ mod plugin_tests {
     }
 
     #[tokio::test]
-    async fn billing_license_ipc_flow_locked_set_unlocked_clear() {
-        use crate::plugins::billing::license::test_keys::{fixture_verifier, sign_license};
+    async fn billing_license_ipc_flow_activate_status_deactivate() {
+        use crate::plugins::billing::lemonsqueezy::{LicenseApi, LicenseError, LicenseFacts};
+        use async_trait::async_trait;
+
+        // A fake Lemon Squeezy that activates once, then deactivates.
+        struct FakeApi;
+        #[async_trait]
+        impl LicenseApi for FakeApi {
+            async fn activate(&self, _key: &str) -> Result<LicenseFacts, LicenseError> {
+                Ok(LicenseFacts {
+                    status: "active".into(),
+                    instance_id: "inst-9".into(),
+                    customer_email: Some("dev@example.com".into()),
+                    product_name: Some("Cairn Pro".into()),
+                    expires_at: None,
+                })
+            }
+            async fn validate(
+                &self,
+                _key: &str,
+                _inst: &str,
+            ) -> Result<LicenseFacts, LicenseError> {
+                Err(LicenseError::Unreachable("not used".into()))
+            }
+            async fn deactivate(&self, _key: &str, _inst: &str) -> Result<(), LicenseError> {
+                Ok(())
+            }
+        }
 
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
-        let verifier = fixture_verifier();
+        let api = FakeApi;
 
-        let s = billing_status_impl(state.clone(), &verifier).await.unwrap();
-        assert!(s.key_configured);
-        assert!(s.license.is_none(), "starts locked");
-
-        // An invalid key is rejected and nothing is stored.
-        let err = set_billing_license_impl(state.clone(), &verifier, "junk".into())
-            .await
-            .unwrap_err();
-        assert!(err.contains("two dot"), "{err}");
-        let s = billing_status_impl(state.clone(), &verifier).await.unwrap();
+        // Starts locked.
+        let s = billing_status_impl(state.clone()).await.unwrap();
         assert!(s.license.is_none());
 
-        // A signed key unlocks (and survives a fresh status read).
-        let license = sign_license("dev@example.com", "ord_9", "cairn-pro");
-        let s = set_billing_license_impl(state.clone(), &verifier, license)
+        // Activation unlocks and survives a fresh, network-free status read.
+        let s = activate_billing_license_impl(state.clone(), &api, "KEY-1".into())
             .await
             .unwrap();
-        assert_eq!(s.license.as_ref().unwrap().email, "dev@example.com");
-        let s = billing_status_impl(state.clone(), &verifier).await.unwrap();
-        assert_eq!(s.license.unwrap().order_id, "ord_9");
+        assert!(s.license.as_ref().unwrap().active);
+        let s = billing_status_impl(state.clone()).await.unwrap();
+        assert_eq!(
+            s.license.unwrap().customer_email.as_deref(),
+            Some("dev@example.com")
+        );
 
-        // Clearing locks again.
-        let s = clear_billing_license_impl(state.clone(), &verifier)
+        // Deactivation locks again.
+        let s = deactivate_billing_license_impl(state.clone(), &api)
             .await
             .unwrap();
         assert!(s.license.is_none());

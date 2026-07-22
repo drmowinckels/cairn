@@ -77,14 +77,17 @@ runtime state. Unlike signal sources (where an absent `plugin_state` row
 means enabled, because calendar predates persistence), a feature plugin
 declares its own default; billing is opt-in and defaults **off**.
 
-Billing additionally declares `Capability::Paid`: its screens unlock
-only with a valid Pro license, verified **locally** — an Ed25519
-signature over the license payload checked against a public key baked
-into the build (`CAIRN_LICENSE_PUBKEY` at compile time; wiring it into
-the release workflow is part of the storefront go-live — no build
-carries a key yet). No license call-home, ever; a build without the
-key rejects all licenses and says so. See `plugins/billing/license.rs`
-for the token format the signing worker must emit.
+Billing declares both `Capability::Paid` and `Capability::Network`: its
+screens unlock only with a Pro license, and it verifies that license
+directly against Lemon Squeezy's public license API (`activate` /
+`validate` / `deactivate`) — the same approach as the sister app
+Entracte. The license key is the credential, so no store API token
+ships in the app. A licensing call carries only the key + a device
+instance id, never tracked time data; reading the stored status makes
+no network call, so the app stays usable offline (see `docs/PRIVACY.md`
+and `plugins/billing/lemonsqueezy.rs`). An optional compile-time
+`CAIRN_LS_PRODUCT_ID` pins licenses to the Cairn Pro product so a key
+for another product in the same store can't unlock it.
 
 ## Signal-source plugins
 

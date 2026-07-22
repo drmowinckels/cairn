@@ -177,12 +177,12 @@ describe("PluginsCard", () => {
     await waitFor(() => expect(listPlugins).toHaveBeenCalled());
   });
 
-  it("lists billing with a Pro badge and no license row while disabled (#109)", async () => {
+  it("lists billing with Pro + Network badges and no license row while disabled (#109)", async () => {
     listPlugins.mockResolvedValue([
       {
         id: "billing",
         name: "Billing (Pro)",
-        capabilities: ["paid"] as const,
+        capabilities: ["paid", "network"] as const,
         enabled: false,
       },
     ]);
@@ -192,6 +192,7 @@ describe("PluginsCard", () => {
     });
     expect(sw.getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText("Pro")).toBeTruthy();
+    expect(screen.getByText("Network")).toBeTruthy();
     expect(billingStatus).not.toHaveBeenCalled();
   });
 
@@ -200,15 +201,11 @@ describe("PluginsCard", () => {
       {
         id: "billing",
         name: "Billing (Pro)",
-        capabilities: ["paid"] as const,
+        capabilities: ["paid", "network"] as const,
         enabled: true,
       },
     ]);
-    billingStatus.mockResolvedValue({
-      enabled: true,
-      keyConfigured: true,
-      license: null,
-    });
+    billingStatus.mockResolvedValue({ enabled: true, license: null });
     render(<PluginsCard />);
     expect(await screen.findByLabelText(/pro license key/i)).toBeTruthy();
   });

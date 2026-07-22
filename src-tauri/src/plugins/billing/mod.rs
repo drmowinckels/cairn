@@ -1,19 +1,27 @@
-//! Billing feature plugin (#109): the Pro gate. This slice owns the
-//! plugin's enabled state (via the shared `plugin_state` table) and the
-//! locally-verified license (`license` module). Rates, profitability,
+//! Billing feature plugin (#109): the Pro gate. Owns the plugin's enabled
+//! state (via the shared `plugin_state` table) and the Lemon Squeezy
+//! license activation stored in `billing_license`. Rates, profitability,
 //! and invoicing land in later slices — always in billing-owned tables,
 //! never in core's.
 //!
-//! Fully local: the plugin makes no network calls. See `docs/PRIVACY.md`.
+//! **Networked.** Unlike core, this plugin verifies licenses against Lemon
+//! Squeezy (activate / validate / deactivate — see [`lemonsqueezy`]). It
+//! declares the `Network` capability and the UI surfaces the check. A
+//! licensing call carries only the license key + device instance id, never
+//! any tracked time data. See `docs/PRIVACY.md`.
 
-pub mod license;
+pub mod lemonsqueezy;
 
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
-use license::{LicenseInfo, LicenseVerifier};
+use lemonsqueezy::{LicenseApi, LicenseError, LicenseFacts};
 
 pub const PLUGIN_ID: &str = "billing";
+
+fn err<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
 
 /// Everything the billing card needs in one round trip.
 #[derive(Debug, Clone, Serialize)]
@@ -21,136 +29,415 @@ pub const PLUGIN_ID: &str = "billing";
 pub struct BillingStatus {
     /// The plugin toggle (persisted in `plugin_state`; default off).
     pub enabled: bool,
-    /// Whether this build carries a license public key at all — false
-    /// in dev builds, where the card explains licensing isn't live yet.
-    pub key_configured: bool,
-    /// `Some` when a stored license verifies against the baked-in key.
-    pub license: Option<LicenseInfo>,
+    /// The activated license, if any — read from local storage, no
+    /// network. `None` means the user hasn't activated a key on this
+    /// device.
+    pub license: Option<LicenseView>,
 }
 
-/// Load the stored license string, if any.
-pub async fn load_license(pool: &SqlitePool) -> Result<Option<String>, String> {
-    let row = sqlx::query("SELECT license FROM billing_license WHERE singleton = 1")
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(row.map(|r| r.get("license")))
+/// The stored activation as the UI sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenseView {
+    /// Lemon Squeezy's `license_key.status`: `active` / `inactive` /
+    /// `expired` / `disabled`.
+    pub status: String,
+    /// `true` iff `status == "active"` — the single flag Pro features gate on.
+    pub active: bool,
+    pub customer_email: Option<String>,
+    pub product_name: Option<String>,
+    pub expires_at: Option<String>,
+    pub last_validated_at: String,
 }
 
-/// Store (or replace) the license string. Callers verify BEFORE storing
-/// — an invalid key must never be persisted just to fail again on every
-/// status read.
-pub async fn store_license(pool: &SqlitePool, license: &str) -> Result<(), String> {
-    sqlx::query(
-        "INSERT INTO billing_license (singleton, license, stored_at) \
-         VALUES (1, ?1, datetime('now')) \
-         ON CONFLICT(singleton) DO UPDATE SET license = ?1, stored_at = datetime('now')",
+struct Stored {
+    license_key: String,
+    instance_id: String,
+    status: String,
+    customer_email: Option<String>,
+    product_name: Option<String>,
+    expires_at: Option<String>,
+    last_validated_at: String,
+}
+
+impl Stored {
+    fn view(&self) -> LicenseView {
+        LicenseView {
+            active: self.status == "active",
+            status: self.status.clone(),
+            customer_email: self.customer_email.clone(),
+            product_name: self.product_name.clone(),
+            expires_at: self.expires_at.clone(),
+            last_validated_at: self.last_validated_at.clone(),
+        }
+    }
+}
+
+async fn load_stored(pool: &SqlitePool) -> Result<Option<Stored>, String> {
+    let row = sqlx::query(
+        "SELECT license_key, instance_id, status, customer_email, product_name, \
+                expires_at, last_validated_at \
+           FROM billing_license WHERE singleton = 1",
     )
-    .bind(license)
+    .fetch_optional(pool)
+    .await
+    .map_err(err)?;
+    Ok(row.map(|r| Stored {
+        license_key: r.get("license_key"),
+        instance_id: r.get("instance_id"),
+        status: r.get("status"),
+        customer_email: r.get("customer_email"),
+        product_name: r.get("product_name"),
+        expires_at: r.get("expires_at"),
+        last_validated_at: r.get("last_validated_at"),
+    }))
+}
+
+/// Persist a fresh activation, replacing any prior row (resets
+/// `activated_at`).
+async fn save_activation(
+    pool: &SqlitePool,
+    license_key: &str,
+    facts: &LicenseFacts,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO billing_license \
+           (singleton, license_key, instance_id, status, customer_email, \
+            product_name, expires_at, activated_at, last_validated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), datetime('now')) \
+         ON CONFLICT(singleton) DO UPDATE SET \
+           license_key = excluded.license_key, instance_id = excluded.instance_id, \
+           status = excluded.status, customer_email = excluded.customer_email, \
+           product_name = excluded.product_name, expires_at = excluded.expires_at, \
+           activated_at = excluded.activated_at, last_validated_at = excluded.last_validated_at",
+    )
+    .bind(license_key)
+    .bind(&facts.instance_id)
+    .bind(&facts.status)
+    .bind(&facts.customer_email)
+    .bind(&facts.product_name)
+    .bind(&facts.expires_at)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(err)?;
     Ok(())
 }
 
-pub async fn clear_license(pool: &SqlitePool) -> Result<(), String> {
+/// Update the stored row from a re-validation, keeping the original
+/// `activated_at`.
+async fn update_from_validate(pool: &SqlitePool, facts: &LicenseFacts) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE billing_license SET status = ?1, customer_email = ?2, \
+                product_name = ?3, expires_at = ?4, last_validated_at = datetime('now') \
+          WHERE singleton = 1",
+    )
+    .bind(&facts.status)
+    .bind(&facts.customer_email)
+    .bind(&facts.product_name)
+    .bind(&facts.expires_at)
+    .execute(pool)
+    .await
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Mark the stored license as no longer active (Lemon Squeezy said the key
+/// lapsed) without discarding it, so the card can explain the state.
+async fn mark_inactive(pool: &SqlitePool) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE billing_license SET status = 'inactive', \
+                last_validated_at = datetime('now') WHERE singleton = 1",
+    )
+    .execute(pool)
+    .await
+    .map_err(err)?;
+    Ok(())
+}
+
+async fn clear_stored(pool: &SqlitePool) -> Result<(), String> {
     sqlx::query("DELETE FROM billing_license WHERE singleton = 1")
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(err)?;
     Ok(())
 }
 
-/// Assemble the card's status: plugin flag + license check. A stored
-/// license that no longer verifies (key rotation, corruption) reads as
-/// unlicensed rather than erroring — the user just re-enters the key.
-pub async fn status(
-    pool: &SqlitePool,
-    verifier: &LicenseVerifier,
-) -> Result<BillingStatus, String> {
+/// The card's state: the plugin flag + the locally-stored activation. Reads
+/// no network — the UI stays instant and works offline; `refresh` is what
+/// checks in with Lemon Squeezy.
+pub async fn status(pool: &SqlitePool) -> Result<BillingStatus, String> {
     let flags = crate::plugins::store::load_enabled(pool).await;
     let enabled = crate::plugins::feature_enabled(&flags, PLUGIN_ID);
-    let license = match load_license(pool).await? {
-        Some(stored) => verifier.verify(&stored).ok(),
-        None => None,
+    let license = load_stored(pool).await?.map(|s| s.view());
+    Ok(BillingStatus { enabled, license })
+}
+
+/// Activate a pasted key on this device via Lemon Squeezy, then store it.
+/// A rejected key (invalid / over device limit / wrong product) returns
+/// its reason and stores nothing.
+pub async fn activate(
+    pool: &SqlitePool,
+    api: &dyn LicenseApi,
+    license_key: &str,
+) -> Result<BillingStatus, String> {
+    let key = license_key.trim();
+    if key.is_empty() {
+        return Err("enter a license key".into());
+    }
+    let facts = api.activate(key).await.map_err(err)?;
+    save_activation(pool, key, &facts).await?;
+    status(pool).await
+}
+
+/// Re-check the stored license against Lemon Squeezy (the "direct" check).
+/// A lapsed key is recorded as inactive (kept, so the user sees why); an
+/// unreachable Lemon Squeezy leaves the last-known state and surfaces the
+/// error so a dropped connection never locks a paying user out.
+pub async fn refresh(pool: &SqlitePool, api: &dyn LicenseApi) -> Result<BillingStatus, String> {
+    let Some(stored) = load_stored(pool).await? else {
+        return status(pool).await;
     };
-    Ok(BillingStatus {
-        enabled,
-        key_configured: verifier.has_key(),
-        license,
-    })
+    match api.validate(&stored.license_key, &stored.instance_id).await {
+        Ok(facts) => update_from_validate(pool, &facts).await?,
+        Err(LicenseError::Rejected(_)) => mark_inactive(pool).await?,
+        Err(LicenseError::Unreachable(msg)) => return Err(msg),
+    }
+    status(pool).await
+}
+
+/// Release this device's slot with Lemon Squeezy and clear local state. An
+/// unreachable Lemon Squeezy is a hard error (we keep local state rather
+/// than orphaning the device slot); a rejection (the instance is already
+/// gone) still clears locally.
+pub async fn deactivate(pool: &SqlitePool, api: &dyn LicenseApi) -> Result<BillingStatus, String> {
+    if let Some(stored) = load_stored(pool).await? {
+        match api
+            .deactivate(&stored.license_key, &stored.instance_id)
+            .await
+        {
+            Ok(()) | Err(LicenseError::Rejected(_)) => {}
+            Err(LicenseError::Unreachable(msg)) => {
+                return Err(format!(
+                    "couldn't release this device with Lemon Squeezy: {msg}"
+                ));
+            }
+        }
+        clear_stored(pool).await?;
+    }
+    status(pool).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::license::test_keys::{fixture_verifier, sign_license};
     use super::*;
     use crate::test_support::test_db;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
 
-    #[tokio::test]
-    async fn license_round_trips_store_load_clear() {
-        let (_dir, db) = test_db().await;
-        assert_eq!(load_license(&db.pool).await.unwrap(), None);
+    fn facts(status: &str) -> LicenseFacts {
+        LicenseFacts {
+            status: status.into(),
+            instance_id: "inst-1".into(),
+            customer_email: Some("dev@example.com".into()),
+            product_name: Some("Cairn Pro".into()),
+            expires_at: None,
+        }
+    }
 
-        store_license(&db.pool, "first").await.unwrap();
-        assert_eq!(
-            load_license(&db.pool).await.unwrap().as_deref(),
-            Some("first")
-        );
+    /// Scripted LicenseApi: each method returns the queued result and
+    /// records the call, so tests assert both behaviour and the exact
+    /// Lemon Squeezy interaction.
+    #[derive(Default)]
+    struct MockApi {
+        activate: Mutex<Option<Result<LicenseFacts, LicenseError>>>,
+        validate: Mutex<Option<Result<LicenseFacts, LicenseError>>>,
+        deactivate: Mutex<Option<Result<(), LicenseError>>>,
+        calls: Mutex<Vec<String>>,
+    }
 
-        // Replacing overwrites the single row rather than adding one.
-        store_license(&db.pool, "second").await.unwrap();
-        assert_eq!(
-            load_license(&db.pool).await.unwrap().as_deref(),
-            Some("second")
-        );
+    impl MockApi {
+        fn take<T>(slot: &Mutex<Option<T>>) -> T {
+            slot.lock().unwrap().take().expect("unexpected API call")
+        }
+    }
 
-        clear_license(&db.pool).await.unwrap();
-        assert_eq!(load_license(&db.pool).await.unwrap(), None);
+    #[async_trait]
+    impl LicenseApi for MockApi {
+        async fn activate(&self, key: &str) -> Result<LicenseFacts, LicenseError> {
+            self.calls.lock().unwrap().push(format!("activate:{key}"));
+            Self::take(&self.activate)
+        }
+        async fn validate(&self, key: &str, inst: &str) -> Result<LicenseFacts, LicenseError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("validate:{key}:{inst}"));
+            Self::take(&self.validate)
+        }
+        async fn deactivate(&self, key: &str, inst: &str) -> Result<(), LicenseError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("deactivate:{key}:{inst}"));
+            Self::take(&self.deactivate)
+        }
     }
 
     #[tokio::test]
-    async fn status_defaults_off_unlicensed() {
+    async fn status_defaults_off_and_unlicensed() {
         let (_dir, db) = test_db().await;
-        let s = status(&db.pool, &fixture_verifier()).await.unwrap();
+        let s = status(&db.pool).await.unwrap();
         assert!(!s.enabled, "billing must default off");
-        assert!(s.key_configured);
         assert!(s.license.is_none());
     }
 
     #[tokio::test]
-    async fn status_reflects_flag_and_valid_license() {
+    async fn activate_stores_and_reflects_a_valid_license() {
         let (_dir, db) = test_db().await;
         crate::plugins::store::set_enabled(&db.pool, PLUGIN_ID, true)
             .await
             .unwrap();
-        store_license(
-            &db.pool,
-            &sign_license("dev@example.com", "o1", "cairn-pro"),
-        )
-        .await
-        .unwrap();
-        let s = status(&db.pool, &fixture_verifier()).await.unwrap();
-        assert!(s.enabled);
-        assert_eq!(s.license.unwrap().email, "dev@example.com");
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+
+        let s = activate(&db.pool, &api, "  KEY-123  ").await.unwrap();
+        let lic = s.license.expect("license stored");
+        assert!(s.enabled && lic.active);
+        assert_eq!(lic.customer_email.as_deref(), Some("dev@example.com"));
+        // The key was trimmed before the API call.
+        assert_eq!(api.calls.lock().unwrap()[0], "activate:KEY-123");
+        // And it survives a fresh, network-free status read.
+        assert!(status(&db.pool).await.unwrap().license.unwrap().active);
     }
 
     #[tokio::test]
-    async fn status_treats_an_unverifiable_stored_license_as_unlicensed() {
+    async fn activate_rejects_a_bad_key_without_storing() {
         let (_dir, db) = test_db().await;
-        store_license(&db.pool, "garbage-from-an-old-key")
-            .await
-            .unwrap();
-        let s = status(&db.pool, &fixture_verifier()).await.unwrap();
-        assert!(s.license.is_none());
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() =
+            Some(Err(LicenseError::Rejected("license key not found".into())));
+        let err = activate(&db.pool, &api, "nope").await.unwrap_err();
+        assert!(err.contains("not found"), "{err}");
+        assert!(status(&db.pool).await.unwrap().license.is_none());
+    }
 
-        // Keyless build: even a well-formed stored license reads unlicensed.
-        store_license(&db.pool, &sign_license("dev@example.com", "o", "p"))
-            .await
-            .unwrap();
-        let keyless = LicenseVerifier::with_key(None);
-        let s = status(&db.pool, &keyless).await.unwrap();
-        assert!(!s.key_configured);
+    #[tokio::test]
+    async fn activate_rejects_an_empty_key_without_calling_the_api() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        let err = activate(&db.pool, &api, "   ").await.unwrap_err();
+        assert!(err.contains("enter a license key"), "{err}");
+        assert!(api.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_updates_status_from_lemon_squeezy() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+        activate(&db.pool, &api, "KEY").await.unwrap();
+
+        // A later re-check reports the key expired.
+        *api.validate.lock().unwrap() = Some(Ok(facts("expired")));
+        let s = refresh(&db.pool, &api).await.unwrap();
+        let lic = s.license.unwrap();
+        assert_eq!(lic.status, "expired");
+        assert!(!lic.active);
+        assert_eq!(
+            api.calls.lock().unwrap()[1],
+            "validate:KEY:inst-1",
+            "validate carries the stored key + instance"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_marks_inactive_when_lemon_squeezy_rejects() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+        activate(&db.pool, &api, "KEY").await.unwrap();
+
+        *api.validate.lock().unwrap() =
+            Some(Err(LicenseError::Rejected("license deactivated".into())));
+        let s = refresh(&db.pool, &api).await.unwrap();
+        let lic = s.license.expect("row kept so the card can explain it");
+        assert!(!lic.active);
+        assert_eq!(lic.status, "inactive");
+    }
+
+    #[tokio::test]
+    async fn refresh_keeps_state_and_errors_when_offline() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+        activate(&db.pool, &api, "KEY").await.unwrap();
+
+        *api.validate.lock().unwrap() = Some(Err(LicenseError::Unreachable("offline".into())));
+        let err = refresh(&db.pool, &api).await.unwrap_err();
+        assert!(err.contains("offline"));
+        // Last-known "active" is untouched — a dropped connection never
+        // locks the user out.
+        assert!(status(&db.pool).await.unwrap().license.unwrap().active);
+    }
+
+    #[tokio::test]
+    async fn refresh_without_a_license_is_a_noop() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        let s = refresh(&db.pool, &api).await.unwrap();
         assert!(s.license.is_none());
+        assert!(api.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deactivate_releases_the_slot_and_clears_local() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+        activate(&db.pool, &api, "KEY").await.unwrap();
+
+        *api.deactivate.lock().unwrap() = Some(Ok(()));
+        let s = deactivate(&db.pool, &api).await.unwrap();
+        assert!(s.license.is_none());
+        assert_eq!(api.calls.lock().unwrap()[1], "deactivate:KEY:inst-1");
+    }
+
+    #[tokio::test]
+    async fn deactivate_clears_locally_even_if_the_instance_is_already_gone() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+        activate(&db.pool, &api, "KEY").await.unwrap();
+
+        *api.deactivate.lock().unwrap() =
+            Some(Err(LicenseError::Rejected("instance not found".into())));
+        let s = deactivate(&db.pool, &api).await.unwrap();
+        assert!(s.license.is_none());
+    }
+
+    #[tokio::test]
+    async fn deactivate_without_a_license_is_a_noop() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        let s = deactivate(&db.pool, &api).await.unwrap();
+        assert!(s.license.is_none());
+        assert!(
+            api.calls.lock().unwrap().is_empty(),
+            "no Lemon Squeezy call"
+        );
+    }
+
+    #[tokio::test]
+    async fn deactivate_keeps_local_state_when_offline() {
+        let (_dir, db) = test_db().await;
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+        activate(&db.pool, &api, "KEY").await.unwrap();
+
+        *api.deactivate.lock().unwrap() = Some(Err(LicenseError::Unreachable("offline".into())));
+        let err = deactivate(&db.pool, &api).await.unwrap_err();
+        assert!(err.contains("couldn't release this device"), "{err}");
+        // Not orphaned — the license is still there to retry.
+        assert!(status(&db.pool).await.unwrap().license.is_some());
     }
 }

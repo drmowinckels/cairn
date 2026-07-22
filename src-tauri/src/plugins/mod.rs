@@ -38,9 +38,9 @@ pub enum Capability {
     Network,
     /// Reads or writes credentials in the OS keychain.
     Secrets,
-    /// Requires a paid license. The license is verified locally
-    /// (offline Ed25519 signature — see `plugins::billing::license`);
-    /// this capability never implies network access.
+    /// Requires a paid license. Billing verifies licenses with Lemon
+    /// Squeezy (see `plugins::billing::lemonsqueezy`), so it also declares
+    /// `Network`; `Paid` on its own only signals "unlocked by a license".
     Paid,
 }
 
@@ -84,7 +84,8 @@ pub const FEATURE_PLUGINS: &[FeaturePlugin] = &[FeaturePlugin {
     manifest: PluginManifest {
         id: "billing",
         name: "Billing (Pro)",
-        capabilities: &[Capability::Paid],
+        // Networked: it verifies licenses against Lemon Squeezy (#109).
+        capabilities: &[Capability::Paid, Capability::Network],
     },
     default_enabled: false,
 }];

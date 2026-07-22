@@ -348,27 +348,30 @@ describe("ipc helpers (inside Tauri)", () => {
   });
 
   it("billingStatus invokes the command and returns the status (#109)", async () => {
-    const status = { enabled: true, keyConfigured: true, license: null };
+    const status = { enabled: true, license: null };
     invokeMock.mockResolvedValue(status);
     const { billingStatus } = await import("./ipc");
     expect(await billingStatus()).toEqual(status);
     expect(invokeMock).toHaveBeenCalledWith("billing_status");
   });
 
-  it("setBillingLicense forwards the key and clearBillingLicense takes none (#109)", async () => {
-    const status = {
-      enabled: true,
-      keyConfigured: true,
-      license: { email: "dev@example.com", orderId: "o", product: "cairn-pro" },
-    };
+  it("billing mutators forward the right args to the right commands (#109)", async () => {
+    const status = { enabled: true, license: null };
     invokeMock.mockResolvedValue(status);
-    const { setBillingLicense, clearBillingLicense } = await import("./ipc");
-    expect(await setBillingLicense("payload.sig")).toEqual(status);
-    expect(invokeMock).toHaveBeenCalledWith("set_billing_license", {
-      license: "payload.sig",
+    const {
+      activateBillingLicense,
+      refreshBillingLicense,
+      deactivateBillingLicense,
+    } = await import("./ipc");
+
+    expect(await activateBillingLicense("KEY-1")).toEqual(status);
+    expect(invokeMock).toHaveBeenCalledWith("activate_billing_license", {
+      license: "KEY-1",
     });
-    await clearBillingLicense();
-    expect(invokeMock).toHaveBeenCalledWith("clear_billing_license");
+    await refreshBillingLicense();
+    expect(invokeMock).toHaveBeenCalledWith("refresh_billing_license");
+    await deactivateBillingLicense();
+    expect(invokeMock).toHaveBeenCalledWith("deactivate_billing_license");
   });
 
   it("listConnectors invokes the command and returns the list", async () => {
@@ -540,12 +543,17 @@ describe("ipc helpers (outside Tauri)", () => {
   });
 
   it("billing commands short-circuit to an inert status without the backend (#109)", async () => {
-    const { billingStatus, setBillingLicense, clearBillingLicense } =
-      await import("./ipc");
+    const {
+      billingStatus,
+      activateBillingLicense,
+      refreshBillingLicense,
+      deactivateBillingLicense,
+    } = await import("./ipc");
     expect(await billingStatus()).toBeNull();
-    const inert = { enabled: false, keyConfigured: false, license: null };
-    expect(await setBillingLicense("x.y")).toEqual(inert);
-    expect(await clearBillingLicense()).toEqual(inert);
+    const inert = { enabled: false, license: null };
+    expect(await activateBillingLicense("KEY")).toEqual(inert);
+    expect(await refreshBillingLicense()).toEqual(inert);
+    expect(await deactivateBillingLicense()).toEqual(inert);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

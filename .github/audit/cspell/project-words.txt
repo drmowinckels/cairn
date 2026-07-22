@@ -44,6 +44,7 @@ Rustdoc
 SQLite
 SmartScreen
 SqlitePool
+Squeezy
 Syncthing
 TEAMID
 TMPDIR
@@ -118,6 +119,7 @@ keyutils
 knip
 lcov
 lede
+lemonsqueezy
 libappindicator
 libayatana
 librsvg2
