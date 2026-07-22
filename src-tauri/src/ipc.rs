@@ -7516,6 +7516,76 @@ pub async fn deactivate_billing_license_impl(
     crate::plugins::billing::deactivate(&state.db.pool, api).await
 }
 
+// ── Billing rate model (#109) ─────────────────────────────────────────
+//
+// Reads (`list`, `effective`) require the plugin enabled; writes (`set`,
+// `delete`) additionally require an active Pro license. Both mutations
+// return the fresh rate list so the UI re-renders from one round trip.
+
+/// Every configured Pro rate. Invoke shim in `lib.rs`.
+pub async fn billing_list_rates_impl(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::plugins::billing::rates::Rate>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_enabled(pool).await?;
+    crate::plugins::billing::rates::list_rates(pool).await
+}
+
+/// Upsert the rate for a scope effective from a date. Invoke shim in `lib.rs`.
+pub async fn billing_set_rate_impl(
+    state: State<'_, AppState>,
+    scope_type: String,
+    scope_id: String,
+    amount_cents: i64,
+    currency: String,
+    effective_from: String,
+) -> Result<Vec<crate::plugins::billing::rates::Rate>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    crate::plugins::billing::rates::set_rate(
+        pool,
+        &scope_type,
+        &scope_id,
+        amount_cents,
+        &currency,
+        &effective_from,
+    )
+    .await?;
+    crate::plugins::billing::rates::list_rates(pool).await
+}
+
+/// Remove a rate by id. Invoke shim in `lib.rs`.
+pub async fn billing_delete_rate_impl(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<crate::plugins::billing::rates::Rate>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    crate::plugins::billing::rates::delete_rate(pool, &id).await?;
+    crate::plugins::billing::rates::list_rates(pool).await
+}
+
+/// The rate that applies to work at `at` for a client/project/task — the
+/// resolver a preview / profitability view calls. Invoke shim in `lib.rs`.
+pub async fn billing_effective_rate_impl(
+    state: State<'_, AppState>,
+    client_id: Option<String>,
+    project_id: Option<String>,
+    task_id: Option<String>,
+    at: String,
+) -> Result<Option<crate::plugins::billing::rates::ResolvedRate>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_enabled(pool).await?;
+    crate::plugins::billing::rates::resolve_rate(
+        pool,
+        client_id.as_deref(),
+        project_id.as_deref(),
+        task_id.as_deref(),
+        &at,
+    )
+    .await
+}
+
 /// A cheap snapshot of the connector registry: clones the inner `Arc` and
 /// releases the lock immediately, so callers can hold it across the network
 /// reads without blocking a concurrent `install_connector` swap. Recovers
@@ -9119,6 +9189,107 @@ mod plugin_tests {
             .await
             .unwrap();
         assert!(s.license.is_none());
+    }
+
+    #[tokio::test]
+    async fn billing_rate_ipc_flow_gates_writes_then_round_trips() {
+        use crate::plugins::billing::lemonsqueezy::{LicenseApi, LicenseError, LicenseFacts};
+        use async_trait::async_trait;
+
+        struct ActiveApi;
+        #[async_trait]
+        impl LicenseApi for ActiveApi {
+            async fn activate(&self, _key: &str) -> Result<LicenseFacts, LicenseError> {
+                Ok(LicenseFacts {
+                    status: "active".into(),
+                    instance_id: "inst-r".into(),
+                    customer_email: None,
+                    product_name: Some("Cairn Pro".into()),
+                    expires_at: None,
+                })
+            }
+            async fn validate(&self, _k: &str, _i: &str) -> Result<LicenseFacts, LicenseError> {
+                Err(LicenseError::Unreachable("unused".into()))
+            }
+            async fn deactivate(&self, _k: &str, _i: &str) -> Result<(), LicenseError> {
+                Ok(())
+            }
+        }
+
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        // Every command is gated while the plugin is off — reads and writes
+        // alike each surface the gate error before touching the DB.
+        let blocked = billing_set_rate_impl(
+            state.clone(),
+            "workspace".into(),
+            String::new(),
+            10000,
+            "USD".into(),
+            "2026-01-01".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(blocked.contains("plugin is off"), "{blocked}");
+        assert!(billing_list_rates_impl(state.clone())
+            .await
+            .unwrap_err()
+            .contains("plugin is off"));
+        assert!(billing_delete_rate_impl(state.clone(), "whatever".into())
+            .await
+            .unwrap_err()
+            .contains("plugin is off"));
+        assert!(
+            billing_effective_rate_impl(state.clone(), None, None, None, "2026-06-01".into())
+                .await
+                .unwrap_err()
+                .contains("plugin is off")
+        );
+
+        set_plugin_enabled_impl(state.clone(), "billing".into(), true)
+            .await
+            .unwrap();
+        activate_billing_license_impl(state.clone(), &ActiveApi, "KEY".into())
+            .await
+            .unwrap();
+
+        // Now a write lands and the mutation returns the fresh list.
+        let after = billing_set_rate_impl(
+            state.clone(),
+            "project".into(),
+            "p1".into(),
+            15000,
+            "usd".into(),
+            "2026-01-01".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].currency, "USD");
+
+        let listed = billing_list_rates_impl(state.clone()).await.unwrap();
+        assert_eq!(listed.len(), 1);
+
+        // The resolver reads the stored rate for a project entry.
+        let resolved = billing_effective_rate_impl(
+            state.clone(),
+            None,
+            Some("p1".into()),
+            None,
+            "2026-06-01".into(),
+        )
+        .await
+        .unwrap()
+        .expect("a project rate applies");
+        assert_eq!(resolved.amount_cents, 15000);
+        assert_eq!(resolved.scope_type, "project");
+
+        // Delete empties the list.
+        let emptied = billing_delete_rate_impl(state.clone(), after[0].id.clone())
+            .await
+            .unwrap();
+        assert!(emptied.is_empty());
     }
 }
 
