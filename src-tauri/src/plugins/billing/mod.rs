@@ -11,6 +11,7 @@
 //! any tracked time data. See `docs/PRIVACY.md`.
 
 pub mod lemonsqueezy;
+pub mod rates;
 
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -170,6 +171,33 @@ pub async fn status(pool: &SqlitePool) -> Result<BillingStatus, String> {
     let enabled = crate::plugins::feature_enabled(&flags, PLUGIN_ID);
     let license = load_stored(pool).await?.map(|s| s.view());
     Ok(BillingStatus { enabled, license })
+}
+
+/// Pro-feature gate for **reads**: the plugin must be switched on. A
+/// lapsed-but-enabled user still gets here, so their configured rates
+/// stay visible — data is never held hostage.
+pub async fn require_enabled(pool: &SqlitePool) -> Result<(), String> {
+    if status(pool).await?.enabled {
+        Ok(())
+    } else {
+        Err("the billing plugin is off".into())
+    }
+}
+
+/// Pro-feature gate for **writes**: enabled *and* an active license. Every
+/// future Pro command (rates, profitability, invoices) gates through here,
+/// so the "you need active Pro to change billing" rule lives in one place.
+/// Reads the stored status with no network — a paying user offline still
+/// passes on their last-known-active license.
+pub async fn require_pro(pool: &SqlitePool) -> Result<(), String> {
+    let s = status(pool).await?;
+    if !s.enabled {
+        return Err("the billing plugin is off".into());
+    }
+    match s.license {
+        Some(l) if l.active => Ok(()),
+        _ => Err("Cairn Pro isn't active — activate a license to change billing rates".into()),
+    }
 }
 
 /// Activate a pasted key on this device via Lemon Squeezy, then store it.
@@ -439,5 +467,50 @@ mod tests {
         assert!(err.contains("couldn't release this device"), "{err}");
         // Not orphaned — the license is still there to retry.
         assert!(status(&db.pool).await.unwrap().license.is_some());
+    }
+
+    async fn enable(pool: &SqlitePool) {
+        crate::plugins::store::set_enabled(pool, PLUGIN_ID, true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn require_enabled_tracks_the_plugin_flag() {
+        let (_dir, db) = test_db().await;
+        assert!(require_enabled(&db.pool).await.is_err(), "off by default");
+        enable(&db.pool).await;
+        assert!(require_enabled(&db.pool).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn require_pro_needs_enabled_and_an_active_license() {
+        let (_dir, db) = test_db().await;
+        // Disabled ⇒ blocked on the flag.
+        assert!(require_pro(&db.pool)
+            .await
+            .unwrap_err()
+            .contains("plugin is off"));
+
+        // Enabled but no license ⇒ blocked on Pro.
+        enable(&db.pool).await;
+        assert!(require_pro(&db.pool)
+            .await
+            .unwrap_err()
+            .contains("Cairn Pro isn't active"));
+
+        // Enabled + active license ⇒ passes.
+        let api = MockApi::default();
+        *api.activate.lock().unwrap() = Some(Ok(facts("active")));
+        activate(&db.pool, &api, "KEY").await.unwrap();
+        assert!(require_pro(&db.pool).await.is_ok());
+
+        // Reads stay open when the license lapses, writes don't.
+        mark_inactive(&db.pool).await.unwrap();
+        assert!(require_enabled(&db.pool).await.is_ok());
+        assert!(require_pro(&db.pool)
+            .await
+            .unwrap_err()
+            .contains("Cairn Pro isn't active"));
     }
 }

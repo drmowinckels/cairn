@@ -158,6 +158,52 @@ async fn deactivate_billing_license(
     ipc::deactivate_billing_license_impl(state, &lemon_api()?).await
 }
 
+#[tauri::command]
+async fn billing_list_rates(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugins::billing::rates::Rate>, String> {
+    ipc::billing_list_rates_impl(state).await
+}
+
+#[tauri::command]
+async fn billing_set_rate(
+    state: tauri::State<'_, AppState>,
+    scope_type: String,
+    scope_id: String,
+    amount_cents: i64,
+    currency: String,
+    effective_from: String,
+) -> Result<Vec<plugins::billing::rates::Rate>, String> {
+    ipc::billing_set_rate_impl(
+        state,
+        scope_type,
+        scope_id,
+        amount_cents,
+        currency,
+        effective_from,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn billing_delete_rate(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Vec<plugins::billing::rates::Rate>, String> {
+    ipc::billing_delete_rate_impl(state, id).await
+}
+
+#[tauri::command]
+async fn billing_effective_rate(
+    state: tauri::State<'_, AppState>,
+    client_id: Option<String>,
+    project_id: Option<String>,
+    task_id: Option<String>,
+    at: String,
+) -> Result<Option<plugins::billing::rates::ResolvedRate>, String> {
+    ipc::billing_effective_rate_impl(state, client_id, project_id, task_id, at).await
+}
+
 // Thin PM-connector command shims (#110), same coverage rationale.
 #[tauri::command]
 async fn list_connectors(
@@ -885,6 +931,10 @@ pub fn run() {
             activate_billing_license,
             refresh_billing_license,
             deactivate_billing_license,
+            billing_list_rates,
+            billing_set_rate,
+            billing_delete_rate,
+            billing_effective_rate,
             list_connectors,
             set_connector_secret,
             clear_connector_secret,
