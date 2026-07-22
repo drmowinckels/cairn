@@ -125,11 +125,12 @@ Connectors are **opt-in plugins** that read a task list from a project-managemen
 
 ## Billing (Pro plugin)
 
-Billing is an **opt-in feature plugin** (#109), off by default. It is **fully local**: it makes **no network calls** — not for licensing, not for rates, not for invoicing.
+Billing is an **opt-in feature plugin** (#109), off by default, and — unlike core — it is **networked**: it verifies Pro licenses directly with Lemon Squeezy (the same approach as the sister app Entracte). This is the one place the licensing boundary and the data boundary differ, so it's spelled out here. The plugin declares the **Network** capability (a badge in Extensions → Plugins), and the card shows a "Checking…" state while a licensing call is in flight.
 
-- **The Pro license is verified offline.** The user pastes a license key bought outside the app; Cairn checks its Ed25519 signature against a public key baked into the build. There is no activation server, no call-home, and nothing about the license leaves the machine.
-- **What's stored:** the license token itself (in `cairn.sqlite` — it attests a purchase and is locally verifiable; it grants no remote access, so it is not keychain material) and, in later slices, rates and invoice data in billing-owned tables. "Delete everything" wipes it with the rest.
-- **The license is write-only across the IPC boundary once stored** — status replies carry only the attested identity (email, order id, product), never the token.
+- **What a licensing call carries — and doesn't.** Activating, re-checking, or removing a license sends only the **license key** and a per-device **instance id** to Lemon Squeezy's public license API. It never sends any tracked time data: your entries, projects, window titles, and signals never leave the machine. The device label sent is a fixed `"Cairn Desktop"`, not your hostname.
+- **When it talks to the network.** On activation, on an explicit "Re-check", and once when the billing card is opened with a stored license. Reading the stored status (and everyday app use) makes **no** network call, so a dropped connection never locks out a paying user — the last-known state stands until the next successful check.
+- **What's stored:** the license key, the Lemon Squeezy instance id, the last-known status, and display metadata (customer email, product, expiry) in `cairn.sqlite`'s `billing_license` table, plus — in later slices — rates and invoice data in billing-owned tables. "Delete everything" wipes it with the rest.
+- **The license key is write-only across the IPC boundary** — status replies carry only the stored status and display metadata, never the key.
 - **Money never enters core.** Rates, currency, and amounts exist only inside the plugin's own tables; core entries carry a plain billable yes/no flag.
 
 ## Update checks

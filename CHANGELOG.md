@@ -9,13 +9,15 @@ as the GitHub Release body, so keep the most recent version at the top.
 ### Added
 
 - `[billing]` The billing plugin scaffold (#109): Extensions → Plugins
-  now lists **Billing (Pro)** — opt-in, off by default, with a "Pro"
-  capability badge. Enabling it reveals the license row: paste a Pro
-  license key and it is verified **locally** (an Ed25519 signature
-  checked against a key baked into the build — no activation server,
-  no call-home, ever). Builds without a baked-in key say licensing
-  isn't live yet. No billing features ship behind the gate yet; rates
-  and invoicing come in later slices, always outside core.
+  now lists **Billing (Pro)** — opt-in, off by default, with "Pro" and
+  "Network" capability badges. Enabling it reveals the license row:
+  paste a Pro license key and Cairn activates it directly with Lemon
+  Squeezy (the same approach as the sister app Entracte), then re-checks
+  it when the card is opened. A licensing call sends only the key and a
+  device id — never any tracked time data — and reading the stored
+  status needs no network, so the app stays usable offline. No billing
+  features ship behind the gate yet; rates and invoicing come in later
+  slices, always outside core.
 - `[billing]` Projects have a "Billable by default" setting; new entries
   snapshot it at creation (changing the project default later never
   rewrites existing entries). The flag is categorization only — rates,

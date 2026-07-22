@@ -74,7 +74,7 @@ const CAPABILITY = {
   secrets: { label: "Secrets", hint: "Stores credentials in your keychain" },
   paid: {
     label: "Pro",
-    hint: "Requires a paid license, verified locally — never online",
+    hint: "Requires a paid license",
   },
 } as const;
 

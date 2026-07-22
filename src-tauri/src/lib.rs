@@ -121,41 +121,41 @@ async fn set_plugin_enabled(
     ipc::set_plugin_enabled_impl(state, id, enabled).await
 }
 
-// Billing plugin shims (#109): the production license verifier (baked-in
-// public key) is bound here so the tested impls stay injectable.
+// Billing plugin shims (#109): the production Lemon Squeezy client
+// (reqwest) is bound here so the tested impls stay injectable with a fake.
+// A client that fails to build (TLS init) surfaces as a user-facing error
+// rather than panicking the command.
+fn lemon_api() -> Result<plugins::billing::lemonsqueezy::LemonSqueezyApi, String> {
+    plugins::billing::lemonsqueezy::LemonSqueezyApi::new()
+}
+
 #[tauri::command]
 async fn billing_status(
     state: tauri::State<'_, AppState>,
 ) -> Result<plugins::billing::BillingStatus, String> {
-    ipc::billing_status_impl(
-        state,
-        plugins::billing::license::LicenseVerifier::from_build(),
-    )
-    .await
+    ipc::billing_status_impl(state).await
 }
 
 #[tauri::command]
-async fn set_billing_license(
+async fn activate_billing_license(
     state: tauri::State<'_, AppState>,
     license: String,
 ) -> Result<plugins::billing::BillingStatus, String> {
-    ipc::set_billing_license_impl(
-        state,
-        plugins::billing::license::LicenseVerifier::from_build(),
-        license,
-    )
-    .await
+    ipc::activate_billing_license_impl(state, &lemon_api()?, license).await
 }
 
 #[tauri::command]
-async fn clear_billing_license(
+async fn refresh_billing_license(
     state: tauri::State<'_, AppState>,
 ) -> Result<plugins::billing::BillingStatus, String> {
-    ipc::clear_billing_license_impl(
-        state,
-        plugins::billing::license::LicenseVerifier::from_build(),
-    )
-    .await
+    ipc::refresh_billing_license_impl(state, &lemon_api()?).await
+}
+
+#[tauri::command]
+async fn deactivate_billing_license(
+    state: tauri::State<'_, AppState>,
+) -> Result<plugins::billing::BillingStatus, String> {
+    ipc::deactivate_billing_license_impl(state, &lemon_api()?).await
 }
 
 // Thin PM-connector command shims (#110), same coverage rationale.
@@ -882,8 +882,9 @@ pub fn run() {
             list_plugins,
             set_plugin_enabled,
             billing_status,
-            set_billing_license,
-            clear_billing_license,
+            activate_billing_license,
+            refresh_billing_license,
+            deactivate_billing_license,
             list_connectors,
             set_connector_secret,
             clear_connector_secret,

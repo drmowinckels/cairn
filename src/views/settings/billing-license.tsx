@@ -1,30 +1,32 @@
 import { useState } from "react";
+import { formatRelativeTime } from "../../lib/relative-time";
 import { useBilling } from "../../lib/use-billing";
 
 /**
- * The Pro license row (#109), rendered under the billing plugin's
- * toggle while it is enabled. Verification is fully local (an Ed25519
- * check against a key baked into the build) — no activation server.
- * Builds without a baked-in key say licensing isn't live yet instead
- * of rejecting every key with a signature error.
+ * The Pro license row (#109), rendered under the billing plugin's toggle
+ * while it is enabled. Licenses are verified **directly with Lemon
+ * Squeezy** (activate / re-check / deactivate) — the same approach as the
+ * sister app Entracte. A licensing call carries only the key + a device
+ * id, never tracked time data; the "Checking…" state surfaces the network
+ * activity (docs/PRIVACY.md).
  */
 export function BillingLicenseRow() {
-  const { status, busy, error, activate, remove } = useBilling();
+  const { status, busy, error, activate, refresh, deactivate } = useBilling();
   const [draft, setDraft] = useState("");
 
-  // The pasted key stays put on a rejected activation so the user can
-  // fix a copy-paste error; it clears only on success.
   const submit = () => void activate(draft).then((ok) => ok && setDraft(""));
   const errorLine = error && (
     <p className="field-error" role="alert">
       {error}
     </p>
   );
+  const checking = busy && (
+    <span className="settings-sub" data-billing="checking">
+      Checking with Lemon Squeezy…
+    </span>
+  );
 
   if (!status) {
-    // Still loading (render nothing), unless the load itself failed —
-    // an enabled plugin whose status can't be read must say so rather
-    // than silently showing no row.
     return error ? (
       <p className="field-error" role="alert" data-billing="load-error">
         Couldn’t load the license status: {error}
@@ -32,30 +34,54 @@ export function BillingLicenseRow() {
     ) : null;
   }
 
-  if (!status.keyConfigured) {
-    return (
-      <p className="settings-sub" data-billing="no-key">
-        Pro licensing isn’t available in this build. Everything else in Cairn
-        stays free — billing features will unlock here once licenses go on sale.
-      </p>
-    );
-  }
+  const license = status.license;
 
-  if (status.license) {
+  if (license) {
     return (
-      <div className="data-add-row" data-billing="licensed">
-        <p className="settings-sub">
-          Licensed to <strong>{status.license.email}</strong> (
-          {status.license.product}) — verified on this machine, never online.
-        </p>
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={() => void remove()}
-          disabled={busy}
-        >
-          Remove license
-        </button>
+      <div
+        className="data-add-row"
+        data-billing={license.active ? "active" : "inactive"}
+      >
+        {license.active ? (
+          <p className="settings-sub">
+            Licensed
+            {license.customerEmail ? (
+              <>
+                {" "}
+                to <strong>{license.customerEmail}</strong>
+              </>
+            ) : null}
+            {license.productName ? ` (${license.productName})` : ""}
+            {license.expiresAt ? ` — renews ${license.expiresAt}` : ""}. Checked
+            with Lemon Squeezy {formatRelativeTime(license.lastValidatedAt)}.
+          </p>
+        ) : (
+          // Persistent state, not a transient alert — the `errorLine`
+          // below is the sole role="alert" so the two don't compete.
+          <p className="field-error">
+            This license is no longer active ({license.status}). Re-check it, or
+            remove it to enter a different key.
+          </p>
+        )}
+        <div className="data-form-actions">
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => void refresh()}
+            disabled={busy}
+          >
+            Re-check
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => void deactivate()}
+            disabled={busy}
+          >
+            Remove license
+          </button>
+        </div>
+        {checking}
         {errorLine}
       </div>
     );
@@ -85,6 +111,11 @@ export function BillingLicenseRow() {
       >
         Activate
       </button>
+      <p className="settings-sub" data-billing="network-note">
+        Activating checks the key with Lemon Squeezy over the network — the only
+        thing billing ever sends out.
+      </p>
+      {checking}
       {errorLine}
     </div>
   );

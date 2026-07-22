@@ -3,33 +3,47 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const billingStatus = vi.fn();
-const setBillingLicense = vi.fn();
-const clearBillingLicense = vi.fn();
+const activateBillingLicense = vi.fn();
+const refreshBillingLicense = vi.fn();
+const deactivateBillingLicense = vi.fn();
 
 vi.mock("../../lib/ipc", async () => {
   const actual =
     await vi.importActual<typeof import("../../lib/ipc")>("../../lib/ipc");
   return {
     ...actual,
-    billingStatus: (...args: unknown[]) => billingStatus(...args),
-    setBillingLicense: (...args: unknown[]) => setBillingLicense(...args),
-    clearBillingLicense: (...args: unknown[]) => clearBillingLicense(...args),
+    billingStatus: (...a: unknown[]) => billingStatus(...a),
+    activateBillingLicense: (...a: unknown[]) => activateBillingLicense(...a),
+    refreshBillingLicense: (...a: unknown[]) => refreshBillingLicense(...a),
+    deactivateBillingLicense: (...a: unknown[]) =>
+      deactivateBillingLicense(...a),
   };
 });
 
 import { BillingLicenseRow } from "./billing-license";
 
-const locked = { enabled: true, keyConfigured: true, license: null };
-const licensed = {
+const locked = { enabled: true, license: null };
+const active = {
   enabled: true,
-  keyConfigured: true,
-  license: { email: "dev@example.com", orderId: "o1", product: "cairn-pro" },
+  license: {
+    status: "active",
+    active: true,
+    customerEmail: "dev@example.com",
+    productName: "Cairn Pro",
+    expiresAt: null,
+    lastValidatedAt: "2026-07-22T00:00:00Z",
+  },
+};
+const expired = {
+  enabled: true,
+  license: { ...active.license, status: "expired", active: false },
 };
 
 beforeEach(() => {
   billingStatus.mockReset();
-  setBillingLicense.mockReset();
-  clearBillingLicense.mockReset();
+  activateBillingLicense.mockReset();
+  refreshBillingLicense.mockReset();
+  deactivateBillingLicense.mockReset();
 });
 
 describe("BillingLicenseRow", () => {
@@ -42,63 +56,72 @@ describe("BillingLicenseRow", () => {
   it("shows a load failure instead of silently rendering nothing", async () => {
     billingStatus.mockRejectedValue(new Error("ipc down"));
     render(<BillingLicenseRow />);
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Couldn’t load the license status");
+    const alert = await screen.findByText(/load the license status/i);
     expect(alert.textContent).toContain("ipc down");
   });
 
-  it("explains when the build has no license key", async () => {
-    billingStatus.mockResolvedValue({
-      enabled: true,
-      keyConfigured: false,
-      license: null,
-    });
+  it("activates a pasted key, notes the network call, and clears the input", async () => {
+    billingStatus.mockResolvedValue(locked);
+    activateBillingLicense.mockResolvedValue(active);
     render(<BillingLicenseRow />);
+
+    const input = await screen.findByLabelText(/pro license key/i);
+    expect(screen.getByText(/checks the key with lemon squeezy/i)).toBeTruthy();
+    await userEvent.type(input, "KEY-1");
+    await userEvent.click(screen.getByRole("button", { name: /activate/i }));
+
+    await screen.findByText(/dev@example\.com/);
+    expect(activateBillingLicense).toHaveBeenCalledWith("KEY-1");
+    expect(screen.queryByLabelText(/pro license key/i)).toBeNull();
+  });
+
+  it("keeps the pasted key and shows Lemon Squeezy's reason on rejection", async () => {
+    billingStatus.mockResolvedValue(locked);
+    activateBillingLicense.mockRejectedValue(
+      "license_key has reached its activation limit",
+    );
+    render(<BillingLicenseRow />);
+
+    const input = await screen.findByLabelText(/pro license key/i);
+    await userEvent.type(input, "KEY-1{Enter}");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("activation limit");
+    expect((input as HTMLInputElement).value).toBe("KEY-1");
+  });
+
+  it("re-checks a stored license on mount and shows the licensed state", async () => {
+    billingStatus.mockResolvedValue(active);
+    refreshBillingLicense.mockResolvedValue(active);
+    render(<BillingLicenseRow />);
+
+    await screen.findByText(/dev@example\.com/);
+    await waitFor(() => expect(refreshBillingLicense).toHaveBeenCalled());
+    expect(screen.getByText(/checked with lemon squeezy/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /re-check/i })).toBeTruthy();
     expect(
-      await screen.findByText(/isn.t available in this build/i),
+      screen.getByRole("button", { name: /remove license/i }),
     ).toBeTruthy();
     expect(screen.queryByLabelText(/pro license key/i)).toBeNull();
   });
 
-  it("activates a pasted key and clears the input on success", async () => {
-    billingStatus.mockResolvedValue(locked);
-    setBillingLicense.mockResolvedValue(licensed);
+  it("shows an inactive license with its status and keeps it removable", async () => {
+    billingStatus.mockResolvedValue(expired);
+    refreshBillingLicense.mockResolvedValue(expired);
     render(<BillingLicenseRow />);
 
-    const input = await screen.findByLabelText(/pro license key/i);
-    await userEvent.type(input, "payload.sig");
-    await userEvent.click(screen.getByRole("button", { name: /activate/i }));
-
-    await screen.findByText(/dev@example\.com/);
-    expect(setBillingLicense).toHaveBeenCalledWith("payload.sig");
-    expect(screen.getByText(/never online/i)).toBeTruthy();
-    // The input is gone (licensed state), not just cleared.
-    expect(screen.queryByLabelText(/pro license key/i)).toBeNull();
+    expect(
+      await screen.findByText(/no longer active \(expired\)/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /remove license/i }),
+    ).toBeTruthy();
   });
 
-  it("keeps the pasted key and shows the error when activation fails", async () => {
-    billingStatus.mockResolvedValue(locked);
-    setBillingLicense.mockRejectedValue("license signature does not match");
-    render(<BillingLicenseRow />);
-
-    const input = await screen.findByLabelText(/pro license key/i);
-    await userEvent.type(input, "bad.key{Enter}");
-
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("does not match");
-    expect((input as HTMLInputElement).value).toBe("bad.key");
-  });
-
-  it("Activate stays disabled for a blank key", async () => {
-    billingStatus.mockResolvedValue(locked);
-    render(<BillingLicenseRow />);
-    const btn = await screen.findByRole("button", { name: /activate/i });
-    expect((btn as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("removes the license from the licensed state", async () => {
-    billingStatus.mockResolvedValue(licensed);
-    clearBillingLicense.mockResolvedValue(locked);
+  it("removes (deactivates) the license", async () => {
+    billingStatus.mockResolvedValue(active);
+    refreshBillingLicense.mockResolvedValue(active);
+    deactivateBillingLicense.mockResolvedValue(locked);
     render(<BillingLicenseRow />);
 
     await userEvent.click(
@@ -110,15 +133,25 @@ describe("BillingLicenseRow", () => {
     expect(screen.getByLabelText(/pro license key/i)).toBeTruthy();
   });
 
-  it("surfaces a remove failure as an alert", async () => {
-    billingStatus.mockResolvedValue(licensed);
-    clearBillingLicense.mockRejectedValue("db locked");
+  it("surfaces a deactivate failure as an alert", async () => {
+    billingStatus.mockResolvedValue(active);
+    refreshBillingLicense.mockResolvedValue(active);
+    deactivateBillingLicense.mockRejectedValue(
+      "couldn't release this device with Lemon Squeezy",
+    );
     render(<BillingLicenseRow />);
 
     await userEvent.click(
       await screen.findByRole("button", { name: /remove license/i }),
     );
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("db locked");
+    expect(alert.textContent).toContain("couldn't release this device");
+  });
+
+  it("Activate stays disabled for a blank key", async () => {
+    billingStatus.mockResolvedValue(locked);
+    render(<BillingLicenseRow />);
+    const btn = await screen.findByRole("button", { name: /activate/i });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
   });
 });
