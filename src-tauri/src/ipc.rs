@@ -7586,6 +7586,33 @@ pub async fn billing_effective_rate_impl(
     .await
 }
 
+/// The Pro profitability report over the same `range` the time reports use
+/// (week / month / quarter / year) — billable vs non-billable hours and
+/// billable amounts by project, priced at each entry's historical rate.
+/// Requires an active Pro license. Invoke shim in `lib.rs`.
+pub async fn billing_profitability_impl(
+    state: State<'_, AppState>,
+    range: String,
+    rounding: Option<Rounding>,
+) -> Result<crate::plugins::billing::profitability::ProfitabilityReport, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    let rounding = rounding.unwrap_or_default();
+    let anchor = Local::now().date_naive();
+    let now = Utc::now();
+    let (start_day, end_day) = report_window(&range, anchor);
+    crate::plugins::billing::profitability::profitability(
+        pool,
+        local_midnight_utc(start_day),
+        local_midnight_utc(end_day),
+        start_day.to_string(),
+        end_day.to_string(),
+        rounding,
+        now,
+    )
+    .await
+}
+
 /// A cheap snapshot of the connector registry: clones the inner `Arc` and
 /// releases the lock immediately, so callers can hold it across the network
 /// reads without blocking a concurrent `install_connector` swap. Recovers
@@ -9290,6 +9317,52 @@ mod plugin_tests {
             .await
             .unwrap();
         assert!(emptied.is_empty());
+    }
+
+    #[tokio::test]
+    async fn billing_profitability_ipc_gates_then_reports() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        // Gated: the plugin is off, so the report is blocked before any work.
+        assert!(
+            billing_profitability_impl(state.clone(), "year".into(), None)
+                .await
+                .unwrap_err()
+                .contains("plugin is off")
+        );
+
+        // Enabled but unlicensed is still blocked.
+        set_plugin_enabled_impl(state.clone(), "billing".into(), true)
+            .await
+            .unwrap();
+        assert!(
+            billing_profitability_impl(state.clone(), "year".into(), None)
+                .await
+                .unwrap_err()
+                .contains("Cairn Pro isn't active")
+        );
+
+        // An active license unlocks the report — inserted directly, since the
+        // activation flow itself is covered by the license tests.
+        sqlx::query(
+            "INSERT INTO billing_license \
+               (singleton, license_key, instance_id, status, activated_at, last_validated_at) \
+             VALUES (1, 'k', 'i', 'active', datetime('now'), datetime('now'))",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        // The command now runs end to end (range → window → fetch → report).
+        // The empty-DB report keeps this deterministic — the pricing math is
+        // covered by profitability's own tests.
+        let rep = billing_profitability_impl(state.clone(), "year".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(rep.billable_seconds, 0);
+        assert!(rep.totals.is_empty());
+        assert!(rep.by_project.is_empty());
     }
 }
 
