@@ -1,7 +1,7 @@
 import { CapabilityBadges } from "../../lib/components";
 import { Icon } from "../../lib/icon";
 import { usePlugins } from "../../lib/use-plugins";
-import { BillingLicenseRow } from "./billing-license";
+import { BillingDetail } from "./billing-license";
 
 /** Plugins surfaced elsewhere in the UI, hidden from this list to avoid
  *  listing them twice. Calendar has its own Integrations row (with the
@@ -12,7 +12,7 @@ const HIDDEN_PLUGIN_IDS = new Set(["calendar"]);
  *  enabled — keeps the list renderer generic instead of special-casing
  *  plugin ids inline. Billing's row manages the Pro license (#109). */
 const PLUGIN_DETAIL: Record<string, React.ComponentType> = {
-  billing: BillingLicenseRow,
+  billing: BillingDetail,
 };
 
 /** Settings → Plugins (#111). Lists each registered signal-source

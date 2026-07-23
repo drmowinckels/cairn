@@ -374,6 +374,46 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("deactivate_billing_license");
   });
 
+  it("rate commands forward the right args to the right commands (#109)", async () => {
+    invokeMock.mockResolvedValue([]);
+    const {
+      billingListRates,
+      billingSetRate,
+      billingDeleteRate,
+      billingEffectiveRate,
+    } = await import("./ipc");
+
+    await billingListRates();
+    expect(invokeMock).toHaveBeenCalledWith("billing_list_rates");
+
+    const rate = {
+      scopeType: "client" as const,
+      scopeId: "c1",
+      amountCents: 15000,
+      currency: "USD",
+      effectiveFrom: "2026-01-01",
+    };
+    await billingSetRate(rate);
+    expect(invokeMock).toHaveBeenCalledWith("billing_set_rate", rate);
+
+    await billingDeleteRate("r1");
+    expect(invokeMock).toHaveBeenCalledWith("billing_delete_rate", {
+      id: "r1",
+    });
+
+    invokeMock.mockResolvedValue({
+      amountCents: 15000,
+      currency: "USD",
+      scopeType: "client",
+      effectiveFrom: "2026-01-01",
+    });
+    const at = { projectId: "p1", at: "2026-06-01" };
+    expect(await billingEffectiveRate(at)).toMatchObject({
+      amountCents: 15000,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("billing_effective_rate", at);
+  });
+
   it("listConnectors invokes the command and returns the list", async () => {
     const list = [
       {
@@ -554,6 +594,28 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(await activateBillingLicense("KEY")).toEqual(inert);
     expect(await refreshBillingLicense()).toEqual(inert);
     expect(await deactivateBillingLicense()).toEqual(inert);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("rate commands short-circuit without the backend (#109)", async () => {
+    const {
+      billingListRates,
+      billingSetRate,
+      billingDeleteRate,
+      billingEffectiveRate,
+    } = await import("./ipc");
+    expect(await billingListRates()).toEqual([]);
+    expect(
+      await billingSetRate({
+        scopeType: "workspace",
+        scopeId: "",
+        amountCents: 1,
+        currency: "USD",
+        effectiveFrom: "2026-01-01",
+      }),
+    ).toEqual([]);
+    expect(await billingDeleteRate("r1")).toEqual([]);
+    expect(await billingEffectiveRate({ at: "2026-01-01" })).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

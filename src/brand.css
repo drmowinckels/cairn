@@ -3826,6 +3826,56 @@ select.rule-conf {
   color: var(--ink-mute);
 }
 
+/* Billing plugin detail (#109): the license row + Pro rate panel, stacked
+   full-width across the plugin-row grid; the rate panel's own blocks and
+   the rate list stack the same way, just tighter. */
+.plugin-detail,
+.rate-panel,
+.rate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-detail {
+  grid-column: 1 / -1;
+  gap: 12px;
+}
+
+.rate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 6px;
+}
+
+.rate-h {
+  margin: 0;
+  font-size: var(--font-small);
+}
+
+/* Rate rows and the add form reuse `.data-add-row` (the license row's flex
+   line); the scope grows so the amount / date / controls sit to the right,
+   and the add form wraps when the controls run out of room. */
+.rate-scope {
+  flex: 1;
+}
+
+.rate-amount {
+  white-space: nowrap;
+}
+
+.rate-scope em,
+.rate-from {
+  font-style: normal;
+  color: var(--ink-mute);
+  font-size: var(--font-tiny);
+}
+
+.rate-add {
+  flex-wrap: wrap;
+}
+
 /* Settings → Connectors (#110). A disclosure list: connector → its
    projects → their tasks, each row expandable to lazily reveal the next
    level. Read-only browse of what a PM connector sees. */

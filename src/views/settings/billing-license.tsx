@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { formatRelativeTime } from "../../lib/relative-time";
-import { useBilling } from "../../lib/use-billing";
+import { useBilling, type UseBilling } from "../../lib/use-billing";
+import { BillingRatesPanel } from "./billing-rates";
 
 /**
  * The Pro license row (#109), rendered under the billing plugin's toggle
@@ -9,9 +10,12 @@ import { useBilling } from "../../lib/use-billing";
  * sister app Entracte. A licensing call carries only the key + a device
  * id, never tracked time data; the "Checking…" state surfaces the network
  * activity (docs/PRIVACY.md).
+ *
+ * Presentational: its parent [`BillingDetail`] owns the single `useBilling`
+ * instance so the license state is shared with the rate panel's gate.
  */
-export function BillingLicenseRow() {
-  const { status, busy, error, activate, refresh, deactivate } = useBilling();
+export function BillingLicenseRow({ billing }: { billing: UseBilling }) {
+  const { status, busy, error, activate, refresh, deactivate } = billing;
   const [draft, setDraft] = useState("");
 
   const submit = () => void activate(draft).then((ok) => ok && setDraft(""));
@@ -117,6 +121,22 @@ export function BillingLicenseRow() {
       </p>
       {checking}
       {errorLine}
+    </div>
+  );
+}
+
+/**
+ * The billing card's detail block (#109): the license row, and — once the
+ * license is active — the Pro rate panel. Owns the single `useBilling`
+ * instance and shares it, so activating a key immediately reveals the
+ * rate panel without a remount. Spans the full plugin row.
+ */
+export function BillingDetail() {
+  const billing = useBilling();
+  return (
+    <div className="plugin-detail" data-plugin-detail="billing">
+      <BillingLicenseRow billing={billing} />
+      {billing.status?.license?.active && <BillingRatesPanel />}
     </div>
   );
 }
