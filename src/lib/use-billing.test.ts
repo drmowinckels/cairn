@@ -66,6 +66,15 @@ describe("useBilling", () => {
     expect(result.current.busy).toBe(false);
   });
 
+  it("skips the network re-check when revalidate is false", async () => {
+    billingStatus.mockResolvedValue(active);
+    const { result } = renderHook(() => useBilling({ revalidate: false }));
+    await waitFor(() => expect(result.current.status).toEqual(active));
+    // Local status only — no Lemon Squeezy round trip (e.g. the Reports tab).
+    expect(refreshBillingLicense).not.toHaveBeenCalled();
+    expect(result.current.busy).toBe(false);
+  });
+
   it("keeps the last-known status and shows the error when the mount re-check is offline", async () => {
     billingStatus.mockResolvedValue(active);
     refreshBillingLicense.mockRejectedValue("couldn't reach Lemon Squeezy");

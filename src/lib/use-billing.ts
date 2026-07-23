@@ -24,7 +24,11 @@ export interface UseBilling {
  *  activation with no network, then re-checks it against Lemon Squeezy
  *  once so the card reflects the live status when opened. The license key
  *  is write-only: sent once on activate, never held in state. */
-export function useBilling(): UseBilling {
+export function useBilling(opts: { revalidate?: boolean } = {}): UseBilling {
+  // Callers that only read the (local) status to gate UI pass
+  // `revalidate: false` to skip the mount-time Lemon Squeezy network
+  // re-check — that belongs to the billing card, which surfaces its result.
+  const revalidate = opts.revalidate ?? true;
   const [status, setStatus] = useState<BillingStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +45,9 @@ export function useBilling(): UseBilling {
       }
       if (!alive) return;
       setStatus(loaded);
-      // Check in with Lemon Squeezy only when there's something to verify.
-      if (!loaded?.license) return;
+      // Check in with Lemon Squeezy only when asked and there's something to
+      // verify.
+      if (!revalidate || !loaded?.license) return;
       setBusy(true);
       try {
         const fresh = await refreshBillingLicense();
@@ -57,7 +62,7 @@ export function useBilling(): UseBilling {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [revalidate]);
 
   const run = useCallback(async (op: () => Promise<BillingStatus>) => {
     setBusy(true);

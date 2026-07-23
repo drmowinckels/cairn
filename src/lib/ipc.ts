@@ -1143,6 +1143,50 @@ export async function billingEffectiveRate(input: {
   return invoke<ResolvedRate | null>("billing_effective_rate", input);
 }
 
+/** A billable subtotal in one currency (amounts never mix currencies).
+ *  Mirrors the Rust `CurrencyAmount`. */
+export interface CurrencyAmount {
+  currency: string;
+  amountCents: number;
+  billableSeconds: number;
+}
+
+/** One project's row in the profitability report (mirrors `ProjectProfit`).
+ *  Grouped like the time report: local project, else remote-task project
+ *  name, else the no-project bucket (both ids `null`). */
+export interface ProjectProfit {
+  projectId: string | null;
+  remoteProjectName: string | null;
+  billableSeconds: number;
+  nonbillableSeconds: number;
+  unratedBillableSeconds: number;
+  amounts: CurrencyAmount[];
+}
+
+/** The Pro profitability report over a range (mirrors `ProfitabilityReport`). */
+export interface ProfitabilityReport {
+  from: string;
+  to: string;
+  billableSeconds: number;
+  nonbillableSeconds: number;
+  unratedBillableSeconds: number;
+  totals: CurrencyAmount[];
+  byProject: ProjectProfit[];
+}
+
+/** Billable hours + amounts over `range`, priced at each entry's historical
+ *  rate. Requires an active Pro license; `null` outside Tauri. */
+export async function billingProfitability(
+  range: ReportRange,
+  rounding?: Rounding,
+): Promise<ProfitabilityReport | null> {
+  if (!inTauri) return null;
+  return invoke<ProfitabilityReport>("billing_profitability", {
+    range,
+    rounding,
+  });
+}
+
 /** A capability a PM connector declares (mirrors the Rust `Capability`,
  *  kebab-serialized). A local-file connector declares none. */
 export type ConnectorCapability = "network" | "secrets";

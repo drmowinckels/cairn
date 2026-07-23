@@ -2208,6 +2208,48 @@ body {
   padding: 2px 0;
 }
 
+/* Reports → Summary / Profitability tab bar (#109), reusing the segmented
+   control below the period picker. */
+.rep-tabs {
+  margin-top: 10px;
+}
+
+/* Reports → Profitability panel (#109): billable amounts by project. */
+.rep-profit {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rep-profit-scroll {
+  overflow-x: auto;
+}
+
+.rep-profit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-small);
+}
+
+.rep-profit-table th,
+.rep-profit-table td {
+  padding: 8px 14px 8px 0;
+  border-bottom: 0.5px solid var(--hairline);
+}
+
+.rep-profit-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--font-tiny);
+  color: var(--ink-mute);
+}
+
+.rep-profit-table th:not(:first-child),
+.rep-profit-table td:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .total {
   display: flex;
   flex-direction: column;
