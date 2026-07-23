@@ -1081,6 +1081,68 @@ export async function deactivateBillingLicense(): Promise<BillingStatus> {
   return invoke<BillingStatus>("deactivate_billing_license");
 }
 
+/** A stored Pro hourly rate (#109). Mirrors the Rust `Rate`. `amountCents`
+ *  is integer minor units of `currency`; `scopeId` is `""` for the
+ *  workspace default, else the client/project/task id. */
+export interface Rate {
+  id: string;
+  scopeType: "workspace" | "client" | "project" | "task";
+  scopeId: string;
+  amountCents: number;
+  currency: string;
+  /** ISO date (`YYYY-MM-DD`); the rate applies to work on or after it. */
+  effectiveFrom: string;
+  createdAt: string;
+}
+
+/** The rate that applies to a piece of work, plus which scope supplied it
+ *  (mirrors the Rust `ResolvedRate`). */
+export interface ResolvedRate {
+  amountCents: number;
+  currency: string;
+  scopeType: string;
+  effectiveFrom: string;
+}
+
+/** Every configured Pro rate. Requires the billing plugin enabled. */
+export async function billingListRates(): Promise<Rate[]> {
+  if (!inTauri) return [];
+  return invoke<Rate[]>("billing_list_rates");
+}
+
+/** Upsert the rate for a scope effective from a date (one rate per scope
+ *  per date). Requires an active Pro license; returns the fresh list. */
+export async function billingSetRate(input: {
+  scopeType: Rate["scopeType"];
+  scopeId: string;
+  amountCents: number;
+  currency: string;
+  effectiveFrom: string;
+}): Promise<Rate[]> {
+  if (!inTauri) return [];
+  return invoke<Rate[]>("billing_set_rate", input);
+}
+
+/** Remove a rate by id. Requires an active Pro license; returns the fresh
+ *  list. */
+export async function billingDeleteRate(id: string): Promise<Rate[]> {
+  if (!inTauri) return [];
+  return invoke<Rate[]>("billing_delete_rate", { id });
+}
+
+/** The rate that applies to work at `at` for a client/project/task — the
+ *  resolver a preview / profitability view calls. Requires the plugin
+ *  enabled; `null` when nothing is configured. */
+export async function billingEffectiveRate(input: {
+  clientId?: string | null;
+  projectId?: string | null;
+  taskId?: string | null;
+  at: string;
+}): Promise<ResolvedRate | null> {
+  if (!inTauri) return null;
+  return invoke<ResolvedRate | null>("billing_effective_rate", input);
+}
+
 /** A capability a PM connector declares (mirrors the Rust `Capability`,
  *  kebab-serialized). A local-file connector declares none. */
 export type ConnectorCapability = "network" | "secrets";
