@@ -5,8 +5,10 @@ import { cbColor } from "../../lib/colorblind";
 import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { buildWeekSummary } from "../../lib/summary";
 import { useBackup } from "../../lib/use-backup";
+import { useBilling } from "../../lib/use-billing";
 import { useProjects } from "../../lib/use-projects";
 import { useReportSummary } from "../../lib/use-report-summary";
+import { ProfitabilityPanel } from "./profitability-panel";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { isRoundingActive, roundingLabel } from "../../lib/rounding";
 import {
@@ -52,6 +54,15 @@ export function ReportsView({ density }: Props) {
     [projects],
   );
   const [range, setRange] = useState<ReportRange>("week");
+  const [tab, setTab] = useState<"summary" | "profitability">("summary");
+  // The Profitability tab (#109) only exists once Pro is active — the
+  // active tab falls back to Summary whenever it isn't. A local status
+  // read is enough to gate it; no network re-check from the Reports view.
+  const billing = useBilling({ revalidate: false });
+  const proActive = !!(
+    billing.status?.enabled && billing.status.license?.active
+  );
+  const activeTab = proActive ? tab : "summary";
   const [copied, setCopied] = useState(false);
   const [feedbackEvents] = useState(() => loadSuggestionFeedback());
   const { rounding } = useRoundingPrefs();
@@ -167,8 +178,8 @@ export function ReportsView({ density }: Props) {
   const trust = weeklyTrustSummary(data, feedbackEvents);
   const recentFeedback = eventsInLastDays(feedbackEvents, 7);
 
-  return (
-    <div className="view view-reports" data-density={density}>
+  const headerEl = (
+    <>
       <header className="view-head">
         <div>
           <h2 className="view-title">{rangeTitle(range)}</h2>
@@ -197,6 +208,51 @@ export function ReportsView({ density }: Props) {
           ))}
         </div>
       </header>
+      {proActive && (
+        <div
+          className="seg rep-tabs"
+          role="radiogroup"
+          aria-label="Report view"
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={activeTab === "summary"}
+            className={`seg-btn${activeTab === "summary" ? " is-on" : ""}`}
+            onClick={() => setTab("summary")}
+          >
+            Summary
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={activeTab === "profitability"}
+            className={`seg-btn${activeTab === "profitability" ? " is-on" : ""}`}
+            onClick={() => setTab("profitability")}
+          >
+            Profitability
+          </button>
+        </div>
+      )}
+    </>
+  );
+
+  if (activeTab === "profitability") {
+    return (
+      <div className="view view-reports" data-density={density}>
+        {headerEl}
+        <ProfitabilityPanel
+          range={range}
+          rounding={rounding}
+          projectsById={projectsById}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="view view-reports" data-density={density}>
+      {headerEl}
 
       {error && <ErrorBanner message={error} onRetry={refresh} />}
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listClients, listProjects, listTasks, type Rate } from "../../lib/ipc";
+import { formatMoney } from "../../lib/money";
 import { isoLocalDate } from "../../lib/report-math";
 import type { Client, Project, Task } from "../../lib/types";
 import { useRates } from "../../lib/use-rates";
@@ -28,16 +29,6 @@ function entitiesFor(
     default:
       return [];
   }
-}
-
-/** Money for display. `Intl` accepts any well-formed 3-letter code (which
- *  the backend guarantees), rendering the code itself when it doesn't name
- *  a known currency — so an unusual code shows through rather than throwing. */
-function formatMoney(amountCents: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-  }).format(amountCents / 100);
 }
 
 /** How a rate's scope reads in the list: the entity's name (or its raw id

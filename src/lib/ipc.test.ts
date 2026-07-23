@@ -414,6 +414,26 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("billing_effective_rate", at);
   });
 
+  it("billingProfitability forwards range + rounding (#109)", async () => {
+    const rep = {
+      from: "a",
+      to: "b",
+      billableSeconds: 0,
+      nonbillableSeconds: 0,
+      unratedBillableSeconds: 0,
+      totals: [],
+      byProject: [],
+    };
+    invokeMock.mockResolvedValue(rep);
+    const { billingProfitability } = await import("./ipc");
+    const rounding = { intervalMinutes: 15, mode: "nearest" } as const;
+    expect(await billingProfitability("month", rounding)).toEqual(rep);
+    expect(invokeMock).toHaveBeenCalledWith("billing_profitability", {
+      range: "month",
+      rounding,
+    });
+  });
+
   it("listConnectors invokes the command and returns the list", async () => {
     const list = [
       {
@@ -603,6 +623,7 @@ describe("ipc helpers (outside Tauri)", () => {
       billingSetRate,
       billingDeleteRate,
       billingEffectiveRate,
+      billingProfitability,
     } = await import("./ipc");
     expect(await billingListRates()).toEqual([]);
     expect(
@@ -616,6 +637,7 @@ describe("ipc helpers (outside Tauri)", () => {
     ).toEqual([]);
     expect(await billingDeleteRate("r1")).toEqual([]);
     expect(await billingEffectiveRate({ at: "2026-01-01" })).toBeNull();
+    expect(await billingProfitability("week")).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
