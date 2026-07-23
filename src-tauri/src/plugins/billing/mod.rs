@@ -11,6 +11,7 @@
 //! any tracked time data. See `docs/PRIVACY.md`.
 
 pub mod lemonsqueezy;
+pub mod profitability;
 pub mod rates;
 
 use serde::Serialize;

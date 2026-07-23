@@ -174,12 +174,22 @@ pub async fn delete_rate(pool: &SqlitePool, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-struct Candidate {
-    priority: u8,
-    effective_from: String,
-    amount_cents: i64,
-    currency: String,
-    scope_type: String,
+/// Does this rate's scope apply to a piece of work? Workspace always does;
+/// a client/project/task rate only when the work carries that same id. An
+/// absent scope (`None`) never matches — mirroring `scope_id = NULL`.
+fn scope_matches(
+    rate: &Rate,
+    client_id: Option<&str>,
+    project_id: Option<&str>,
+    task_id: Option<&str>,
+) -> bool {
+    match rate.scope_type.as_str() {
+        "workspace" => true,
+        "client" => Some(rate.scope_id.as_str()) == client_id,
+        "project" => Some(rate.scope_id.as_str()) == project_id,
+        "task" => Some(rate.scope_id.as_str()) == task_id,
+        _ => false,
+    }
 }
 
 /// The rate that applies to work at `at` for a given client/project/task,
@@ -196,47 +206,42 @@ pub async fn resolve_rate(
     at: &str,
 ) -> Result<Option<ResolvedRate>, String> {
     let at = validate_at(at)?;
-    // A NULL bind never matches `scope_id = ?`, so an absent scope drops
-    // out of the query naturally; the workspace clause needs no id.
-    let rows = sqlx::query(
-        "SELECT scope_type, amount_cents, currency, effective_from \
-           FROM billing_rates \
-          WHERE effective_from <= ?1 \
-            AND ( scope_type = 'workspace' \
-               OR (scope_type = 'client'  AND scope_id = ?2) \
-               OR (scope_type = 'project' AND scope_id = ?3) \
-               OR (scope_type = 'task'    AND scope_id = ?4) )",
-    )
-    .bind(&at)
-    .bind(client_id)
-    .bind(project_id)
-    .bind(task_id)
-    .fetch_all(pool)
-    .await
-    .map_err(err)?;
+    Ok(resolve_from(
+        &list_rates(pool).await?,
+        client_id,
+        project_id,
+        task_id,
+        &at,
+    ))
+}
 
-    let best = rows
-        .into_iter()
-        .map(|r| {
-            let scope_type: String = r.get("scope_type");
-            Candidate {
-                priority: scope_priority(&scope_type),
-                effective_from: r.get("effective_from"),
-                amount_cents: r.get("amount_cents"),
-                currency: r.get("currency"),
-                scope_type,
-            }
+/// The pure resolution core, over an already-loaded rate set — shared by
+/// the single-lookup [`resolve_rate`] and the profitability report, which
+/// resolves every entry against one loaded set instead of one query each.
+/// `at` is compared lexicographically against the stored `effective_from`
+/// (sound because both are ISO 8601); the caller supplies a validated `at`.
+pub fn resolve_from(
+    rates: &[Rate],
+    client_id: Option<&str>,
+    project_id: Option<&str>,
+    task_id: Option<&str>,
+    at: &str,
+) -> Option<ResolvedRate> {
+    rates
+        .iter()
+        .filter(|r| {
+            r.effective_from.as_str() <= at && scope_matches(r, client_id, project_id, task_id)
         })
         .max_by(|a, b| {
-            (a.priority, a.effective_from.as_str()).cmp(&(b.priority, b.effective_from.as_str()))
-        });
-
-    Ok(best.map(|c| ResolvedRate {
-        amount_cents: c.amount_cents,
-        currency: c.currency,
-        scope_type: c.scope_type,
-        effective_from: c.effective_from,
-    }))
+            (scope_priority(&a.scope_type), a.effective_from.as_str())
+                .cmp(&(scope_priority(&b.scope_type), b.effective_from.as_str()))
+        })
+        .map(|r| ResolvedRate {
+            amount_cents: r.amount_cents,
+            currency: r.currency.clone(),
+            scope_type: r.scope_type.clone(),
+            effective_from: r.effective_from.clone(),
+        })
 }
 
 #[cfg(test)]
@@ -458,5 +463,33 @@ mod tests {
             .await
             .unwrap_err()
             .contains("ISO 8601"));
+    }
+
+    fn rate_row(scope_type: &str, scope_id: &str, cents: i64) -> Rate {
+        Rate {
+            id: format!("{scope_type}-{scope_id}"),
+            scope_type: scope_type.into(),
+            scope_id: scope_id.into(),
+            amount_cents: cents,
+            currency: "USD".into(),
+            effective_from: "2026-01-01".into(),
+            created_at: "x".into(),
+        }
+    }
+
+    #[test]
+    fn resolve_from_is_pure_and_ignores_unknown_scopes() {
+        // Empty set → nothing applies.
+        assert!(resolve_from(&[], Some("c1"), None, None, "2026-06-01").is_none());
+
+        let rates = vec![
+            rate_row("workspace", "", 5000),
+            // A scope the CHECK constraint can't actually produce — defensively
+            // never matched.
+            rate_row("galaxy", "g1", 99999),
+        ];
+        let r = resolve_from(&rates, Some("c1"), None, None, "2026-06-01").unwrap();
+        assert_eq!(r.scope_type, "workspace");
+        assert_eq!(r.amount_cents, 5000);
     }
 }

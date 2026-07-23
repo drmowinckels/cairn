@@ -204,6 +204,15 @@ async fn billing_effective_rate(
     ipc::billing_effective_rate_impl(state, client_id, project_id, task_id, at).await
 }
 
+#[tauri::command]
+async fn billing_profitability(
+    state: tauri::State<'_, AppState>,
+    range: String,
+    rounding: Option<crate::rounding::Rounding>,
+) -> Result<plugins::billing::profitability::ProfitabilityReport, String> {
+    ipc::billing_profitability_impl(state, range, rounding).await
+}
+
 // Thin PM-connector command shims (#110), same coverage rationale.
 #[tauri::command]
 async fn list_connectors(
@@ -935,6 +944,7 @@ pub fn run() {
             billing_set_rate,
             billing_delete_rate,
             billing_effective_rate,
+            billing_profitability,
             list_connectors,
             set_connector_secret,
             clear_connector_secret,
