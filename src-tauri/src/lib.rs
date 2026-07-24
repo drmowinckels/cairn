@@ -213,6 +213,60 @@ async fn billing_profitability(
     ipc::billing_profitability_impl(state, range, rounding).await
 }
 
+#[tauri::command]
+async fn create_invoice(
+    state: tauri::State<'_, AppState>,
+    client_id: String,
+    from_date: String,
+    to_date: String,
+    tax_rate_bps: i64,
+    notes: Option<String>,
+    rounding: Option<crate::rounding::Rounding>,
+) -> Result<plugins::billing::invoices::Invoice, String> {
+    ipc::create_invoice_impl(
+        state,
+        client_id,
+        from_date,
+        to_date,
+        tax_rate_bps,
+        notes,
+        rounding,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn list_invoices(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugins::billing::invoices::InvoiceSummary>, String> {
+    ipc::list_invoices_impl(state).await
+}
+
+#[tauri::command]
+async fn get_invoice(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Option<plugins::billing::invoices::Invoice>, String> {
+    ipc::get_invoice_impl(state, id).await
+}
+
+#[tauri::command]
+async fn delete_invoice(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Vec<plugins::billing::invoices::InvoiceSummary>, String> {
+    ipc::delete_invoice_impl(state, id).await
+}
+
+#[tauri::command]
+async fn set_invoice_status(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    status: String,
+) -> Result<plugins::billing::invoices::Invoice, String> {
+    ipc::set_invoice_status_impl(state, id, status).await
+}
+
 // Thin PM-connector command shims (#110), same coverage rationale.
 #[tauri::command]
 async fn list_connectors(
@@ -945,6 +999,11 @@ pub fn run() {
             billing_delete_rate,
             billing_effective_rate,
             billing_profitability,
+            create_invoice,
+            list_invoices,
+            get_invoice,
+            delete_invoice,
+            set_invoice_status,
             list_connectors,
             set_connector_secret,
             clear_connector_secret,

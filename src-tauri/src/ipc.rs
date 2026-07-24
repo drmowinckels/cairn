@@ -7613,6 +7613,92 @@ pub async fn billing_profitability_impl(
     .await
 }
 
+// ── Billing invoices (#1) ─────────────────────────────────────────────
+
+fn parse_invoice_day(label: &str, value: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| format!("{label} must be a YYYY-MM-DD date"))
+}
+
+/// Generate and store an invoice for a client's billable, priced time over
+/// `[from_date, to_date)`. Requires an active Pro license. Invoice shim in
+/// `lib.rs`.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_invoice_impl(
+    state: State<'_, AppState>,
+    client_id: String,
+    from_date: String,
+    to_date: String,
+    tax_rate_bps: i64,
+    notes: Option<String>,
+    rounding: Option<Rounding>,
+) -> Result<crate::plugins::billing::invoices::Invoice, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    let from = parse_invoice_day("from", &from_date)?;
+    let to = parse_invoice_day("to", &to_date)?;
+    if to <= from {
+        return Err("to must be after from".into());
+    }
+    let issue_date = Local::now().date_naive().to_string();
+    crate::plugins::billing::invoices::create_invoice(
+        pool,
+        &client_id,
+        &from_date,
+        &to_date,
+        local_midnight_utc(from),
+        local_midnight_utc(to),
+        &issue_date,
+        tax_rate_bps,
+        notes.as_deref(),
+        rounding.unwrap_or_default(),
+        Utc::now(),
+    )
+    .await
+}
+
+/// Every stored invoice (without lines). Reads require the plugin enabled.
+pub async fn list_invoices_impl(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::plugins::billing::invoices::InvoiceSummary>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_enabled(pool).await?;
+    crate::plugins::billing::invoices::list_invoices(pool).await
+}
+
+/// One invoice with its lines, or `None`. Reads require the plugin enabled.
+pub async fn get_invoice_impl(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<crate::plugins::billing::invoices::Invoice>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_enabled(pool).await?;
+    crate::plugins::billing::invoices::get_invoice(pool, &id).await
+}
+
+/// Delete an invoice; returns the fresh list. Requires an active Pro license.
+pub async fn delete_invoice_impl(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<crate::plugins::billing::invoices::InvoiceSummary>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    crate::plugins::billing::invoices::delete_invoice(pool, &id).await?;
+    crate::plugins::billing::invoices::list_invoices(pool).await
+}
+
+/// Set an invoice's status (draft / sent / paid). Requires an active Pro
+/// license.
+pub async fn set_invoice_status_impl(
+    state: State<'_, AppState>,
+    id: String,
+    status: String,
+) -> Result<crate::plugins::billing::invoices::Invoice, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    crate::plugins::billing::invoices::set_invoice_status(pool, &id, &status).await
+}
+
 /// A cheap snapshot of the connector registry: clones the inner `Arc` and
 /// releases the lock immediately, so callers can hold it across the network
 /// reads without blocking a concurrent `install_connector` swap. Recovers
@@ -9363,6 +9449,104 @@ mod plugin_tests {
         assert_eq!(rep.billable_seconds, 0);
         assert!(rep.totals.is_empty());
         assert!(rep.by_project.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invoice_ipc_flow_gates_creates_and_manages() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        let make = |from: &str, to: &str, tax: i64| {
+            create_invoice_impl(
+                state.clone(),
+                "c1".into(),
+                from.into(),
+                to.into(),
+                tax,
+                None,
+                None,
+            )
+        };
+
+        // Gated: off, then enabled-but-unlicensed.
+        assert!(make("2026-07-01", "2026-08-01", 0)
+            .await
+            .unwrap_err()
+            .contains("plugin is off"));
+        set_plugin_enabled_impl(state.clone(), "billing".into(), true)
+            .await
+            .unwrap();
+        assert!(make("2026-07-01", "2026-08-01", 0)
+            .await
+            .unwrap_err()
+            .contains("Cairn Pro isn't active"));
+
+        sqlx::query(
+            "INSERT INTO billing_license (singleton, license_key, instance_id, status, activated_at, last_validated_at) \
+             VALUES (1, 'k', 'i', 'active', datetime('now'), datetime('now'))",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        // Bad / inverted dates are rejected before any work.
+        assert!(make("notadate", "2026-08-01", 0)
+            .await
+            .unwrap_err()
+            .contains("YYYY-MM-DD"));
+        assert!(make("2026-08-01", "2026-07-01", 0)
+            .await
+            .unwrap_err()
+            .contains("after from"));
+
+        // Seed a client, rate, and one billable hour, then invoice it.
+        sqlx::query(
+            "INSERT INTO clients (id, name, created_at, updated_at) VALUES ('c1','Acme','x','x')",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, billable_default, created_at, updated_at) \
+             VALUES ('p1','Website','c1','#000',0,1,'x','x')",
+        ).execute(&db.pool).await.unwrap();
+        crate::plugins::billing::rates::set_rate(
+            &db.pool,
+            "project",
+            "p1",
+            15000,
+            "USD",
+            "2020-01-01",
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, billable, created_at, updated_at) \
+             VALUES ('e','p1',NULL,'','2026-07-10T09:00:00+00:00','2026-07-10T10:00:00+00:00','manual',1,'x','x')",
+        ).execute(&db.pool).await.unwrap();
+
+        let inv = make("2026-07-01", "2026-08-01", 2500).await.unwrap();
+        assert_eq!(inv.number, "INV-0001");
+        assert_eq!(inv.total_cents, 18750);
+
+        assert_eq!(list_invoices_impl(state.clone()).await.unwrap().len(), 1);
+        assert_eq!(
+            get_invoice_impl(state.clone(), inv.id.clone())
+                .await
+                .unwrap()
+                .unwrap()
+                .lines
+                .len(),
+            1
+        );
+        let sent = set_invoice_status_impl(state.clone(), inv.id.clone(), "sent".into())
+            .await
+            .unwrap();
+        assert_eq!(sent.status, "sent");
+        assert!(delete_invoice_impl(state.clone(), inv.id.clone())
+            .await
+            .unwrap()
+            .is_empty());
     }
 }
 

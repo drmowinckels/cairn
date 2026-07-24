@@ -35,6 +35,12 @@ pub struct ResolvedRate {
     pub effective_from: String,
 }
 
+/// Bill an hourly rate for a span: hourly cents × seconds ÷ 3600, rounded to
+/// the nearest cent. Shared by the profitability report and invoices.
+pub fn amount_cents(hourly_cents: i64, seconds: i64) -> i64 {
+    (hourly_cents as f64 * seconds as f64 / 3600.0).round() as i64
+}
+
 const SCOPES: [&str; 4] = ["workspace", "client", "project", "task"];
 
 /// A more-specific scope outranks a broader one regardless of dates —
@@ -475,6 +481,13 @@ mod tests {
             effective_from: "2026-01-01".into(),
             created_at: "x".into(),
         }
+    }
+
+    #[test]
+    fn amount_cents_bills_the_hourly_rate_by_hours() {
+        // $150/hr for 90 min = $225.00; 20 min at $30/hr = $10.00.
+        assert_eq!(amount_cents(15000, 90 * 60), 22500);
+        assert_eq!(amount_cents(3000, 20 * 60), 1000);
     }
 
     #[test]

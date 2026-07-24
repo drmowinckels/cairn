@@ -10,6 +10,7 @@
 //! licensing call carries only the license key + device instance id, never
 //! any tracked time data. See `docs/PRIVACY.md`.
 
+pub mod invoices;
 pub mod lemonsqueezy;
 pub mod profitability;
 pub mod rates;
