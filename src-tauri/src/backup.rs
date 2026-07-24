@@ -17,6 +17,7 @@ use tauri::{Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::AsyncWriteExt;
 
+use crate::ipc::ensure_parent_dir;
 use crate::rounding::Rounding;
 use crate::AppState;
 
@@ -122,11 +123,7 @@ pub fn apply_pending_import(data_dir: &Path) -> std::io::Result<()> {
 /// INTO` is the SQLite-blessed primitive — it handles WAL and
 /// in-flight transactions correctly, which a raw file copy does not.
 pub async fn vacuum_into(pool: &SqlitePool, dest: &Path) -> Result<(), String> {
-    if let Some(parent) = dest.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await.map_err(err)?;
-        }
-    }
+    ensure_parent_dir(dest).await?;
     sqlx::query("VACUUM INTO ?1")
         .bind(dest.to_string_lossy().to_string())
         .execute(pool)
@@ -159,11 +156,7 @@ pub async fn export_csv_to(
     rounding: Rounding,
 ) -> Result<(), String> {
     let now = Utc::now();
-    if let Some(parent) = dest.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await.map_err(err)?;
-        }
-    }
+    ensure_parent_dir(dest).await?;
 
     let rows = sqlx::query(
         r#"

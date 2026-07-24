@@ -15,7 +15,7 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use tauri::State;
 
-use crate::ipc::{err, parse_ts};
+use crate::ipc::{ensure_parent_dir, err, parse_ts};
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 use crate::AppState;
 
@@ -227,11 +227,7 @@ pub async fn export_json_to(
         entries,
     };
 
-    if let Some(parent) = dest.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await.map_err(err)?;
-        }
-    }
+    ensure_parent_dir(dest).await?;
     let json = serde_json::to_vec_pretty(&doc).map_err(err)?;
     tokio::fs::write(dest, &json).await.map_err(err)?;
     Ok(())

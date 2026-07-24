@@ -2792,6 +2792,19 @@ pub(crate) fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// Create the parent directory of a destination file, if it has a named one.
+/// A bare filename yields an empty parent (`Some("")`) — nothing to create —
+/// and a root path yields `None`; both are no-ops. Used by the export paths
+/// before writing a chosen file.
+pub(crate) async fn ensure_parent_dir(path: &std::path::Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await.map_err(err)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod report_pure_tests {
     use super::*;
@@ -7699,6 +7712,29 @@ pub async fn set_invoice_status_impl(
     crate::plugins::billing::invoices::set_invoice_status(pool, &id, &status).await
 }
 
+/// Render an invoice to a self-contained HTML file at `dest` (the user then
+/// prints it to PDF). Returns the written path. Gated on `require_enabled`
+/// (not `require_pro`) to match the `get_invoice` read it wraps: the export
+/// reveals nothing the read doesn't, so a lapsed license can still print an
+/// already-created invoice rather than being locked out of its own data.
+/// Invoice shim in `lib.rs`.
+pub async fn export_invoice_html_impl(
+    state: State<'_, AppState>,
+    id: String,
+    dest: String,
+) -> Result<String, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_enabled(pool).await?;
+    let invoice = crate::plugins::billing::invoices::get_invoice(pool, &id)
+        .await?
+        .ok_or_else(|| "unknown invoice".to_string())?;
+    let html = crate::plugins::billing::invoice_html::render_html(&invoice);
+    let path = std::path::Path::new(&dest);
+    ensure_parent_dir(path).await?;
+    tokio::fs::write(path, html.as_bytes()).await.map_err(err)?;
+    Ok(dest)
+}
+
 /// A cheap snapshot of the connector registry: clones the inner `Arc` and
 /// releases the lock immediately, so callers can hold it across the network
 /// reads without blocking a concurrent `install_connector` swap. Recovers
@@ -9547,6 +9583,96 @@ mod plugin_tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn export_invoice_html_writes_a_file() {
+        let (dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let path = |name: &str| dir.path().join(name).to_string_lossy().to_string();
+
+        // Gated on the plugin being enabled.
+        assert!(
+            export_invoice_html_impl(state.clone(), "x".into(), path("x.html"))
+                .await
+                .unwrap_err()
+                .contains("plugin is off")
+        );
+
+        set_plugin_enabled_impl(state.clone(), "billing".into(), true)
+            .await
+            .unwrap();
+        assert!(
+            export_invoice_html_impl(state.clone(), "nope".into(), path("n.html"))
+                .await
+                .unwrap_err()
+                .contains("unknown invoice")
+        );
+
+        sqlx::query(
+            "INSERT INTO billing_license (singleton, license_key, instance_id, status, activated_at, last_validated_at) \
+             VALUES (1,'k','i','active',datetime('now'),datetime('now'))",
+        ).execute(&db.pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO clients (id, name, created_at, updated_at) VALUES ('c1','Acme','x','x')",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, billable_default, created_at, updated_at) \
+             VALUES ('p1','Website','c1','#000',0,1,'x','x')",
+        ).execute(&db.pool).await.unwrap();
+        crate::plugins::billing::rates::set_rate(
+            &db.pool,
+            "project",
+            "p1",
+            15000,
+            "USD",
+            "2020-01-01",
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, billable, created_at, updated_at) \
+             VALUES ('e','p1',NULL,'','2026-07-10T09:00:00+00:00','2026-07-10T10:00:00+00:00','manual',1,'x','x')",
+        ).execute(&db.pool).await.unwrap();
+        let inv = create_invoice_impl(
+            state.clone(),
+            "c1".into(),
+            "2026-07-01".into(),
+            "2026-08-01".into(),
+            0,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let dest = path("invoice.html");
+        let out = export_invoice_html_impl(state.clone(), inv.id.clone(), dest.clone())
+            .await
+            .unwrap();
+        assert!(out.contains("invoice.html"));
+        let html = std::fs::read_to_string(&dest).unwrap();
+        assert!(html.contains(&format!("Invoice {}", inv.number)));
+        assert!(html.contains("Website"));
+    }
+
+    #[tokio::test]
+    async fn ensure_parent_dir_creates_named_parents_and_skips_the_rest() {
+        // A bare filename has an empty parent and a root has none — both
+        // are no-ops that must not error.
+        ensure_parent_dir(std::path::Path::new("bare.html"))
+            .await
+            .unwrap();
+        ensure_parent_dir(std::path::Path::new("/")).await.unwrap();
+
+        // A named, missing parent is created on demand.
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a/b/c.html");
+        ensure_parent_dir(&nested).await.unwrap();
+        assert!(nested.parent().unwrap().is_dir());
     }
 }
 

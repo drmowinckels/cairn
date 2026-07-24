@@ -1,6 +1,8 @@
+import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { Empty, ErrorBanner } from "../../lib/components";
 import {
+  exportInvoiceHtml,
   getInvoice,
   listClients,
   type Invoice,
@@ -10,6 +12,7 @@ import { formatMoney } from "../../lib/money";
 import { isoLocalDate, secondsToHours } from "../../lib/report-math";
 import type { Rounding } from "../../lib/rounding";
 import type { Client } from "../../lib/types";
+import { withPopoverPinned } from "../../lib/use-backup";
 import { useInvoices } from "../../lib/use-invoices";
 
 const STATUSES: InvoiceStatus[] = ["draft", "sent", "paid"];
@@ -48,6 +51,12 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
   const [notes, setNotes] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Invoice | null>(null);
+  // A per-save note shown under the expanded row. Cleared whenever the
+  // expanded row changes so a success/error can't leak onto another invoice.
+  const [notice, setNotice] = useState<{
+    text: string;
+    error: boolean;
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -72,6 +81,7 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
 
   const toggle = (id: string) => {
     const req = ++detailReq.current;
+    setNotice(null);
     if (expandedId === id) {
       setExpandedId(null);
       setDetail(null);
@@ -98,6 +108,7 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
         // Invalidate any in-flight expand fetch, then show the new invoice.
         detailReq.current += 1;
         setNotes("");
+        setNotice(null);
         setExpandedId(inv.id);
         setDetail(inv);
       }
@@ -111,6 +122,25 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
     void remove(id);
     setExpandedId(null);
     setDetail(null);
+  };
+
+  const saveHtml = async (inv: Invoice) => {
+    setNotice(null);
+    try {
+      // Pin the popover so the native save dialog doesn't dismiss it.
+      const dest = await withPopoverPinned(() =>
+        save({
+          title: "Save invoice",
+          defaultPath: `${inv.number}.html`,
+          filters: [{ name: "HTML", extensions: ["html"] }],
+        }),
+      );
+      if (typeof dest !== "string") return; // cancelled
+      const path = await exportInvoiceHtml(inv.id, dest);
+      setNotice({ text: `Saved to ${path}`, error: false });
+    } catch (e) {
+      setNotice({ text: String(e), error: true });
+    }
   };
 
   return (
@@ -284,12 +314,30 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
                       <button
                         type="button"
                         className="btn btn--ghost btn--sm"
+                        onClick={() => void saveHtml(detail)}
+                      >
+                        Save as HTML
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
                         onClick={() => removeRow(inv.id)}
                         disabled={busy}
                       >
                         Delete
                       </button>
                     </div>
+                    {notice && (
+                      <p
+                        className={
+                          notice.error ? "field-error" : "settings-sub"
+                        }
+                        role={notice.error ? "alert" : undefined}
+                        data-inv="notice"
+                      >
+                        {notice.text}
+                      </p>
+                    )}
                   </div>
                 ))}
             </li>

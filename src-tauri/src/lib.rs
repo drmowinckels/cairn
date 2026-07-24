@@ -267,6 +267,15 @@ async fn set_invoice_status(
     ipc::set_invoice_status_impl(state, id, status).await
 }
 
+#[tauri::command]
+async fn export_invoice_html(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    dest: String,
+) -> Result<String, String> {
+    ipc::export_invoice_html_impl(state, id, dest).await
+}
+
 // Thin PM-connector command shims (#110), same coverage rationale.
 #[tauri::command]
 async fn list_connectors(
@@ -1004,6 +1013,7 @@ pub fn run() {
             get_invoice,
             delete_invoice,
             set_invoice_status,
+            export_invoice_html,
             list_connectors,
             set_connector_secret,
             clear_connector_secret,

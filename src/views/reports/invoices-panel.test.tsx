@@ -13,6 +13,7 @@ vi.mock("../../lib/use-invoices", () => ({ useInvoices: () => useInvoices() }));
 
 const getInvoice = vi.fn();
 const listClients = vi.fn();
+const exportInvoiceHtml = vi.fn();
 vi.mock("../../lib/ipc", async () => {
   const actual =
     await vi.importActual<typeof import("../../lib/ipc")>("../../lib/ipc");
@@ -20,8 +21,17 @@ vi.mock("../../lib/ipc", async () => {
     ...actual,
     getInvoice: (...a: unknown[]) => getInvoice(...a),
     listClients: (...a: unknown[]) => listClients(...a),
+    exportInvoiceHtml: (...a: unknown[]) => exportInvoiceHtml(...a),
   };
 });
+
+const save = vi.fn();
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: (...a: unknown[]) => save(...a),
+}));
+vi.mock("../../lib/use-backup", () => ({
+  withPopoverPinned: (fn: () => unknown) => fn(),
+}));
 
 import { InvoicesPanel } from "./invoices-panel";
 import { ROUNDING_OFF } from "../../lib/rounding";
@@ -74,6 +84,8 @@ beforeEach(() => {
   useInvoices.mockReset();
   getInvoice.mockReset().mockResolvedValue(invoice);
   listClients.mockReset().mockResolvedValue([{ id: "c1", name: "Acme" }]);
+  save.mockReset();
+  exportInvoiceHtml.mockReset();
 });
 
 describe("InvoicesPanel", () => {
@@ -257,5 +269,76 @@ describe("InvoicesPanel", () => {
     unmount();
     resolve([{ id: "c1", name: "Acme" }]);
     await Promise.resolve();
+  });
+
+  async function expandFirstRow() {
+    useInvoices.mockReturnValue(state({ invoices: [summary] }));
+    render(<InvoicesPanel rounding={ROUNDING_OFF} />);
+    await userEvent.click(screen.getByRole("button", { name: /INV-0001/ }));
+    await screen.findByText("Website");
+  }
+
+  it("saves an invoice to HTML through the save dialog", async () => {
+    save.mockResolvedValue("/tmp/INV-0001.html");
+    exportInvoiceHtml.mockResolvedValue("/tmp/INV-0001.html");
+    await expandFirstRow();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /save as html/i }),
+    );
+    await waitFor(() =>
+      expect(exportInvoiceHtml).toHaveBeenCalledWith(
+        "i1",
+        "/tmp/INV-0001.html",
+      ),
+    );
+    // Default filename is derived from the invoice number.
+    expect(save.mock.calls[0][0]).toMatchObject({
+      defaultPath: "INV-0001.html",
+    });
+    expect(await screen.findByText(/saved to/i)).toBeTruthy();
+  });
+
+  it("does nothing when the save dialog is cancelled", async () => {
+    save.mockResolvedValue(null);
+    await expandFirstRow();
+    await userEvent.click(
+      screen.getByRole("button", { name: /save as html/i }),
+    );
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(exportInvoiceHtml).not.toHaveBeenCalled();
+  });
+
+  it("shows an export failure as an alert, not a muted note", async () => {
+    save.mockResolvedValue("/tmp/x.html");
+    exportInvoiceHtml.mockRejectedValue("disk full");
+    await expandFirstRow();
+    await userEvent.click(
+      screen.getByRole("button", { name: /save as html/i }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/disk full/i);
+  });
+
+  it("clears a stale save notice when switching to another invoice", async () => {
+    save.mockResolvedValue("/tmp/INV-0001.html");
+    exportInvoiceHtml.mockResolvedValue("/tmp/INV-0001.html");
+    const summaryB = { ...summary, id: "i2", number: "INV-0002" };
+    getInvoice.mockImplementation((id: string) =>
+      Promise.resolve(id === "i2" ? { ...invoice, ...summaryB } : invoice),
+    );
+    useInvoices.mockReturnValue(state({ invoices: [summary, summaryB] }));
+    render(<InvoicesPanel rounding={ROUNDING_OFF} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /INV-0001/ }));
+    await screen.findByText("Website");
+    await userEvent.click(
+      screen.getByRole("button", { name: /save as html/i }),
+    );
+    expect(await screen.findByText(/saved to/i)).toBeTruthy();
+
+    // Switching rows drops the note so it can't reappear under INV-0002.
+    await userEvent.click(screen.getByRole("button", { name: /INV-0002/ }));
+    await waitFor(() => expect(screen.queryByText(/saved to/i)).toBeNull());
   });
 });
