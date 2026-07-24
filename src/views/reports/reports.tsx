@@ -8,6 +8,7 @@ import { useBackup } from "../../lib/use-backup";
 import { useBilling } from "../../lib/use-billing";
 import { useProjects } from "../../lib/use-projects";
 import { useReportSummary } from "../../lib/use-report-summary";
+import { InvoicesPanel } from "./invoices-panel";
 import { ProfitabilityPanel } from "./profitability-panel";
 import { useRoundingPrefs } from "../../lib/use-rounding-prefs";
 import { isRoundingActive, roundingLabel } from "../../lib/rounding";
@@ -54,10 +55,12 @@ export function ReportsView({ density }: Props) {
     [projects],
   );
   const [range, setRange] = useState<ReportRange>("week");
-  const [tab, setTab] = useState<"summary" | "profitability">("summary");
-  // The Profitability tab (#109) only exists once Pro is active — the
-  // active tab falls back to Summary whenever it isn't. A local status
-  // read is enough to gate it; no network re-check from the Reports view.
+  const [tab, setTab] = useState<"summary" | "profitability" | "invoices">(
+    "summary",
+  );
+  // The Pro tabs (#109/#1) only exist once Pro is active — the active tab
+  // falls back to Summary whenever it isn't. A local status read is enough
+  // to gate them; no network re-check from the Reports view.
   const billing = useBilling({ revalidate: false });
   const proActive = !!(
     billing.status?.enabled && billing.status.license?.active
@@ -232,6 +235,15 @@ export function ReportsView({ density }: Props) {
           >
             Profitability
           </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={activeTab === "invoices"}
+            className={`seg-btn${activeTab === "invoices" ? " is-on" : ""}`}
+            onClick={() => setTab("invoices")}
+          >
+            Invoices
+          </button>
         </div>
       )}
     </>
@@ -246,6 +258,15 @@ export function ReportsView({ density }: Props) {
           rounding={rounding}
           projectsById={projectsById}
         />
+      </div>
+    );
+  }
+
+  if (activeTab === "invoices") {
+    return (
+      <div className="view view-reports" data-density={density}>
+        {headerEl}
+        <InvoicesPanel rounding={rounding} />
       </div>
     );
   }

@@ -1187,6 +1187,93 @@ export async function billingProfitability(
   });
 }
 
+export type InvoiceStatus = "draft" | "sent" | "paid";
+
+/** One line of an invoice (mirrors the Rust `InvoiceLine`). */
+export interface InvoiceLine {
+  id: string;
+  description: string;
+  seconds: number;
+  amountCents: number;
+  sort: number;
+}
+
+/** A stored invoice with its lines (mirrors the Rust `Invoice`). */
+export interface Invoice {
+  id: string;
+  number: string;
+  clientId: string;
+  clientName: string;
+  currency: string;
+  issueDate: string;
+  fromDate: string;
+  toDate: string;
+  taxRateBps: number;
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  /** Billable time in range that had no rate — uninvoiced, flagged. */
+  unratedSeconds: number;
+  status: InvoiceStatus;
+  notes: string | null;
+  createdAt: string;
+  lines: InvoiceLine[];
+}
+
+/** An invoice list row without lines (mirrors the Rust `InvoiceSummary`). */
+export interface InvoiceSummary {
+  id: string;
+  number: string;
+  clientName: string;
+  currency: string;
+  issueDate: string;
+  totalCents: number;
+  status: InvoiceStatus;
+}
+
+/** Generate and store an invoice for a client's billable, priced time over
+ *  `[fromDate, toDate)`. Requires an active Pro license; `null` outside
+ *  Tauri. */
+export async function createInvoice(input: {
+  clientId: string;
+  fromDate: string;
+  toDate: string;
+  taxRateBps: number;
+  notes?: string | null;
+  rounding?: Rounding;
+}): Promise<Invoice | null> {
+  if (!inTauri) return null;
+  return invoke<Invoice>("create_invoice", input);
+}
+
+/** Every stored invoice (without lines). Requires the plugin enabled. */
+export async function listInvoices(): Promise<InvoiceSummary[]> {
+  if (!inTauri) return [];
+  return invoke<InvoiceSummary[]>("list_invoices");
+}
+
+/** One invoice with its lines, or `null`. Requires the plugin enabled. */
+export async function getInvoice(id: string): Promise<Invoice | null> {
+  if (!inTauri) return null;
+  return invoke<Invoice | null>("get_invoice", { id });
+}
+
+/** Delete an invoice; returns the fresh list. Requires an active Pro license. */
+export async function deleteInvoice(id: string): Promise<InvoiceSummary[]> {
+  if (!inTauri) return [];
+  return invoke<InvoiceSummary[]>("delete_invoice", { id });
+}
+
+/** Set an invoice's status. Requires an active Pro license; `null` outside
+ *  Tauri. */
+export async function setInvoiceStatus(
+  id: string,
+  status: InvoiceStatus,
+): Promise<Invoice | null> {
+  if (!inTauri) return null;
+  return invoke<Invoice>("set_invoice_status", { id, status });
+}
+
 /** A capability a PM connector declares (mirrors the Rust `Capability`,
  *  kebab-serialized). A local-file connector declares none. */
 export type ConnectorCapability = "network" | "secrets";

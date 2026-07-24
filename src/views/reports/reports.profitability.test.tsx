@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe("ReportsView — Profitability tab (#109)", () => {
-  it("shows the tab when Pro is active and switches to the panel", () => {
+  it("shows the tabs when Pro is active and switches between panels", async () => {
     render(<ReportsView density="comfy" />);
     const tab = screen.getByRole("radio", { name: "Profitability" });
     expect(tab).toBeTruthy();
@@ -74,17 +74,23 @@ describe("ReportsView — Profitability tab (#109)", () => {
     // The Profitability panel mounts (its empty state here).
     expect(screen.getByText(/no time tracked/i)).toBeTruthy();
 
+    // The Invoices tab mounts its panel (empty out of Tauri, loaded async).
+    fireEvent.click(screen.getByRole("radio", { name: "Invoices" }));
+    expect(await screen.findByText(/no invoices yet/i)).toBeTruthy();
+
     // And back to Summary.
     fireEvent.click(screen.getByRole("radio", { name: "Summary" }));
     expect(screen.queryByText(/no time tracked/i)).toBeNull();
+    expect(screen.queryByText(/no invoices yet/i)).toBeNull();
   });
 
-  it("hides the tab entirely when Pro is not active", () => {
+  it("hides the Pro tabs entirely when Pro is not active", () => {
     useBilling.mockReturnValue({
       ...proActive,
       status: { enabled: false, license: null },
     });
     render(<ReportsView density="comfy" />);
     expect(screen.queryByRole("radio", { name: "Profitability" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Invoices" })).toBeNull();
   });
 });

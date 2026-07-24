@@ -2250,6 +2250,102 @@ body {
   white-space: nowrap;
 }
 
+/* Reports → Invoices tab (#1): a create form, a list of invoices, and an
+   expandable per-invoice detail. */
+.rep-invoices,
+.inv-list,
+.inv-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inv-create {
+  flex-wrap: wrap;
+}
+
+.inv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 6px;
+}
+
+.inv-detail {
+  gap: 10px;
+  padding: 6px 10px 2px;
+}
+
+.inv-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-small);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.inv-number {
+  font-family: var(--mono);
+  color: var(--ink-mute);
+}
+
+.inv-total {
+  font-variant-numeric: tabular-nums;
+}
+
+.inv-badge {
+  font-size: var(--font-tiny);
+  text-transform: capitalize;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 0.5px solid var(--hairline-strong);
+  color: var(--ink-soft);
+}
+
+.inv-badge--paid {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.inv-totals {
+  margin: 0;
+  align-self: flex-end;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inv-totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  font-size: var(--font-small);
+}
+
+.inv-totals dt,
+.inv-totals dd {
+  margin: 0;
+}
+
+.inv-totals dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.inv-grand {
+  font-weight: 600;
+  border-top: 0.5px solid var(--hairline);
+  padding-top: 2px;
+}
+
 .total {
   display: flex;
   flex-direction: column;
