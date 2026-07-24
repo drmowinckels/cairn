@@ -16,7 +16,7 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use super::err;
-use super::rates::{list_rates, resolve_from, Rate};
+use super::rates::{amount_cents, list_rates, resolve_from, Rate};
 use crate::ipc::parse_ts;
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 
@@ -127,11 +127,6 @@ async fn fetch_profit_rows(
         });
     }
     Ok(rows)
-}
-
-/// hourly cents × seconds ÷ 3600, rounded to the nearest cent.
-fn amount_cents(hourly_cents: i64, seconds: i64) -> i64 {
-    (hourly_cents as f64 * seconds as f64 / 3600.0).round() as i64
 }
 
 /// The grouping key: local project id, else remote project name, else the
@@ -312,14 +307,6 @@ mod tests {
 
     fn off() -> Rounding {
         Rounding::off()
-    }
-
-    #[test]
-    fn amount_is_hourly_rate_times_hours() {
-        // $150/hr for 90 min = $225.00 = 22500¢.
-        assert_eq!(amount_cents(15000, 90 * 60), 22500);
-        // 20 min at $30/hr = $10.00.
-        assert_eq!(amount_cents(3000, 20 * 60), 1000);
     }
 
     #[test]
