@@ -434,6 +434,40 @@ describe("ipc helpers (inside Tauri)", () => {
     });
   });
 
+  it("invoice commands forward the right args (#1)", async () => {
+    const {
+      createInvoice,
+      listInvoices,
+      getInvoice,
+      deleteInvoice,
+      setInvoiceStatus,
+    } = await import("./ipc");
+
+    invokeMock.mockResolvedValue({ id: "i1", number: "INV-0001" });
+    const input = {
+      clientId: "c1",
+      fromDate: "2026-07-01",
+      toDate: "2026-08-01",
+      taxRateBps: 2500,
+    };
+    expect(await createInvoice(input)).toMatchObject({ number: "INV-0001" });
+    expect(invokeMock).toHaveBeenCalledWith("create_invoice", input);
+
+    await getInvoice("i1");
+    expect(invokeMock).toHaveBeenCalledWith("get_invoice", { id: "i1" });
+    await setInvoiceStatus("i1", "sent");
+    expect(invokeMock).toHaveBeenCalledWith("set_invoice_status", {
+      id: "i1",
+      status: "sent",
+    });
+
+    invokeMock.mockResolvedValue([]);
+    await listInvoices();
+    expect(invokeMock).toHaveBeenCalledWith("list_invoices");
+    await deleteInvoice("i1");
+    expect(invokeMock).toHaveBeenCalledWith("delete_invoice", { id: "i1" });
+  });
+
   it("listConnectors invokes the command and returns the list", async () => {
     const list = [
       {
@@ -638,6 +672,29 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(await billingDeleteRate("r1")).toEqual([]);
     expect(await billingEffectiveRate({ at: "2026-01-01" })).toBeNull();
     expect(await billingProfitability("week")).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("invoice commands short-circuit without the backend (#1)", async () => {
+    const {
+      createInvoice,
+      listInvoices,
+      getInvoice,
+      deleteInvoice,
+      setInvoiceStatus,
+    } = await import("./ipc");
+    expect(
+      await createInvoice({
+        clientId: "c1",
+        fromDate: "a",
+        toDate: "b",
+        taxRateBps: 0,
+      }),
+    ).toBeNull();
+    expect(await listInvoices()).toEqual([]);
+    expect(await getInvoice("i1")).toBeNull();
+    expect(await deleteInvoice("i1")).toEqual([]);
+    expect(await setInvoiceStatus("i1", "paid")).toBeNull();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
