@@ -1274,6 +1274,16 @@ export async function setInvoiceStatus(
   return invoke<Invoice>("set_invoice_status", { id, status });
 }
 
+/** Render an invoice to a self-contained HTML file at `dest`; returns the
+ *  written path. The user prints that file to PDF. */
+export async function exportInvoiceHtml(
+  id: string,
+  dest: string,
+): Promise<string> {
+  if (!inTauri) return "";
+  return invoke<string>("export_invoice_html", { id, dest });
+}
+
 /** A capability a PM connector declares (mirrors the Rust `Capability`,
  *  kebab-serialized). A local-file connector declares none. */
 export type ConnectorCapability = "network" | "secrets";
