@@ -24,10 +24,15 @@ pub struct BusinessDetails {
     pub tax_id: String,
     /// A self-contained image data URI (`data:image/png;base64,…`) or empty.
     pub logo: String,
+    /// The tax line's label ("VAT", "GST", "Sales Tax", …); empty renders as
+    /// "Tax". A tax-line detail, not a "From" field — see `is_empty`.
+    pub tax_label: String,
 }
 
 impl BusinessDetails {
-    /// True when nothing is filled in — the invoice then omits the block.
+    /// True when the "From" block has nothing to show. Excludes `tax_label`,
+    /// which only labels the tax line — a tax-label-only profile still omits
+    /// the block.
     pub fn is_empty(&self) -> bool {
         self.name.is_empty()
             && self.address.is_empty()
@@ -44,6 +49,7 @@ impl BusinessDetails {
             tax_id: self.tax_id.trim().to_string(),
             // The logo is an opaque data URI — never trimmed or altered.
             logo: self.logo.clone(),
+            tax_label: self.tax_label.trim().to_string(),
         }
     }
 }
@@ -130,7 +136,8 @@ pub async fn logo_from_path(path: &str) -> Result<String, String> {
 /// Read the stored business details, or an empty profile when none are set.
 pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> {
     let row = sqlx::query(
-        "SELECT name, address, email, tax_id, logo FROM billing_business WHERE singleton = 1",
+        "SELECT name, address, email, tax_id, logo, tax_label \
+           FROM billing_business WHERE singleton = 1",
     )
     .fetch_optional(pool)
     .await
@@ -142,6 +149,7 @@ pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> 
             email: r.get("email"),
             tax_id: r.get("tax_id"),
             logo: r.get("logo"),
+            tax_label: r.get("tax_label"),
         },
         None => BusinessDetails::default(),
     })
@@ -156,17 +164,19 @@ pub async fn set_business(
     let d = details.trimmed();
     validate_logo(&d.logo)?;
     sqlx::query(
-        "INSERT INTO billing_business (singleton, name, address, email, tax_id, logo, updated_at) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, datetime('now')) \
+        "INSERT INTO billing_business \
+           (singleton, name, address, email, tax_id, logo, tax_label, updated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, datetime('now')) \
          ON CONFLICT (singleton) DO UPDATE SET \
            name = ?1, address = ?2, email = ?3, tax_id = ?4, logo = ?5, \
-           updated_at = datetime('now')",
+           tax_label = ?6, updated_at = datetime('now')",
     )
     .bind(&d.name)
     .bind(&d.address)
     .bind(&d.email)
     .bind(&d.tax_id)
     .bind(&d.logo)
+    .bind(&d.tax_label)
     .execute(pool)
     .await
     .map_err(err)?;
@@ -195,12 +205,14 @@ mod tests {
                 email: "hi@acme.no".into(),
                 tax_id: "NO 123 456 789".into(),
                 logo: PNG_URI.into(),
+                tax_label: "  VAT  ".into(),
             },
         )
         .await
         .unwrap();
         assert_eq!(saved.name, "Acme Consulting AS");
         assert_eq!(saved.logo, PNG_URI); // stored verbatim, not trimmed
+        assert_eq!(saved.tax_label, "VAT"); // trimmed
         assert!(!saved.is_empty());
         assert_eq!(get_business(&db.pool).await.unwrap(), saved);
 
@@ -228,6 +240,12 @@ mod tests {
         };
         assert!(!b.is_empty());
         assert!(BusinessDetails::default().is_empty());
+        // A tax-label-only profile still has no "From" block to show.
+        assert!(BusinessDetails {
+            tax_label: "VAT".into(),
+            ..Default::default()
+        }
+        .is_empty());
     }
 
     #[test]

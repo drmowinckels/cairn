@@ -11,6 +11,11 @@ import userEvent from "@testing-library/user-event";
 const useInvoices = vi.fn();
 vi.mock("../../lib/use-invoices", () => ({ useInvoices: () => useInvoices() }));
 
+const useBusiness = vi.fn();
+vi.mock("../../lib/use-business", () => ({
+  useBusiness: () => useBusiness(),
+}));
+
 const getInvoice = vi.fn();
 const listClients = vi.fn();
 const exportInvoiceHtml = vi.fn();
@@ -82,6 +87,7 @@ function state(over: Partial<ReturnType<typeof useInvoices>> = {}) {
 
 beforeEach(() => {
   useInvoices.mockReset();
+  useBusiness.mockReset().mockReturnValue({ details: null });
   getInvoice.mockReset().mockResolvedValue(invoice);
   listClients.mockReset().mockResolvedValue([{ id: "c1", name: "Acme" }]);
   save.mockReset();
@@ -165,10 +171,22 @@ describe("InvoicesPanel", () => {
     // $150.00 shows for both the line amount and the subtotal.
     expect(screen.getAllByText(/\$150\.00/).length).toBeGreaterThan(0);
     expect(screen.getByText(/billable but unpriced/i)).toBeTruthy();
+    // No business tax label set → the tax line defaults to "Tax".
+    expect(screen.getByText(/Tax \(25%\)/)).toBeTruthy();
 
     // Clicking the row again collapses the detail.
     await userEvent.click(screen.getByRole("button", { name: /INV-0001/ }));
     await waitFor(() => expect(screen.queryByText("Website")).toBeNull());
+  });
+
+  it("labels the tax line with the issuer's configured tax label", async () => {
+    useBusiness.mockReturnValue({ details: { taxLabel: "VAT" } });
+    useInvoices.mockReturnValue(state({ invoices: [summary] }));
+    render(<InvoicesPanel rounding={ROUNDING_OFF} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /INV-0001/ }));
+    expect(await screen.findByText(/VAT \(25%\)/)).toBeTruthy();
+    expect(screen.queryByText(/^Tax \(25%\)$/)).toBeNull();
   });
 
   it("changes status and deletes from the expanded detail", async () => {

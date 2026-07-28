@@ -1119,6 +1119,8 @@ export interface BusinessDetails {
   taxId: string;
   /** A self-contained image data URI (`data:image/png;base64,…`) or empty. */
   logo: string;
+  /** The invoice tax line's label ("VAT", "GST", …); empty renders as "Tax". */
+  taxLabel: string;
 }
 
 const EMPTY_BUSINESS: BusinessDetails = {
@@ -1127,6 +1129,7 @@ const EMPTY_BUSINESS: BusinessDetails = {
   email: "",
   taxId: "",
   logo: "",
+  taxLabel: "",
 };
 
 /** Read the stored issuer details. Requires the billing plugin enabled. */

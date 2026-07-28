@@ -21,6 +21,7 @@ const biz = (over: Record<string, unknown> = {}) => ({
   email: "hi@acme.no",
   taxId: "NO 1",
   logo: "",
+  taxLabel: "",
   ...over,
 });
 
