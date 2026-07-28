@@ -65,6 +65,7 @@ pub struct InvoiceSummary {
 
 /// One billable entry reduced to what pricing a line needs.
 struct InvoiceRow {
+    entry_id: String,
     project_id: String,
     task_id: Option<String>,
     project_name: String,
@@ -84,6 +85,11 @@ struct Built {
     currency: String,
     lines: Vec<DraftLine>,
     unrated_seconds: i64,
+    /// The entries that landed on a priced line — recorded against the
+    /// invoice so an overlapping range never bills them twice. Unrated and
+    /// zero-rounded entries are deliberately absent: they weren't billed, so
+    /// they stay available to a future (priced) invoice.
+    billed_entry_ids: Vec<String>,
 }
 
 /// Price a client's billable rows into one line per project, in a single
@@ -100,6 +106,7 @@ fn build_lines_from(
     let mut by_project: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     let mut currency: Option<String> = None;
     let mut unrated_seconds = 0;
+    let mut billed_entry_ids = Vec::new();
 
     for r in rows {
         let secs = effective_rounding(r.project_rounding, global_rounding)
@@ -129,6 +136,7 @@ fn build_lines_from(
                 let entry = by_project.entry(r.project_name.clone()).or_insert((0, 0));
                 entry.0 += secs;
                 entry.1 += amount_cents(rate.amount_cents, secs);
+                billed_entry_ids.push(r.entry_id.clone());
             }
             None => unrated_seconds += secs,
         }
@@ -146,12 +154,24 @@ fn build_lines_from(
         currency: currency.unwrap_or_default(),
         lines,
         unrated_seconds,
+        billed_entry_ids,
     })
 }
 
 fn tax_cents(subtotal_cents: i64, tax_rate_bps: i64) -> i64 {
     (subtotal_cents as f64 * tax_rate_bps as f64 / 10_000.0).round() as i64
 }
+
+/// The `FROM`/`WHERE` selecting a client's completed, billable entries in
+/// `[?2, ?3)` (bind `?1`=client, `?2`=from, `?3`=to). Shared by the exclusion
+/// fetch and the "was it all already invoiced?" count so the two can't drift —
+/// if they did, the diagnostic message would lie. It is a compile-time
+/// constant, never user input, so interpolating it is injection-safe.
+const BILLABLE_IN_RANGE: &str = "\
+    FROM entries e \
+    JOIN projects p ON p.id = e.project_id \
+    WHERE p.client_id = ?1 AND e.billable = 1 AND e.ended_at IS NOT NULL \
+      AND e.started_at >= ?2 AND e.started_at < ?3";
 
 async fn fetch_invoice_rows(
     pool: &SqlitePool,
@@ -160,24 +180,23 @@ async fn fetch_invoice_rows(
     to_utc: DateTime<Utc>,
 ) -> Result<Vec<InvoiceRow>, String> {
     // Only completed entries: a still-running timer isn't final work, so it
-    // isn't invoiced (and can't be double-billed as it grows).
-    let sqlrows = sqlx::query(
-        r#"
-        SELECT e.project_id, e.task_id, e.started_at, e.ended_at,
-               p.name AS project_name,
-               p.rounding_interval_minutes, p.rounding_mode
-          FROM entries e
-          JOIN projects p ON p.id = e.project_id
-         WHERE p.client_id = ?1 AND e.billable = 1 AND e.ended_at IS NOT NULL
-           AND e.started_at >= ?2 AND e.started_at < ?3
-        "#,
-    )
-    .bind(client_id)
-    .bind(from_utc.to_rfc3339())
-    .bind(to_utc.to_rfc3339())
-    .fetch_all(pool)
-    .await
-    .map_err(err)?;
+    // isn't invoiced (and can't be double-billed as it grows). Entries already
+    // billed by an existing invoice are excluded, so overlapping ranges never
+    // re-bill them; deleting that invoice cascades its ledger rows and frees
+    // them again. The `NOT IN` is NULL-safe because `entry_id` is `NOT NULL`.
+    let sql = format!(
+        "SELECT e.id AS entry_id, e.project_id, e.task_id, e.started_at, e.ended_at, \
+                p.name AS project_name, p.rounding_interval_minutes, p.rounding_mode \
+         {BILLABLE_IN_RANGE} \
+           AND e.id NOT IN (SELECT entry_id FROM billing_invoice_entries)"
+    );
+    let sqlrows = sqlx::query(&sql)
+        .bind(client_id)
+        .bind(from_utc.to_rfc3339())
+        .bind(to_utc.to_rfc3339())
+        .fetch_all(pool)
+        .await
+        .map_err(err)?;
 
     let mut rows = Vec::with_capacity(sqlrows.len());
     for row in sqlrows {
@@ -186,6 +205,7 @@ async fn fetch_invoice_rows(
         let ended_raw: String = row.get("ended_at");
         let end = parse_ts(&ended_raw)?;
         rows.push(InvoiceRow {
+            entry_id: row.get("entry_id"),
             project_id: row.get("project_id"),
             task_id: row.get("task_id"),
             project_name: row.get("project_name"),
@@ -198,6 +218,27 @@ async fn fetch_invoice_rows(
     Ok(rows)
 }
 
+/// Count the client's completed billable entries in range **ignoring** the
+/// invoiced ledger — used only to explain an empty result: if there are some
+/// but none were fetchable, they were all already invoiced.
+async fn count_billable_in_range(
+    pool: &SqlitePool,
+    client_id: &str,
+    from_utc: DateTime<Utc>,
+    to_utc: DateTime<Utc>,
+) -> Result<i64, String> {
+    let sql = format!("SELECT COUNT(*) AS n {BILLABLE_IN_RANGE}");
+    let n: i64 = sqlx::query(&sql)
+        .bind(client_id)
+        .bind(from_utc.to_rfc3339())
+        .bind(to_utc.to_rfc3339())
+        .fetch_one(pool)
+        .await
+        .map_err(err)?
+        .get("n");
+    Ok(n)
+}
+
 async fn client_name(pool: &SqlitePool, client_id: &str) -> Result<String, String> {
     sqlx::query("SELECT name FROM clients WHERE id = ?1")
         .bind(client_id)
@@ -206,6 +247,38 @@ async fn client_name(pool: &SqlitePool, client_id: &str) -> Result<String, Strin
         .map_err(err)?
         .map(|r| r.get::<String, _>("name"))
         .ok_or_else(|| "unknown client".to_string())
+}
+
+/// Record each billed entry against the invoice on the given connection.
+/// `entry_id` is the ledger's primary key, so a uniqueness violation means a
+/// concurrent invoice already claimed that entry between the exclusion read
+/// and now — surfaced as `already_invoiced` (identical to a serial retry over
+/// an invoiced range) rather than a raw DB error, while the caller's
+/// transaction rolls back. Any other DB error propagates unchanged.
+async fn record_billed_entries(
+    conn: &mut sqlx::SqliteConnection,
+    invoice_id: &str,
+    entry_ids: &[String],
+    already_invoiced: String,
+) -> Result<(), String> {
+    for entry_id in entry_ids {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO billing_invoice_entries (entry_id, invoice_id) VALUES (?1, ?2)",
+        )
+        .bind(entry_id)
+        .bind(invoice_id)
+        .execute(&mut *conn)
+        .await
+        {
+            if e.as_database_error()
+                .is_some_and(|d| d.is_unique_violation())
+            {
+                return Err(already_invoiced);
+            }
+            return Err(err(e));
+        }
+    }
+    Ok(())
 }
 
 /// Generate and store an invoice for a client's billable, priced time in
@@ -230,10 +303,23 @@ pub async fn create_invoice(
         return Err("tax rate can't be negative".into());
     }
     let name = client_name(pool, client_id).await?;
+    let already_invoiced = || {
+        format!(
+            "all billable time for {name} between {from_date} and {to_date} \
+             is already on an invoice"
+        )
+    };
     let rows = fetch_invoice_rows(pool, client_id, from_utc, to_utc).await?;
     let rates = list_rates(pool).await?;
     let built = build_lines_from(&rows, client_id, &rates, global_rounding)?;
     if built.lines.is_empty() {
+        // Distinguish "nothing left to bill because it's all already invoiced"
+        // from "no priced time here at all", so a retry over an invoiced range
+        // doesn't read as if the time went missing.
+        if rows.is_empty() && count_billable_in_range(pool, client_id, from_utc, to_utc).await? > 0
+        {
+            return Err(already_invoiced());
+        }
         return Err(format!(
             "no billable, priced time for {name} between {from_date} and {to_date}"
         ));
@@ -313,6 +399,11 @@ pub async fn create_invoice(
             sort,
         });
     }
+
+    // Record which entries this invoice billed, in the same transaction, so a
+    // later overlapping range excludes them. Rolled back with the invoice on
+    // any failure, so the ledger never claims an entry for an uncommitted one.
+    record_billed_entries(&mut tx, &id, &built.billed_entry_ids, already_invoiced()).await?;
     tx.commit().await.map_err(err)?;
 
     Ok(Invoice {
@@ -457,6 +548,7 @@ mod tests {
     fn row(project_id: &str, name: &str, start: &str, minutes: i64) -> InvoiceRow {
         let start_dt = ts(start);
         InvoiceRow {
+            entry_id: format!("{project_id}-{start}-{minutes}"),
             project_id: project_id.into(),
             task_id: None,
             project_name: name.into(),
@@ -511,6 +603,11 @@ mod tests {
         assert_eq!(built.lines[1].seconds, 5400); // 90 min
         assert_eq!(built.lines[1].amount_cents, 15000); // 1.5h @ $100
         assert_eq!(built.unrated_seconds, 0);
+        // Every priced row is recorded as billed, so it can't be re-invoiced.
+        assert_eq!(built.billed_entry_ids.len(), 3);
+        assert!(built
+            .billed_entry_ids
+            .contains(&"p2-2026-07-03-120".to_string()));
     }
 
     #[test]
@@ -520,6 +617,9 @@ mod tests {
         assert!(built.lines.is_empty());
         assert_eq!(built.unrated_seconds, 3600);
         assert_eq!(built.currency, "");
+        // Unrated time isn't billed, so it's not recorded — a future invoice
+        // (once a rate exists) can still pick it up.
+        assert!(built.billed_entry_ids.is_empty());
     }
 
     #[test]
@@ -554,6 +654,8 @@ mod tests {
         assert_eq!(built.lines.len(), 1);
         assert_eq!(built.lines[0].seconds, 900);
         assert_eq!(built.lines[0].amount_cents, 3000); // 15 min @ $120
+                                                       // Only the row that survived rounding is billed; the zeroed one isn't.
+        assert_eq!(built.billed_entry_ids, vec!["p1-2026-07-02-8".to_string()]);
     }
 
     async fn seed_client_and_rate(pool: &SqlitePool) {
@@ -574,11 +676,22 @@ mod tests {
             .unwrap();
     }
 
-    async fn seed_billable_hour(pool: &SqlitePool) {
+    /// Insert one completed, billable hour on `p1` on `day` (09:00–10:00).
+    async fn insert_billable_hour(pool: &SqlitePool, id: &str, day: &str) {
         sqlx::query(
             "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, billable, created_at, updated_at) \
-             VALUES ('e1','p1',NULL,'work','2026-07-10T09:00:00+00:00','2026-07-10T10:00:00+00:00','manual',1,'x','x')",
-        ).execute(pool).await.unwrap();
+             VALUES (?1,'p1',NULL,'work',?2,?3,'manual',1,'x','x')",
+        )
+        .bind(id)
+        .bind(format!("{day}T09:00:00+00:00"))
+        .bind(format!("{day}T10:00:00+00:00"))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_billable_hour(pool: &SqlitePool) {
+        insert_billable_hour(pool, "e1", "2026-07-10").await;
     }
 
     async fn create(pool: &SqlitePool, tax_bps: i64) -> Invoice {
@@ -597,6 +710,14 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    async fn ledger_count(pool: &SqlitePool) -> i64 {
+        sqlx::query("SELECT COUNT(*) AS n FROM billing_invoice_entries")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .get("n")
     }
 
     #[tokio::test]
@@ -630,10 +751,14 @@ mod tests {
         assert_eq!(inv.lines[0].amount_cents, 15000);
         assert_eq!(inv.unrated_seconds, 3600);
 
-        // Numbers increment monotonically.
+        // Numbers increment monotonically — a fresh hour, since the first is
+        // now recorded as billed and can't be invoiced again.
+        insert_billable_hour(&db.pool, "e3", "2026-07-20").await;
         let inv2 = create(&db.pool, 0).await;
         assert_eq!(inv2.number, "INV-0002");
         assert_eq!(inv2.tax_cents, 0);
+        // Only the fresh hour — a regressed exclusion would re-bill e1 (30000).
+        assert_eq!(inv2.subtotal_cents, 15000);
     }
 
     #[tokio::test]
@@ -719,15 +844,168 @@ mod tests {
     async fn invoice_numbers_never_reuse_after_deleting_the_latest() {
         let (_dir, db) = test_db().await;
         seed_client_and_rate(&db.pool).await;
-        seed_billable_hour(&db.pool).await;
+        // A fresh hour per invoice, since an already-billed one can't be re-billed.
+        insert_billable_hour(&db.pool, "e1", "2026-07-10").await;
         let a = create(&db.pool, 0).await;
         assert_eq!(a.number, "INV-0001");
+        insert_billable_hour(&db.pool, "e2", "2026-07-11").await;
         let b = create(&db.pool, 0).await;
         assert_eq!(b.number, "INV-0002");
         // Deleting the latest must not free its number.
         delete_invoice(&db.pool, &b.id).await.unwrap();
+        insert_billable_hour(&db.pool, "e3", "2026-07-12").await;
         let c = create(&db.pool, 0).await;
         assert_eq!(c.number, "INV-0003");
+    }
+
+    #[tokio::test]
+    async fn overlapping_ranges_never_double_bill_and_delete_frees_entries() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        seed_billable_hour(&db.pool).await; // one completed hour on p1
+
+        let a = create(&db.pool, 0).await;
+        assert_eq!(a.number, "INV-0001");
+        assert_eq!(a.subtotal_cents, 15000);
+        // The billed entry is recorded against the invoice.
+        assert_eq!(ledger_count(&db.pool).await, 1);
+
+        // A second invoice over the SAME range has nothing left to bill —
+        // the one hour was already invoiced, so it isn't billed twice.
+        let err = create_invoice(
+            &db.pool,
+            "c1",
+            "2026-07-01",
+            "2026-08-01",
+            ts("2026-07-01"),
+            ts("2026-08-01"),
+            "2026-07-15",
+            0,
+            None,
+            off(),
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("already on an invoice"), "{err}");
+
+        // Deleting the first invoice cascades its ledger rows away, freeing
+        // the entry so the same range can be invoiced again.
+        delete_invoice(&db.pool, &a.id).await.unwrap();
+        assert_eq!(ledger_count(&db.pool).await, 0);
+        let b = create(&db.pool, 0).await;
+        assert_eq!(b.number, "INV-0002");
+        assert_eq!(b.subtotal_cents, 15000);
+    }
+
+    #[tokio::test]
+    async fn an_entry_can_only_be_recorded_on_one_invoice() {
+        // The schema-level guard behind the exclusion SELECT: `entry_id` is the
+        // ledger's primary key, so an entry can't be recorded on two invoices.
+        // This is what stops a concurrent create — one that read the entry as
+        // unbilled before the other committed — from double-billing it: the
+        // losing INSERT violates uniqueness and rolls its whole transaction back.
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        insert_billable_hour(&db.pool, "e1", "2026-07-10").await;
+        insert_billable_hour(&db.pool, "e2", "2026-08-10").await;
+
+        // Two invoices over non-overlapping ranges: A bills e1, B bills e2.
+        let a = create(&db.pool, 0).await;
+        let b = create_invoice(
+            &db.pool,
+            "c1",
+            "2026-08-01",
+            "2026-09-01",
+            ts("2026-08-01"),
+            ts("2026-09-01"),
+            "2026-08-15",
+            0,
+            None,
+            off(),
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        assert_ne!(a.id, b.id);
+
+        // Recording e1 (already on A) against B must fail — a composite
+        // (invoice_id, entry_id) key would wrongly allow this and double-bill.
+        let dup = sqlx::query(
+            "INSERT INTO billing_invoice_entries (entry_id, invoice_id) VALUES ('e1', ?1)",
+        )
+        .bind(&b.id)
+        .execute(&db.pool)
+        .await;
+        assert!(
+            dup.as_ref()
+                .err()
+                .and_then(|e| e.as_database_error())
+                .is_some_and(|d| d.is_unique_violation()),
+            "recording an entry on a second invoice must violate uniqueness: {dup:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_billed_entries_reports_a_claimed_entry() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        seed_billable_hour(&db.pool).await;
+        let a = create(&db.pool, 0).await; // ledger now holds (e1, a.id)
+
+        // Re-recording e1 collides on the unique entry_id → the friendly message
+        // (this is the concurrent-loser path, forced deterministically).
+        let mut tx = db.pool.begin().await.unwrap();
+        let e = record_billed_entries(&mut tx, &a.id, &["e1".to_string()], "already billed".into())
+            .await
+            .unwrap_err();
+        assert_eq!(e, "already billed");
+    }
+
+    #[tokio::test]
+    async fn record_billed_entries_propagates_non_unique_errors() {
+        let (_dir, db) = test_db().await;
+        // A nonexistent invoice_id violates the FK — not a uniqueness error, so
+        // the raw DB error propagates instead of the friendly message.
+        let mut tx = db.pool.begin().await.unwrap();
+        let e = record_billed_entries(&mut tx, "ghost", &["e1".to_string()], "friendly".into())
+            .await
+            .unwrap_err();
+        assert_ne!(e, "friendly");
+        assert!(e.to_lowercase().contains("foreign key"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn previously_unrated_time_invoices_once_a_rate_exists() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await; // p1 is priced
+        seed_billable_hour(&db.pool).await; // one completed hour on p1
+                                            // A second project for the same client with NO rate: its billable
+                                            // hour is unrated on the first invoice, so it isn't recorded as billed.
+        let now = "2026-07-01T00:00:00+00:00";
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, billable_default, created_at, updated_at) \
+             VALUES ('p2','Research','c1','#111',0,1,?1,?1)",
+        ).bind(now).execute(&db.pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, billable, created_at, updated_at) \
+             VALUES ('e2','p2',NULL,'','2026-07-11T09:00:00+00:00','2026-07-11T10:00:00+00:00','manual',1,'x','x')",
+        ).execute(&db.pool).await.unwrap();
+
+        let a = create(&db.pool, 0).await;
+        assert_eq!(a.lines.len(), 1); // only p1 is priced
+        assert_eq!(a.unrated_seconds, 3600); // p2's hour set aside, not billed
+
+        // Add a rate for p2, then invoice the same range again. p1's entry is
+        // already billed (excluded); p2's — never billed — now prices onto a line.
+        super::super::rates::set_rate(&db.pool, "project", "p2", 9000, "USD", "2020-01-01")
+            .await
+            .unwrap();
+        let b = create(&db.pool, 0).await;
+        assert_eq!(b.lines.len(), 1);
+        assert_eq!(b.lines[0].description, "Research");
+        assert_eq!(b.subtotal_cents, 9000); // 1h @ $90
+        assert_eq!(b.unrated_seconds, 0);
     }
 
     #[tokio::test]
