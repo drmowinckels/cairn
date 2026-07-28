@@ -7563,6 +7563,17 @@ pub async fn billing_set_business_impl(
     crate::plugins::billing::business::set_business(pool, &details).await
 }
 
+/// Read a user-picked image file into a logo data URI (validated raster,
+/// size-capped) ready to store on the business details. Invoke shim in `lib.rs`.
+pub async fn billing_logo_from_path_impl(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    crate::plugins::billing::business::logo_from_path(&path).await
+}
+
 /// Upsert the rate for a scope effective from a date. Invoke shim in `lib.rs`.
 pub async fn billing_set_rate_impl(
     state: State<'_, AppState>,
@@ -9464,6 +9475,7 @@ mod plugin_tests {
     #[tokio::test]
     async fn business_ipc_flow_gates_reads_and_writes() {
         use crate::plugins::billing::business::BusinessDetails;
+        use base64::Engine;
         let (_dir, app, db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
 
@@ -9478,6 +9490,10 @@ mod plugin_tests {
                 .unwrap_err()
                 .contains("plugin is off")
         );
+        assert!(billing_logo_from_path_impl(state.clone(), "x.png".into())
+            .await
+            .unwrap_err()
+            .contains("plugin is off"));
 
         set_plugin_enabled_impl(state.clone(), "billing".into(), true)
             .await
@@ -9520,6 +9536,28 @@ mod plugin_tests {
         assert_eq!(saved.name, "Acme AS");
         let got = billing_get_business_impl(state.clone()).await.unwrap();
         assert_eq!(got.tax_id, "NO 1");
+
+        // The logo command encodes a picked image into a data URI (Pro-gated),
+        // and rejects a non-image file.
+        let dir = tempfile::tempdir().unwrap();
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+            .unwrap();
+        let img = dir.path().join("logo.png");
+        std::fs::write(&img, &png).unwrap();
+        let uri = billing_logo_from_path_impl(state.clone(), img.to_string_lossy().into())
+            .await
+            .unwrap();
+        assert!(uri.starts_with("data:image/png;base64,"));
+
+        let txt = dir.path().join("nope.txt");
+        std::fs::write(&txt, b"text").unwrap();
+        assert!(
+            billing_logo_from_path_impl(state.clone(), txt.to_string_lossy().into())
+                .await
+                .unwrap_err()
+                .contains("unsupported image")
+        );
     }
 
     #[tokio::test]

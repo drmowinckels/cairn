@@ -7,6 +7,24 @@ vi.mock("../../lib/use-business", () => ({
   useBusiness: () => useBusiness(),
 }));
 
+const billingLogoFromPath = vi.fn();
+vi.mock("../../lib/ipc", async () => {
+  const actual =
+    await vi.importActual<typeof import("../../lib/ipc")>("../../lib/ipc");
+  return {
+    ...actual,
+    billingLogoFromPath: (...a: unknown[]) => billingLogoFromPath(...a),
+  };
+});
+
+const open = vi.fn();
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (...a: unknown[]) => open(...a),
+}));
+vi.mock("../../lib/use-backup", () => ({
+  withPopoverPinned: (fn: () => unknown) => fn(),
+}));
+
 import { BusinessDetailsPanel } from "./business-details";
 
 const details = (over: Record<string, unknown> = {}) => ({
@@ -14,6 +32,7 @@ const details = (over: Record<string, unknown> = {}) => ({
   address: "123 Main\nOslo",
   email: "hi@acme.no",
   taxId: "NO 1",
+  logo: "",
   ...over,
 });
 
@@ -31,6 +50,8 @@ function state(over: Partial<ReturnType<typeof useBusiness>> = {}) {
 
 beforeEach(() => {
   useBusiness.mockReset();
+  billingLogoFromPath.mockReset();
+  open.mockReset();
 });
 
 describe("BusinessDetailsPanel", () => {
@@ -115,5 +136,63 @@ describe("BusinessDetailsPanel", () => {
     useBusiness.mockReturnValue(state({ error: "Cairn Pro isn't active" }));
     render(<BusinessDetailsPanel />);
     expect(screen.getByRole("alert").textContent).toMatch(/isn't active/i);
+  });
+
+  it("adds a logo through the picker and shows a preview", async () => {
+    open.mockResolvedValue("/pics/logo.png");
+    billingLogoFromPath.mockResolvedValue("data:image/png;base64,AAAA");
+    useBusiness.mockReturnValue(state());
+    render(<BusinessDetailsPanel />);
+
+    expect(screen.queryByAltText(/current logo/i)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /add logo/i }));
+
+    await waitFor(() =>
+      expect(billingLogoFromPath).toHaveBeenCalledWith("/pics/logo.png"),
+    );
+    const img = (await screen.findByAltText(
+      /current logo/i,
+    )) as HTMLImageElement;
+    expect(img.src).toContain("data:image/png;base64,AAAA");
+    expect(screen.getByRole("button", { name: /change logo/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /remove logo/i })).toBeTruthy();
+  });
+
+  it("does nothing when the logo picker is cancelled", async () => {
+    open.mockResolvedValue(null);
+    useBusiness.mockReturnValue(state());
+    render(<BusinessDetailsPanel />);
+    await userEvent.click(screen.getByRole("button", { name: /add logo/i }));
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    expect(billingLogoFromPath).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /add logo/i })).toBeTruthy();
+  });
+
+  it("shows an error when the logo is rejected, then clears it on edit", async () => {
+    open.mockResolvedValue("/pics/huge.png");
+    billingLogoFromPath.mockRejectedValue("the logo is too large (900 KB)");
+    useBusiness.mockReturnValue(state());
+    render(<BusinessDetailsPanel />);
+    await userEvent.click(screen.getByRole("button", { name: /add logo/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/too large/i);
+
+    // Editing another field moves past the error, so it clears.
+    fireEvent.change(screen.getByLabelText(/business name/i), {
+      target: { value: "X" },
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("removes an existing logo", async () => {
+    useBusiness.mockReturnValue(
+      state({ details: details({ logo: "data:image/png;base64,ZZZZ" }) }),
+    );
+    render(<BusinessDetailsPanel />);
+    expect(screen.getByAltText(/current logo/i)).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /remove logo/i }));
+    expect(screen.queryByAltText(/current logo/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /add logo/i })).toBeTruthy();
   });
 });

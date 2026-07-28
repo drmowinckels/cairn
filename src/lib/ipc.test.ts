@@ -415,8 +415,15 @@ describe("ipc helpers (inside Tauri)", () => {
   });
 
   it("business commands forward to the right commands (#1)", async () => {
-    const { billingGetBusiness, billingSetBusiness } = await import("./ipc");
-    const biz = { name: "Acme", address: "St", email: "e", taxId: "NO1" };
+    const { billingGetBusiness, billingSetBusiness, billingLogoFromPath } =
+      await import("./ipc");
+    const biz = {
+      name: "Acme",
+      address: "St",
+      email: "e",
+      taxId: "NO1",
+      logo: "",
+    };
 
     invokeMock.mockResolvedValue(biz);
     expect(await billingGetBusiness()).toEqual(biz);
@@ -425,6 +432,14 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(await billingSetBusiness(biz)).toEqual(biz);
     expect(invokeMock).toHaveBeenCalledWith("billing_set_business", {
       details: biz,
+    });
+
+    invokeMock.mockResolvedValue("data:image/png;base64,AAAA");
+    expect(await billingLogoFromPath("/x/logo.png")).toBe(
+      "data:image/png;base64,AAAA",
+    );
+    expect(invokeMock).toHaveBeenCalledWith("billing_logo_from_path", {
+      path: "/x/logo.png",
     });
   });
 
@@ -698,15 +713,18 @@ describe("ipc helpers (outside Tauri)", () => {
   });
 
   it("business commands short-circuit without the backend (#1)", async () => {
-    const { billingGetBusiness, billingSetBusiness } = await import("./ipc");
+    const { billingGetBusiness, billingSetBusiness, billingLogoFromPath } =
+      await import("./ipc");
     expect(await billingGetBusiness()).toEqual({
       name: "",
       address: "",
       email: "",
       taxId: "",
+      logo: "",
     });
-    const biz = { name: "Acme", address: "", email: "", taxId: "" };
+    const biz = { name: "Acme", address: "", email: "", taxId: "", logo: "" };
     expect(await billingSetBusiness(biz)).toEqual(biz);
+    expect(await billingLogoFromPath("/x.png")).toBe("");
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

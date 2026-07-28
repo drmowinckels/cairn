@@ -1117,6 +1117,8 @@ export interface BusinessDetails {
   address: string;
   email: string;
   taxId: string;
+  /** A self-contained image data URI (`data:image/png;base64,…`) or empty. */
+  logo: string;
 }
 
 const EMPTY_BUSINESS: BusinessDetails = {
@@ -1124,6 +1126,7 @@ const EMPTY_BUSINESS: BusinessDetails = {
   address: "",
   email: "",
   taxId: "",
+  logo: "",
 };
 
 /** Read the stored issuer details. Requires the billing plugin enabled. */
@@ -1139,6 +1142,13 @@ export async function billingSetBusiness(
 ): Promise<BusinessDetails> {
   if (!inTauri) return details;
   return invoke<BusinessDetails>("billing_set_business", { details });
+}
+
+/** Read a picked image file into a validated, size-capped logo data URI ready
+ *  to store on the business details. Requires an active Pro license. */
+export async function billingLogoFromPath(path: string): Promise<string> {
+  if (!inTauri) return "";
+  return invoke<string>("billing_logo_from_path", { path });
 }
 
 /** Upsert the rate for a scope effective from a date (one rate per scope
