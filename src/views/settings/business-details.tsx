@@ -106,6 +106,13 @@ export function BusinessDetailsPanel() {
           value={form.taxId}
           onChange={(e) => update({ taxId: e.target.value })}
         />
+        <input
+          className="field-input"
+          aria-label="Tax label"
+          placeholder="Tax line label (e.g. VAT, GST) — defaults to “Tax”"
+          value={form.taxLabel}
+          onChange={(e) => update({ taxLabel: e.target.value })}
+        />
         <div className="biz-logo-row">
           {hasLogo && (
             <img

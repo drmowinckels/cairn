@@ -33,6 +33,7 @@ const details = (over: Record<string, unknown> = {}) => ({
   email: "hi@acme.no",
   taxId: "NO 1",
   logo: "",
+  taxLabel: "",
   ...over,
 });
 
@@ -95,8 +96,11 @@ describe("BusinessDetailsPanel", () => {
     fireEvent.change(screen.getByLabelText(/^email$/i), {
       target: { value: "new@co.no" },
     });
-    fireEvent.change(screen.getByLabelText(/tax id/i), {
+    fireEvent.change(screen.getByLabelText(/^tax id$/i), {
       target: { value: "NO 2" },
+    });
+    fireEvent.change(screen.getByLabelText(/tax label/i), {
+      target: { value: "VAT" },
     });
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
 
@@ -106,6 +110,7 @@ describe("BusinessDetailsPanel", () => {
       address: "9 Oak\nBergen",
       email: "new@co.no",
       taxId: "NO 2",
+      taxLabel: "VAT",
     });
     // Not previously saved, so editing doesn't try to clear the confirmation.
     expect(clearSaved).not.toHaveBeenCalled();
@@ -117,7 +122,7 @@ describe("BusinessDetailsPanel", () => {
     render(<BusinessDetailsPanel />);
 
     expect(screen.getByText(/^saved\.$/i)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText(/tax id/i), {
+    fireEvent.change(screen.getByLabelText(/^tax id$/i), {
       target: { value: "NO 2" },
     });
     expect(clearSaved).toHaveBeenCalled();

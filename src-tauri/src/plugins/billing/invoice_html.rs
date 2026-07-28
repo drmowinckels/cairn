@@ -143,6 +143,15 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         )
     };
 
+    // The tax line's label comes from the issuer's tax regime; "Tax" by
+    // default. `set_business` trims it, so `get_business` never yields a
+    // whitespace-only label that would slip past this empty check.
+    let tax_label = if business.tax_label.is_empty() {
+        "Tax".to_string()
+    } else {
+        escape(&business.tax_label)
+    };
+
     format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
@@ -154,7 +163,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 <table><thead><tr><th>Description</th><th class=\"num\">Hours</th>\
 <th class=\"num\">Amount</th></tr></thead><tbody>{rows}</tbody></table>\
 <dl class=\"totals\"><div><dt>Subtotal</dt><dd>{subtotal}</dd></div>\
-<div><dt>Tax ({tax_pct}%)</dt><dd>{tax}</dd></div>\
+<div><dt>{tax_label} ({tax_pct}%)</dt><dd>{tax}</dd></div>\
 <div class=\"grand\"><dt>Total</dt><dd>{total}</dd></div></dl>\
 {notes}{unrated}</body></html>",
         number = escape(&inv.number),
@@ -167,6 +176,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         rows = rows,
         subtotal = money(inv.subtotal_cents, &inv.currency),
         tax = money(inv.tax_cents, &inv.currency),
+        tax_label = tax_label,
         tax_pct = inv.tax_rate_bps as f64 / 100.0,
         total = money(inv.total_cents, &inv.currency),
         notes = notes,
@@ -187,6 +197,7 @@ mod tests {
             email: "hi@bjork.no".into(),
             tax_id: "NO 999".into(),
             logo: "data:image/png;base64,AAAA".into(),
+            tax_label: String::new(), // default "Tax" label
         }
     }
 
@@ -240,6 +251,15 @@ mod tests {
         assert!(html.contains("Tax (25%)"));
         assert!(html.contains("1.5")); // line hours
         assert!(html.contains("0.5 h of billable time")); // unrated note
+    }
+
+    #[test]
+    fn uses_the_configured_tax_label_escaped() {
+        let mut b = business();
+        b.tax_label = "GST & VAT".into();
+        let html = render_html(&invoice(), &b);
+        assert!(html.contains("GST &amp; VAT (25%)"));
+        assert!(!html.contains(">Tax (25%)")); // the default is not used
     }
 
     #[test]
