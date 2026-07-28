@@ -10,6 +10,7 @@
 //! licensing call carries only the license key + device instance id, never
 //! any tracked time data. See `docs/PRIVACY.md`.
 
+pub mod business;
 pub mod invoice_html;
 pub mod invoices;
 pub mod lemonsqueezy;
@@ -199,7 +200,7 @@ pub async fn require_pro(pool: &SqlitePool) -> Result<(), String> {
     }
     match s.license {
         Some(l) if l.active => Ok(()),
-        _ => Err("Cairn Pro isn't active — activate a license to change billing rates".into()),
+        _ => Err("Cairn Pro isn't active — activate a license to make billing changes".into()),
     }
 }
 

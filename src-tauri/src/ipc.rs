@@ -7544,6 +7544,25 @@ pub async fn billing_list_rates_impl(
     crate::plugins::billing::rates::list_rates(pool).await
 }
 
+/// Read the invoice issuer's business details. Invoke shim in `lib.rs`.
+pub async fn billing_get_business_impl(
+    state: State<'_, AppState>,
+) -> Result<crate::plugins::billing::business::BusinessDetails, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_enabled(pool).await?;
+    crate::plugins::billing::business::get_business(pool).await
+}
+
+/// Store the invoice issuer's business details. Invoke shim in `lib.rs`.
+pub async fn billing_set_business_impl(
+    state: State<'_, AppState>,
+    details: crate::plugins::billing::business::BusinessDetails,
+) -> Result<crate::plugins::billing::business::BusinessDetails, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_pro(pool).await?;
+    crate::plugins::billing::business::set_business(pool, &details).await
+}
+
 /// Upsert the rate for a scope effective from a date. Invoke shim in `lib.rs`.
 pub async fn billing_set_rate_impl(
     state: State<'_, AppState>,
@@ -7728,7 +7747,8 @@ pub async fn export_invoice_html_impl(
     let invoice = crate::plugins::billing::invoices::get_invoice(pool, &id)
         .await?
         .ok_or_else(|| "unknown invoice".to_string())?;
-    let html = crate::plugins::billing::invoice_html::render_html(&invoice);
+    let business = crate::plugins::billing::business::get_business(pool).await?;
+    let html = crate::plugins::billing::invoice_html::render_html(&invoice, &business);
     let path = std::path::Path::new(&dest);
     ensure_parent_dir(path).await?;
     tokio::fs::write(path, html.as_bytes()).await.map_err(err)?;
@@ -9442,6 +9462,67 @@ mod plugin_tests {
     }
 
     #[tokio::test]
+    async fn business_ipc_flow_gates_reads_and_writes() {
+        use crate::plugins::billing::business::BusinessDetails;
+        let (_dir, app, db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+
+        // Plugin off → the read and the write are both gated before any DB work.
+        assert!(billing_get_business_impl(state.clone())
+            .await
+            .unwrap_err()
+            .contains("plugin is off"));
+        assert!(
+            billing_set_business_impl(state.clone(), BusinessDetails::default())
+                .await
+                .unwrap_err()
+                .contains("plugin is off")
+        );
+
+        set_plugin_enabled_impl(state.clone(), "billing".into(), true)
+            .await
+            .unwrap();
+
+        // Enabled but unlicensed: the read works (empty), the write is Pro-gated.
+        assert!(billing_get_business_impl(state.clone())
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(billing_set_business_impl(
+            state.clone(),
+            BusinessDetails {
+                name: "x".into(),
+                ..Default::default()
+            }
+        )
+        .await
+        .unwrap_err()
+        .contains("Cairn Pro isn't active"));
+
+        // Activate a license by inserting the row directly (no LicenseApi mock,
+        // whose unused trait methods would leave uncovered patch lines).
+        sqlx::query(
+            "INSERT INTO billing_license (singleton, license_key, instance_id, status, activated_at, last_validated_at) \
+             VALUES (1,'k','i','active',datetime('now'),datetime('now'))",
+        ).execute(&db.pool).await.unwrap();
+
+        // Now the write lands (trimmed) and the read returns it.
+        let saved = billing_set_business_impl(
+            state.clone(),
+            BusinessDetails {
+                name: "  Acme AS  ".into(),
+                tax_id: "NO 1".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved.name, "Acme AS");
+        let got = billing_get_business_impl(state.clone()).await.unwrap();
+        assert_eq!(got.tax_id, "NO 1");
+    }
+
+    #[tokio::test]
     async fn billing_profitability_ipc_gates_then_reports() {
         let (_dir, app, db) = mock_app_with_db().await;
         let state = app.state::<crate::AppState>();
@@ -9649,6 +9730,17 @@ mod plugin_tests {
         .await
         .unwrap();
 
+        // Issuer details are threaded into the exported document.
+        crate::plugins::billing::business::set_business(
+            &db.pool,
+            &crate::plugins::billing::business::BusinessDetails {
+                name: "Acme Consulting AS".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
         let dest = path("invoice.html");
         let out = export_invoice_html_impl(state.clone(), inv.id.clone(), dest.clone())
             .await
@@ -9657,6 +9749,9 @@ mod plugin_tests {
         let html = std::fs::read_to_string(&dest).unwrap();
         assert!(html.contains(&format!("Invoice {}", inv.number)));
         assert!(html.contains("Website"));
+        // The stored issuer "From" block is present.
+        assert!(html.contains("<h2>From</h2>"));
+        assert!(html.contains("Acme Consulting AS"));
     }
 
     #[tokio::test]

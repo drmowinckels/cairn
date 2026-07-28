@@ -414,6 +414,20 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("billing_effective_rate", at);
   });
 
+  it("business commands forward to the right commands (#1)", async () => {
+    const { billingGetBusiness, billingSetBusiness } = await import("./ipc");
+    const biz = { name: "Acme", address: "St", email: "e", taxId: "NO1" };
+
+    invokeMock.mockResolvedValue(biz);
+    expect(await billingGetBusiness()).toEqual(biz);
+    expect(invokeMock).toHaveBeenCalledWith("billing_get_business");
+
+    expect(await billingSetBusiness(biz)).toEqual(biz);
+    expect(invokeMock).toHaveBeenCalledWith("billing_set_business", {
+      details: biz,
+    });
+  });
+
   it("billingProfitability forwards range + rounding (#109)", async () => {
     const rep = {
       from: "a",
@@ -680,6 +694,19 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(await billingDeleteRate("r1")).toEqual([]);
     expect(await billingEffectiveRate({ at: "2026-01-01" })).toBeNull();
     expect(await billingProfitability("week")).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("business commands short-circuit without the backend (#1)", async () => {
+    const { billingGetBusiness, billingSetBusiness } = await import("./ipc");
+    expect(await billingGetBusiness()).toEqual({
+      name: "",
+      address: "",
+      email: "",
+      taxId: "",
+    });
+    const biz = { name: "Acme", address: "", email: "", taxId: "" };
+    expect(await billingSetBusiness(biz)).toEqual(biz);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
