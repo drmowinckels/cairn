@@ -181,6 +181,14 @@ async fn billing_set_business(
 }
 
 #[tauri::command]
+async fn billing_logo_from_path(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    ipc::billing_logo_from_path_impl(state, path).await
+}
+
+#[tauri::command]
 async fn billing_set_rate(
     state: tauri::State<'_, AppState>,
     scope_type: String,
@@ -1021,6 +1029,7 @@ pub fn run() {
             billing_list_rates,
             billing_get_business,
             billing_set_business,
+            billing_logo_from_path,
             billing_set_rate,
             billing_delete_rate,
             billing_effective_rate,

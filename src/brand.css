@@ -3992,6 +3992,19 @@ select.rule-conf {
   align-self: flex-start;
 }
 
+.biz-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.biz-logo-preview {
+  max-height: 40px;
+  max-width: 140px;
+  border-radius: 4px;
+}
+
 .plugin-detail {
   grid-column: 1 / -1;
   gap: 12px;

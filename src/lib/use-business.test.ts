@@ -20,6 +20,7 @@ const biz = (over: Record<string, unknown> = {}) => ({
   address: "123 Main",
   email: "hi@acme.no",
   taxId: "NO 1",
+  logo: "",
   ...over,
 });
 

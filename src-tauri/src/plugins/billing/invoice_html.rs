@@ -6,13 +6,22 @@ use super::business::BusinessDetails;
 use super::invoices::Invoice;
 
 /// Escape the five HTML-significant characters so user text (client name,
-/// notes, line descriptions) can never break out of the document.
+/// notes, line descriptions) can never break out of the document. Single pass
+/// with one allocation — matters for the logo data URI, which is large and
+/// never actually contains any of these characters.
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Escape user text and turn its newlines into `<br>` for display. The escape
@@ -68,6 +77,7 @@ h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:#666;marg
 .parties h2{margin-top:0}\
 .from p,.to p{margin:0}\
 .pname{font-weight:600;font-size:1.05rem}\
+.from .logo{display:block;max-height:56px;max-width:200px;margin-bottom:.4rem}\
 table{width:100%;border-collapse:collapse;margin-top:1.5rem;font-size:.9rem}\
 th,td{padding:.5rem .25rem;border-bottom:1px solid #e2e2e2;text-align:left}\
 th{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:#666}\
@@ -116,8 +126,19 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
     let from_block = if business.is_empty() {
         String::new()
     } else {
+        // The logo is a validated raster data URI (business::set_business), so
+        // its base64 payload can't break out of the attribute; escaped anyway.
+        let logo = if business.logo.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "<img class=\"logo\" alt=\"\" src=\"{}\">",
+                escape(&business.logo)
+            )
+        };
         format!(
-            "<section class=\"from\"><h2>From</h2>{}</section>",
+            "<section class=\"from\"><h2>From</h2>{}{}</section>",
+            logo,
             issuer_lines(business)
         )
     };
@@ -165,6 +186,7 @@ mod tests {
             address: "1 <b>Main</b> St\nOslo".into(),
             email: "hi@bjork.no".into(),
             tax_id: "NO 999".into(),
+            logo: "data:image/png;base64,AAAA".into(),
         }
     }
 
@@ -204,6 +226,11 @@ mod tests {
     }
 
     #[test]
+    fn escape_encodes_all_five_characters() {
+        assert_eq!(escape("a&b<c>d\"e'f"), "a&amp;b&lt;c&gt;d&quot;e&#39;f");
+    }
+
+    #[test]
     fn renders_the_invoice_fields() {
         let html = render_html(&invoice(), &business());
         assert!(html.starts_with("<!doctype html>"));
@@ -224,6 +251,8 @@ mod tests {
         assert!(html.contains("1 &lt;b&gt;Main&lt;/b&gt; St<br>Oslo"));
         assert!(html.contains("hi@bjork.no"));
         assert!(html.contains("Tax ID: NO 999"));
+        // The logo is embedded as an <img> ahead of the issuer lines.
+        assert!(html.contains("<img class=\"logo\" alt=\"\" src=\"data:image/png;base64,AAAA\">"));
     }
 
     #[test]
@@ -231,7 +260,8 @@ mod tests {
         let html = render_html(&invoice(), &BusinessDetails::default());
         assert!(!html.contains("class=\"from\""));
         assert!(!html.contains("<h2>From</h2>"));
-        // A partly-filled profile shows only the fields that are set.
+        // A partly-filled profile shows only the fields that are set, and no
+        // <img> when there's no logo.
         let partial = BusinessDetails {
             name: "Solo".into(),
             ..Default::default()
@@ -240,6 +270,18 @@ mod tests {
         assert!(html.contains("class=\"from\""));
         assert!(html.contains("Solo"));
         assert!(!html.contains("Tax ID:"));
+        assert!(!html.contains("class=\"logo\""));
+    }
+
+    #[test]
+    fn renders_a_logo_only_profile() {
+        let logo_only = BusinessDetails {
+            logo: "data:image/png;base64,AAAA".into(),
+            ..Default::default()
+        };
+        let html = render_html(&invoice(), &logo_only);
+        assert!(html.contains("class=\"from\""));
+        assert!(html.contains("<img class=\"logo\""));
     }
 
     #[test]

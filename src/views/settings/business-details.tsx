@@ -1,6 +1,8 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import type { BusinessDetails } from "../../lib/ipc";
+import { billingLogoFromPath, type BusinessDetails } from "../../lib/ipc";
 import { useBusiness } from "../../lib/use-business";
+import { withPopoverPinned } from "../../lib/use-backup";
 
 /** The Pro business-details panel (#1), shown under the Billing card once the
  *  license is active. Edits the issuer identity printed as the "From" block on
@@ -8,6 +10,7 @@ import { useBusiness } from "../../lib/use-business";
 export function BusinessDetailsPanel() {
   const { details, busy, error, saved, save, clearSaved } = useBusiness();
   const [form, setForm] = useState<BusinessDetails | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
 
   // Seed the editable form from the loaded details, once.
   useEffect(() => {
@@ -31,8 +34,39 @@ export function BusinessDetailsPanel() {
 
   const update = (patch: Partial<BusinessDetails>) => {
     setForm({ ...form, ...patch });
+    setLogoError(null);
     if (saved) clearSaved();
   };
+
+  const submit = () => {
+    setLogoError(null);
+    void save(form).then((stored) => stored && setForm(stored));
+  };
+
+  const pickLogo = async () => {
+    setLogoError(null);
+    try {
+      // Pin the popover so the native picker doesn't dismiss it.
+      const path = await withPopoverPinned(() =>
+        open({
+          title: "Choose a logo",
+          multiple: false,
+          filters: [
+            {
+              name: "Image",
+              extensions: ["png", "jpg", "jpeg", "gif", "webp"],
+            },
+          ],
+        }),
+      );
+      if (typeof path !== "string") return; // cancelled
+      update({ logo: await billingLogoFromPath(path) });
+    } catch (e) {
+      setLogoError(String(e));
+    }
+  };
+
+  const hasLogo = form.logo !== "";
 
   return (
     <div className="biz-panel" data-billing="business">
@@ -72,12 +106,40 @@ export function BusinessDetailsPanel() {
           value={form.taxId}
           onChange={(e) => update({ taxId: e.target.value })}
         />
+        <div className="biz-logo-row">
+          {hasLogo && (
+            <img
+              className="biz-logo-preview"
+              src={form.logo}
+              alt="Current logo"
+            />
+          )}
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => void pickLogo()}
+          >
+            {hasLogo ? "Change logo" : "Add logo"}
+          </button>
+          {hasLogo && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => update({ logo: "" })}
+            >
+              Remove logo
+            </button>
+          )}
+        </div>
+        {logoError && (
+          <p className="field-error" role="alert" data-business="logo-error">
+            {logoError}
+          </p>
+        )}
         <button
           type="button"
           className="btn btn--primary btn--sm"
-          onClick={() =>
-            void save(form).then((stored) => stored && setForm(stored))
-          }
+          onClick={submit}
           disabled={busy}
         >
           Save
