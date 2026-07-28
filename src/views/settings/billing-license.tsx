@@ -2,6 +2,7 @@ import { useState } from "react";
 import { formatRelativeTime } from "../../lib/relative-time";
 import { useBilling, type UseBilling } from "../../lib/use-billing";
 import { BillingRatesPanel } from "./billing-rates";
+import { BusinessDetailsPanel } from "./business-details";
 
 /**
  * The Pro license row (#109), rendered under the billing plugin's toggle
@@ -136,7 +137,12 @@ export function BillingDetail() {
   return (
     <div className="plugin-detail" data-plugin-detail="billing">
       <BillingLicenseRow billing={billing} />
-      {billing.status?.license?.active && <BillingRatesPanel />}
+      {billing.status?.license?.active && (
+        <>
+          <BillingRatesPanel />
+          <BusinessDetailsPanel />
+        </>
+      )}
     </div>
   );
 }

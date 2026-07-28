@@ -3969,10 +3969,27 @@ select.rule-conf {
    the rate list stack the same way, just tighter. */
 .plugin-detail,
 .rate-panel,
-.rate-list {
+.rate-list,
+.biz-panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Issuer "Business details" form: a stacked set of full-width fields. */
+.biz-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.biz-form textarea.field-input {
+  resize: vertical;
+  font: inherit;
+}
+
+.biz-form .btn {
+  align-self: flex-start;
 }
 
 .plugin-detail {

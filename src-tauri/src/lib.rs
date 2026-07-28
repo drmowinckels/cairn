@@ -166,6 +166,21 @@ async fn billing_list_rates(
 }
 
 #[tauri::command]
+async fn billing_get_business(
+    state: tauri::State<'_, AppState>,
+) -> Result<plugins::billing::business::BusinessDetails, String> {
+    ipc::billing_get_business_impl(state).await
+}
+
+#[tauri::command]
+async fn billing_set_business(
+    state: tauri::State<'_, AppState>,
+    details: plugins::billing::business::BusinessDetails,
+) -> Result<plugins::billing::business::BusinessDetails, String> {
+    ipc::billing_set_business_impl(state, details).await
+}
+
+#[tauri::command]
 async fn billing_set_rate(
     state: tauri::State<'_, AppState>,
     scope_type: String,
@@ -1004,6 +1019,8 @@ pub fn run() {
             refresh_billing_license,
             deactivate_billing_license,
             billing_list_rates,
+            billing_get_business,
+            billing_set_business,
             billing_set_rate,
             billing_delete_rate,
             billing_effective_rate,

@@ -1110,6 +1110,37 @@ export async function billingListRates(): Promise<Rate[]> {
   return invoke<Rate[]>("billing_list_rates");
 }
 
+/** The invoice issuer's business details (the "From" block). Every field is
+ *  optional free text; an all-empty profile omits the block on the invoice. */
+export interface BusinessDetails {
+  name: string;
+  address: string;
+  email: string;
+  taxId: string;
+}
+
+const EMPTY_BUSINESS: BusinessDetails = {
+  name: "",
+  address: "",
+  email: "",
+  taxId: "",
+};
+
+/** Read the stored issuer details. Requires the billing plugin enabled. */
+export async function billingGetBusiness(): Promise<BusinessDetails> {
+  if (!inTauri) return { ...EMPTY_BUSINESS };
+  return invoke<BusinessDetails>("billing_get_business");
+}
+
+/** Store the issuer details (trimmed server-side). Requires an active Pro
+ *  license; returns the stored form. */
+export async function billingSetBusiness(
+  details: BusinessDetails,
+): Promise<BusinessDetails> {
+  if (!inTauri) return details;
+  return invoke<BusinessDetails>("billing_set_business", { details });
+}
+
 /** Upsert the rate for a scope effective from a date (one rate per scope
  *  per date). Requires an active Pro license; returns the fresh list. */
 export async function billingSetRate(input: {
