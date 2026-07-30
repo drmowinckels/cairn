@@ -14,6 +14,11 @@ use super::err;
 /// larger once base64-encoded.
 const MAX_LOGO_BYTES: usize = 512 * 1024;
 
+/// Upper bound on payment terms (10 years). Generous for any real "Net N"
+/// term, and keeps an absurd value from being persisted and later fed to the
+/// due-date arithmetic.
+const MAX_TERMS_DAYS: i64 = 3650;
+
 /// The issuer's business details, shown as the invoice "From" block.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +38,9 @@ pub struct BusinessDetails {
     /// How the client pays (bank / IBAN / "how to pay me"); shown as its own
     /// "Payment" block. Not a "From" field — excluded from `is_empty`.
     pub payment_details: String,
+    /// Default payment terms in days ("Net N"); an invoice's due date is its
+    /// issue date plus this. 0 shows no due date. Not a "From" field.
+    pub payment_terms_days: i64,
 }
 
 impl BusinessDetails {
@@ -58,6 +66,7 @@ impl BusinessDetails {
             tax_label: self.tax_label.trim().to_string(),
             template: self.template.trim().to_string(),
             payment_details: self.payment_details.trim().to_string(),
+            payment_terms_days: self.payment_terms_days,
         }
     }
 }
@@ -156,7 +165,8 @@ pub async fn logo_from_path(path: &str) -> Result<String, String> {
 /// Read the stored business details, or an empty profile when none are set.
 pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> {
     let row = sqlx::query(
-        "SELECT name, address, email, tax_id, logo, tax_label, template, payment_details \
+        "SELECT name, address, email, tax_id, logo, tax_label, template, payment_details, \
+                payment_terms_days \
            FROM billing_business WHERE singleton = 1",
     )
     .fetch_optional(pool)
@@ -172,6 +182,7 @@ pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> 
             tax_label: r.get("tax_label"),
             template: r.get("template"),
             payment_details: r.get("payment_details"),
+            payment_terms_days: r.get("payment_terms_days"),
         },
         None => BusinessDetails::default(),
     })
@@ -186,15 +197,21 @@ pub async fn set_business(
     let d = details.trimmed();
     validate_logo(&d.logo)?;
     validate_template(&d.template)?;
+    if d.payment_terms_days < 0 {
+        return Err("payment terms can't be negative".into());
+    }
+    if d.payment_terms_days > MAX_TERMS_DAYS {
+        return Err(format!("payment terms can't exceed {MAX_TERMS_DAYS} days"));
+    }
     sqlx::query(
         "INSERT INTO billing_business \
            (singleton, name, address, email, tax_id, logo, tax_label, template, \
-            payment_details, updated_at) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now')) \
+            payment_details, payment_terms_days, updated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now')) \
          ON CONFLICT (singleton) DO UPDATE SET \
            name = ?1, address = ?2, email = ?3, tax_id = ?4, logo = ?5, \
            tax_label = ?6, template = ?7, payment_details = ?8, \
-           updated_at = datetime('now')",
+           payment_terms_days = ?9, updated_at = datetime('now')",
     )
     .bind(&d.name)
     .bind(&d.address)
@@ -204,6 +221,7 @@ pub async fn set_business(
     .bind(&d.tax_label)
     .bind(&d.template)
     .bind(&d.payment_details)
+    .bind(d.payment_terms_days)
     .execute(pool)
     .await
     .map_err(err)?;
@@ -235,6 +253,7 @@ mod tests {
                 tax_label: "  VAT  ".into(),
                 template: "modern".into(),
                 payment_details: "  Bank: Acme\nIBAN: NO00  ".into(),
+                payment_terms_days: 14,
             },
         )
         .await
@@ -244,6 +263,7 @@ mod tests {
         assert_eq!(saved.tax_label, "VAT"); // trimmed
         assert_eq!(saved.template, "modern");
         assert_eq!(saved.payment_details, "Bank: Acme\nIBAN: NO00"); // trimmed
+        assert_eq!(saved.payment_terms_days, 14);
         assert!(!saved.is_empty());
         assert_eq!(get_business(&db.pool).await.unwrap(), saved);
 
@@ -365,6 +385,36 @@ mod tests {
         assert!(validate_template("fancy")
             .unwrap_err()
             .contains("unknown invoice template"));
+    }
+
+    #[tokio::test]
+    async fn set_business_rejects_negative_payment_terms() {
+        let (_dir, db) = test_db().await;
+        let e = set_business(
+            &db.pool,
+            &BusinessDetails {
+                payment_terms_days: -1,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(e.contains("can't be negative"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn set_business_rejects_overlong_payment_terms() {
+        let (_dir, db) = test_db().await;
+        let e = set_business(
+            &db.pool,
+            &BusinessDetails {
+                payment_terms_days: MAX_TERMS_DAYS + 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(e.contains("can't exceed"), "{e}");
     }
 
     #[tokio::test]

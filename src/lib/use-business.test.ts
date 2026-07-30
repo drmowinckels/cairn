@@ -24,6 +24,7 @@ const biz = (over: Record<string, unknown> = {}) => ({
   taxLabel: "",
   template: "",
   paymentDetails: "",
+  paymentTermsDays: 0,
   ...over,
 });
 

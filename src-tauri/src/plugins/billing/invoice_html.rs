@@ -66,6 +66,22 @@ fn hours(seconds: i64) -> String {
     format!("{:.1}", seconds as f64 / 3600.0)
 }
 
+/// The invoice due date: `issue_date` plus the issuer's `payment_terms_days`,
+/// formatted `YYYY-MM-DD`. `None` when terms are ≤ 0, the issue date doesn't
+/// parse, or the result is out of range — so no due line is shown. Uses the
+/// checked `try_days`/`checked_add_signed` throughout: an absurd `terms_days`
+/// (only reachable by a direct IPC call, past the clamped input) yields `None`
+/// rather than panicking `Duration::days`.
+fn due_date(issue_date: &str, terms_days: i64) -> Option<String> {
+    if terms_days <= 0 {
+        return None;
+    }
+    let issued = chrono::NaiveDate::parse_from_str(issue_date, "%Y-%m-%d").ok()?;
+    let delta = chrono::Duration::try_days(terms_days)?;
+    let due = issued.checked_add_signed(delta)?;
+    Some(due.format("%Y-%m-%d").to_string())
+}
+
 /// The shared invoice layout — the "classic" look on its own. A template
 /// preset appends a small override sheet (below) that wins over these rules.
 const BASE: &str = "\
@@ -209,6 +225,12 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         )
     };
 
+    // The due date (issue date + the issuer's terms) sits in the header meta.
+    let due_line = match due_date(&inv.issue_date, business.payment_terms_days) {
+        Some(d) => format!("Due {}<br>", escape(&d)),
+        None => String::new(),
+    };
+
     // The template preset selects an override sheet appended after the base.
     // `template_key` (a fixed allowlist value) tags the body as a decorative
     // marker — the styling comes from the override, not a `[data-template]`
@@ -221,7 +243,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 <title>Invoice {number}</title><style>{style}{template_override}</style></head>\
 <body data-template=\"{template_key}\">\
 <header class=\"head\"><h1>Invoice {number}</h1>\
-<div class=\"meta\">Issued {issued}<br>Period {from} – {to}</div></header>\
+<div class=\"meta\">Issued {issued}<br>{due_line}Period {from} – {to}</div></header>\
 <div class=\"parties\">{from_block}\
 <section class=\"to\"><h2>Billed to</h2><p class=\"pname\">{client}</p></section></div>\
 <table><thead><tr><th>Description</th><th class=\"num\">Hours</th>\
@@ -235,6 +257,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         template_override = template_override,
         template_key = template_key,
         issued = escape(&inv.issue_date),
+        due_line = due_line,
         from = escape(&inv.from_date),
         to = escape(&inv.to_date),
         client = escape(&inv.client_name),
@@ -267,6 +290,7 @@ mod tests {
             tax_label: String::new(), // default "Tax" label
             template: String::new(),  // default "classic" look
             payment_details: "Bank <Acme>\nIBAN NO00".into(),
+            payment_terms_days: 0, // no due date by default
         }
     }
 
@@ -311,6 +335,15 @@ mod tests {
     }
 
     #[test]
+    fn due_date_is_issue_plus_terms() {
+        assert_eq!(due_date("2026-07-15", 14).as_deref(), Some("2026-07-29"));
+        assert_eq!(due_date("2026-07-15", 0), None); // no terms
+        assert_eq!(due_date("2026-07-15", -3), None); // negative
+        assert_eq!(due_date("not-a-date", 14), None); // unparseable
+        assert_eq!(due_date("2026-07-15", i64::MAX), None); // no panic on absurd terms
+    }
+
+    #[test]
     fn renders_the_invoice_fields() {
         let html = render_html(&invoice(), &business());
         assert!(html.starts_with("<!doctype html>"));
@@ -341,6 +374,15 @@ mod tests {
         let mut b = business();
         b.payment_details = String::new();
         assert!(!render_html(&invoice(), &b).contains("class=\"payment\""));
+    }
+
+    #[test]
+    fn renders_the_due_date_from_terms() {
+        let mut b = business();
+        b.payment_terms_days = 14; // issue 2026-07-15 + 14 = 2026-07-29
+        assert!(render_html(&invoice(), &b).contains("Due 2026-07-29<br>"));
+        // No terms → no due line.
+        assert!(!render_html(&invoice(), &business()).contains("Due 2026"));
     }
 
     #[test]

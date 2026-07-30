@@ -126,6 +126,24 @@ export function BusinessDetailsPanel() {
           value={form.paymentDetails}
           onChange={(e) => update({ paymentDetails: e.target.value })}
         />
+        <input
+          className="field-input"
+          type="number"
+          min="0"
+          max="3650"
+          step="1"
+          aria-label="Payment terms (days)"
+          placeholder="Payment terms in days (0 = no due date)"
+          value={form.paymentTermsDays || ""}
+          onChange={(e) =>
+            update({
+              paymentTermsDays: Math.max(
+                0,
+                Math.floor(Number(e.target.value) || 0),
+              ),
+            })
+          }
+        />
         <select
           className="field-input"
           aria-label="Invoice template"
