@@ -41,7 +41,18 @@ pub struct BusinessDetails {
     /// Default payment terms in days ("Net N"); an invoice's due date is its
     /// issue date plus this. 0 shows no due date. Not a "From" field.
     pub payment_terms_days: i64,
+    /// Invoice number prefix; empty renders the default "INV-".
+    pub invoice_prefix: String,
+    /// Zero-pad width of the sequential invoice number; 0 renders the default
+    /// width of 4 (`0007`). Capped at `MAX_NUMBER_PADDING`.
+    pub invoice_number_padding: i64,
 }
+
+/// Default zero-pad width for the invoice number when unset (`0`).
+pub const DEFAULT_NUMBER_PADDING: usize = 4;
+/// Upper bound on the pad width so a format string can't build an enormous
+/// number.
+const MAX_NUMBER_PADDING: i64 = 12;
 
 impl BusinessDetails {
     /// True when the "From" block has nothing to show. Excludes `tax_label`,
@@ -67,8 +78,22 @@ impl BusinessDetails {
             template: self.template.trim().to_string(),
             payment_details: self.payment_details.trim().to_string(),
             payment_terms_days: self.payment_terms_days,
+            invoice_prefix: self.invoice_prefix.trim().to_string(),
+            invoice_number_padding: self.invoice_number_padding,
         }
     }
+}
+
+/// Format a sequential invoice number with the issuer's prefix and pad width,
+/// applying the defaults for the empty/zero cases.
+pub fn format_invoice_number(seq: i64, prefix: &str, padding: i64) -> String {
+    let prefix = if prefix.is_empty() { "INV-" } else { prefix };
+    let width = if (1..=MAX_NUMBER_PADDING).contains(&padding) {
+        padding as usize
+    } else {
+        DEFAULT_NUMBER_PADDING
+    };
+    format!("{prefix}{seq:0width$}")
 }
 
 /// Reject an unknown template so only a preset the renderer actually supports
@@ -166,7 +191,7 @@ pub async fn logo_from_path(path: &str) -> Result<String, String> {
 pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> {
     let row = sqlx::query(
         "SELECT name, address, email, tax_id, logo, tax_label, template, payment_details, \
-                payment_terms_days \
+                payment_terms_days, invoice_prefix, invoice_number_padding \
            FROM billing_business WHERE singleton = 1",
     )
     .fetch_optional(pool)
@@ -183,6 +208,8 @@ pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> 
             template: r.get("template"),
             payment_details: r.get("payment_details"),
             payment_terms_days: r.get("payment_terms_days"),
+            invoice_prefix: r.get("invoice_prefix"),
+            invoice_number_padding: r.get("invoice_number_padding"),
         },
         None => BusinessDetails::default(),
     })
@@ -203,15 +230,22 @@ pub async fn set_business(
     if d.payment_terms_days > MAX_TERMS_DAYS {
         return Err(format!("payment terms can't exceed {MAX_TERMS_DAYS} days"));
     }
+    if !(0..=MAX_NUMBER_PADDING).contains(&d.invoice_number_padding) {
+        return Err(format!(
+            "invoice number padding must be between 0 and {MAX_NUMBER_PADDING}"
+        ));
+    }
     sqlx::query(
         "INSERT INTO billing_business \
            (singleton, name, address, email, tax_id, logo, tax_label, template, \
-            payment_details, payment_terms_days, updated_at) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now')) \
+            payment_details, payment_terms_days, invoice_prefix, invoice_number_padding, \
+            updated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now')) \
          ON CONFLICT (singleton) DO UPDATE SET \
            name = ?1, address = ?2, email = ?3, tax_id = ?4, logo = ?5, \
            tax_label = ?6, template = ?7, payment_details = ?8, \
-           payment_terms_days = ?9, updated_at = datetime('now')",
+           payment_terms_days = ?9, invoice_prefix = ?10, invoice_number_padding = ?11, \
+           updated_at = datetime('now')",
     )
     .bind(&d.name)
     .bind(&d.address)
@@ -222,6 +256,8 @@ pub async fn set_business(
     .bind(&d.template)
     .bind(&d.payment_details)
     .bind(d.payment_terms_days)
+    .bind(&d.invoice_prefix)
+    .bind(d.invoice_number_padding)
     .execute(pool)
     .await
     .map_err(err)?;
@@ -254,6 +290,8 @@ mod tests {
                 template: "modern".into(),
                 payment_details: "  Bank: Acme\nIBAN: NO00  ".into(),
                 payment_terms_days: 14,
+                invoice_prefix: "  2026-  ".into(),
+                invoice_number_padding: 3,
             },
         )
         .await
@@ -264,6 +302,8 @@ mod tests {
         assert_eq!(saved.template, "modern");
         assert_eq!(saved.payment_details, "Bank: Acme\nIBAN: NO00"); // trimmed
         assert_eq!(saved.payment_terms_days, 14);
+        assert_eq!(saved.invoice_prefix, "2026-"); // trimmed
+        assert_eq!(saved.invoice_number_padding, 3);
         assert!(!saved.is_empty());
         assert_eq!(get_business(&db.pool).await.unwrap(), saved);
 
@@ -400,6 +440,35 @@ mod tests {
         .await
         .unwrap_err();
         assert!(e.contains("can't be negative"), "{e}");
+    }
+
+    #[test]
+    fn format_invoice_number_applies_prefix_and_padding() {
+        assert_eq!(format_invoice_number(7, "", 0), "INV-0007"); // both defaults
+        assert_eq!(format_invoice_number(7, "2026-", 3), "2026-007");
+        assert_eq!(format_invoice_number(7, "ACME-", 1), "ACME-7"); // no leading zeros
+        assert_eq!(format_invoice_number(1234, "", 0), "INV-1234"); // wider than pad
+        assert_eq!(format_invoice_number(7, "", 12), "INV-000000000007"); // max width
+                                                                          // Out-of-range padding (too big or negative) falls back to the default.
+        assert_eq!(format_invoice_number(7, "", 99), "INV-0007");
+        assert_eq!(format_invoice_number(7, "", -1), "INV-0007");
+    }
+
+    #[tokio::test]
+    async fn set_business_rejects_out_of_range_number_padding() {
+        let (_dir, db) = test_db().await;
+        for pad in [MAX_NUMBER_PADDING + 1, -1] {
+            let e = set_business(
+                &db.pool,
+                &BusinessDetails {
+                    invoice_number_padding: pad,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(e.contains("padding must be between"), "{e}");
+        }
     }
 
     #[tokio::test]

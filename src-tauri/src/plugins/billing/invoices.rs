@@ -330,6 +330,9 @@ pub async fn create_invoice(
     let total_cents = subtotal_cents + tax;
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = now.to_rfc3339();
+    // The issuer's number format is applied when the number is minted below;
+    // fetched here (past the no-work error paths) so it isn't wasted work.
+    let business = super::business::get_business(pool).await?;
 
     let mut tx = pool.begin().await.map_err(err)?;
     // Take the next number from the monotonic counter inside the transaction:
@@ -343,7 +346,29 @@ pub async fn create_invoice(
     .await
     .map_err(err)?
     .get("seq");
-    let number = format!("INV-{seq:04}");
+    let number = super::business::format_invoice_number(
+        seq,
+        &business.invoice_prefix,
+        business.invoice_number_padding,
+    );
+    // A later number format can re-mint an earlier invoice's number (e.g. a
+    // shorter prefix that merges with the sequence digits). The tx holds the
+    // write lock, so this check-then-insert can't race; on a clash, roll back
+    // (the seq isn't consumed) with an actionable error instead of the raw
+    // `UNIQUE` failure that would otherwise surface below.
+    let clash: i64 =
+        sqlx::query("SELECT EXISTS(SELECT 1 FROM billing_invoices WHERE number = ?1) AS e")
+            .bind(&number)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(err)?
+            .get("e");
+    if clash != 0 {
+        return Err(format!(
+            "invoice number \"{number}\" already exists — an earlier number format \
+             produced it. Change the invoice number prefix or padding."
+        ));
+    }
     sqlx::query(
         "INSERT INTO billing_invoices \
            (id, seq, number, client_id, client_name, currency, issue_date, \
@@ -712,12 +737,95 @@ mod tests {
         .unwrap()
     }
 
+    async fn try_create(pool: &SqlitePool) -> Result<Invoice, String> {
+        create_invoice(
+            pool,
+            "c1",
+            "2026-07-01",
+            "2026-08-01",
+            ts("2026-07-01"),
+            ts("2026-08-01"),
+            "2026-07-15",
+            0,
+            None,
+            off(),
+            Utc::now(),
+        )
+        .await
+    }
+
+    async fn set_number_format(pool: &SqlitePool, prefix: &str, padding: i64) {
+        super::super::business::set_business(
+            pool,
+            &super::super::business::BusinessDetails {
+                invoice_prefix: prefix.into(),
+                invoice_number_padding: padding,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reused_number_format_fails_without_consuming_the_seq() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        seed_billable_hour(&db.pool).await;
+        // An existing invoice already carries the number "X12".
+        sqlx::query(
+            "INSERT INTO billing_invoices \
+               (id, seq, number, client_id, client_name, currency, issue_date, from_date, \
+                to_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, unrated_seconds, \
+                created_at) \
+             VALUES ('pre', 999, 'X12', 'c1', 'Acme', 'USD', '2026-07-15', '2026-07-01', \
+                     '2026-08-01', 0, 0, 0, 0, 0, 'x')",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        // Point the counter so the next create mints seq 12.
+        sqlx::query("UPDATE billing_invoice_seq SET next = 12 WHERE singleton = 1")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        // prefix "X" + pad 1 → seq 12 → "X12" → clashes with the existing number.
+        set_number_format(&db.pool, "X", 1).await;
+        let err = try_create(&db.pool).await.unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+
+        // The seq wasn't consumed: a non-colliding format still mints seq 12.
+        set_number_format(&db.pool, "Y", 1).await;
+        assert_eq!(try_create(&db.pool).await.unwrap().number, "Y12");
+    }
+
     async fn ledger_count(pool: &SqlitePool) -> i64 {
         sqlx::query("SELECT COUNT(*) AS n FROM billing_invoice_entries")
             .fetch_one(pool)
             .await
             .unwrap()
             .get("n")
+    }
+
+    #[tokio::test]
+    async fn create_applies_the_issuer_number_format() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        seed_billable_hour(&db.pool).await;
+        super::super::business::set_business(
+            &db.pool,
+            &super::super::business::BusinessDetails {
+                invoice_prefix: "2026-".into(),
+                invoice_number_padding: 3,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let inv = create(&db.pool, 0).await;
+        assert_eq!(inv.number, "2026-001");
     }
 
     #[tokio::test]

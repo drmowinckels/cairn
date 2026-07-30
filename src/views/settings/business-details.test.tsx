@@ -37,6 +37,8 @@ const details = (over: Record<string, unknown> = {}) => ({
   template: "",
   paymentDetails: "",
   paymentTermsDays: 0,
+  invoicePrefix: "",
+  invoiceNumberPadding: 0,
   ...over,
 });
 
@@ -111,6 +113,12 @@ describe("BusinessDetailsPanel", () => {
     fireEvent.change(screen.getByLabelText(/payment terms/i), {
       target: { value: "14" },
     });
+    fireEvent.change(screen.getByLabelText(/invoice number prefix/i), {
+      target: { value: "2026-" },
+    });
+    fireEvent.change(screen.getByLabelText(/invoice number padding/i), {
+      target: { value: "3" },
+    });
     await userEvent.selectOptions(
       screen.getByLabelText(/invoice template/i),
       "modern",
@@ -127,12 +135,14 @@ describe("BusinessDetailsPanel", () => {
       template: "modern",
       paymentDetails: "IBAN NO00",
       paymentTermsDays: 14,
+      invoicePrefix: "2026-",
+      invoiceNumberPadding: 3,
     });
     // Not previously saved, so editing doesn't try to clear the confirmation.
     expect(clearSaved).not.toHaveBeenCalled();
   });
 
-  it("clamps payment terms to a non-negative integer", async () => {
+  it("clamps the numeric fields to non-negative integers", async () => {
     const save = vi.fn().mockResolvedValue(details());
     useBusiness.mockReturnValue(state({ save }));
     render(<BusinessDetailsPanel />);
@@ -140,9 +150,13 @@ describe("BusinessDetailsPanel", () => {
     fireEvent.change(terms, { target: { value: "0" } }); // Number 0 → 0
     fireEvent.change(terms, { target: { value: "-5" } }); // negative → clamped 0
     fireEvent.change(terms, { target: { value: "3.7" } }); // decimal → floored 3
+    const padding = screen.getByLabelText(/invoice number padding/i);
+    fireEvent.change(padding, { target: { value: "0" } }); // Number 0 → 0
+    fireEvent.change(padding, { target: { value: "9.9" } }); // decimal → floored 9
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(save.mock.calls[0][0].paymentTermsDays).toBe(3);
+    expect(save.mock.calls[0][0].invoiceNumberPadding).toBe(9);
   });
 
   it("shows the saved confirmation and clears it on the next edit", async () => {
