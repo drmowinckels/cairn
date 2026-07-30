@@ -90,6 +90,8 @@ th{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:#666}\
 .totals dd{font-variant-numeric:tabular-nums}\
 .grand{font-weight:700;border-top:1px solid #1a1a1a;margin-top:.25rem;padding-top:.35rem}\
 .notes{margin-top:2rem;white-space:pre-wrap}\
+.payment{margin-top:1.5rem}\
+.payment p{margin:.1rem 0}\
 .muted{color:#777;font-size:.85rem}";
 
 /// "modern" — an indigo accent, bolder headings, a tinted table header.
@@ -197,6 +199,16 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         escape(&business.tax_label)
     };
 
+    // A "Payment" block (how the client pays) when the issuer set instructions.
+    let payment = if business.payment_details.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<section class=\"payment\"><h2>Payment</h2><p>{}</p></section>",
+            escape_multiline(&business.payment_details)
+        )
+    };
+
     // The template preset selects an override sheet appended after the base.
     // `template_key` (a fixed allowlist value) tags the body as a decorative
     // marker — the styling comes from the override, not a `[data-template]`
@@ -217,7 +229,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 <dl class=\"totals\"><div><dt>Subtotal</dt><dd>{subtotal}</dd></div>\
 <div><dt>{tax_label} ({tax_pct}%)</dt><dd>{tax}</dd></div>\
 <div class=\"grand\"><dt>Total</dt><dd>{total}</dd></div></dl>\
-{notes}{unrated}</body></html>",
+{payment}{notes}{unrated}</body></html>",
         number = escape(&inv.number),
         style = BASE,
         template_override = template_override,
@@ -233,6 +245,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         tax_label = tax_label,
         tax_pct = inv.tax_rate_bps as f64 / 100.0,
         total = money(inv.total_cents, &inv.currency),
+        payment = payment,
         notes = notes,
         unrated = unrated,
     )
@@ -253,6 +266,7 @@ mod tests {
             logo: "data:image/png;base64,AAAA".into(),
             tax_label: String::new(), // default "Tax" label
             template: String::new(),  // default "classic" look
+            payment_details: "Bank <Acme>\nIBAN NO00".into(),
         }
     }
 
@@ -315,6 +329,33 @@ mod tests {
         let html = render_html(&invoice(), &b);
         assert!(html.contains("GST &amp; VAT (25%)"));
         assert!(!html.contains(">Tax (25%)")); // the default is not used
+    }
+
+    #[test]
+    fn renders_the_payment_block_when_set_and_omits_it_otherwise() {
+        let html = render_html(&invoice(), &business());
+        assert!(html.contains("<section class=\"payment\"><h2>Payment</h2>"));
+        // Escaped, with newlines turned into <br>.
+        assert!(html.contains("Bank &lt;Acme&gt;<br>IBAN NO00"));
+
+        let mut b = business();
+        b.payment_details = String::new();
+        assert!(!render_html(&invoice(), &b).contains("class=\"payment\""));
+    }
+
+    #[test]
+    fn payment_block_is_independent_of_the_from_block() {
+        // Payment details but nothing else: the "From" block is omitted, yet the
+        // "Payment" block still renders (it isn't gated on `is_empty`).
+        let b = BusinessDetails {
+            payment_details: "IBAN NO00".into(),
+            ..Default::default()
+        };
+        assert!(b.is_empty());
+        let html = render_html(&invoice(), &b);
+        assert!(!html.contains("<h2>From</h2>"));
+        assert!(html.contains("<section class=\"payment\">"));
+        assert!(html.contains("IBAN NO00"));
     }
 
     #[test]

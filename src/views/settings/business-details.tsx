@@ -76,7 +76,8 @@ export function BusinessDetailsPanel() {
     <div className="biz-panel" data-billing="business">
       <h4 className="rate-h">Business details</h4>
       <p className="settings-sub">
-        Shown as the “From” block on the invoices you generate. Leave everything
+        These details appear on the invoices you generate — the “From” block,
+        the tax line, payment instructions, and the overall look. Leave a field
         blank to omit it.
       </p>
       <div className="biz-form">
@@ -116,6 +117,14 @@ export function BusinessDetailsPanel() {
           placeholder="Tax line label (e.g. VAT, GST) — defaults to “Tax”"
           value={form.taxLabel}
           onChange={(e) => update({ taxLabel: e.target.value })}
+        />
+        <textarea
+          className="field-input"
+          aria-label="Payment details"
+          placeholder="Payment details (bank, IBAN, how to pay) — shown on the invoice"
+          rows={2}
+          value={form.paymentDetails}
+          onChange={(e) => update({ paymentDetails: e.target.value })}
         />
         <select
           className="field-input"

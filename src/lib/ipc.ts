@@ -1123,6 +1123,9 @@ export interface BusinessDetails {
   taxLabel: string;
   /** The invoice look: "classic" (default / empty), "modern", or "minimal". */
   template: string;
+  /** How the client pays (bank / IBAN / …); shown as a "Payment" block, or
+   *  omitted when empty. */
+  paymentDetails: string;
 }
 
 /** The invoice template presets. Empty is treated as "classic". */
@@ -1136,6 +1139,7 @@ const EMPTY_BUSINESS: BusinessDetails = {
   logo: "",
   taxLabel: "",
   template: "",
+  paymentDetails: "",
 };
 
 /** Read the stored issuer details. Requires the billing plugin enabled. */
