@@ -1129,6 +1129,10 @@ export interface BusinessDetails {
   /** Default payment terms in days ("Net N"); the invoice due date is its
    *  issue date plus this. 0 shows no due date. */
   paymentTermsDays: number;
+  /** Invoice number prefix; empty renders the default "INV-". */
+  invoicePrefix: string;
+  /** Zero-pad width of the sequential invoice number; 0 = default width (4). */
+  invoiceNumberPadding: number;
 }
 
 /** The invoice template presets. Empty is treated as "classic". */
@@ -1144,6 +1148,8 @@ const EMPTY_BUSINESS: BusinessDetails = {
   template: "",
   paymentDetails: "",
   paymentTermsDays: 0,
+  invoicePrefix: "",
+  invoiceNumberPadding: 0,
 };
 
 /** Read the stored issuer details. Requires the billing plugin enabled. */

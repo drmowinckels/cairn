@@ -427,6 +427,8 @@ describe("ipc helpers (inside Tauri)", () => {
       template: "modern",
       paymentDetails: "IBAN NO00",
       paymentTermsDays: 14,
+      invoicePrefix: "2026-",
+      invoiceNumberPadding: 3,
     };
 
     invokeMock.mockResolvedValue(biz);
@@ -729,6 +731,8 @@ describe("ipc helpers (outside Tauri)", () => {
       template: "",
       paymentDetails: "",
       paymentTermsDays: 0,
+      invoicePrefix: "",
+      invoiceNumberPadding: 0,
     });
     const biz = {
       name: "Acme",
@@ -740,6 +744,8 @@ describe("ipc helpers (outside Tauri)", () => {
       template: "",
       paymentDetails: "",
       paymentTermsDays: 0,
+      invoicePrefix: "",
+      invoiceNumberPadding: 0,
     };
     expect(await billingSetBusiness(biz)).toEqual(biz);
     expect(await billingLogoFromPath("/x.png")).toBe("");

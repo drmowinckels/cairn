@@ -144,6 +144,31 @@ export function BusinessDetailsPanel() {
             })
           }
         />
+        <input
+          className="field-input"
+          aria-label="Invoice number prefix"
+          placeholder="Invoice number prefix (defaults to “INV-”)"
+          value={form.invoicePrefix}
+          onChange={(e) => update({ invoicePrefix: e.target.value })}
+        />
+        <input
+          className="field-input"
+          type="number"
+          min="0"
+          max="12"
+          step="1"
+          aria-label="Invoice number padding"
+          placeholder="Number width, e.g. 4 → 0007 (0 = default)"
+          value={form.invoiceNumberPadding || ""}
+          onChange={(e) =>
+            update({
+              invoiceNumberPadding: Math.max(
+                0,
+                Math.floor(Number(e.target.value) || 0),
+              ),
+            })
+          }
+        />
         <select
           className="field-input"
           aria-label="Invoice template"

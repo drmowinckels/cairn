@@ -291,6 +291,8 @@ mod tests {
             template: String::new(),  // default "classic" look
             payment_details: "Bank <Acme>\nIBAN NO00".into(),
             payment_terms_days: 0, // no due date by default
+            invoice_prefix: String::new(),
+            invoice_number_padding: 0,
         }
     }
 
