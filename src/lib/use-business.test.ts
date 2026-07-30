@@ -22,6 +22,7 @@ const biz = (over: Record<string, unknown> = {}) => ({
   taxId: "NO 1",
   logo: "",
   taxLabel: "",
+  template: "",
   ...over,
 });
 
