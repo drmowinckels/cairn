@@ -30,6 +30,9 @@ pub struct BusinessDetails {
     /// The invoice look: "classic" (default / empty), "modern", or "minimal".
     /// Not a "From" field — excluded from `is_empty`.
     pub template: String,
+    /// How the client pays (bank / IBAN / "how to pay me"); shown as its own
+    /// "Payment" block. Not a "From" field — excluded from `is_empty`.
+    pub payment_details: String,
 }
 
 impl BusinessDetails {
@@ -54,6 +57,7 @@ impl BusinessDetails {
             logo: self.logo.clone(),
             tax_label: self.tax_label.trim().to_string(),
             template: self.template.trim().to_string(),
+            payment_details: self.payment_details.trim().to_string(),
         }
     }
 }
@@ -152,7 +156,7 @@ pub async fn logo_from_path(path: &str) -> Result<String, String> {
 /// Read the stored business details, or an empty profile when none are set.
 pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> {
     let row = sqlx::query(
-        "SELECT name, address, email, tax_id, logo, tax_label, template \
+        "SELECT name, address, email, tax_id, logo, tax_label, template, payment_details \
            FROM billing_business WHERE singleton = 1",
     )
     .fetch_optional(pool)
@@ -167,6 +171,7 @@ pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> 
             logo: r.get("logo"),
             tax_label: r.get("tax_label"),
             template: r.get("template"),
+            payment_details: r.get("payment_details"),
         },
         None => BusinessDetails::default(),
     })
@@ -183,11 +188,13 @@ pub async fn set_business(
     validate_template(&d.template)?;
     sqlx::query(
         "INSERT INTO billing_business \
-           (singleton, name, address, email, tax_id, logo, tax_label, template, updated_at) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now')) \
+           (singleton, name, address, email, tax_id, logo, tax_label, template, \
+            payment_details, updated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now')) \
          ON CONFLICT (singleton) DO UPDATE SET \
            name = ?1, address = ?2, email = ?3, tax_id = ?4, logo = ?5, \
-           tax_label = ?6, template = ?7, updated_at = datetime('now')",
+           tax_label = ?6, template = ?7, payment_details = ?8, \
+           updated_at = datetime('now')",
     )
     .bind(&d.name)
     .bind(&d.address)
@@ -196,6 +203,7 @@ pub async fn set_business(
     .bind(&d.logo)
     .bind(&d.tax_label)
     .bind(&d.template)
+    .bind(&d.payment_details)
     .execute(pool)
     .await
     .map_err(err)?;
@@ -226,6 +234,7 @@ mod tests {
                 logo: PNG_URI.into(),
                 tax_label: "  VAT  ".into(),
                 template: "modern".into(),
+                payment_details: "  Bank: Acme\nIBAN: NO00  ".into(),
             },
         )
         .await
@@ -234,6 +243,7 @@ mod tests {
         assert_eq!(saved.logo, PNG_URI); // stored verbatim, not trimmed
         assert_eq!(saved.tax_label, "VAT"); // trimmed
         assert_eq!(saved.template, "modern");
+        assert_eq!(saved.payment_details, "Bank: Acme\nIBAN: NO00"); // trimmed
         assert!(!saved.is_empty());
         assert_eq!(get_business(&db.pool).await.unwrap(), saved);
 
@@ -269,6 +279,12 @@ mod tests {
         .is_empty());
         assert!(BusinessDetails {
             template: "modern".into(),
+            ..Default::default()
+        }
+        .is_empty());
+        // Payment details render in their own block, not the "From" block.
+        assert!(BusinessDetails {
+            payment_details: "IBAN NO00".into(),
             ..Default::default()
         }
         .is_empty());

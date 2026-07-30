@@ -35,6 +35,7 @@ const details = (over: Record<string, unknown> = {}) => ({
   logo: "",
   taxLabel: "",
   template: "",
+  paymentDetails: "",
   ...over,
 });
 
@@ -103,6 +104,9 @@ describe("BusinessDetailsPanel", () => {
     fireEvent.change(screen.getByLabelText(/tax label/i), {
       target: { value: "VAT" },
     });
+    fireEvent.change(screen.getByLabelText(/payment details/i), {
+      target: { value: "IBAN NO00" },
+    });
     await userEvent.selectOptions(
       screen.getByLabelText(/invoice template/i),
       "modern",
@@ -117,6 +121,7 @@ describe("BusinessDetailsPanel", () => {
       taxId: "NO 2",
       taxLabel: "VAT",
       template: "modern",
+      paymentDetails: "IBAN NO00",
     });
     // Not previously saved, so editing doesn't try to clear the confirmation.
     expect(clearSaved).not.toHaveBeenCalled();
