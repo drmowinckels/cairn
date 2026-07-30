@@ -36,6 +36,7 @@ const details = (over: Record<string, unknown> = {}) => ({
   taxLabel: "",
   template: "",
   paymentDetails: "",
+  paymentTermsDays: 0,
   ...over,
 });
 
@@ -107,6 +108,9 @@ describe("BusinessDetailsPanel", () => {
     fireEvent.change(screen.getByLabelText(/payment details/i), {
       target: { value: "IBAN NO00" },
     });
+    fireEvent.change(screen.getByLabelText(/payment terms/i), {
+      target: { value: "14" },
+    });
     await userEvent.selectOptions(
       screen.getByLabelText(/invoice template/i),
       "modern",
@@ -122,9 +126,23 @@ describe("BusinessDetailsPanel", () => {
       taxLabel: "VAT",
       template: "modern",
       paymentDetails: "IBAN NO00",
+      paymentTermsDays: 14,
     });
     // Not previously saved, so editing doesn't try to clear the confirmation.
     expect(clearSaved).not.toHaveBeenCalled();
+  });
+
+  it("clamps payment terms to a non-negative integer", async () => {
+    const save = vi.fn().mockResolvedValue(details());
+    useBusiness.mockReturnValue(state({ save }));
+    render(<BusinessDetailsPanel />);
+    const terms = screen.getByLabelText(/payment terms/i);
+    fireEvent.change(terms, { target: { value: "0" } }); // Number 0 → 0
+    fireEvent.change(terms, { target: { value: "-5" } }); // negative → clamped 0
+    fireEvent.change(terms, { target: { value: "3.7" } }); // decimal → floored 3
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].paymentTermsDays).toBe(3);
   });
 
   it("shows the saved confirmation and clears it on the next edit", async () => {

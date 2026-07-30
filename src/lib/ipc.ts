@@ -1126,6 +1126,9 @@ export interface BusinessDetails {
   /** How the client pays (bank / IBAN / …); shown as a "Payment" block, or
    *  omitted when empty. */
   paymentDetails: string;
+  /** Default payment terms in days ("Net N"); the invoice due date is its
+   *  issue date plus this. 0 shows no due date. */
+  paymentTermsDays: number;
 }
 
 /** The invoice template presets. Empty is treated as "classic". */
@@ -1140,6 +1143,7 @@ const EMPTY_BUSINESS: BusinessDetails = {
   taxLabel: "",
   template: "",
   paymentDetails: "",
+  paymentTermsDays: 0,
 };
 
 /** Read the stored issuer details. Requires the billing plugin enabled. */
