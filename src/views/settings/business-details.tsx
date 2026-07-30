@@ -1,6 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { billingLogoFromPath, type BusinessDetails } from "../../lib/ipc";
+import {
+  billingLogoFromPath,
+  INVOICE_TEMPLATES,
+  type BusinessDetails,
+} from "../../lib/ipc";
 import { useBusiness } from "../../lib/use-business";
 import { withPopoverPinned } from "../../lib/use-backup";
 
@@ -113,6 +117,21 @@ export function BusinessDetailsPanel() {
           value={form.taxLabel}
           onChange={(e) => update({ taxLabel: e.target.value })}
         />
+        <select
+          className="field-input"
+          aria-label="Invoice template"
+          value={form.template || "classic"}
+          onChange={(e) => update({ template: e.target.value })}
+        >
+          {INVOICE_TEMPLATES.map((t) => (
+            <option key={t} value={t}>
+              {t[0].toUpperCase() + t.slice(1)} template
+            </option>
+          ))}
+        </select>
+        <p className="settings-sub" data-business="template-note">
+          The template styles the invoice you export or print.
+        </p>
         <div className="biz-logo-row">
           {hasLogo && (
             <img

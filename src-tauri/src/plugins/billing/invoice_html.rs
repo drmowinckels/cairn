@@ -66,7 +66,9 @@ fn hours(seconds: i64) -> String {
     format!("{:.1}", seconds as f64 / 3600.0)
 }
 
-const STYLE: &str = "\
+/// The shared invoice layout — the "classic" look on its own. A template
+/// preset appends a small override sheet (below) that wins over these rules.
+const BASE: &str = "\
 :root{color-scheme:light}\
 body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;max-width:46rem;margin:2rem auto;padding:0 1.5rem}\
 .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a1a1a;padding-bottom:.75rem}\
@@ -89,6 +91,49 @@ th{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:#666}\
 .grand{font-weight:700;border-top:1px solid #1a1a1a;margin-top:.25rem;padding-top:.35rem}\
 .notes{margin-top:2rem;white-space:pre-wrap}\
 .muted{color:#777;font-size:.85rem}";
+
+/// "modern" — an indigo accent, bolder headings, a tinted table header.
+const MODERN_OVERRIDE: &str = "\
+body{color:#111827}\
+.head{border-bottom:3px solid #4338ca}\
+h1{color:#4338ca;font-weight:800;letter-spacing:-.02em}\
+h2{color:#4338ca}\
+th{background:#eef2ff;color:#4338ca;border-bottom:none}\
+td{border-bottom:1px solid #eef2ff}\
+.grand{border-top:2px solid #4338ca;color:#4338ca}";
+
+/// "minimal" — monochrome, hairline rules, lighter weight, more whitespace.
+const MINIMAL_OVERRIDE: &str = "\
+body{color:#374151;max-width:44rem}\
+.head{border-bottom:1px solid #e5e7eb;padding-bottom:1.25rem}\
+h1{font-weight:400;font-size:1.5rem;letter-spacing:.01em}\
+h2{color:#9ca3af;letter-spacing:.12em}\
+table{margin-top:2rem}\
+th{color:#9ca3af;border-bottom:1px solid #f3f4f6}\
+td{border-bottom:none;padding:.55rem .25rem}\
+.grand{border-top:1px solid #d1d5db}";
+
+/// Each preset with its override sheet — the single source of which templates
+/// exist. "classic" is the base sheet alone (no override entry).
+const TEMPLATE_OVERRIDES: [(&str, &str); 2] =
+    [("modern", MODERN_OVERRIDE), ("minimal", MINIMAL_OVERRIDE)];
+
+/// True for a storable template: the empty default, "classic", or a preset
+/// with an override sheet. `business::set_business` validates against this, so
+/// a name the renderer would silently fall back on can never be stored.
+pub fn known_template(template: &str) -> bool {
+    matches!(template, "" | "classic") || TEMPLATE_OVERRIDES.iter().any(|(n, _)| *n == template)
+}
+
+/// Resolve the template name to its `(key, override-sheet)`. Empty, "classic",
+/// or any unknown value falls back to the classic base (no override).
+fn template_style(template: &str) -> (&'static str, &'static str) {
+    TEMPLATE_OVERRIDES
+        .iter()
+        .find(|(name, _)| *name == template)
+        .copied()
+        .unwrap_or(("classic", ""))
+}
 
 /// Build the printable HTML document for an invoice. `business` is the issuer
 /// shown in the "From" block; an empty profile omits that block.
@@ -152,10 +197,17 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         escape(&business.tax_label)
     };
 
+    // The template preset selects an override sheet appended after the base.
+    // `template_key` (a fixed allowlist value) tags the body as a decorative
+    // marker — the styling comes from the override, not a `[data-template]`
+    // selector.
+    let (template_key, template_override) = template_style(&business.template);
+
     format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<title>Invoice {number}</title><style>{style}</style></head><body>\
+<title>Invoice {number}</title><style>{style}{template_override}</style></head>\
+<body data-template=\"{template_key}\">\
 <header class=\"head\"><h1>Invoice {number}</h1>\
 <div class=\"meta\">Issued {issued}<br>Period {from} – {to}</div></header>\
 <div class=\"parties\">{from_block}\
@@ -167,7 +219,9 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 <div class=\"grand\"><dt>Total</dt><dd>{total}</dd></div></dl>\
 {notes}{unrated}</body></html>",
         number = escape(&inv.number),
-        style = STYLE,
+        style = BASE,
+        template_override = template_override,
+        template_key = template_key,
         issued = escape(&inv.issue_date),
         from = escape(&inv.from_date),
         to = escape(&inv.to_date),
@@ -198,6 +252,7 @@ mod tests {
             tax_id: "NO 999".into(),
             logo: "data:image/png;base64,AAAA".into(),
             tax_label: String::new(), // default "Tax" label
+            template: String::new(),  // default "classic" look
         }
     }
 
@@ -260,6 +315,34 @@ mod tests {
         let html = render_html(&invoice(), &b);
         assert!(html.contains("GST &amp; VAT (25%)"));
         assert!(!html.contains(">Tax (25%)")); // the default is not used
+    }
+
+    #[test]
+    fn selects_the_template_preset_stylesheet() {
+        let render = |template: &str| {
+            let mut b = business();
+            b.template = template.into();
+            render_html(&invoice(), &b)
+        };
+
+        // Empty and explicit "classic" → base sheet, no accent, tagged classic.
+        for c in [render(""), render("classic")] {
+            assert!(c.contains("<body data-template=\"classic\">"));
+            assert!(!c.contains("#4338ca"));
+        }
+
+        // Modern → indigo accent override + tag.
+        let modern = render("modern");
+        assert!(modern.contains("<body data-template=\"modern\">"));
+        assert!(modern.contains("#4338ca"));
+
+        // Minimal → hairline/monochrome override + tag.
+        let minimal = render("minimal");
+        assert!(minimal.contains("<body data-template=\"minimal\">"));
+        assert!(minimal.contains("#9ca3af"));
+
+        // An unknown value (blocked on store) still falls back to classic.
+        assert!(render("bogus").contains("<body data-template=\"classic\">"));
     }
 
     #[test]

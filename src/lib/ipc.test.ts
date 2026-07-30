@@ -424,6 +424,7 @@ describe("ipc helpers (inside Tauri)", () => {
       taxId: "NO1",
       logo: "",
       taxLabel: "VAT",
+      template: "modern",
     };
 
     invokeMock.mockResolvedValue(biz);
@@ -723,6 +724,7 @@ describe("ipc helpers (outside Tauri)", () => {
       taxId: "",
       logo: "",
       taxLabel: "",
+      template: "",
     });
     const biz = {
       name: "Acme",
@@ -731,6 +733,7 @@ describe("ipc helpers (outside Tauri)", () => {
       taxId: "",
       logo: "",
       taxLabel: "",
+      template: "",
     };
     expect(await billingSetBusiness(biz)).toEqual(biz);
     expect(await billingLogoFromPath("/x.png")).toBe("");

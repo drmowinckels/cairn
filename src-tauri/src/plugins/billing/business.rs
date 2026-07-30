@@ -27,6 +27,9 @@ pub struct BusinessDetails {
     /// The tax line's label ("VAT", "GST", "Sales Tax", …); empty renders as
     /// "Tax". A tax-line detail, not a "From" field — see `is_empty`.
     pub tax_label: String,
+    /// The invoice look: "classic" (default / empty), "modern", or "minimal".
+    /// Not a "From" field — excluded from `is_empty`.
+    pub template: String,
 }
 
 impl BusinessDetails {
@@ -50,7 +53,20 @@ impl BusinessDetails {
             // The logo is an opaque data URI — never trimmed or altered.
             logo: self.logo.clone(),
             tax_label: self.tax_label.trim().to_string(),
+            template: self.template.trim().to_string(),
         }
+    }
+}
+
+/// Reject an unknown template so only a preset the renderer actually supports
+/// (or the empty default) can be stored. The allowlist is the renderer's own
+/// table — one source of truth, so a name can't be accepted here that would
+/// silently render as classic.
+fn validate_template(template: &str) -> Result<(), String> {
+    if super::invoice_html::known_template(template) {
+        Ok(())
+    } else {
+        Err(format!("unknown invoice template: {template}"))
     }
 }
 
@@ -136,7 +152,7 @@ pub async fn logo_from_path(path: &str) -> Result<String, String> {
 /// Read the stored business details, or an empty profile when none are set.
 pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> {
     let row = sqlx::query(
-        "SELECT name, address, email, tax_id, logo, tax_label \
+        "SELECT name, address, email, tax_id, logo, tax_label, template \
            FROM billing_business WHERE singleton = 1",
     )
     .fetch_optional(pool)
@@ -150,6 +166,7 @@ pub async fn get_business(pool: &SqlitePool) -> Result<BusinessDetails, String> 
             tax_id: r.get("tax_id"),
             logo: r.get("logo"),
             tax_label: r.get("tax_label"),
+            template: r.get("template"),
         },
         None => BusinessDetails::default(),
     })
@@ -163,13 +180,14 @@ pub async fn set_business(
 ) -> Result<BusinessDetails, String> {
     let d = details.trimmed();
     validate_logo(&d.logo)?;
+    validate_template(&d.template)?;
     sqlx::query(
         "INSERT INTO billing_business \
-           (singleton, name, address, email, tax_id, logo, tax_label, updated_at) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, datetime('now')) \
+           (singleton, name, address, email, tax_id, logo, tax_label, template, updated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now')) \
          ON CONFLICT (singleton) DO UPDATE SET \
            name = ?1, address = ?2, email = ?3, tax_id = ?4, logo = ?5, \
-           tax_label = ?6, updated_at = datetime('now')",
+           tax_label = ?6, template = ?7, updated_at = datetime('now')",
     )
     .bind(&d.name)
     .bind(&d.address)
@@ -177,6 +195,7 @@ pub async fn set_business(
     .bind(&d.tax_id)
     .bind(&d.logo)
     .bind(&d.tax_label)
+    .bind(&d.template)
     .execute(pool)
     .await
     .map_err(err)?;
@@ -206,6 +225,7 @@ mod tests {
                 tax_id: "NO 123 456 789".into(),
                 logo: PNG_URI.into(),
                 tax_label: "  VAT  ".into(),
+                template: "modern".into(),
             },
         )
         .await
@@ -213,6 +233,7 @@ mod tests {
         assert_eq!(saved.name, "Acme Consulting AS");
         assert_eq!(saved.logo, PNG_URI); // stored verbatim, not trimmed
         assert_eq!(saved.tax_label, "VAT"); // trimmed
+        assert_eq!(saved.template, "modern");
         assert!(!saved.is_empty());
         assert_eq!(get_business(&db.pool).await.unwrap(), saved);
 
@@ -240,9 +261,14 @@ mod tests {
         };
         assert!(!b.is_empty());
         assert!(BusinessDetails::default().is_empty());
-        // A tax-label-only profile still has no "From" block to show.
+        // Tax-label-only and template-only profiles have no "From" block.
         assert!(BusinessDetails {
             tax_label: "VAT".into(),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(BusinessDetails {
+            template: "modern".into(),
             ..Default::default()
         }
         .is_empty());
@@ -313,6 +339,32 @@ mod tests {
         .unwrap_err();
         assert!(e.contains("PNG, JPEG"), "{e}");
         assert!(get_business(&db.pool).await.unwrap().logo.is_empty());
+    }
+
+    #[test]
+    fn validate_template_allows_known_presets_and_empty() {
+        for t in ["", "classic", "modern", "minimal"] {
+            assert!(validate_template(t).is_ok(), "{t}");
+        }
+        assert!(validate_template("fancy")
+            .unwrap_err()
+            .contains("unknown invoice template"));
+    }
+
+    #[tokio::test]
+    async fn set_business_rejects_an_unknown_template() {
+        let (_dir, db) = test_db().await;
+        let e = set_business(
+            &db.pool,
+            &BusinessDetails {
+                template: "fancy".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(e.contains("unknown invoice template"), "{e}");
+        assert!(get_business(&db.pool).await.unwrap().template.is_empty());
     }
 
     #[tokio::test]

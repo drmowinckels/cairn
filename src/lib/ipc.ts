@@ -1121,7 +1121,12 @@ export interface BusinessDetails {
   logo: string;
   /** The invoice tax line's label ("VAT", "GST", …); empty renders as "Tax". */
   taxLabel: string;
+  /** The invoice look: "classic" (default / empty), "modern", or "minimal". */
+  template: string;
 }
+
+/** The invoice template presets. Empty is treated as "classic". */
+export const INVOICE_TEMPLATES = ["classic", "modern", "minimal"] as const;
 
 const EMPTY_BUSINESS: BusinessDetails = {
   name: "",
@@ -1130,6 +1135,7 @@ const EMPTY_BUSINESS: BusinessDetails = {
   taxId: "",
   logo: "",
   taxLabel: "",
+  template: "",
 };
 
 /** Read the stored issuer details. Requires the billing plugin enabled. */
