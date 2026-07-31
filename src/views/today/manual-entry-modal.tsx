@@ -89,6 +89,10 @@ interface Props {
    */
   connectors?: Connector[];
   onDelete?: (id: string) => Promise<void>;
+  /** When editing an entry already billed on an invoice (#287), its invoice
+   *  number. Shows a non-blocking notice; editing stays allowed — the invoice
+   *  is a frozen snapshot, so changes here won't alter it. */
+  billedInvoiceNumber?: string | null;
   onClose: () => void;
 }
 
@@ -122,6 +126,7 @@ export function ManualEntryModal({
   onCreateTask,
   connectors,
   onDelete,
+  billedInvoiceNumber,
   onClose,
 }: Props) {
   const titleId = useId();
@@ -381,6 +386,16 @@ export function ManualEntryModal({
             <Icon name="x" size={14} />
           </button>
         </header>
+
+        {billedInvoiceNumber && (
+          <p className="modal-billed-note" role="note">
+            <Icon name="info" size={13} />
+            <span>
+              On invoice {billedInvoiceNumber}. Editing this entry won&apos;t
+              change that invoice.
+            </span>
+          </p>
+        )}
 
         <form className="modal-body" onSubmit={handleSubmit}>
           <label className="field">

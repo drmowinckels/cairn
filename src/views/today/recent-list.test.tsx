@@ -77,6 +77,29 @@ describe("RecentList", () => {
     expect(document.querySelector(".entry-remote")).toBeNull();
   });
 
+  it("shows a 'billed on' chip only when the entry is invoiced (#287)", () => {
+    const { rerender } = render(
+      <RecentList
+        entries={[entry({ billedInvoiceNumber: "INV-0007" })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    const chip = document.querySelector(".entry-billed");
+    expect(chip).toBeTruthy();
+    expect(chip?.textContent).toContain("INV-0007");
+    expect(
+      document.querySelector('[aria-label="Billed on INV-0007"]'),
+    ).not.toBeNull();
+
+    rerender(
+      <RecentList
+        entries={[entry({ billedInvoiceNumber: null })]}
+        projectsById={PROJECTS_BY_ID}
+      />,
+    );
+    expect(document.querySelector(".entry-billed")).toBeNull();
+  });
+
   it("calendar source row carries aria-label 'source: calendar'", () => {
     render(
       <RecentList

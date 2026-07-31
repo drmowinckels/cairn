@@ -1324,6 +1324,16 @@ export async function getInvoice(id: string): Promise<Invoice | null> {
   return invoke<Invoice | null>("get_invoice", { id });
 }
 
+/** For each given entry id that's been invoiced, the number of the invoice
+ *  billing it (unbilled ids are absent), as a `{ entryId: invoiceNumber }`
+ *  map. Requires the plugin enabled; empty outside Tauri. */
+export async function entriesBillingStatus(
+  entryIds: string[],
+): Promise<Record<string, string>> {
+  if (!inTauri || entryIds.length === 0) return {};
+  return invoke<Record<string, string>>("entries_billing_status", { entryIds });
+}
+
 /** Delete an invoice; returns the fresh list. Requires an active Pro license. */
 export async function deleteInvoice(id: string): Promise<InvoiceSummary[]> {
   if (!inTauri) return [];

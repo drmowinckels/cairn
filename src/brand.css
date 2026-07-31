@@ -2066,6 +2066,19 @@ body {
   white-space: nowrap;
 }
 
+/* "Billed on INV-XXXX" chip (#287) — muted, so it reads as secondary metadata
+   next to the accent-coloured remote-task chip, not as another action. */
+.entry-billed {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .entry-dur {
   font-family: var(--mono);
   font-size: 12.5px;
@@ -4965,6 +4978,26 @@ select.rule-conf {
   font-weight: 500;
   margin: 0;
   color: var(--ink);
+}
+
+/* Non-blocking "this entry is on invoice INV-XXXX" notice in the edit modal
+   (#287) — informational; editing stays enabled. */
+.modal-billed-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.modal-billed-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--accent-ink);
 }
 
 .modal-body {

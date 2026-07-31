@@ -445,6 +445,48 @@ describe("ManualEntryModal — edit mode + delete", () => {
     expect(screen.getByRole("dialog", { name: /edit entry/i })).toBeTruthy();
   });
 
+  it("shows a non-blocking 'on invoice' note for a billed entry, editing still enabled (#287)", () => {
+    const { rerender } = render(
+      <ManualEntryModal
+        open
+        mode="edit"
+        initial={EDIT_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        billedInvoiceNumber="INV-0003"
+        onClose={vi.fn()}
+      />,
+    );
+    const note = screen.getByRole("note");
+    expect(note.textContent).toContain("INV-0003");
+    expect(note.textContent).toMatch(/won.t\s+change that invoice/i);
+    // Editing stays allowed — fields and delete are not disabled.
+    expect(
+      (screen.getByLabelText(/description/i) as HTMLInputElement).disabled,
+    ).toBe(false);
+    expect(
+      screen.getByRole("button", { name: /delete/i }).hasAttribute("disabled"),
+    ).toBe(false);
+
+    // No number → no note.
+    rerender(
+      <ManualEntryModal
+        open
+        mode="edit"
+        initial={EDIT_DRAFT}
+        projects={PROJECTS}
+        runningRange={null}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        billedInvoiceNumber={null}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
   it("prefills the form fields from the initial draft", () => {
     render(
       <ManualEntryModal
