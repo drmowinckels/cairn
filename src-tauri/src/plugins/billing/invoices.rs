@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
+use super::business::BusinessDetails;
 use super::err;
 use super::rates::{amount_cents, list_rates, resolve_from, Rate};
 use crate::ipc::parse_ts;
@@ -39,6 +40,11 @@ pub struct Invoice {
     pub from_date: String,
     pub to_date: String,
     pub tax_rate_bps: i64,
+    /// The issuer's tax-line label ("VAT"/"GST"/…) as frozen at creation;
+    /// empty renders as "Tax". Snapshotted alongside the full issuer so the
+    /// in-app tax line matches the exported document even after the business
+    /// profile's label changes.
+    pub tax_label: String,
     pub subtotal_cents: i64,
     pub tax_cents: i64,
     pub total_cents: i64,
@@ -331,8 +337,13 @@ pub async fn create_invoice(
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = now.to_rfc3339();
     // The issuer's number format is applied when the number is minted below;
-    // fetched here (past the no-work error paths) so it isn't wasted work.
+    // fetched here (past the no-work error paths) so it isn't wasted work. The
+    // same profile is frozen onto the invoice (below) so a later edit to the
+    // business details never rewrites this already-issued document.
     let business = super::business::get_business(pool).await?;
+    // Serializing a plain struct can't fail; `""` on the impossible error still
+    // deserializes back to an empty issuer, so the invoice stays renderable.
+    let issuer_snapshot = serde_json::to_string(&business).unwrap_or_default();
 
     let mut tx = pool.begin().await.map_err(err)?;
     // Take the next number from the monotonic counter inside the transaction:
@@ -373,8 +384,8 @@ pub async fn create_invoice(
         "INSERT INTO billing_invoices \
            (id, seq, number, client_id, client_name, currency, issue_date, \
             from_date, to_date, tax_rate_bps, subtotal_cents, tax_cents, \
-            total_cents, unrated_seconds, notes, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            total_cents, unrated_seconds, notes, created_at, issuer_snapshot) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
     )
     .bind(&id)
     .bind(seq)
@@ -392,6 +403,7 @@ pub async fn create_invoice(
     .bind(built.unrated_seconds)
     .bind(notes)
     .bind(&created_at)
+    .bind(&issuer_snapshot)
     .execute(&mut *tx)
     .await
     .map_err(err)?;
@@ -441,6 +453,7 @@ pub async fn create_invoice(
         from_date: from_date.to_string(),
         to_date: to_date.to_string(),
         tax_rate_bps,
+        tax_label: business.tax_label,
         subtotal_cents,
         tax_cents: tax,
         total_cents,
@@ -478,7 +491,7 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
     let Some(head) = sqlx::query(
         "SELECT id, number, client_id, client_name, currency, issue_date, \
                 from_date, to_date, tax_rate_bps, subtotal_cents, tax_cents, \
-                total_cents, unrated_seconds, status, notes, created_at \
+                total_cents, unrated_seconds, status, notes, created_at, issuer_snapshot \
            FROM billing_invoices WHERE id = ?1",
     )
     .bind(id)
@@ -488,6 +501,10 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
     else {
         return Ok(None);
     };
+    // The tax-line label the invoice was issued with, read from the frozen
+    // snapshot (the single source of truth) so the in-app tax line matches the
+    // exported document. This runs only on a user-initiated detail open.
+    let tax_label = parse_issuer(&head.get::<String, _>("issuer_snapshot")).tax_label;
 
     let lines = sqlx::query(
         "SELECT id, description, seconds, amount_cents, sort \
@@ -517,6 +534,7 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
         from_date: head.get("from_date"),
         to_date: head.get("to_date"),
         tax_rate_bps: head.get("tax_rate_bps"),
+        tax_label,
         subtotal_cents: head.get("subtotal_cents"),
         tax_cents: head.get("tax_cents"),
         total_cents: head.get("total_cents"),
@@ -526,6 +544,37 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
         created_at: head.get("created_at"),
         lines,
     }))
+}
+
+/// Deserialize a stored issuer snapshot into the frozen `BusinessDetails`. An
+/// empty snapshot (pre-`0031` invoices) is a never-set profile → empty issuer.
+/// A non-empty value that fails to parse (only reachable by outside tampering,
+/// since we always write valid JSON) also degrades to an empty issuer rather
+/// than failing the render — but is logged, so genuine corruption is visible
+/// and not mistaken for "no issuer".
+fn parse_issuer(snapshot: &str) -> BusinessDetails {
+    if snapshot.is_empty() {
+        return BusinessDetails::default();
+    }
+    serde_json::from_str(snapshot).unwrap_or_else(|e| {
+        log::warn!("invoice issuer snapshot didn't parse ({e}); rendering without issuer");
+        BusinessDetails::default()
+    })
+}
+
+/// The issuer details **as frozen on the invoice at creation** — the source for
+/// rendering it, so editing the business profile never rewrites an already-
+/// issued document. Returns an empty issuer when the invoice is unknown (the
+/// caller has already confirmed it exists) or predates the snapshot column.
+pub async fn get_invoice_issuer(pool: &SqlitePool, id: &str) -> Result<BusinessDetails, String> {
+    let snapshot: Option<String> =
+        sqlx::query("SELECT issuer_snapshot FROM billing_invoices WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(err)?
+            .map(|r| r.get("issuer_snapshot"));
+    Ok(parse_issuer(&snapshot.unwrap_or_default()))
 }
 
 pub async fn delete_invoice(pool: &SqlitePool, id: &str) -> Result<(), String> {
@@ -826,6 +875,109 @@ mod tests {
 
         let inv = create(&db.pool, 0).await;
         assert_eq!(inv.number, "2026-001");
+    }
+
+    #[test]
+    fn parse_issuer_handles_empty_valid_and_garbage() {
+        // Pre-0031 rows store "" → a never-set (empty) issuer, no warning.
+        assert_eq!(parse_issuer(""), BusinessDetails::default());
+        // Our own serialized snapshot round-trips exactly.
+        let b = BusinessDetails {
+            name: "Acme AS".into(),
+            tax_label: "VAT".into(),
+            template: "modern".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&b).unwrap();
+        assert_eq!(parse_issuer(&json), b);
+        // "{}" fills every field from Default (the serde(default) path).
+        assert_eq!(parse_issuer("{}"), BusinessDetails::default());
+        // Non-empty garbage degrades to an empty issuer instead of panicking.
+        assert_eq!(parse_issuer("not json"), BusinessDetails::default());
+    }
+
+    #[tokio::test]
+    async fn the_issuer_is_frozen_at_creation() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        seed_billable_hour(&db.pool).await;
+        super::super::business::set_business(
+            &db.pool,
+            &BusinessDetails {
+                name: "Acme AS".into(),
+                address: "1 Main St".into(),
+                tax_label: "VAT".into(),
+                template: "modern".into(),
+                payment_terms_days: 14,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let inv = create(&db.pool, 0).await;
+        // The returned invoice carries the frozen tax label.
+        assert_eq!(inv.tax_label, "VAT");
+        let frozen = get_invoice_issuer(&db.pool, &inv.id).await.unwrap();
+        assert_eq!(frozen.name, "Acme AS");
+        assert_eq!(frozen.tax_label, "VAT");
+        assert_eq!(frozen.template, "modern");
+        assert_eq!(frozen.payment_terms_days, 14);
+
+        // Editing the business profile after issuing must NOT rewrite the
+        // invoice — its snapshot and its exposed tax label stay put.
+        super::super::business::set_business(
+            &db.pool,
+            &BusinessDetails {
+                name: "Rebranded Co".into(),
+                tax_label: "GST".into(),
+                template: "minimal".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let still = get_invoice_issuer(&db.pool, &inv.id).await.unwrap();
+        assert_eq!(still.name, "Acme AS");
+        assert_eq!(still.tax_label, "VAT");
+        assert_eq!(still.template, "modern");
+        // get_invoice reads the frozen label, not the (now "GST") live profile.
+        let reread = get_invoice(&db.pool, &inv.id).await.unwrap().unwrap();
+        assert_eq!(reread.tax_label, "VAT");
+        // Sanity: the live profile really did change.
+        assert_eq!(
+            super::super::business::get_business(&db.pool)
+                .await
+                .unwrap()
+                .tax_label,
+            "GST"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_invoice_issuer_is_empty_for_unknown_or_snapshotless_invoices() {
+        let (_dir, db) = test_db().await;
+        // Unknown invoice → empty issuer (no row).
+        assert!(get_invoice_issuer(&db.pool, "nope")
+            .await
+            .unwrap()
+            .is_empty());
+        // A pre-0031 row (issuer_snapshot defaults to "") → empty issuer.
+        sqlx::query(
+            "INSERT INTO billing_invoices \
+               (id, seq, number, client_id, client_name, currency, issue_date, from_date, \
+                to_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, unrated_seconds, \
+                created_at) \
+             VALUES ('old', 1, 'INV-0001', 'c1', 'Acme', 'USD', '2026-07-15', '2026-07-01', \
+                     '2026-08-01', 0, 0, 0, 0, 0, 'x')",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(get_invoice_issuer(&db.pool, "old")
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

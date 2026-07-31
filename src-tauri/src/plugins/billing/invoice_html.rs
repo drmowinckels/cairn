@@ -307,6 +307,7 @@ mod tests {
             from_date: "2026-07-01".into(),
             to_date: "2026-08-01".into(),
             tax_rate_bps: 2500,
+            tax_label: String::new(),
             subtotal_cents: 15000,
             tax_cents: 3750,
             total_cents: 18750,

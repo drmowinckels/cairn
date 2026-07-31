@@ -7758,8 +7758,10 @@ pub async fn export_invoice_html_impl(
     let invoice = crate::plugins::billing::invoices::get_invoice(pool, &id)
         .await?
         .ok_or_else(|| "unknown invoice".to_string())?;
-    let business = crate::plugins::billing::business::get_business(pool).await?;
-    let html = crate::plugins::billing::invoice_html::render_html(&invoice, &business);
+    // Render from the issuer frozen onto the invoice at creation — not the live
+    // business profile — so editing the profile never rewrites an issued doc.
+    let issuer = crate::plugins::billing::invoices::get_invoice_issuer(pool, &id).await?;
+    let html = crate::plugins::billing::invoice_html::render_html(&invoice, &issuer);
     let path = std::path::Path::new(&dest);
     ensure_parent_dir(path).await?;
     tokio::fs::write(path, html.as_bytes()).await.map_err(err)?;
@@ -9756,6 +9758,20 @@ mod plugin_tests {
             "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, billable, created_at, updated_at) \
              VALUES ('e','p1',NULL,'','2026-07-10T09:00:00+00:00','2026-07-10T10:00:00+00:00','manual',1,'x','x')",
         ).execute(&db.pool).await.unwrap();
+
+        // The issuer set BEFORE creation is what the invoice freezes and the
+        // export renders — name, tax label, and template all snapshotted.
+        crate::plugins::billing::business::set_business(
+            &db.pool,
+            &crate::plugins::billing::business::BusinessDetails {
+                name: "Acme Consulting AS".into(),
+                tax_label: "VAT".into(),
+                template: "modern".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         let inv = create_invoice_impl(
             state.clone(),
             "c1".into(),
@@ -9768,17 +9784,6 @@ mod plugin_tests {
         .await
         .unwrap();
 
-        // Issuer details are threaded into the exported document.
-        crate::plugins::billing::business::set_business(
-            &db.pool,
-            &crate::plugins::billing::business::BusinessDetails {
-                name: "Acme Consulting AS".into(),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
         let dest = path("invoice.html");
         let out = export_invoice_html_impl(state.clone(), inv.id.clone(), dest.clone())
             .await
@@ -9787,9 +9792,36 @@ mod plugin_tests {
         let html = std::fs::read_to_string(&dest).unwrap();
         assert!(html.contains(&format!("Invoice {}", inv.number)));
         assert!(html.contains("Website"));
-        // The stored issuer "From" block is present.
+        // The frozen issuer "From" block, tax label, and template are present.
         assert!(html.contains("<h2>From</h2>"));
         assert!(html.contains("Acme Consulting AS"));
+        assert!(html.contains("VAT (0%)"));
+        assert!(html.contains("data-template=\"modern\""));
+
+        // Rebranding the business — new name, tax label, AND template — must NOT
+        // rewrite an already-issued invoice: a re-export keeps every frozen
+        // value and shows none of the new ones.
+        crate::plugins::billing::business::set_business(
+            &db.pool,
+            &crate::plugins::billing::business::BusinessDetails {
+                name: "Rebranded Co".into(),
+                tax_label: "GST".into(),
+                template: "minimal".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        export_invoice_html_impl(state.clone(), inv.id.clone(), dest.clone())
+            .await
+            .unwrap();
+        let html = std::fs::read_to_string(&dest).unwrap();
+        assert!(html.contains("Acme Consulting AS"));
+        assert!(html.contains("VAT (0%)"));
+        assert!(html.contains("data-template=\"modern\""));
+        assert!(!html.contains("Rebranded Co"));
+        assert!(!html.contains("GST"));
+        assert!(!html.contains("data-template=\"minimal\""));
     }
 
     #[tokio::test]

@@ -1273,6 +1273,8 @@ export interface Invoice {
   fromDate: string;
   toDate: string;
   taxRateBps: number;
+  /** The issuer's tax-line label frozen at creation; "" renders as "Tax". */
+  taxLabel: string;
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
