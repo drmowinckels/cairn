@@ -577,6 +577,41 @@ pub async fn get_invoice_issuer(pool: &SqlitePool, id: &str) -> Result<BusinessD
     Ok(parse_issuer(&snapshot.unwrap_or_default()))
 }
 
+/// Map each of `entry_ids` that has been billed to the number of the invoice
+/// billing it (`{ entryId: number }`). Unbilled ids are simply absent from the
+/// result. `entry_id` is the ledger's primary key, so each id yields at most
+/// one row. Used to flag already-invoiced entries in the activity log (#287) —
+/// a read, so it needs only the plugin enabled, not an active license.
+///
+/// The caller passes one day's closed entries, so the bound-parameter count
+/// stays far under SQLite's limit; it isn't chunked for arbitrarily large sets.
+pub async fn entries_billing_status(
+    pool: &SqlitePool,
+    entry_ids: &[String],
+) -> Result<BTreeMap<String, String>, String> {
+    if entry_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    // Bind each id as a parameter (never interpolate the text) — QueryBuilder
+    // is the same dynamic-`IN` idiom used in `connectors::params`.
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT bie.entry_id AS entry_id, bi.number AS number \
+           FROM billing_invoice_entries bie \
+           JOIN billing_invoices bi ON bi.id = bie.invoice_id \
+          WHERE bie.entry_id IN (",
+    );
+    let mut sep = qb.separated(", ");
+    for id in entry_ids {
+        sep.push_bind(id);
+    }
+    qb.push(")");
+    let rows = qb.build().fetch_all(pool).await.map_err(err)?;
+    Ok(rows
+        .iter()
+        .map(|r| (r.get::<String, _>("entry_id"), r.get::<String, _>("number")))
+        .collect())
+}
+
 pub async fn delete_invoice(pool: &SqlitePool, id: &str) -> Result<(), String> {
     // The lines go with it: `billing_invoice_lines.invoice_id` is ON DELETE
     // CASCADE and the pool runs with foreign keys on.
@@ -1306,5 +1341,35 @@ mod tests {
                 .unwrap()
                 .get("n");
         assert_eq!(orphans, 0);
+    }
+
+    #[tokio::test]
+    async fn entries_billing_status_maps_billed_entries_to_their_invoice() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        insert_billable_hour(&db.pool, "e1", "2026-07-10").await; // in the invoiced range
+        insert_billable_hour(&db.pool, "e2", "2026-08-15").await; // outside it → never billed
+
+        // Empty input short-circuits with no query.
+        assert!(entries_billing_status(&db.pool, &[])
+            .await
+            .unwrap()
+            .is_empty());
+        // Nothing billed yet → no rows.
+        assert!(
+            entries_billing_status(&db.pool, &["e1".into(), "e2".into()])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Invoice July → e1 is billed; e2 (August) stays unbilled.
+        let inv = create(&db.pool, 0).await;
+        let status = entries_billing_status(&db.pool, &["e1".into(), "e2".into(), "ghost".into()])
+            .await
+            .unwrap();
+        assert_eq!(status.len(), 1); // only the billed, existing entry
+        assert_eq!(status.get("e1"), Some(&inv.number)); // "INV-0001"
+        assert!(!status.contains_key("e2")); // unbilled id is absent
     }
 }

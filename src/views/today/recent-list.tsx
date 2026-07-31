@@ -18,6 +18,10 @@ export interface RecentEntry {
    *  to a remote task. Shown as a non-interactive chip — the row itself is the
    *  edit button, so the deep-link lives in the editor, not here. */
   remoteTaskLabel?: string | null;
+  /** Number of the invoice this entry was billed on (#287), when billing is
+   *  enabled and the entry has been invoiced. A non-interactive chip so the
+   *  user sees the time is already on an invoice before editing it. */
+  billedInvoiceNumber?: string | null;
 }
 
 interface Props {
@@ -82,6 +86,15 @@ export function RecentList({
                 <span className="entry-remote">
                   <Icon name="globe" size={10} />
                   {e.remoteTaskLabel}
+                </span>
+              )}
+              {e.billedInvoiceNumber && (
+                <span
+                  className="entry-billed"
+                  aria-label={`Billed on ${e.billedInvoiceNumber}`}
+                >
+                  <Icon name="reports" size={10} />
+                  {e.billedInvoiceNumber}
                 </span>
               )}
             </span>

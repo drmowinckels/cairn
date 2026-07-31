@@ -7719,6 +7719,19 @@ pub async fn get_invoice_impl(
     crate::plugins::billing::invoices::get_invoice(pool, &id).await
 }
 
+/// For each given entry id that's been invoiced, the invoice number billing it
+/// (unbilled ids are absent). Flags already-invoiced entries in the activity
+/// log (#287); a read, so it needs only the plugin enabled. Invoice shim in
+/// `lib.rs`.
+pub async fn entries_billing_status_impl(
+    state: State<'_, AppState>,
+    entry_ids: Vec<String>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let pool = &state.db.pool;
+    crate::plugins::billing::require_enabled(pool).await?;
+    crate::plugins::billing::invoices::entries_billing_status(pool, &entry_ids).await
+}
+
 /// Delete an invoice; returns the fresh list. Requires an active Pro license.
 pub async fn delete_invoice_impl(
     state: State<'_, AppState>,
@@ -9696,11 +9709,38 @@ mod plugin_tests {
                 .len(),
             1
         );
+
+        // The billed entry maps to its invoice number through the command; an
+        // unbilled id is simply absent.
+        let billed = entries_billing_status_impl(state.clone(), vec!["e".into(), "x".into()])
+            .await
+            .unwrap();
+        assert_eq!(billed.len(), 1);
+        assert_eq!(billed.get("e").map(String::as_str), Some("INV-0001"));
         let sent = set_invoice_status_impl(state.clone(), inv.id.clone(), "sent".into())
             .await
             .unwrap();
         assert_eq!(sent.status, "sent");
         assert!(delete_invoice_impl(state.clone(), inv.id.clone())
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn entries_billing_status_impl_requires_the_plugin_enabled() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        // Off by default → gated, even for a read.
+        assert!(entries_billing_status_impl(state.clone(), vec!["e".into()])
+            .await
+            .unwrap_err()
+            .contains("plugin is off"));
+        // Enabled with nothing billed → an empty map, no error.
+        set_plugin_enabled_impl(state.clone(), "billing".into(), true)
+            .await
+            .unwrap();
+        assert!(entries_billing_status_impl(state.clone(), vec!["e".into()])
             .await
             .unwrap()
             .is_empty());

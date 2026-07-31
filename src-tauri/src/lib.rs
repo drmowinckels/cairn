@@ -274,6 +274,14 @@ async fn get_invoice(
 }
 
 #[tauri::command]
+async fn entries_billing_status(
+    state: tauri::State<'_, AppState>,
+    entry_ids: Vec<String>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    ipc::entries_billing_status_impl(state, entry_ids).await
+}
+
+#[tauri::command]
 async fn delete_invoice(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -1037,6 +1045,7 @@ pub fn run() {
             create_invoice,
             list_invoices,
             get_invoice,
+            entries_billing_status,
             delete_invoice,
             set_invoice_status,
             export_invoice_html,

@@ -29,12 +29,14 @@ import {
   attributeEntryToRemoteTask,
   createEntry,
   deleteEntry,
+  entriesBillingStatus,
   inTauri,
   listTasks,
   saveTask,
   updateEntry,
   type BackendEntry,
 } from "../../lib/ipc";
+import { useBilling } from "../../lib/use-billing";
 import {
   bestLearnedRuleCandidate,
   buildReviewInbox,
@@ -545,6 +547,47 @@ export function TodayView({
   );
 
   // ── manual-entry modal (#21) ────────────────────────────────────
+  // Billing is an opt-in plugin; when it's on, flag entries already on an
+  // invoice (#287) so editing invoiced time is a conscious choice. Gated on the
+  // plugin being enabled (a read) — not on an active Pro license. Only completed
+  // entries can be billed, so we look up the closed ones (running ones never are).
+  const billing = useBilling({ revalidate: false });
+  const billingEnabled = !!billing.status?.enabled;
+  // A stable string key of the closed entries' ids (uuids, comma-safe). Keying
+  // the effect on this primitive — not a fresh array — keeps it from re-firing
+  // (and looping via setState) on every render when `todayEntries` changes
+  // identity but not content.
+  const closedIdsKey = useMemo(
+    () =>
+      todayEntries
+        .filter((e) => e.endedAt !== null)
+        .map((e) => e.id)
+        .join(","),
+    [todayEntries],
+  );
+  const [billedByEntry, setBilledByEntry] = useState<Record<string, string>>(
+    {},
+  );
+  useEffect(() => {
+    if (!billingEnabled) {
+      setBilledByEntry({});
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const ids = closedIdsKey ? closedIdsKey.split(",") : [];
+        const map = await entriesBillingStatus(ids);
+        if (alive) setBilledByEntry(map);
+      } catch {
+        // Non-fatal — just omit the billed chips.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [billingEnabled, closedIdsKey]);
+
   const [modalState, setModalState] = useState<
     | { open: false }
     | { open: true; mode: "create" | "edit"; draft: ManualEntryDraft }
@@ -683,9 +726,10 @@ export function TodayView({
         // Only remote (connector) tasks get the chip; local task names
         // aren't surfaced on the row.
         remoteTaskLabel: task?.connectorId ? task.name : null,
+        billedInvoiceNumber: billedByEntry[e.id] ?? null,
       };
     });
-  }, [todayEntries, tasksById, isToday]);
+  }, [todayEntries, tasksById, isToday, billedByEntry]);
 
   const findEntryById = useCallback(
     (id: string): BackendEntry | undefined =>
@@ -1460,6 +1504,7 @@ export function TodayView({
           onCreateTask={(projectId, name) => saveTask({ projectId, name })}
           connectors={connectors}
           onDelete={modalState.mode === "edit" ? handleDelete : undefined}
+          billedInvoiceNumber={billedByEntry[modalState.draft.id ?? ""] ?? null}
           onClose={closeModal}
         />
       )}

@@ -477,6 +477,7 @@ describe("ipc helpers (inside Tauri)", () => {
       deleteInvoice,
       setInvoiceStatus,
       exportInvoiceHtml,
+      entriesBillingStatus,
     } = await import("./ipc");
 
     invokeMock.mockResolvedValue({ id: "i1", number: "INV-0001" });
@@ -509,6 +510,20 @@ describe("ipc helpers (inside Tauri)", () => {
       id: "i1",
       dest: "/tmp/INV-0001.html",
     });
+
+    // The command already returns an { entryId: number } map.
+    invokeMock.mockResolvedValue({ e1: "INV-0001", e2: "INV-0002" });
+    expect(await entriesBillingStatus(["e1", "e2"])).toEqual({
+      e1: "INV-0001",
+      e2: "INV-0002",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("entries_billing_status", {
+      entryIds: ["e1", "e2"],
+    });
+    // An empty id list short-circuits without invoking.
+    invokeMock.mockClear();
+    expect(await entriesBillingStatus([])).toEqual({});
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("listConnectors invokes the command and returns the list", async () => {
@@ -760,6 +775,7 @@ describe("ipc helpers (outside Tauri)", () => {
       deleteInvoice,
       setInvoiceStatus,
       exportInvoiceHtml,
+      entriesBillingStatus,
     } = await import("./ipc");
     expect(
       await createInvoice({
@@ -774,6 +790,7 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(await deleteInvoice("i1")).toEqual([]);
     expect(await setInvoiceStatus("i1", "paid")).toBeNull();
     expect(await exportInvoiceHtml("i1", "d")).toBe("");
+    expect(await entriesBillingStatus(["e1"])).toEqual({});
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
