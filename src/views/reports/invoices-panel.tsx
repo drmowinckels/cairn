@@ -13,7 +13,6 @@ import { isoLocalDate, secondsToHours } from "../../lib/report-math";
 import type { Rounding } from "../../lib/rounding";
 import type { Client } from "../../lib/types";
 import { withPopoverPinned } from "../../lib/use-backup";
-import { useBusiness } from "../../lib/use-business";
 import { useInvoices } from "../../lib/use-invoices";
 
 const STATUSES: InvoiceStatus[] = ["draft", "sent", "paid"];
@@ -40,10 +39,6 @@ function currentMonthRange(): { from: string; to: string } {
  *  its status or delete it. Only mounts when Pro is active. */
 export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
   const { invoices, busy, error, create, remove, setStatus } = useInvoices();
-  // The tax line's label is the issuer's current setting, matching the export
-  // (which live-fetches it) so the preview and the exported file agree.
-  const { details: business } = useBusiness();
-  const taxLabel = business?.taxLabel || "Tax";
   const [clients, setClients] = useState<Client[]>([]);
   // Guards the expand fetch: bumped by every action that changes what the
   // detail should show, so a slow `getInvoice` can't overwrite a newer one.
@@ -275,7 +270,8 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
                       </div>
                       <div>
                         <dt>
-                          {taxLabel} ({taxPercentLabel(detail.taxRateBps)}%)
+                          {detail.taxLabel || "Tax"} (
+                          {taxPercentLabel(detail.taxRateBps)}%)
                         </dt>
                         <dd>{formatMoney(detail.taxCents, detail.currency)}</dd>
                       </div>

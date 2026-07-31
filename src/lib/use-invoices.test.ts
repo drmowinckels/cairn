@@ -35,6 +35,7 @@ const invoice = {
   fromDate: "2026-07-01",
   toDate: "2026-08-01",
   taxRateBps: 2500,
+  taxLabel: "",
   subtotalCents: 15000,
   taxCents: 3750,
   unratedSeconds: 0,

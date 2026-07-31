@@ -11,11 +11,6 @@ import userEvent from "@testing-library/user-event";
 const useInvoices = vi.fn();
 vi.mock("../../lib/use-invoices", () => ({ useInvoices: () => useInvoices() }));
 
-const useBusiness = vi.fn();
-vi.mock("../../lib/use-business", () => ({
-  useBusiness: () => useBusiness(),
-}));
-
 const getInvoice = vi.fn();
 const listClients = vi.fn();
 const exportInvoiceHtml = vi.fn();
@@ -57,6 +52,7 @@ const invoice = {
   fromDate: "2026-07-01",
   toDate: "2026-08-01",
   taxRateBps: 2500,
+  taxLabel: "",
   subtotalCents: 15000,
   taxCents: 3750,
   unratedSeconds: 3600,
@@ -87,7 +83,6 @@ function state(over: Partial<ReturnType<typeof useInvoices>> = {}) {
 
 beforeEach(() => {
   useInvoices.mockReset();
-  useBusiness.mockReset().mockReturnValue({ details: null });
   getInvoice.mockReset().mockResolvedValue(invoice);
   listClients.mockReset().mockResolvedValue([{ id: "c1", name: "Acme" }]);
   save.mockReset();
@@ -171,7 +166,7 @@ describe("InvoicesPanel", () => {
     // $150.00 shows for both the line amount and the subtotal.
     expect(screen.getAllByText(/\$150\.00/).length).toBeGreaterThan(0);
     expect(screen.getByText(/billable but unpriced/i)).toBeTruthy();
-    // No business tax label set → the tax line defaults to "Tax".
+    // No frozen tax label on the invoice → the tax line defaults to "Tax".
     expect(screen.getByText(/Tax \(25%\)/)).toBeTruthy();
 
     // Clicking the row again collapses the detail.
@@ -179,8 +174,10 @@ describe("InvoicesPanel", () => {
     await waitFor(() => expect(screen.queryByText("Website")).toBeNull());
   });
 
-  it("labels the tax line with the issuer's configured tax label", async () => {
-    useBusiness.mockReturnValue({ details: { taxLabel: "VAT" } });
+  it("labels the tax line with the invoice's frozen tax label", async () => {
+    // The label rides on the invoice (snapshotted at creation), not the live
+    // business profile — so an old invoice keeps the label it was issued with.
+    getInvoice.mockResolvedValue({ ...invoice, taxLabel: "VAT" });
     useInvoices.mockReturnValue(state({ invoices: [summary] }));
     render(<InvoicesPanel rounding={ROUNDING_OFF} />);
 

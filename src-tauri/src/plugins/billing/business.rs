@@ -20,8 +20,17 @@ const MAX_LOGO_BYTES: usize = 512 * 1024;
 const MAX_TERMS_DAYS: i64 = 3650;
 
 /// The issuer's business details, shown as the invoice "From" block.
+///
+/// This is a persisted wire format, not just an in-memory struct: each invoice
+/// freezes a JSON copy of it (`billing_invoices.issuer_snapshot`) at creation
+/// and historical invoices are rendered by deserializing that copy back. Treat
+/// the fields as **append-only** — renaming or retyping one silently drops it
+/// from (or fails to parse) every already-issued invoice's snapshot. Add new
+/// optional fields only; `serde(default)` then lets old snapshots (and an old
+/// invoice's `''`) deserialize by filling the absent field from `Default`. See
+/// `invoices::parse_issuer`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct BusinessDetails {
     pub name: String,
     pub address: String,
