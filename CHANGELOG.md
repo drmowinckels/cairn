@@ -32,6 +32,17 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Fixed
 
+- `[tray]` The About window no longer becomes an invisible, undismissable
+  window in the middle of the screen when its webview fails to paint. It
+  was the one overlay still missing the #261/#267 hardening: it is now
+  shown click-through until the frontend confirms first paint, takes
+  focus only once it is actually visible, and is hidden by a watchdog if
+  no paint arrives — so a blank overlay can never swallow clicks with no
+  way to close it. Its title bar can also be dragged again (the ACL was
+  missing `core:window:allow-start-dragging`). The show/watchdog/paint-ack
+  logic behind all three overlay windows now lives in one place
+  (`src-tauri/src/overlay.rs`) instead of being copied per window (#300).
+
 - `[autostart]` Startup now detects and repairs a stale macOS
   launch-at-login LaunchAgent left over from before #263's dev-build
   guard existed — one still pointing at a removed `target/debug`

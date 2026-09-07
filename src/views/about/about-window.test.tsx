@@ -23,7 +23,7 @@ vi.mock("../../lib/use-focus-trap", async (importOriginal) => {
   };
 });
 
-import { AboutWindow } from "./about-window";
+import { ABOUT_SHOWN_EVENT, AboutWindow } from "./about-window";
 
 beforeEach(() => {
   localStorage.clear();
@@ -100,11 +100,125 @@ describe("AboutWindow", () => {
   it("skips mount-focus when the dialog ref is unset", () => {
     useNullTrapRef = true;
     const raf = vi.spyOn(window, "requestAnimationFrame");
-    render(<AboutWindow onClose={vi.fn()} />);
+    render(<AboutWindow onClose={vi.fn()} onPainted={vi.fn()} />);
     const dialog = screen.getByRole("dialog", { name: /about cairn/i });
     expect(document.activeElement).not.toBe(dialog);
-    expect(raf).not.toHaveBeenCalled();
+    // The one frame request is the paint ack; mount-focus took the early
+    // return instead of scheduling a second.
+    expect(raf).toHaveBeenCalledTimes(1);
     raf.mockRestore();
+  });
+
+  // ---- #300: paint ack ----
+
+  it("acks paint on mount so the watchdog leaves the window up", async () => {
+    const onPainted = vi.fn().mockResolvedValue(undefined);
+    render(
+      <AboutWindow
+        onClose={vi.fn()}
+        onPainted={onPainted}
+        listenFn={vi.fn().mockResolvedValue(vi.fn())}
+      />,
+    );
+    await waitFor(() => expect(onPainted).toHaveBeenCalledTimes(1));
+  });
+
+  it("re-acks paint on every show, not just the first", async () => {
+    const onPainted = vi.fn().mockResolvedValue(undefined);
+    let fire: (() => void) | undefined;
+    const listenFn = vi.fn().mockImplementation((_event, handler) => {
+      fire = handler as () => void;
+      return Promise.resolve(vi.fn());
+    });
+    render(
+      <AboutWindow
+        onClose={vi.fn()}
+        onPainted={onPainted}
+        listenFn={listenFn}
+      />,
+    );
+    await waitFor(() => expect(onPainted).toHaveBeenCalledTimes(1));
+    expect(listenFn).toHaveBeenCalledWith(
+      ABOUT_SHOWN_EVENT,
+      expect.any(Function),
+    );
+
+    // The window is hidden, not closed, so the webview never remounts — a
+    // second open must still confirm paint or the watchdog hides it.
+    fire?.();
+    await waitFor(() => expect(onPainted).toHaveBeenCalledTimes(2));
+  });
+
+  it("logs instead of throwing when the paint ack rejects", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onPainted = vi.fn().mockRejectedValue(new Error("denied"));
+    render(
+      <AboutWindow
+        onClose={vi.fn()}
+        onPainted={onPainted}
+        listenFn={vi.fn().mockResolvedValue(vi.fn())}
+      />,
+    );
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "about_window_painted failed",
+        expect.any(Error),
+      ),
+    );
+    error.mockRestore();
+  });
+
+  it("logs instead of throwing when the show listener fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <AboutWindow
+        onClose={vi.fn()}
+        onPainted={vi.fn().mockResolvedValue(undefined)}
+        listenFn={vi.fn().mockRejectedValue(new Error("no ipc"))}
+      />,
+    );
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "about:shown listener failed",
+        expect.any(Error),
+      ),
+    );
+    error.mockRestore();
+  });
+
+  it("unsubscribes a listener that resolves after unmount", async () => {
+    const unlisten = vi.fn();
+    let resolveListen: ((fn: () => void) => void) | undefined;
+    const listenFn = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveListen = resolve as (fn: () => void) => void;
+        }),
+    );
+    const { unmount } = render(
+      <AboutWindow
+        onClose={vi.fn()}
+        onPainted={vi.fn().mockResolvedValue(undefined)}
+        listenFn={listenFn}
+      />,
+    );
+    unmount();
+    resolveListen?.(unlisten);
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(1));
+  });
+
+  it("unsubscribes on unmount", async () => {
+    const unlisten = vi.fn();
+    const { unmount } = render(
+      <AboutWindow
+        onClose={vi.fn()}
+        onPainted={vi.fn().mockResolvedValue(undefined)}
+        listenFn={vi.fn().mockResolvedValue(unlisten)}
+      />,
+    );
+    await waitFor(() => expect(unlisten).not.toHaveBeenCalled());
+    unmount();
+    expect(unlisten).toHaveBeenCalledTimes(1);
   });
 
   it("traps Tab focus inside the dialog", () => {

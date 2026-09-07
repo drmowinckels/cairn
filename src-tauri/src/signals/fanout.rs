@@ -311,16 +311,12 @@ pub(crate) async fn running_entry_exists(pool: &SqlitePool) -> bool {
     }
 }
 
-/// How long an always-on-top overlay window (idle prompt #261, suggestion
-/// notification #267) may stay shown without the frontend confirming its
-/// webview painted before the watchdog hides it. Generous because the
-/// window is click-through until the paint ack lands, so a slow-but-working
-/// paint is harmless — only a webview that never renders reaches the
-/// timeout, and hiding it beats leaving an invisible, undismissable,
-/// always-on-top overlay. Shared by both overlay windows; a future
-/// divergence in timeout can split this back into two constants.
+/// How long an always-on-top overlay window may stay shown without the
+/// frontend confirming its webview painted before the watchdog hides it.
+/// Re-exported from `crate::overlay`, which owns the shared hardening for
+/// every overlay window (idle #261, notification #267, About #300).
 pub(crate) const OVERLAY_PAINT_WATCHDOG_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(4);
+    crate::overlay::PAINT_WATCHDOG_TIMEOUT;
 
 /// Present the idle window safely and arm the paint watchdog (#261).
 /// Returns the show generation the watchdog guards, or `None` when app
@@ -333,40 +329,7 @@ pub(crate) fn show_idle_with_watchdog<R: Runtime>(
     win: &tauri::WebviewWindow<R>,
     timeout: std::time::Duration,
 ) -> Option<u64> {
-    use std::sync::atomic::Ordering::SeqCst;
-    use tauri::Manager;
-
-    let _ = win.set_ignore_cursor_events(true);
-    // `center()` returns a `Result` (no monitor → `Err`), unlike the
-    // positioner's `move_window`, which unwraps the monitor and panics.
-    let _ = win.center();
-    let _ = win.show();
-
-    let state = app.try_state::<crate::AppState>()?;
-    state.idle_painted.store(false, SeqCst);
-    let generation = state.idle_show_gen.fetch_add(1, SeqCst) + 1;
-    spawn_idle_watchdog(app.clone(), generation, timeout);
-    Some(generation)
-}
-
-/// Spawn the paint watchdog for a given show generation. Split from its
-/// body (`idle_watchdog_task`) so the timing-free decision is unit-tested
-/// directly without waiting on the real timeout.
-fn spawn_idle_watchdog<R: Runtime>(
-    app: AppHandle<R>,
-    generation: u64,
-    timeout: std::time::Duration,
-) {
-    tauri::async_runtime::spawn(idle_watchdog_task(app, generation, timeout));
-}
-
-async fn idle_watchdog_task<R: Runtime>(
-    app: AppHandle<R>,
-    generation: u64,
-    timeout: std::time::Duration,
-) {
-    tokio::time::sleep(timeout).await;
-    enforce_idle_watchdog(&app, generation);
+    crate::overlay::show_with_watchdog(app, win, &crate::overlay::IDLE, timeout)
 }
 
 /// Watchdog action after the timeout (#261): if this show is still the
@@ -374,28 +337,7 @@ async fn idle_watchdog_task<R: Runtime>(
 /// (and drop its click-through state) so it can't linger as an invisible
 /// overlay. Returns whether it hid the window.
 pub(crate) fn enforce_idle_watchdog<R: Runtime>(app: &AppHandle<R>, generation: u64) -> bool {
-    use std::sync::atomic::Ordering::SeqCst;
-    use tauri::Manager;
-
-    let Some(state) = app.try_state::<crate::AppState>() else {
-        return false;
-    };
-    if !overlay_watchdog_should_hide(
-        generation,
-        state.idle_show_gen.load(SeqCst),
-        state.idle_painted.load(SeqCst),
-    ) {
-        return false;
-    }
-    let Some(win) = app.get_webview_window(IDLE_LABEL) else {
-        return false;
-    };
-    log::warn!(
-        "fanout: idle window never confirmed paint within {OVERLAY_PAINT_WATCHDOG_TIMEOUT:?}; hiding to avoid an invisible input trap (#261)"
-    );
-    let _ = win.set_ignore_cursor_events(false);
-    let _ = win.hide();
-    true
+    crate::overlay::enforce_watchdog(app, &crate::overlay::IDLE, generation)
 }
 
 /// Present the suggestion-notification window safely and arm its paint
@@ -404,57 +346,12 @@ pub(crate) fn enforce_idle_watchdog<R: Runtime>(app: &AppHandle<R>, generation: 
 /// kind of foot-gun: a new transparent, always-on-top, undecorated window.
 /// Returns the show generation the watchdog guards, or `None` when app
 /// state is unavailable.
-///
-/// Positioned via the same native `.center()` `show_idle_with_watchdog`
-/// uses, not `tauri_plugin_positioner`'s `Position::TopRight`/`Position::Tray*`
-/// — that plugin's `calculate_position` does `window.current_monitor()?.unwrap()`,
-/// which panics outright when no monitor/tray rect is available. An earlier
-/// version of this function hand-rolled top-right placement instead, but
-/// `WebviewWindow::current_monitor()` returns `Ok(None)` unconditionally
-/// under `MockRuntime` with no test hook to override it (confirmed by
-/// reading the Tauri source), so *any* branch gated on monitor availability
-/// is structurally unreachable under this codebase's Rust test harness —
-/// there is no way to cover it, no matter how it's written. `.center()`
-/// has no such branch (it's a single opaque native call, already proven by
-/// the idle/about windows), so that's what this window uses too.
 pub(crate) fn show_notify_with_watchdog<R: Runtime>(
     app: &AppHandle<R>,
     win: &tauri::WebviewWindow<R>,
     timeout: std::time::Duration,
 ) -> Option<u64> {
-    use std::sync::atomic::Ordering::SeqCst;
-    use tauri::Manager;
-
-    let _ = win.set_ignore_cursor_events(true);
-    let _ = win.center();
-    let _ = win.show();
-
-    let state = app.try_state::<crate::AppState>()?;
-    state.notify_painted.store(false, SeqCst);
-    state.notify_currently_shown.store(true, SeqCst);
-    let generation = state.notify_show_gen.fetch_add(1, SeqCst) + 1;
-    spawn_notify_watchdog(app.clone(), generation, timeout);
-    Some(generation)
-}
-
-/// Spawn the notification window's paint watchdog. Split from its body
-/// (`notify_watchdog_task`) for the same reason as `spawn_idle_watchdog`:
-/// the timing-free decision stays directly unit-testable.
-fn spawn_notify_watchdog<R: Runtime>(
-    app: AppHandle<R>,
-    generation: u64,
-    timeout: std::time::Duration,
-) {
-    tauri::async_runtime::spawn(notify_watchdog_task(app, generation, timeout));
-}
-
-async fn notify_watchdog_task<R: Runtime>(
-    app: AppHandle<R>,
-    generation: u64,
-    timeout: std::time::Duration,
-) {
-    tokio::time::sleep(timeout).await;
-    enforce_notify_watchdog(&app, generation);
+    crate::overlay::show_with_watchdog(app, win, &crate::overlay::NOTIFY, timeout)
 }
 
 /// Watchdog action after the timeout (#267): if this show is still current
@@ -462,40 +359,7 @@ async fn notify_watchdog_task<R: Runtime>(
 /// its click-through state) so it can't linger as an invisible overlay.
 /// Returns whether it hid the window.
 pub(crate) fn enforce_notify_watchdog<R: Runtime>(app: &AppHandle<R>, generation: u64) -> bool {
-    use std::sync::atomic::Ordering::SeqCst;
-    use tauri::Manager;
-
-    let Some(state) = app.try_state::<crate::AppState>() else {
-        return false;
-    };
-    if !overlay_watchdog_should_hide(
-        generation,
-        state.notify_show_gen.load(SeqCst),
-        state.notify_painted.load(SeqCst),
-    ) {
-        return false;
-    }
-    let Some(win) = app.get_webview_window(NOTIFY_LABEL) else {
-        return false;
-    };
-    log::warn!(
-        "fanout: notification window never confirmed paint within {OVERLAY_PAINT_WATCHDOG_TIMEOUT:?}; hiding to avoid an invisible input trap (#267)"
-    );
-    let _ = win.set_ignore_cursor_events(false);
-    let _ = win.hide();
-    state.notify_currently_shown.store(false, SeqCst);
-    true
-}
-
-/// Pure decision for the paint watchdog: hide only when this show is still
-/// the latest (not superseded by a newer show) and the webview never
-/// confirmed paint.
-pub(crate) fn overlay_watchdog_should_hide(
-    shown_generation: u64,
-    current_generation: u64,
-    painted: bool,
-) -> bool {
-    shown_generation == current_generation && !painted
+    crate::overlay::enforce_watchdog(app, &crate::overlay::NOTIFY, generation)
 }
 
 pub async fn run_idle_resume<R: Runtime>(
@@ -932,11 +796,11 @@ mod tests {
     #[test]
     fn idle_watchdog_hides_only_when_current_and_unpainted() {
         // Current show, never painted → hide.
-        assert!(overlay_watchdog_should_hide(3, 3, false));
+        assert!(crate::overlay::should_hide(3, 3, false));
         // Current show but painted → leave it (the prompt is up).
-        assert!(!overlay_watchdog_should_hide(3, 3, true));
+        assert!(!crate::overlay::should_hide(3, 3, true));
         // Superseded by a newer show → this watchdog is stale, do nothing.
-        assert!(!overlay_watchdog_should_hide(2, 3, false));
+        assert!(!crate::overlay::should_hide(2, 3, false));
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1085,7 +949,13 @@ mod tests {
         // `show()` reliably reports visible under MockRuntime (unlike hide).
         state.idle_painted.store(true, SeqCst);
 
-        idle_watchdog_task(handle.clone(), 1, Duration::from_millis(20)).await;
+        crate::overlay::watchdog_task(
+            handle.clone(),
+            &crate::overlay::IDLE,
+            1,
+            Duration::from_millis(20),
+        )
+        .await;
         assert!(win.is_visible().unwrap(), "painted → task left it up");
     }
 
@@ -1240,7 +1110,13 @@ mod tests {
         // `show()` reliably reports visible under MockRuntime (unlike hide).
         state.notify_painted.store(true, SeqCst);
 
-        notify_watchdog_task(handle.clone(), 1, Duration::from_millis(20)).await;
+        crate::overlay::watchdog_task(
+            handle.clone(),
+            &crate::overlay::NOTIFY,
+            1,
+            Duration::from_millis(20),
+        )
+        .await;
         assert!(win.is_visible().unwrap(), "painted → task left it up");
     }
 }

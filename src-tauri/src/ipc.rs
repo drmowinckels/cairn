@@ -2260,13 +2260,17 @@ pub fn dismiss_idle(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
 /// input trap. Marking the show painted cancels the paint watchdog; clearing
 /// `ignore_cursor_events` makes the now-visible prompt interactive.
 pub fn idle_window_painted_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) {
-    state
-        .idle_painted
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    if let Some(win) = app.get_webview_window(crate::signals::fanout::IDLE_LABEL) {
-        let _ = win.set_ignore_cursor_events(false);
-        let _ = win.set_focus();
-    }
+    crate::overlay::confirm_painted(app, state, &crate::overlay::IDLE);
+}
+
+/// Confirm the About window's webview has painted (#300). The About window
+/// is the same kind of transparent, always-on-top, undecorated overlay as
+/// the idle prompt, so it gets the same treatment: shown click-through with
+/// a watchdog armed, made interactive and focused only once this ack lands.
+/// Focusing here rather than at show time also means Escape reaches a window
+/// the user can actually see.
+pub fn about_window_painted_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) {
+    crate::overlay::confirm_painted(app, state, &crate::overlay::ABOUT);
 }
 
 /// Show the suggestion-notification window and forward `payload` to it
@@ -2403,12 +2407,7 @@ pub fn notification_window_painted_impl<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     state: &AppState,
 ) {
-    state
-        .notify_painted
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    if let Some(win) = app.get_webview_window(crate::signals::fanout::NOTIFY_LABEL) {
-        let _ = win.set_ignore_cursor_events(false);
-    }
+    crate::overlay::confirm_painted(app, state, &crate::overlay::NOTIFY);
 }
 
 /// Whether `exe` is a Cargo dev/release build run in place — i.e. it lives

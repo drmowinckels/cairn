@@ -23,7 +23,14 @@ const MENU_ID_ABOUT: &str = "tray.about";
 
 /// Window label of the About window — must match the `label` in
 /// `tauri.conf.json` and the `?win=about` route the webview reads.
-const ABOUT_LABEL: &str = "about";
+pub(crate) const ABOUT_LABEL: &str = "about";
+
+/// Emitted to the About window every time it is shown. The window is hidden
+/// (not closed) on dismiss, so its webview mounts once and survives every
+/// later open — a mount-only paint ack would confirm the first show and
+/// leave every subsequent one unacked, letting the watchdog hide a perfectly
+/// good window after its timeout (#300). The frontend re-acks on this event.
+pub(crate) const EVENT_ABOUT_SHOWN: &str = "about:shown";
 
 /// Menu item id: quits the application. Closes #54 — until this
 /// existed, the only way to quit was Force Quit from the OS
@@ -165,17 +172,30 @@ fn apply_action(app: &AppHandle, action: TrayMenuAction) {
     }
 }
 
-/// Show the small About window (`?win=about`), centered + focused.
-/// The window is created hidden in `tauri.conf.json`; this reveals it
-/// (and re-centres on each open). The webview's close button hides it
-/// again. Mirrors the idle window's show flow.
+/// Show the small About window (`?win=about`), centered. The window is
+/// created hidden in `tauri.conf.json`; this reveals it (and re-centres on
+/// each open). The webview's close button hides it again.
+///
+/// Goes through `crate::overlay` like the idle prompt and the suggestion
+/// notification (#300): About is the same transparent + always-on-top +
+/// undecorated shape, and without the shared hardening a webview that never
+/// painted left an invisible window swallowing every click in the middle of
+/// the screen with no way to dismiss it. So it is shown click-through with a
+/// paint watchdog armed, and only becomes interactive + focused once
+/// `about_window_painted` confirms the webview rendered.
 fn show_about<R: Runtime>(app: &AppHandle<R>) {
     use tauri::Manager;
     if let Some(win) = app.get_webview_window(ABOUT_LABEL) {
-        use tauri_plugin_positioner::{Position, WindowExt};
-        let _ = win.move_window(Position::Center);
-        let _ = win.show();
-        let _ = win.set_focus();
+        crate::overlay::show_with_watchdog(
+            app,
+            &win,
+            &crate::overlay::ABOUT,
+            crate::overlay::PAINT_WATCHDOG_TIMEOUT,
+        );
+        use tauri::Emitter;
+        if let Err(e) = app.emit_to(ABOUT_LABEL, EVENT_ABOUT_SHOWN, ()) {
+            log::warn!("tray: about show event not delivered: {e}");
+        }
     } else {
         log::warn!("tray: about window missing; not shown");
     }
@@ -318,6 +338,8 @@ fn tray_icon() -> tauri::Result<Image<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "windows"))]
+    use tauri::Manager;
 
     #[test]
     fn dispatch_open_menu_id_returns_open_action() {
@@ -403,6 +425,56 @@ mod tests {
         // either side silently drops the binding. Assert the contract.
         assert_eq!(TRAY_START_PROJECT_EVENT, "tray:start-project");
         assert_eq!(TRAY_STOP_EVENT, "tray:stop");
+        // `about-window.tsx` hard-codes this one to re-ack paint on every
+        // show (#300).
+        assert_eq!(EVENT_ABOUT_SHOWN, "about:shown");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn show_about_arms_the_paint_watchdog() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let handle = app.handle().clone();
+        let win =
+            tauri::WebviewWindowBuilder::new(&handle, ABOUT_LABEL, tauri::WebviewUrl::default())
+                .visible(false)
+                .build()
+                .expect("about window builds");
+
+        show_about(&handle);
+
+        assert!(win.is_visible().unwrap(), "the About window is shown");
+        let state = app.try_state::<crate::AppState>().unwrap();
+        assert_eq!(
+            state.about_show_gen.load(SeqCst),
+            1,
+            "the show is generation-tracked, so the watchdog can hide it \
+             if the webview never paints (#300)"
+        );
+        assert!(
+            !state.about_painted.load(SeqCst),
+            "shown click-through until the frontend acks paint"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn show_about_without_the_window_is_a_noop() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
+
+        // No About window built — must warn and return, not panic.
+        show_about(app.handle());
+
+        assert_eq!(
+            app.try_state::<crate::AppState>()
+                .unwrap()
+                .about_show_gen
+                .load(SeqCst),
+            0,
+            "nothing shown → nothing armed"
+        );
     }
 
     // `build_menu` / `update_menu` are intentionally not unit-tested.

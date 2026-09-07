@@ -5,6 +5,7 @@ mod connectors;
 mod db;
 mod export;
 mod ipc;
+mod overlay;
 mod plugins;
 mod popover;
 mod prompt_scheduler;
@@ -392,6 +393,17 @@ fn idle_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>)
     ipc::idle_window_painted_impl(&app, &state);
 }
 
+/// The About window's frontend calls this once its webview has rendered
+/// (#300), confirming the overlay actually painted. Same contract as
+/// `idle_window_painted`: the window is shown click-through with a watchdog
+/// armed, so a webview that never renders can't sit invisibly in the middle
+/// of the screen swallowing clicks. Thin shim over the testable
+/// `ipc::about_window_painted_impl`.
+#[tauri::command]
+fn about_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    ipc::about_window_painted_impl(&app, &state);
+}
+
 /// Show the suggestion-notification overlay window and forward the match
 /// payload to it (#267). Called by the always-mounted `useSuggestionNotifier`
 /// hook when the "Detection prompts" setting is `"notification"` and a
@@ -688,14 +700,11 @@ pub struct AppState {
     /// `dismiss_suggestion_notification`. Mirrors `last_idle`.
     ///
     /// This field plus the `notify_*` trio below duplicate the shape of
-    /// `last_idle`/`idle_show_gen`/`idle_painted` one-for-one (see
-    /// `signals::fanout`'s `show_idle_with_watchdog`/`show_notify_with_watchdog`
-    /// pair for the same duplication in the show/watchdog functions — kept
-    /// separate deliberately for now since idle and notify diverge in
-    /// positioning, focus behavior, and the notify-only `currently_shown`
-    /// dedup). If a third overlay window is ever added, that's the signal
-    /// to stop duplicating and factor a shared `OverlayWindowState { show_gen,
-    /// painted, currently_shown }` both windows embed instead.
+    /// `last_idle`/`idle_show_gen`/`idle_painted` one-for-one. The
+    /// *behaviour* that reads them is no longer duplicated: `crate::overlay`
+    /// owns one show/watchdog/paint-ack implementation and each window
+    /// contributes an `Overlay` descriptor naming its pair of atomics
+    /// (#300 added the third such window, About).
     pub last_notification: std::sync::Mutex<Option<rules::RuleMatch>>,
     /// Notification-window paint coordination (#267). Same pattern as
     /// `idle_show_gen` / `idle_painted`: the window is transparent +
@@ -716,6 +725,14 @@ pub struct AppState {
     /// re-arming the show/position/watchdog on every tick (no flicker),
     /// only refreshing the emitted payload and cold-start stash.
     pub notify_currently_shown: AtomicBool,
+    /// About-window paint coordination (#300). The About window is the
+    /// third transparent + always-on-top + undecorated overlay and had none
+    /// of the #261/#267 hardening: opening it on a build whose webview
+    /// doesn't paint left an invisible, undismissable window swallowing
+    /// clicks in the middle of the screen. Same contract as the pair above,
+    /// driven by `crate::overlay::ABOUT`.
+    pub about_show_gen: AtomicU64,
+    pub about_painted: AtomicBool,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
     /// here on every push from the `browser` plugin's local-IPC listener
     /// (`plugins::browser`); the IPC handler `browser_extension_status`
@@ -988,6 +1005,7 @@ pub fn run() {
             ipc::pending_idle,
             ipc::dismiss_idle,
             idle_window_painted,
+            about_window_painted,
             show_suggestion_notification,
             pending_notification,
             dismiss_suggestion_notification,
@@ -1358,6 +1376,8 @@ pub fn run() {
                 notify_show_gen: AtomicU64::new(0),
                 notify_painted: AtomicBool::new(false),
                 notify_currently_shown: AtomicBool::new(false),
+                about_show_gen: AtomicU64::new(0),
+                about_painted: AtomicBool::new(false),
                 browser_extension: browser_extension_state,
                 auto_backup_lock,
             });
