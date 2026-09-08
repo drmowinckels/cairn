@@ -31,6 +31,13 @@ tauri-plugin-autostart = "2"
 tauri-plugin-log = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
+# Native message box for fatal startup failures (#301). Already in the
+# tree via tauri-plugin-dialog; taken as a direct dep because the dialog
+# must be shown before any Tauri AppHandle exists.
+rfd = { version = "0.16", default-features = false, features = [
+  "common-controls-v6",
+  "gtk3",
+] }
 tauri-plugin-positioner = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"

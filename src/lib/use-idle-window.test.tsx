@@ -48,6 +48,24 @@ describe("useIdleWindow", () => {
     await waitFor(() => expect(result.current.prompt).toEqual(RESUME));
   });
 
+  it("logs a rejected idle-resume subscribe instead of swallowing it (#301)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderHook(() =>
+      useIdleWindow({
+        enabled: true,
+        listen: vi.fn().mockRejectedValue(new Error("not allowed")) as never,
+        pendingIdle: vi.fn().mockResolvedValue(null) as never,
+      }),
+    );
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "idle: signal:idle-resume listen failed",
+        expect.any(Error),
+      ),
+    );
+    error.mockRestore();
+  });
+
   it("exposes the tracking project once a prompt arrives", async () => {
     const { result } = renderHook(() =>
       useIdleWindow({

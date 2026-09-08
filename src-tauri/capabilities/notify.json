@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notify",
+  "description": "Capabilities for the suggestion-notification window (#267): listen for the `signal:match` event the backend emits to it. Without this the window is matched by no capability at all, so `core:event:default` is ungranted, its `listen()` is denied by the ACL, no suggestion ever arrives, nothing renders, and the paint watchdog hides the window 4s after every show (#301). Deliberately omits dialog / autostart / global-shortcut / positioner / opener — the notification window needs none of them, and it never hides itself (the backend's `dismiss_suggestion_notification` does that), so it needs no window permissions either.",
+  "windows": ["notify"],
+  "permissions": ["core:default", "core:event:default", "log:default"]
+}

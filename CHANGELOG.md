@@ -43,6 +43,22 @@ as the GitHub Release body, so keep the most recent version at the top.
   logic behind all three overlay windows now lives in one place
   (`src-tauri/src/overlay.rs`) instead of being copied per window (#300).
 
+- `[detection]` Suggestion notifications actually appear now. The `notify`
+  window was matched by **no capability at all**, so the ACL denied its
+  `listen()` for `signal:match`; no suggestion ever reached it, it rendered
+  nothing, and the paint watchdog hid it 4s after every show — every
+  notification-tier prompt was silently lost. The rejected subscribe was
+  swallowed as an unhandled promise, which is why it went unnoticed: both
+  overlay hooks now log it. A test asserts every window declared in
+  `tauri.conf.json` is covered by a capability (and vice versa), so the
+  next window can't ship ungranted (#301).
+- `[startup]` A fatal startup failure now shows a native error dialog with
+  the underlying reason instead of dying with a silent `SIGABRT`. Tauri
+  raises a setup-hook `Err` by panicking from inside the event loop's
+  `Ready` callback — an `extern "C"` context that can't unwind — so the
+  process aborted with the real cause (e.g. a database migration mismatch)
+  visible only when running the binary from a terminal (#302).
+
 - `[autostart]` Startup now detects and repairs a stale macOS
   launch-at-login LaunchAgent left over from before #263's dev-build
   guard existed — one still pointing at a removed `target/debug`

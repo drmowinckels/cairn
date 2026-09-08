@@ -93,10 +93,15 @@ export function useIdleWindow(opts: UseIdleWindowOpts = {}): UseIdleWindow {
 
     void listenFn<IdleResumeEvent>(SIGNAL_IDLE_RESUME_EVENT, (event) => {
       setPrompt(event.payload);
-    }).then((un) => {
-      if (cancelled) un();
-      else unlisten = un;
-    });
+    })
+      .then((un) => {
+        if (cancelled) un();
+        else unlisten = un;
+      })
+      // A rejected subscribe (e.g. a missing ACL grant, the #301 cause on
+      // the notify window) must not vanish as an unhandled rejection — the
+      // only other symptom is the prompt silently never appearing.
+      .catch((e) => console.error("idle: signal:idle-resume listen failed", e));
 
     return () => {
       cancelled = true;
