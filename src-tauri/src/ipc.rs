@@ -10110,6 +10110,50 @@ mod budget_tests {
         assert!(state.idle_painted.load(SeqCst));
     }
 
+    // ---- #300: About paint ack ----
+    //
+    // `overlay::confirm_painted` has its own tests, but this thin wrapper is
+    // the only thing `lib.rs`'s `#[tauri::command]` shim calls, and `lib.rs`
+    // is codecov-ignored as Tauri wiring — so without these the wrapper is
+    // genuinely untested and shows up as a patch-coverage miss.
+
+    #[tokio::test]
+    async fn about_window_painted_marks_painted_and_clears_click_through() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let win = tauri::WebviewWindowBuilder::new(
+            app.handle(),
+            crate::tray::ABOUT_LABEL,
+            tauri::WebviewUrl::default(),
+        )
+        .visible(true)
+        .build()
+        .expect("about window builds");
+        let _ = win.set_ignore_cursor_events(true);
+        let state = app.state::<AppState>();
+        state.about_painted.store(false, SeqCst);
+
+        about_window_painted_impl(app.handle(), &state);
+
+        assert!(
+            state.about_painted.load(SeqCst),
+            "the show is marked painted, cancelling the watchdog"
+        );
+    }
+
+    #[tokio::test]
+    async fn about_window_painted_is_safe_without_a_window() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        state.about_painted.store(false, SeqCst);
+
+        // No About window exists — must not panic and still record the ack.
+        about_window_painted_impl(app.handle(), &state);
+
+        assert!(state.about_painted.load(SeqCst));
+    }
+
     // ---- #267: suggestion-notification window ----
 
     fn notification_fixture(rule_id: &str) -> crate::rules::RuleMatch {
