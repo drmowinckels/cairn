@@ -37,7 +37,7 @@ export function AboutWindow({
   // the ack lands the window is shown click-through with a watchdog poised
   // to hide it, so a webview that never renders can't become an invisible
   // input trap. Waits for a paint frame so the ack reflects real rendering,
-  // not just a committed React render. Acked on mount (covering the very
+  // not just a committed React render. Confirmed on mount (covering the very
   // first show, and a webview that mounts after the show event) and again on
   // every later show — the window is hidden rather than closed, so it never
   // remounts.

@@ -32,8 +32,8 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Fixed
 
-- `[tray]` The About window no longer becomes an invisible, undismissable
-  window in the middle of the screen when its webview fails to paint. It
+- `[tray]` The About window no longer becomes an invisible window in
+  the middle of the screen that cannot be dismissed when its webview fails to paint. It
   was the one overlay still missing the #261/#267 hardening: it is now
   shown click-through until the frontend confirms first paint, takes
   focus only once it is actually visible, and is hidden by a watchdog if
@@ -51,7 +51,7 @@ as the GitHub Release body, so keep the most recent version at the top.
   swallowed as an unhandled promise, which is why it went unnoticed: both
   overlay hooks now log it. A test asserts every window declared in
   `tauri.conf.json` is covered by a capability (and vice versa), so the
-  next window can't ship ungranted (#301).
+  next window can't ship without one (#301).
 - `[startup]` A fatal startup failure now shows a native error dialog with
   the underlying reason instead of dying with a silent `SIGABRT`. Tauri
   raises a setup-hook `Err` by panicking from inside the event loop's
