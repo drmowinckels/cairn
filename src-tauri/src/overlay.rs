@@ -199,7 +199,13 @@ pub(crate) fn confirm_painted<R: Runtime>(
     }
 }
 
-#[cfg(test)]
+// Gated as a whole rather than per-test: every test here needs
+// `tauri::test::MockRuntime`, which this codebase can't build on Windows (see
+// Cargo.toml's target-gated `tauri = { features = ["test"] }` dev-dep). With
+// per-item gates the module compiles empty on Windows and the leftover
+// `use super::*` trips `-D warnings`. The pure `should_hide` decision is still
+// covered on Windows via `signals::fanout`'s ungated test.
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
 
@@ -207,7 +213,6 @@ mod tests {
     // `signals::fanout` wrappers; these cover the About overlay (#300), the
     // third window onto this shared machinery.
 
-    #[cfg(not(target_os = "windows"))]
     async fn about_window<R: Runtime>(app: &AppHandle<R>) -> tauri::WebviewWindow<R> {
         tauri::WebviewWindowBuilder::new(app, ABOUT.label, tauri::WebviewUrl::default())
             .visible(false)
@@ -215,7 +220,6 @@ mod tests {
             .expect("about window builds")
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn show_about_presents_click_through_and_arms_watchdog() {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
@@ -235,7 +239,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn show_about_without_app_state_arms_nothing() {
         use tauri::test::{mock_builder, mock_context, noop_assets};
@@ -249,7 +252,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn about_watchdog_hides_a_current_unpainted_window() {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
@@ -268,7 +270,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn about_watchdog_leaves_a_painted_window_up() {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
@@ -288,7 +289,6 @@ mod tests {
         assert!(win.is_visible().unwrap(), "the About window stays up");
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn about_watchdog_ignores_a_superseded_generation() {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
@@ -306,7 +306,6 @@ mod tests {
         assert!(win.is_visible().unwrap());
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn about_watchdog_without_app_state_is_a_noop() {
         use tauri::test::{mock_builder, mock_context, noop_assets};
@@ -319,7 +318,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn about_watchdog_without_a_window_is_a_noop() {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
@@ -332,7 +330,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn about_paint_ack_marks_painted_and_focuses() {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
@@ -349,7 +346,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn about_paint_ack_is_safe_without_a_window() {
         let (_dir, app, _db) = crate::test_support::mock_app_with_db().await;
