@@ -594,24 +594,27 @@ const ISSUES_URL: &str = "https://github.com/drmowinckels/cairn/issues";
 /// running the binary from a terminal. That is exactly how a migration
 /// mismatch presented as "Cairn just crashes" (#302).
 ///
-/// So: log it, show a native message box, and exit non-zero ourselves. The
-/// exit skips the DB-pool drain, which is correct — every caller is a
-/// failure that happens before or during DB open, so there is no pool with
-/// in-flight writes to protect.
+/// So: log it, show a native message box, and exit non-zero ourselves.
+///
+/// The exit skips `shutdown::drain_db_pool`. Two of the three callers fail
+/// before the pool exists at all; the third (`calendar_registry_for_setup`)
+/// runs just after `open_db_for_setup`, so a pool does exist — but setup has
+/// not yet spawned anything that writes to it, so there is nothing in flight
+/// to lose. If a future fatal branch is added after the first writer starts,
+/// it must drain rather than call this.
 fn fatal_startup(reason: &str) -> ! {
-    let text = startup_error_text(reason);
     log::error!("cairn: fatal startup failure: {reason}");
-    // Not shown under `cargo test`: the helper is only ever reached from
-    // the real setup hook, and a modal in CI would hang the run.
+    // Not shown under `cargo test`: the helper is only ever reached from the
+    // real setup hook, and a modal in CI would hang the run. `startup_error_text`
+    // is composed inside the block so it isn't dead work (or an unused binding)
+    // in test builds; it's covered directly by its own unit test.
     #[cfg(not(test))]
     rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
         .set_title("Cairn can't start")
-        .set_description(&text)
+        .set_description(startup_error_text(reason))
         .set_buttons(rfd::MessageButtons::Ok)
         .show();
-    #[cfg(test)]
-    let _ = text;
     std::process::exit(1);
 }
 

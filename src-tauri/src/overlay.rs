@@ -99,11 +99,19 @@ pub(crate) fn show_with_watchdog<R: Runtime>(
     overlay: &'static Overlay,
     timeout: Duration,
 ) -> Option<u64> {
+    // State first, *then* show. Bailing out after `show()` would leave the
+    // window up, click-through and unwatched — no paint ack can arrive to
+    // make it interactive and no watchdog can hide it, which is exactly the
+    // unprotected state this module exists to prevent. Not reachable in
+    // production (setup manages `AppState` long before any overlay can be
+    // shown), but the ordering shouldn't be the thing standing between us
+    // and a permanent invisible overlay.
+    let state = app.try_state::<AppState>()?;
+
     let _ = win.set_ignore_cursor_events(true);
     let _ = win.center();
     let _ = win.show();
 
-    let state = app.try_state::<AppState>()?;
     let (show_gen, painted) = (overlay.paint_state)(&state);
     painted.store(false, SeqCst);
     let generation = show_gen.fetch_add(1, SeqCst) + 1;
@@ -153,8 +161,11 @@ pub(crate) fn enforce_watchdog<R: Runtime>(
     let Some(win) = app.get_webview_window(overlay.label) else {
         return false;
     };
+    // Deliberately does not name a duration: this function doesn't know the
+    // timeout its caller waited (tests pass a short one), and a log line
+    // stating a wait it never measured is worse than one that omits it.
     log::warn!(
-        "overlay: {} window never confirmed paint within {PAINT_WATCHDOG_TIMEOUT:?}; hiding to avoid an invisible input trap ({})",
+        "overlay: {} window never confirmed paint before the watchdog timeout; hiding to avoid an invisible input trap ({})",
         overlay.label,
         overlay.issue
     );

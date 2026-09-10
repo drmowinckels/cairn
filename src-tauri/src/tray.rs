@@ -184,7 +184,7 @@ fn apply_action(app: &AppHandle, action: TrayMenuAction) {
 /// paint watchdog armed, and only becomes interactive + focused once
 /// `about_window_painted` confirms the webview rendered.
 fn show_about<R: Runtime>(app: &AppHandle<R>) {
-    use tauri::Manager;
+    use tauri::{Emitter, Manager};
     if let Some(win) = app.get_webview_window(ABOUT_LABEL) {
         crate::overlay::show_with_watchdog(
             app,
@@ -192,7 +192,6 @@ fn show_about<R: Runtime>(app: &AppHandle<R>) {
             &crate::overlay::ABOUT,
             crate::overlay::PAINT_WATCHDOG_TIMEOUT,
         );
-        use tauri::Emitter;
         if let Err(e) = app.emit_to(ABOUT_LABEL, EVENT_ABOUT_SHOWN, ()) {
             log::warn!("tray: about show event not delivered: {e}");
         }
