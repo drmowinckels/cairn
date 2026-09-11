@@ -231,8 +231,18 @@ describe("Popover footer — live totals (#142)", () => {
     });
 
     const footer = document.querySelector(".pop-foot") as HTMLElement;
-    await waitFor(() => expect(footer.textContent).toMatch(/1h 30m today/));
-    expect(footer.textContent).toMatch(/2 rules active/);
+    // The total and the rule count come from *independent* invokes
+    // (`list_day` / `list_rules`), each landing in its own `setState`.
+    // Waiting on only one of them and then asserting the other bare is the
+    // race behind #275: under load React can commit the total before the
+    // rules state arrives. Both go inside the same `waitFor` so the test
+    // waits for the footer to settle as a whole.
+    await waitFor(() => {
+      expect(footer.textContent).toMatch(/1h 30m today/);
+      expect(footer.textContent).toMatch(/2 rules active/);
+    });
+    // Safe to assert bare now: the positives above have already settled, so
+    // these can't pass vacuously against a not-yet-rendered footer.
     // The old hardcoded fixture copy must be gone.
     expect(footer.textContent).not.toMatch(/4h 12m/);
     expect(footer.textContent).not.toMatch(/3 rules active/);
@@ -245,8 +255,14 @@ describe("Popover footer — live totals (#142)", () => {
       activityLogSettings: { enabled: true, retentionDays: 7 },
     });
     const footer = document.querySelector(".pop-foot") as HTMLElement;
-    await waitFor(() => expect(footer.querySelector(".foot-rec")).toBeTruthy());
-    expect(footer.textContent).toMatch(/activity log/i);
+    // Both assertions inside the wait (#275): the indicator element and its
+    // label are rendered from the same state, but asserting the text bare
+    // still relies on the element and its text committing in one pass —
+    // waiting on both removes the assumption instead of betting on it.
+    await waitFor(() => {
+      expect(footer.querySelector(".foot-rec")).toBeTruthy();
+      expect(footer.textContent).toMatch(/activity log/i);
+    });
   });
 
   it("shows a stale-backup indicator when the last backup is overdue", async () => {
