@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use tokio::io::AsyncWriteExt;
 
-use crate::backup::csv_escape;
+use crate::export::csv_escape;
 
 /// One stored activity span, surfaced to the "review your day" UI (#190).
 /// `serde(camelCase)` so it crosses IPC unchanged.
@@ -236,7 +236,7 @@ pub async fn save_settings(
 }
 
 /// Header for the activity-log CSV export (#190). Deliberately distinct from
-/// the entries export (`backup::CSV_HEADER`): this is the redacted foreground
+/// the entries export (`export::CSV_HEADER`): this is the redacted foreground
 /// record, not time entries, and the two must never be conflated.
 pub const CSV_HEADER: &str =
     "activity_id,started_at,ended_at,duration_minutes,app_name,title_hint,source";
@@ -257,7 +257,7 @@ fn csv_duration_minutes(started: &str, ended: &str) -> String {
 /// Write every activity-log row to `dest` as CSV, oldest first — the separate
 /// "Export activity log" action (#190). Distinct from the entries export, which
 /// never reads this table. `dest` comes from the system save dialog, so its
-/// parent directory already exists (unlike `backup::export_csv_to`'s
+/// parent directory already exists (unlike `export::export_csv_to`'s
 /// programmatic targets, we don't create it).
 pub async fn export_csv_to(pool: &SqlitePool, dest: &Path) -> Result<(), String> {
     let rows = sqlx::query(

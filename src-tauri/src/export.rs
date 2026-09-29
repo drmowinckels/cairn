@@ -1,19 +1,35 @@
-//! Versioned structured JSON export — the stable contract the billing
-//! plugin (#109) and any other downstream consumer reads instead of
-//! touching the database. Bump `SCHEMA_VERSION` on any breaking change
-//! to the document shape; additive fields are non-breaking.
+//! Every export contract Cairn offers, in one place (#276).
 //!
-//! Durations carry both lenses: `duration_seconds` is the raw span and
-//! `rounded_duration_seconds` applies the user's rounding preference
-//! (#107, per-project overrides included) — consumers must pick one and
-//! never round an already-rounded value.
+//! Two formats, one home:
+//!
+//! * **Versioned structured JSON** — the stable contract the billing plugin
+//!   (#109) and any other downstream consumer reads instead of touching the
+//!   database. Bump `SCHEMA_VERSION` on any breaking change to the document
+//!   shape; additive fields are non-breaking.
+//! * **Long-format CSV** — one row per entry, for tabular tools (pandas /
+//!   dplyr / Excel) and invoice plugins (#1).
+//!
+//! The CSV export previously lived in `backup.rs`, which left that module a
+//! grab-bag of backup/restore *and* an export contract. `backup.rs` now owns
+//! backup, restore and delete-everything only.
+//!
+//! Durations carry both lenses in JSON: `duration_seconds` is the raw span and
+//! `rounded_duration_seconds` applies the user's rounding preference (#107,
+//! per-project overrides included) — consumers must pick one and never round
+//! an already-rounded value. Both formats measure a span the same way (see
+//! [`span_seconds`]) but degrade differently when a stored timestamp won't
+//! parse: CSV leaves the cell empty, JSON fails the whole export. That
+//! difference is deliberate — a CSV is read by a human who can see the gap,
+//! while the JSON document is a machine contract where a silently missing
+//! duration would be taken as real.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use tauri::State;
+use tokio::io::AsyncWriteExt;
 
 use crate::ipc::{ensure_parent_dir, err, parse_ts};
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
@@ -192,13 +208,17 @@ pub async fn export_json_to(
         let ended_at: Option<String> = r.get("ended_at");
         let started = parse_ts(&started_at)
             .map_err(|e| format!("entry {id} has unparseable started_at: {e}"))?;
+        // `None` (an open entry) is handed to `span_seconds`, which measures
+        // it to `now`. An unparseable stored timestamp fails the whole export
+        // — unlike the CSV, this document is a machine contract, and a
+        // silently wrong duration would be consumed as real.
         let ended = match &ended_at {
             Some(s) => {
-                parse_ts(s).map_err(|e| format!("entry {id} has unparseable ended_at: {e}"))?
+                Some(parse_ts(s).map_err(|e| format!("entry {id} has unparseable ended_at: {e}"))?)
             }
-            None => now,
+            None => None,
         };
-        let duration_seconds = (ended - started).num_seconds().max(0);
+        let duration_seconds = span_seconds(started, ended, now);
         let rounding = effective_rounding(project_rounding_from_row(&r), global_rounding);
         entries.push(ExportEntry {
             id,
@@ -227,10 +247,8 @@ pub async fn export_json_to(
         entries,
     };
 
-    ensure_parent_dir(dest).await?;
     let json = serde_json::to_vec_pretty(&doc).map_err(err)?;
-    tokio::fs::write(dest, &json).await.map_err(err)?;
-    Ok(())
+    write_export(dest, &json).await
 }
 
 #[tauri::command]
@@ -258,11 +276,186 @@ pub async fn suggested_json_name() -> String {
     format!("cairn-export-{}.json", Utc::now().format("%Y-%m-%d"))
 }
 
+// ── Shared span + write plumbing ──────────────────────────────────────
+
+/// Seconds between `started` and `ended`, measuring an open entry to `now`.
+///
+/// Clamped at zero: a backwards span means a bad row or clock skew, and a
+/// negative duration is never a meaningful answer in either format. Both
+/// exporters call this so they can't drift on how a span is measured — only
+/// on how they report a timestamp that wouldn't parse in the first place.
+pub(crate) fn span_seconds(
+    started: DateTime<Utc>,
+    ended: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> i64 {
+    (ended.unwrap_or(now) - started).num_seconds().max(0)
+}
+
+/// Create the export file, making its parent directory first.
+///
+/// Every export writes to a path the user picked in a save dialog, which may
+/// name a directory that doesn't exist yet.
+async fn create_export_file(dest: &Path) -> Result<tokio::fs::File, String> {
+    ensure_parent_dir(dest).await?;
+    tokio::fs::File::create(dest).await.map_err(err)
+}
+
+/// Write a whole export in one shot, making its parent directory first.
+async fn write_export(dest: &Path, bytes: &[u8]) -> Result<(), String> {
+    ensure_parent_dir(dest).await?;
+    tokio::fs::write(dest, bytes).await.map_err(err)
+}
+
+// ── CSV entries export ────────────────────────────────────────────────
+
+/// Single source of truth for the CSV export header. Documented in
+/// `docs/PRIVACY.md`; the `csv_header_matches_const_and_documented_columns`
+/// test guards against silent drift between the two.
+pub const CSV_HEADER: &str =
+    "entry_id,started_at,ended_at,duration_minutes,client,project,task,description,source";
+
+/// Rounded entry duration in whole minutes for the CSV `duration_minutes`
+/// column. Open entries (no `ended_at`) measure to `now`.
+///
+/// Returns an empty string if a timestamp can't be parsed, rather than
+/// failing the export the way the JSON contract does. A CSV row with a blank
+/// duration is visibly incomplete to whoever opens it; aborting a whole
+/// export over one unparseable row would be worse. (DB values are RFC3339, so
+/// this is defensive.)
+fn csv_duration_minutes(
+    started: &str,
+    ended: Option<&str>,
+    now: DateTime<Utc>,
+    rounding: Rounding,
+) -> String {
+    let Ok(start) = DateTime::parse_from_rfc3339(started) else {
+        return String::new();
+    };
+    let end = match ended {
+        Some(s) => match DateTime::parse_from_rfc3339(s) {
+            Ok(e) => Some(e.with_timezone(&Utc)),
+            Err(_) => return String::new(),
+        },
+        None => None,
+    };
+    let secs = span_seconds(start.with_timezone(&Utc), end, now);
+    (rounding.round_secs(secs) / 60).to_string()
+}
+
+/// Long-format CSV: one row per entry. Tabular tools (pandas / dplyr /
+/// Excel) and invoice plugins (see issue #1) consume this directly.
+pub async fn export_csv_to(
+    pool: &SqlitePool,
+    dest: &Path,
+    rounding: Rounding,
+) -> Result<(), String> {
+    let now = Utc::now();
+
+    let rows = sqlx::query(
+        r#"
+        SELECT e.id,
+               e.started_at,
+               e.ended_at,
+               c.name AS client,
+               p.name AS project,
+               t.name AS task,
+               e.description,
+               e.source
+          FROM entries e
+          LEFT JOIN projects p ON p.id = e.project_id
+          LEFT JOIN clients  c ON c.id = p.client_id
+          LEFT JOIN tasks    t ON t.id = e.task_id
+         ORDER BY e.started_at ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(err)?;
+
+    let mut file = create_export_file(dest).await?;
+    file.write_all(format!("{CSV_HEADER}\n").as_bytes())
+        .await
+        .map_err(err)?;
+
+    for row in rows {
+        let id: String = row.get("id");
+        let started: String = row.get("started_at");
+        let ended: Option<String> = row.get("ended_at");
+        let client: Option<String> = row.get("client");
+        let project: Option<String> = row.get("project");
+        let task: Option<String> = row.get("task");
+        let description: String = row.get("description");
+        let source: String = row.get("source");
+        let duration = csv_duration_minutes(&started, ended.as_deref(), now, rounding);
+        let line = format!(
+            "{},{},{},{},{},{},{},{},{}\n",
+            csv_escape(&id),
+            csv_escape(&started),
+            csv_escape(ended.as_deref().unwrap_or("")),
+            csv_escape(&duration),
+            csv_escape(client.as_deref().unwrap_or("")),
+            csv_escape(project.as_deref().unwrap_or("")),
+            csv_escape(task.as_deref().unwrap_or("")),
+            csv_escape(&description),
+            csv_escape(&source),
+        );
+        file.write_all(line.as_bytes()).await.map_err(err)?;
+    }
+    file.flush().await.map_err(err)?;
+    Ok(())
+}
+
+pub(crate) fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        let escaped = s.replace('"', "\"\"");
+        format!("\"{escaped}\"")
+    } else {
+        s.to_string()
+    }
+}
+
+#[tauri::command]
+pub async fn export_csv(
+    state: State<'_, AppState>,
+    dest: String,
+    rounding: Option<Rounding>,
+) -> Result<String, String> {
+    let dest = PathBuf::from(dest);
+    export_csv_to(&state.db.pool, &dest, rounding.unwrap_or_default()).await?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn suggested_csv_name() -> String {
+    format!("cairn-entries-{}.csv", Utc::now().format("%Y-%m-%d"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::db_path;
+    use crate::db::Db;
     use crate::rounding::RoundMode;
     use crate::test_support::test_db;
+    #[cfg(not(target_os = "windows"))]
+    use tauri::Manager;
+
+    async fn insert_entry(pool: &SqlitePool, description: &str) -> String {
+        let now = Utc::now().to_rfc3339();
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+               VALUES (?1, 'cairn', NULL, ?2, ?3, NULL, 'manual', NULL, ?3, ?3)"#,
+        )
+        .bind(&id)
+        .bind(description)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
 
     async fn seed(pool: &SqlitePool) {
         let now = "2026-07-01T00:00:00+00:00";
@@ -532,5 +725,275 @@ mod tests {
         let name = suggested_json_name().await;
         assert!(name.starts_with("cairn-export-"));
         assert!(name.ends_with(".json"));
+    }
+
+    // ── CSV entries export (moved here from backup.rs, #276) ──────────
+
+    async fn insert_entry_with_task(
+        pool: &SqlitePool,
+        description: &str,
+        task_name: &str,
+    ) -> String {
+        let now = Utc::now().to_rfc3339();
+        let task_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"INSERT INTO tasks (id, project_id, name, archived, created_at, updated_at)
+               VALUES (?1, 'cairn', ?2, 0, ?3, ?3)"#,
+        )
+        .bind(&task_id)
+        .bind(task_name)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+               VALUES (?1, 'cairn', ?2, ?3, ?4, NULL, 'manual', NULL, ?4, ?4)"#,
+        )
+        .bind(&id)
+        .bind(&task_id)
+        .bind(description)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn csv_escapes_commas_and_quotes() {
+        assert_eq!(csv_escape("plain"), "plain");
+        assert_eq!(csv_escape("has,comma"), "\"has,comma\"");
+        assert_eq!(csv_escape("has\"quote"), "\"has\"\"quote\"");
+        assert_eq!(csv_escape("line\nbreak"), "\"line\nbreak\"");
+    }
+
+    #[tokio::test]
+    async fn csv_has_one_row_per_entry_with_client_project_task_description() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&db_path(dir.path())).await.unwrap();
+        insert_entry(&db.pool, "lone description").await;
+        insert_entry_with_task(&db.pool, "with-task description", "Bug fixing").await;
+
+        let csv_path = dir.path().join("out.csv");
+        export_csv_to(&db.pool, &csv_path, Rounding::off())
+            .await
+            .unwrap();
+
+        let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], CSV_HEADER);
+        // Header + one row per entry. No tag fan-out anymore.
+        assert_eq!(lines.len(), 3);
+
+        let with_task = lines
+            .iter()
+            .find(|l| l.contains("with-task description"))
+            .unwrap();
+        assert!(with_task.contains(",Bug fixing,"), "{with_task}");
+
+        let lone = lines
+            .iter()
+            .find(|l| l.contains("lone description"))
+            .unwrap();
+        // Task field is empty when entry has no task_id.
+        assert!(lone.contains(",,lone description,"), "{lone}");
+    }
+
+    #[tokio::test]
+    async fn csv_header_matches_const_and_documented_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&db_path(dir.path())).await.unwrap();
+        let csv_path = dir.path().join("header.csv");
+        export_csv_to(&db.pool, &csv_path, Rounding::off())
+            .await
+            .unwrap();
+
+        let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
+        // The produced first line is exactly the source-of-truth const,
+        // which docs/PRIVACY.md documents verbatim.
+        assert_eq!(csv.lines().next().unwrap(), CSV_HEADER);
+        for column in [
+            "entry_id",
+            "started_at",
+            "ended_at",
+            "duration_minutes",
+            "client",
+            "project",
+            "task",
+            "description",
+            "source",
+        ] {
+            assert!(
+                CSV_HEADER.split(',').any(|c| c == column),
+                "documented column {column} missing from CSV_HEADER"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn csv_duration_column_respects_rounding() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&db_path(dir.path())).await.unwrap();
+        // A closed 8-minute entry.
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+               VALUES (?1, NULL, NULL, 'eight minutes', '2026-05-25T09:00:00+00:00', '2026-05-25T09:08:00+00:00', 'manual', NULL, '2026-05-25T09:00:00+00:00', '2026-05-25T09:08:00+00:00')"#,
+        )
+        .bind(&id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        // duration_minutes is the 4th column (index 3).
+        let duration_col = |csv: &str| -> String {
+            csv.lines()
+                .nth(1)
+                .unwrap()
+                .split(',')
+                .nth(3)
+                .unwrap()
+                .to_string()
+        };
+
+        let p_off = dir.path().join("off.csv");
+        export_csv_to(&db.pool, &p_off, Rounding::off())
+            .await
+            .unwrap();
+        assert_eq!(
+            duration_col(&tokio::fs::read_to_string(&p_off).await.unwrap()),
+            "8"
+        );
+
+        let r15 = Rounding {
+            interval_minutes: 15,
+            mode: crate::rounding::RoundMode::Nearest,
+        };
+        let p_on = dir.path().join("on.csv");
+        export_csv_to(&db.pool, &p_on, r15).await.unwrap();
+        assert_eq!(
+            duration_col(&tokio::fs::read_to_string(&p_on).await.unwrap()),
+            "15"
+        );
+    }
+
+    #[test]
+    fn csv_duration_minutes_handles_open_and_unparseable() {
+        let now = DateTime::parse_from_rfc3339("2026-05-25T10:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let off = Rounding::off();
+        let start = "2026-05-25T09:00:00+00:00";
+        // Closed 8-minute entry.
+        assert_eq!(
+            csv_duration_minutes(start, Some("2026-05-25T09:08:00+00:00"), now, off),
+            "8"
+        );
+        // Open entry measures to `now` (60 minutes).
+        assert_eq!(csv_duration_minutes(start, None, now, off), "60");
+        // Unparseable start or end degrades to an empty cell.
+        assert_eq!(csv_duration_minutes("nope", Some(start), now, off), "");
+        assert_eq!(csv_duration_minutes(start, Some("nope"), now, off), "");
+    }
+
+    // Tauri's MockRuntime (mock_app_with_db) is unavailable on Windows.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn export_csv_command_writes_a_file() {
+        let (dir, app, _db) = crate::test_support::mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let dest = dir.path().join("cmd.csv");
+        let out = export_csv(state, dest.to_string_lossy().to_string(), None)
+            .await
+            .unwrap();
+        assert!(out.contains("cmd.csv"));
+        assert!(tokio::fs::try_exists(&dest).await.unwrap());
+    }
+
+    // ── Shared span core (#276) ───────────────────────────────────────
+
+    #[test]
+    fn span_seconds_measures_a_closed_entry() {
+        let start = parse_ts("2026-05-25T09:00:00+00:00").unwrap();
+        let end = parse_ts("2026-05-25T09:08:00+00:00").unwrap();
+        let now = parse_ts("2026-05-25T12:00:00+00:00").unwrap();
+        assert_eq!(span_seconds(start, Some(end), now), 480);
+    }
+
+    #[test]
+    fn span_seconds_measures_an_open_entry_to_now() {
+        let start = parse_ts("2026-05-25T09:00:00+00:00").unwrap();
+        let now = parse_ts("2026-05-25T10:00:00+00:00").unwrap();
+        assert_eq!(span_seconds(start, None, now), 3600);
+    }
+
+    #[test]
+    fn span_seconds_clamps_a_backwards_span_to_zero() {
+        // Clock skew or a bad row. Before #276 the CSV path didn't clamp and
+        // could emit a negative duration_minutes; the JSON path always did.
+        // Both go through this now.
+        let start = parse_ts("2026-05-25T10:00:00+00:00").unwrap();
+        let end = parse_ts("2026-05-25T09:00:00+00:00").unwrap();
+        let now = parse_ts("2026-05-25T12:00:00+00:00").unwrap();
+        assert_eq!(span_seconds(start, Some(end), now), 0);
+    }
+
+    #[tokio::test]
+    async fn csv_duration_never_goes_negative() {
+        // The user-visible half of the clamp above: a backwards entry reports
+        // 0, not "-60", in the column a spreadsheet will sum.
+        let now = Utc::now();
+        assert_eq!(
+            csv_duration_minutes(
+                "2026-05-25T10:00:00+00:00",
+                Some("2026-05-25T09:00:00+00:00"),
+                now,
+                Rounding::off(),
+            ),
+            "0"
+        );
+    }
+
+    #[tokio::test]
+    async fn both_exports_agree_on_the_same_entry_duration() {
+        // The point of sharing `span_seconds`: CSV minutes and JSON seconds
+        // are two renderings of one measurement, and must not drift.
+        let (_dir, db) = test_db().await;
+        sqlx::query(
+            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
+               VALUES ('e-dur', NULL, NULL, 'span', '2026-05-25T09:00:00+00:00', '2026-05-25T09:30:00+00:00', 'manual', NULL, '2026-05-25T09:00:00+00:00', '2026-05-25T09:00:00+00:00')"#,
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("e.csv");
+        export_csv_to(&db.pool, &csv_path, Rounding::off())
+            .await
+            .unwrap();
+        let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
+        let minutes: i64 = csv
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split(',')
+            .nth(3)
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let json_path = dir.path().join("e.json");
+        export_json_to(&db.pool, &json_path, Rounding::off(), None, None)
+            .await
+            .unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_slice(&tokio::fs::read(&json_path).await.unwrap()).unwrap();
+        let seconds = doc["entries"][0]["durationSeconds"].as_i64().unwrap();
+
+        assert_eq!(seconds, 1800);
+        assert_eq!(minutes, seconds / 60);
     }
 }
