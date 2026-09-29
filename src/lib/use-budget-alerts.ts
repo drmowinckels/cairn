@@ -49,6 +49,9 @@ const SEVERITY: Record<string, number> = { under: 0, approaching: 1, over: 2 };
  * Returns `null` when nothing is at or past its threshold.
  */
 export function pickAlert(statuses: BudgetStatus[]): BudgetStatus | null {
+  // Guarded like `totalTrackedMinutes`: this runs during a render, so a
+  // malformed reply must degrade to "nothing to say" rather than throw.
+  if (!Array.isArray(statuses)) return null;
   const firing = statuses.filter((s) => s.state !== "under");
   if (firing.length === 0) return null;
   const scopeRank: Record<string, number> = {
@@ -95,7 +98,7 @@ export function useBudgetAlerts(
       // clearing an alert the user hasn't dealt with.
       return;
     }
-    setStatuses(next);
+    setStatuses(Array.isArray(next) ? next : []);
     const candidate = pickAlert(next);
     setAlert(
       candidate && !dismissedRef.current.has(alertKey(candidate))

@@ -243,3 +243,25 @@ describe("useBudgetAlerts", () => {
     }
   });
 });
+
+describe("a malformed backend reply", () => {
+  it("pickAlert says nothing rather than throwing", () => {
+    // This ran during a render, so a `null` reply crashed the whole view —
+    // 90 unhandled rejections in CI while every test still passed.
+    expect(pickAlert(null as unknown as BudgetStatus[])).toBeNull();
+    expect(pickAlert(undefined as unknown as BudgetStatus[])).toBeNull();
+  });
+
+  it("the hook degrades to no alert and an empty list", async () => {
+    const { result } = renderHook(() =>
+      useBudgetAlerts({
+        enabled: true,
+        fetchStatus: vi
+          .fn()
+          .mockResolvedValue(null as unknown as BudgetStatus[]),
+      }),
+    );
+    await waitFor(() => expect(result.current.statuses).toEqual([]));
+    expect(result.current.alert).toBeNull();
+  });
+});

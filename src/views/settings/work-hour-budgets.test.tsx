@@ -273,3 +273,31 @@ describe("WorkHourBudgetsPanel", () => {
     expect(setBudget.mock.calls[0][0].minutes).toBe(450);
   });
 });
+
+describe("submitting a scoped budget", () => {
+  it("sends the chosen entity id rather than an empty scope", async () => {
+    // The workspace default is the only scope that submits an empty id.
+    listProjects.mockResolvedValue([
+      { id: "p1", name: "Website", archived: false },
+    ]);
+    setBudget.mockResolvedValue([]);
+    render(<WorkHourBudgetsPanel />);
+    await userEvent.type(await screen.findByLabelText(/budget hours/i), "4");
+    await userEvent.selectOptions(
+      screen.getByLabelText(/budget scope/i),
+      "project",
+    );
+    await userEvent.selectOptions(
+      screen.getByLabelText(/which project/i),
+      "p1",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /add budget/i }));
+
+    await waitFor(() => expect(setBudget).toHaveBeenCalled());
+    expect(setBudget.mock.calls[0][0]).toMatchObject({
+      scopeType: "project",
+      scopeId: "p1",
+      minutes: 240,
+    });
+  });
+});

@@ -150,3 +150,20 @@ describe("useBudgets", () => {
     await Promise.resolve();
   });
 });
+
+describe("settling after unmount", () => {
+  it("ignores a load that rejects after unmount", async () => {
+    // Setting state on an unmounted hook would warn, and there is no longer
+    // anywhere to show the error.
+    let reject!: (e: unknown) => void;
+    listBudgets.mockReturnValue(
+      new Promise((_, r) => {
+        reject = r;
+      }),
+    );
+    const { unmount } = renderHook(() => useBudgets());
+    unmount();
+    reject(new Error("db locked"));
+    await Promise.resolve();
+  });
+});

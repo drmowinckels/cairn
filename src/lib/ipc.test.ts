@@ -1006,3 +1006,56 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
+
+describe("work-hour budget IPC (#307, inside Tauri)", () => {
+  let original: unknown;
+
+  beforeEach(() => {
+    original = (globalThis as WithInternals).__TAURI_INTERNALS__;
+    (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    } else {
+      (globalThis as WithInternals).__TAURI_INTERNALS__ = original;
+    }
+  });
+
+  it("coerces a null reply to an empty array", async () => {
+    // The backend answering `null` crashed `pickAlert` from inside a render —
+    // 90 unhandled rejections in CI while every test still passed.
+    invokeMock.mockResolvedValue(null);
+    const { listBudgets, budgetStatus, setBudget, deleteBudget } =
+      await import("./ipc");
+    expect(await listBudgets()).toEqual([]);
+    expect(await budgetStatus()).toEqual([]);
+    expect(
+      await setBudget({
+        scopeType: "workspace",
+        scopeId: "",
+        period: "weekly",
+        minutes: 2400,
+        warnPercent: 80,
+      }),
+    ).toEqual([]);
+    expect(await deleteBudget("b1")).toEqual([]);
+  });
+
+  it("passes budgets through when the backend answers properly", async () => {
+    const budget = {
+      id: "b1",
+      scopeType: "workspace",
+      scopeId: "",
+      period: "weekly",
+      minutes: 2400,
+      warnPercent: 80,
+    };
+    invokeMock.mockResolvedValue([budget]);
+    const { listBudgets } = await import("./ipc");
+    expect(await listBudgets()).toEqual([budget]);
+    expect(invokeMock).toHaveBeenCalledWith("list_budgets");
+  });
+});

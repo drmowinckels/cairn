@@ -215,3 +215,14 @@ describe("BudgetBanner", () => {
     ).toBe("over");
   });
 });
+
+describe("an unrecognised period", () => {
+  it("falls back to a generic phrase rather than rendering undefined", () => {
+    // Defensive: a period that escaped validation must still read as English.
+    const msg = budgetMessage(
+      status({ period: "fortnightly" as never, usedMinutes: 600 }),
+    );
+    expect(msg).toContain("this period");
+    expect(msg).not.toMatch(/undefined/);
+  });
+});

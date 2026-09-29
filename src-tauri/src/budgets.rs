@@ -151,19 +151,41 @@ pub fn period_start(period: &str, now: DateTime<Utc>) -> DateTime<Utc> {
         "monthly" => NaiveDate::from_ymd_opt(date.year(), date.month(), 1).unwrap_or(date),
         _ => date, // daily
     };
-    // A local midnight that doesn't exist (spring-forward in a zone that
-    // shifts at 00:00) has no single answer; the earliest valid instant that
-    // day is the honest one, and `and_hms_opt(0,0,0)` plus the mapping below
-    // gives exactly that.
     start_date
         .and_hms_opt(0, 0, 0)
-        .map(|naive| match chrono::Local.from_local_datetime(&naive) {
-            chrono::LocalResult::Single(dt) => dt.with_timezone(&Utc),
-            chrono::LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
-            // Skipped local midnight: step forward until the clock exists.
-            chrono::LocalResult::None => (naive + Duration::hours(1)).and_utc().with_timezone(&Utc),
-        })
+        .map(local_midnight_to_utc)
         .unwrap_or(now)
+}
+
+/// Resolve a local wall-clock instant to UTC, deciding what to do when that
+/// local time is ambiguous or doesn't exist.
+///
+/// Both cases are DST artefacts a period boundary can land on:
+///
+/// * **Ambiguous** (clocks went back, so the time happens twice) — take the
+///   earlier instant, so the period starts as early as it plausibly did and
+///   the repeated hour is counted rather than skipped.
+/// * **None** (clocks went forward, so the time never happened) — fall back
+///   to reading the naive time as UTC. A period start off by the zone's
+///   offset, once a year, in the few zones that shift at midnight, is not
+///   worth more machinery than that.
+///
+/// Split out as a pure function of the `LocalResult` so all three outcomes are
+/// testable without controlling the process timezone.
+pub(crate) fn resolve_local(
+    naive: chrono::NaiveDateTime,
+    resolved: chrono::LocalResult<DateTime<chrono::Local>>,
+) -> DateTime<Utc> {
+    match resolved {
+        chrono::LocalResult::Single(dt) => dt.with_timezone(&Utc),
+        chrono::LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
+        chrono::LocalResult::None => naive.and_utc(),
+    }
+}
+
+/// [`resolve_local`] against the real local timezone.
+pub(crate) fn local_midnight_to_utc(naive: chrono::NaiveDateTime) -> DateTime<Utc> {
+    resolve_local(naive, chrono::Local.from_local_datetime(&naive))
 }
 
 /// Percentage of `minutes` that `used` represents, rounded down.
@@ -683,12 +705,7 @@ mod tests {
     fn midmonth_noon() -> DateTime<Utc> {
         let local = chrono::Local::now();
         let date = NaiveDate::from_ymd_opt(local.year(), local.month(), 15).unwrap();
-        let naive = date.and_hms_opt(12, 0, 0).unwrap();
-        match chrono::Local.from_local_datetime(&naive) {
-            chrono::LocalResult::Single(dt) => dt.with_timezone(&Utc),
-            chrono::LocalResult::Ambiguous(e, _) => e.with_timezone(&Utc),
-            chrono::LocalResult::None => naive.and_utc(),
-        }
+        local_midnight_to_utc(date.and_hms_opt(12, 0, 0).unwrap())
     }
 
     #[tokio::test]
@@ -1019,5 +1036,95 @@ mod tests {
             .unwrap();
         let status = budget_status(&db.pool, now).await.unwrap();
         assert_eq!(status[0].used_minutes, 60);
+    }
+
+    // ── DST boundaries and deserialization defaults ───────────────────
+
+    #[test]
+    fn resolve_local_takes_the_single_instant_when_there_is_one() {
+        let naive = NaiveDate::from_ymd_opt(2026, 6, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let single = chrono::Local.from_local_datetime(&naive);
+        // Only meaningful if the runner's zone actually has one answer here.
+        if let chrono::LocalResult::Single(dt) = single {
+            assert_eq!(resolve_local(naive, single), dt.with_timezone(&Utc));
+        }
+    }
+
+    #[test]
+    fn resolve_local_takes_the_earlier_of_an_ambiguous_pair() {
+        // Clocks went back, so this wall-clock time happens twice. Taking the
+        // earlier instant means the repeated hour is counted, not skipped.
+        let naive = NaiveDate::from_ymd_opt(2026, 10, 25)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
+        let earlier = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 25, 0, 30, 0)
+            .unwrap()
+            .with_timezone(&chrono::Local);
+        let later = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 25, 1, 30, 0)
+            .unwrap()
+            .with_timezone(&chrono::Local);
+
+        assert_eq!(
+            resolve_local(naive, chrono::LocalResult::Ambiguous(earlier, later)),
+            earlier.with_timezone(&Utc)
+        );
+    }
+
+    #[test]
+    fn resolve_local_falls_back_for_a_local_time_that_never_happened() {
+        // Clocks went forward over this wall-clock time, so there is no
+        // instant for it. The documented fallback reads it as UTC rather than
+        // failing a period boundary.
+        let naive = NaiveDate::from_ymd_opt(2026, 3, 29)
+            .unwrap()
+            .and_hms_opt(0, 30, 0)
+            .unwrap();
+        assert_eq!(
+            resolve_local(naive, chrono::LocalResult::None),
+            naive.and_utc()
+        );
+    }
+
+    #[test]
+    fn a_budget_input_without_a_threshold_defaults_to_eighty() {
+        // The frontend may omit `warnPercent`; serde's default supplies it,
+        // and 80 is the documented starting point.
+        let parsed: BudgetInput =
+            serde_json::from_str(r#"{"scopeType":"workspace","period":"weekly","minutes":2400}"#)
+                .expect("deserializes without warnPercent");
+        assert_eq!(parsed.warn_percent, 80);
+        // `scopeId` defaults too, so a workspace budget needs neither.
+        assert_eq!(parsed.scope_id, "");
+    }
+
+    #[tokio::test]
+    async fn an_entry_with_an_unparseable_start_is_skipped() {
+        let (_dir, db) = test_db().await;
+        seed_scopes(&db.pool).await;
+        let now = midmonth_noon();
+        sqlx::query(
+            "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at) \
+             VALUES ('bad-start', 'p1', NULL, 'broken', 'not-a-timestamp', ?1, 'manual', NULL, ?1, ?1)",
+        )
+        .bind(now.to_rfc3339())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        entry(&db.pool, Some("p1"), now - Duration::minutes(15), Some(15)).await;
+
+        set_budget(&db.pool, input("workspace", "", "daily", 480))
+            .await
+            .unwrap();
+        let status = budget_status(&db.pool, now).await.unwrap();
+
+        // A row whose start can't be read contributes nothing — there is no
+        // span to measure, and guessing one would move a cap.
+        assert_eq!(status[0].used_minutes, 15);
     }
 }

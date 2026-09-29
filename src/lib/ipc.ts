@@ -1652,10 +1652,15 @@ export interface BudgetStatus {
   periodStart: string;
 }
 
-/** Every configured work-hour budget (#307). */
+/** Every configured work-hour budget (#307).
+ *
+ *  Coerces a non-array reply to `[]`, matching `getActivityLogSettings`: a
+ *  backend that answered `null` would otherwise make every caller's
+ *  `.map`/`.filter` throw from inside a render. */
 export async function listBudgets(): Promise<Budget[]> {
   if (!inTauri) return [];
-  return invoke<Budget[]>("list_budgets");
+  const rows = await invoke<Budget[] | null>("list_budgets");
+  return Array.isArray(rows) ? rows : [];
 }
 
 /** Create or replace the budget for a scope and period; returns the fresh
@@ -1668,17 +1673,20 @@ export async function setBudget(input: {
   warnPercent: number;
 }): Promise<Budget[]> {
   if (!inTauri) return [];
-  return invoke<Budget[]>("set_budget", { input });
+  const rows = await invoke<Budget[] | null>("set_budget", { input });
+  return Array.isArray(rows) ? rows : [];
 }
 
 /** Remove a budget; returns what's left. */
 export async function deleteBudget(id: string): Promise<Budget[]> {
   if (!inTauri) return [];
-  return invoke<Budget[]>("delete_budget", { id });
+  const rows = await invoke<Budget[] | null>("delete_budget", { id });
+  return Array.isArray(rows) ? rows : [];
 }
 
 /** Current standing of every budget — drives the approaching/over prompts. */
 export async function budgetStatus(): Promise<BudgetStatus[]> {
   if (!inTauri) return [];
-  return invoke<BudgetStatus[]>("budget_status");
+  const rows = await invoke<BudgetStatus[] | null>("budget_status");
+  return Array.isArray(rows) ? rows : [];
 }
