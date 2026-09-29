@@ -251,7 +251,10 @@ pub async fn export_json_to(
     write_export(dest, &json).await
 }
 
-#[tauri::command]
+/// Write the JSON export, returning the path written. The `#[tauri::command]`
+/// shim is in `lib.rs`: the macro's generated wrapper is only ever reached
+/// through Tauri's IPC, so keeping it here would leave an untestable line in
+/// a module that is otherwise fully covered.
 pub async fn export_entries_json(
     state: State<'_, AppState>,
     dest: String,
@@ -415,7 +418,8 @@ pub(crate) fn csv_escape(s: &str) -> String {
     }
 }
 
-#[tauri::command]
+/// Write the CSV export, returning the path written. `#[tauri::command]` shim
+/// in `lib.rs`, for the same reason as `export_entries_json`.
 pub async fn export_csv(
     state: State<'_, AppState>,
     dest: String,

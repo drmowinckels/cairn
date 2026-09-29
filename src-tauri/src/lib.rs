@@ -159,6 +159,30 @@ async fn deactivate_billing_license(
     ipc::deactivate_billing_license_impl(state, &lemon_api()?).await
 }
 
+/// Write the entries CSV export to `dest` (#276). Thin shim over the
+/// testable `export::export_csv`.
+#[tauri::command]
+async fn export_csv(
+    state: tauri::State<'_, AppState>,
+    dest: String,
+    rounding: Option<rounding::Rounding>,
+) -> Result<String, String> {
+    export::export_csv(state, dest, rounding).await
+}
+
+/// Write the versioned JSON export to `dest` (#109). Thin shim over the
+/// testable `export::export_entries_json`.
+#[tauri::command]
+async fn export_entries_json(
+    state: tauri::State<'_, AppState>,
+    dest: String,
+    rounding: Option<rounding::Rounding>,
+    from: Option<String>,
+    to: Option<String>,
+) -> Result<String, String> {
+    export::export_entries_json(state, dest, rounding, from, to).await
+}
+
 #[tauri::command]
 async fn billing_list_rates(
     state: tauri::State<'_, AppState>,
@@ -1137,8 +1161,8 @@ pub fn run() {
             backup::export_backup,
             backup::stage_import,
             backup::cancel_pending_import,
-            export::export_csv,
-            export::export_entries_json,
+            export_csv,
+            export_entries_json,
             export::suggested_json_name,
             backup::delete_everything,
             backup::suggested_backup_name,
