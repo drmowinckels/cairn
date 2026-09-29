@@ -1,5 +1,7 @@
-//! Backup, restore, CSV export, and "delete everything" for the
-//! local SQLite database.
+//! Backup, restore, and "delete everything" for the local SQLite database.
+//!
+//! The CSV entries export used to live here too; it moved to `export.rs`
+//! alongside the JSON contract (#276), leaving this module to one job.
 //!
 //! Restore is staged: the imported file is written next to
 //! `cairn.sqlite` as `cairn.sqlite.pending`, and the swap happens at
@@ -10,49 +12,18 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use tauri::{Manager, State};
 use tauri_plugin_opener::OpenerExt;
-use tokio::io::AsyncWriteExt;
 
 use crate::ipc::ensure_parent_dir;
-use crate::rounding::Rounding;
 use crate::AppState;
-
-/// Rounded entry duration in whole minutes for the CSV `duration_minutes`
-/// column. Open entries (no `ended_at`) measure to `now`. Returns an empty
-/// string if a timestamp can't be parsed (defensive; DB values are RFC3339).
-fn csv_duration_minutes(
-    started: &str,
-    ended: Option<&str>,
-    now: DateTime<Utc>,
-    rounding: Rounding,
-) -> String {
-    let Ok(start) = DateTime::parse_from_rfc3339(started) else {
-        return String::new();
-    };
-    let end = match ended {
-        Some(s) => match DateTime::parse_from_rfc3339(s) {
-            Ok(e) => e.with_timezone(&Utc),
-            Err(_) => return String::new(),
-        },
-        None => now,
-    };
-    let secs = (end - start.with_timezone(&Utc)).num_seconds();
-    (rounding.round_secs(secs) / 60).to_string()
-}
 
 pub const PENDING_SUFFIX: &str = ".pending";
 pub const BACKUP_SUFFIX: &str = ".bak";
 pub const DEBUG_SIGNALS_FILE: &str = "debug-signals.ndjson";
-
-/// Single source of truth for the CSV export header. Documented in
-/// `docs/PRIVACY.md`; the `csv_header_matches_const_and_documented_columns`
-/// test guards against silent drift between the two.
-pub const CSV_HEADER: &str =
-    "entry_id,started_at,ended_at,duration_minutes,client,project,task,description,source";
 
 /// Names the user is allowed to see under `data_dir` when they click
 /// "View what's stored". Issue #24 fixes this set: the live DB and its
@@ -148,70 +119,6 @@ pub async fn stage_import_at(data_dir: &Path, src: &Path) -> Result<PathBuf, Str
     Ok(dest)
 }
 
-/// Long-format CSV: one row per entry. Tabular tools (pandas / dplyr /
-/// Excel) and invoice plugins (see issue #1) consume this directly.
-pub async fn export_csv_to(
-    pool: &SqlitePool,
-    dest: &Path,
-    rounding: Rounding,
-) -> Result<(), String> {
-    let now = Utc::now();
-    ensure_parent_dir(dest).await?;
-
-    let rows = sqlx::query(
-        r#"
-        SELECT e.id,
-               e.started_at,
-               e.ended_at,
-               c.name AS client,
-               p.name AS project,
-               t.name AS task,
-               e.description,
-               e.source
-          FROM entries e
-          LEFT JOIN projects p ON p.id = e.project_id
-          LEFT JOIN clients  c ON c.id = p.client_id
-          LEFT JOIN tasks    t ON t.id = e.task_id
-         ORDER BY e.started_at ASC
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(err)?;
-
-    let mut file = tokio::fs::File::create(dest).await.map_err(err)?;
-    file.write_all(format!("{CSV_HEADER}\n").as_bytes())
-        .await
-        .map_err(err)?;
-
-    for row in rows {
-        let id: String = row.get("id");
-        let started: String = row.get("started_at");
-        let ended: Option<String> = row.get("ended_at");
-        let client: Option<String> = row.get("client");
-        let project: Option<String> = row.get("project");
-        let task: Option<String> = row.get("task");
-        let description: String = row.get("description");
-        let source: String = row.get("source");
-        let duration = csv_duration_minutes(&started, ended.as_deref(), now, rounding);
-        let line = format!(
-            "{},{},{},{},{},{},{},{},{}\n",
-            csv_escape(&id),
-            csv_escape(&started),
-            csv_escape(ended.as_deref().unwrap_or("")),
-            csv_escape(&duration),
-            csv_escape(client.as_deref().unwrap_or("")),
-            csv_escape(project.as_deref().unwrap_or("")),
-            csv_escape(task.as_deref().unwrap_or("")),
-            csv_escape(&description),
-            csv_escape(&source),
-        );
-        file.write_all(line.as_bytes()).await.map_err(err)?;
-    }
-    file.flush().await.map_err(err)?;
-    Ok(())
-}
-
 /// Inspect `data_dir` and return metadata (no content reads) for every
 /// known-listable file that currently exists, in the canonical order
 /// declared by `LISTABLE_FILES`. Issue #24. Missing files are simply
@@ -268,17 +175,6 @@ pub async fn cancel_pending_import(app: tauri::AppHandle) -> Result<(), String> 
         tokio::fs::remove_file(&pending).await.map_err(err)?;
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn export_csv(
-    state: State<'_, AppState>,
-    dest: String,
-    rounding: Option<Rounding>,
-) -> Result<String, String> {
-    let dest = PathBuf::from(dest);
-    export_csv_to(&state.db.pool, &dest, rounding.unwrap_or_default()).await?;
-    Ok(dest.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -447,11 +343,6 @@ pub async fn suggested_backup_name() -> String {
 }
 
 #[tauri::command]
-pub async fn suggested_csv_name() -> String {
-    format!("cairn-entries-{}.csv", Utc::now().format("%Y-%m-%d"))
-}
-
-#[tauri::command]
 pub async fn list_data_files(app: tauri::AppHandle) -> Result<Vec<DataFileInfo>, String> {
     let data_dir = app.path().app_data_dir().map_err(err)?;
     Ok(list_data_files_in(&data_dir))
@@ -488,15 +379,6 @@ async fn validate_sqlite_header(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        let escaped = s.replace('"', "\"\"");
-        format!("\"{escaped}\"")
-    } else {
-        s.to_string()
-    }
-}
-
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
@@ -506,14 +388,6 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use chrono::Utc;
-
-    #[test]
-    fn csv_escapes_commas_and_quotes() {
-        assert_eq!(csv_escape("plain"), "plain");
-        assert_eq!(csv_escape("has,comma"), "\"has,comma\"");
-        assert_eq!(csv_escape("has\"quote"), "\"has\"\"quote\"");
-        assert_eq!(csv_escape("line\nbreak"), "\"line\nbreak\"");
-    }
 
     #[tokio::test]
     async fn purge_calendar_secrets_visits_each_url_source() {
@@ -721,181 +595,6 @@ mod tests {
         .await
         .unwrap();
         id
-    }
-
-    async fn insert_entry_with_task(
-        pool: &SqlitePool,
-        description: &str,
-        task_name: &str,
-    ) -> String {
-        let now = Utc::now().to_rfc3339();
-        let task_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            r#"INSERT INTO tasks (id, project_id, name, archived, created_at, updated_at)
-               VALUES (?1, 'cairn', ?2, 0, ?3, ?3)"#,
-        )
-        .bind(&task_id)
-        .bind(task_name)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .unwrap();
-        let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
-               VALUES (?1, 'cairn', ?2, ?3, ?4, NULL, 'manual', NULL, ?4, ?4)"#,
-        )
-        .bind(&id)
-        .bind(&task_id)
-        .bind(description)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .unwrap();
-        id
-    }
-
-    #[tokio::test]
-    async fn csv_has_one_row_per_entry_with_client_project_task_description() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = Db::open(&db_path(dir.path())).await.unwrap();
-        insert_entry(&db.pool, "lone description").await;
-        insert_entry_with_task(&db.pool, "with-task description", "Bug fixing").await;
-
-        let csv_path = dir.path().join("out.csv");
-        export_csv_to(&db.pool, &csv_path, Rounding::off())
-            .await
-            .unwrap();
-
-        let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
-        let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[0], CSV_HEADER);
-        // Header + one row per entry. No tag fan-out anymore.
-        assert_eq!(lines.len(), 3);
-
-        let with_task = lines
-            .iter()
-            .find(|l| l.contains("with-task description"))
-            .unwrap();
-        assert!(with_task.contains(",Bug fixing,"), "{with_task}");
-
-        let lone = lines
-            .iter()
-            .find(|l| l.contains("lone description"))
-            .unwrap();
-        // Task field is empty when entry has no task_id.
-        assert!(lone.contains(",,lone description,"), "{lone}");
-    }
-
-    #[tokio::test]
-    async fn csv_header_matches_const_and_documented_columns() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = Db::open(&db_path(dir.path())).await.unwrap();
-        let csv_path = dir.path().join("header.csv");
-        export_csv_to(&db.pool, &csv_path, Rounding::off())
-            .await
-            .unwrap();
-
-        let csv = tokio::fs::read_to_string(&csv_path).await.unwrap();
-        // The produced first line is exactly the source-of-truth const,
-        // which docs/PRIVACY.md documents verbatim.
-        assert_eq!(csv.lines().next().unwrap(), CSV_HEADER);
-        for column in [
-            "entry_id",
-            "started_at",
-            "ended_at",
-            "duration_minutes",
-            "client",
-            "project",
-            "task",
-            "description",
-            "source",
-        ] {
-            assert!(
-                CSV_HEADER.split(',').any(|c| c == column),
-                "documented column {column} missing from CSV_HEADER"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn csv_duration_column_respects_rounding() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = Db::open(&db_path(dir.path())).await.unwrap();
-        // A closed 8-minute entry.
-        let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            r#"INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, rule_id, created_at, updated_at)
-               VALUES (?1, NULL, NULL, 'eight minutes', '2026-05-25T09:00:00+00:00', '2026-05-25T09:08:00+00:00', 'manual', NULL, '2026-05-25T09:00:00+00:00', '2026-05-25T09:08:00+00:00')"#,
-        )
-        .bind(&id)
-        .execute(&db.pool)
-        .await
-        .unwrap();
-
-        // duration_minutes is the 4th column (index 3).
-        let duration_col = |csv: &str| -> String {
-            csv.lines()
-                .nth(1)
-                .unwrap()
-                .split(',')
-                .nth(3)
-                .unwrap()
-                .to_string()
-        };
-
-        let p_off = dir.path().join("off.csv");
-        export_csv_to(&db.pool, &p_off, Rounding::off())
-            .await
-            .unwrap();
-        assert_eq!(
-            duration_col(&tokio::fs::read_to_string(&p_off).await.unwrap()),
-            "8"
-        );
-
-        let r15 = Rounding {
-            interval_minutes: 15,
-            mode: crate::rounding::RoundMode::Nearest,
-        };
-        let p_on = dir.path().join("on.csv");
-        export_csv_to(&db.pool, &p_on, r15).await.unwrap();
-        assert_eq!(
-            duration_col(&tokio::fs::read_to_string(&p_on).await.unwrap()),
-            "15"
-        );
-    }
-
-    #[test]
-    fn csv_duration_minutes_handles_open_and_unparseable() {
-        let now = DateTime::parse_from_rfc3339("2026-05-25T10:00:00+00:00")
-            .unwrap()
-            .with_timezone(&Utc);
-        let off = Rounding::off();
-        let start = "2026-05-25T09:00:00+00:00";
-        // Closed 8-minute entry.
-        assert_eq!(
-            csv_duration_minutes(start, Some("2026-05-25T09:08:00+00:00"), now, off),
-            "8"
-        );
-        // Open entry measures to `now` (60 minutes).
-        assert_eq!(csv_duration_minutes(start, None, now, off), "60");
-        // Unparseable start or end degrades to an empty cell.
-        assert_eq!(csv_duration_minutes("nope", Some(start), now, off), "");
-        assert_eq!(csv_duration_minutes(start, Some("nope"), now, off), "");
-    }
-
-    // Tauri's MockRuntime (mock_app_with_db) is unavailable on Windows.
-    #[cfg(not(target_os = "windows"))]
-    #[tokio::test]
-    async fn export_csv_command_writes_a_file() {
-        let (dir, app, _db) = crate::test_support::mock_app_with_db().await;
-        let state = app.state::<crate::AppState>();
-        let dest = dir.path().join("cmd.csv");
-        let out = export_csv(state, dest.to_string_lossy().to_string(), None)
-            .await
-            .unwrap();
-        assert!(out.contains("cmd.csv"));
-        assert!(tokio::fs::try_exists(&dest).await.unwrap());
     }
 
     #[tokio::test]

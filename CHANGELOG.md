@@ -68,6 +68,13 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Fixed
 
+- `[export]` A time entry whose end precedes its start (clock skew, or a bad
+  row) no longer reports a **negative** `duration_minutes` in the CSV export —
+  a value a spreadsheet would happily sum. Both exports now measure a span
+  through one shared, zero-clamped helper, so the CSV minutes and the JSON
+  `durationSeconds` can't disagree about the same entry. The JSON export
+  already clamped (#276).
+
 - `[tray]` The About window no longer becomes an invisible window in
   the middle of the screen that cannot be dismissed when its webview fails to paint. It
   was the one overlay still missing the #261/#267 hardening: it is now
