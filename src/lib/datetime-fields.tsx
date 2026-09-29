@@ -61,7 +61,7 @@ interface TextFieldShellProps extends FieldBase {
   hint: string;
   invalid: boolean;
   invalidMessage: string;
-  onStep?: (delta: number) => void;
+  onStep: (delta: number) => void;
 }
 
 /**
@@ -106,7 +106,7 @@ function TextFieldShell({
         className={className}
         value={text}
         aria-label={label}
-        aria-describedby={described || undefined}
+        aria-describedby={described}
         aria-invalid={invalid || undefined}
         required={required}
         disabled={disabled}
@@ -118,7 +118,6 @@ function TextFieldShell({
             onCommit();
             return;
           }
-          if (!onStep) return;
           if (e.key === "ArrowUp") {
             e.preventDefault();
             onStep(1);
@@ -249,8 +248,14 @@ export interface DateFieldProps extends FieldBase {
 function isoToDate(value: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return Number.isNaN(d.getTime()) ? null : d;
+  const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const d = new Date(y, mo - 1, day);
+  // `new Date(2026, 1, 31)` silently becomes 3 March. A stored value that
+  // names a day that doesn't exist is not a date to render, so reject it
+  // rather than display a different one.
+  return d.getFullYear() === y && d.getMonth() === mo - 1 && d.getDate() === day
+    ? d
+    : null;
 }
 
 /**
@@ -349,13 +354,12 @@ export function DateTimeField({
   useEffect(() => {
     if (lastValue.current !== value) {
       lastValue.current = value;
+      // `lastValue` already filters out a value echoing back what we just
+      // reported, so anything reaching here is a genuine external change —
+      // including a clear, which resets both halves.
       const [d, t] = splitLocal(value);
-      // An externally-cleared value resets both halves; a value that merely
-      // echoes back what we just reported leaves the drafts alone.
-      if (value || (!d && !t)) {
-        setLocalDate(d);
-        setLocalTime(t);
-      }
+      setLocalDate(d);
+      setLocalTime(t);
     }
   }, [value]);
 

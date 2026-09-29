@@ -1,11 +1,12 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATETIME_FORMAT_DEFAULT } from "./datetime-format";
 import {
   DATETIME_FORMAT_STORAGE_KEY,
   dateTimeFormatPrefs,
   resetDateTimeFormatPrefsForTest,
   setDateTimeFormatPrefs,
+  installStorageSync,
   syncDateTimeFormatPrefs,
   useDateTimeFormat,
   useDateTimeFormatSubscription,
@@ -137,5 +138,22 @@ describe("cross-window sync", () => {
       );
     });
     expect(dateTimeFormatPrefs()).toEqual({ time: "12h", date: "ymd" });
+  });
+});
+
+describe("installStorageSync", () => {
+  it("subscribes when there is a window to subscribe to", () => {
+    const target = { addEventListener: vi.fn() };
+    installStorageSync(target);
+    expect(target.addEventListener).toHaveBeenCalledWith(
+      "storage",
+      expect.any(Function),
+    );
+  });
+
+  it("is a no-op with no window at all", () => {
+    // The only reason the guard exists: importing this module outside a
+    // document must not throw at load.
+    expect(() => installStorageSync(undefined)).not.toThrow();
   });
 });

@@ -275,7 +275,9 @@ export function parseClock(
     return null;
   }
 
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  // No finiteness check: every branch above assigns from `Number()` over a
+  // matched run of digits, so both are always finite. Range is what's left
+  // to police.
   if (minutes > 59) return null;
 
   if (hasPm || hasAm) {
@@ -332,9 +334,6 @@ export function parseNumericDate(
   if (!nums || nums.length !== 3) return null;
 
   const order = resolveDateOrder(prefs, locale);
-  let year: number | undefined;
-  let month: number | undefined;
-  let day: number | undefined;
 
   // A 4-digit group is unambiguously the year; place it first so a user who
   // types 2026-03-04 into a D/M/Y field still gets the date they meant.
@@ -350,16 +349,16 @@ export function parseNumericDate(
     return null;
   }
 
+  // `slots` is always a permutation of the three fields and `nums` always
+  // has three entries, so every field is assigned — no "missing part" case
+  // to guard.
+  const parts = { day: 0, month: 0, year: 0 };
   slots.forEach((field, i) => {
-    const v = Number(nums[i]);
-    if (field === "year") year = v;
-    else if (field === "month") month = v;
-    else day = v;
+    parts[field] = Number(nums[i]);
   });
+  let { year } = parts;
+  const { month, day } = parts;
 
-  if (year === undefined || month === undefined || day === undefined) {
-    return null;
-  }
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   // Two-digit years are read as this century; Cairn tracks time now, not in
   // 1926, and a time tracker has no use for ambiguous historical dates.

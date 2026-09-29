@@ -82,16 +82,27 @@ export function syncDateTimeFormatPrefs(): void {
   emit();
 }
 
-if (
-  typeof window !== "undefined" &&
-  typeof window.addEventListener === "function"
-) {
-  window.addEventListener("storage", (e) => {
-    if (e.key === null || e.key === DATETIME_FORMAT_STORAGE_KEY) {
-      syncDateTimeFormatPrefs();
-    }
-  });
+/** Handle a `storage` event: re-read when it concerns this key, or when the
+ *  whole store was cleared (`key === null`). */
+function onStorage(e: Event): void {
+  const { key } = e as StorageEvent;
+  if (key === null || key === DATETIME_FORMAT_STORAGE_KEY) {
+    syncDateTimeFormatPrefs();
+  }
 }
+
+/**
+ * Subscribe to cross-window preference changes. Exported (and parameterised)
+ * so both outcomes are exercised: a webview, and an environment with no
+ * `window` at all — which is the only reason the guard exists.
+ */
+export function installStorageSync(
+  target: Pick<Window, "addEventListener"> | undefined = globalThis.window,
+): void {
+  target?.addEventListener("storage", onStorage);
+}
+
+installStorageSync();
 
 /** Test-only: reset the store to defaults without touching `localStorage`. */
 export function resetDateTimeFormatPrefsForTest(
@@ -112,11 +123,7 @@ export function resetDateTimeFormatPrefsForTest(
  * call this.
  */
 export function useDateTimeFormatSubscription(): void {
-  useSyncExternalStore(
-    subscribe,
-    dateTimeFormatPrefs,
-    () => DATETIME_FORMAT_DEFAULT,
-  );
+  useSyncExternalStore(subscribe, dateTimeFormatPrefs);
 }
 
 export interface UseDateTimeFormat {
@@ -131,11 +138,7 @@ export interface UseDateTimeFormat {
  * and running-timer clock immediately rather than on next mount.
  */
 export function useDateTimeFormat(): UseDateTimeFormat {
-  const prefs = useSyncExternalStore(
-    subscribe,
-    dateTimeFormatPrefs,
-    () => DATETIME_FORMAT_DEFAULT,
-  );
+  const prefs = useSyncExternalStore(subscribe, dateTimeFormatPrefs);
 
   const setTimeFormat = useCallback(
     (time: TimeFormat) => setDateTimeFormatPrefs({ ...current, time }),

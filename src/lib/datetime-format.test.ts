@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   coerceFormatPrefs,
   DATETIME_FORMAT_DEFAULT,
@@ -398,5 +398,130 @@ describe("parseNumericDate — a typed 4-digit year", () => {
     expect(
       parseNumericDate("03/2026/04", prefs({ date: "dmy" }), "en-US"),
     ).toBeNull();
+  });
+});
+
+describe("degrading when Intl misbehaves", () => {
+  // These guards exist because `Intl` is the one dependency of this module
+  // and a throw from it lands mid-render. Reaching them needs `Intl` itself
+  // stubbed — that is the condition they were written for.
+  const RealDTF = Intl.DateTimeFormat;
+
+  afterEach(() => {
+    Intl.DateTimeFormat = RealDTF;
+  });
+
+  function stubDTF(impl: Partial<Intl.DateTimeFormat>): void {
+    Intl.DateTimeFormat = function () {
+      return impl as Intl.DateTimeFormat;
+    } as unknown as typeof Intl.DateTimeFormat;
+  }
+
+  function throwingDTF(): void {
+    Intl.DateTimeFormat = function () {
+      throw new RangeError("no");
+    } as unknown as typeof Intl.DateTimeFormat;
+  }
+
+  it("falls back to hourCycle when the engine omits hour12", () => {
+    stubDTF({
+      resolvedOptions: () =>
+        ({ hourCycle: "h12" }) as unknown as Intl.ResolvedDateTimeFormatOptions,
+    });
+    expect(resolveHour12(prefs({ time: "system" }), "en-US")).toBe(true);
+
+    stubDTF({
+      resolvedOptions: () =>
+        ({ hourCycle: "h23" }) as unknown as Intl.ResolvedDateTimeFormatOptions,
+    });
+    expect(resolveHour12(prefs({ time: "system" }), "en-US")).toBe(false);
+  });
+
+  it("falls back to the ISO date when a system-format date throws", () => {
+    throwingDTF();
+    expect(
+      formatNumericDate(new Date(2026, 11, 25), prefs({ date: "system" }), "x"),
+    ).toBe("2026-12-25");
+  });
+
+  it("still produces a day label when every name lookup throws", () => {
+    throwingDTF();
+    // No weekday or month name available, but the date itself must survive.
+    expect(
+      formatDayLabel(new Date(2026, 11, 25), prefs({ date: "ymd" }), "x"),
+    ).toBe("2026-12-25");
+    expect(
+      formatDayLabel(new Date(2026, 11, 25), prefs({ date: "dmy" }), "x"),
+    ).toBe("25 ");
+  });
+
+  it("falls back to a bare day label when the system format yields nothing", () => {
+    // `format` returning "" (rather than throwing) must not render an empty
+    // heading where the date should be.
+    stubDTF({ format: () => "" });
+    expect(
+      formatDayLabel(new Date(2026, 11, 25), prefs({ date: "system" }), "x"),
+    ).toBe("25 ");
+  });
+
+  it("still offers a PM placeholder when the marker lookup throws", () => {
+    throwingDTF();
+    // `resolveHour12` also falls back to 24h here, so ask for 12h explicitly.
+    expect(clockPlaceholder(prefs({ time: "12h" }), "x")).toBe("h:mm PM");
+  });
+
+  it("still parses am/pm when the marker lookup throws", () => {
+    throwingDTF();
+    expect(parseClock("9:05 pm", prefs({ time: "12h" }), "x")).toBe(
+      21 * 60 + 5,
+    );
+  });
+});
+
+describe("parseClock rejects what can't be a time", () => {
+  it("rejects a bare hour above 23", () => {
+    expect(parseClock("24", prefs({ time: "24h" }), "en-US")).toBeNull();
+    expect(parseClock("99", prefs({ time: "24h" }), "en-US")).toBeNull();
+  });
+
+  it("rejects 24:00 under a 12-hour preference", () => {
+    // A 12-hour clock has no 24 o'clock.
+    expect(parseClock("24:00", prefs({ time: "12h" }), "en-US")).toBeNull();
+  });
+
+  it("rejects digit runs that are too long to be a time", () => {
+    expect(parseClock("123456", prefs({ time: "24h" }), "en-US")).toBeNull();
+  });
+});
+
+describe("remaining format paths", () => {
+  it("uses the locale's own short date style under `system`", () => {
+    // The happy path for the `system` day label: a real locale gives a
+    // complete short form and it's used verbatim.
+    const label = formatDayLabel(
+      new Date(2026, 11, 25),
+      prefs({ date: "system" }),
+      "en-US",
+    );
+    expect(label).toMatch(/Fri/);
+    expect(label).toMatch(/Dec/);
+    expect(label).toMatch(/25/);
+  });
+
+  it("copes with a locale that reports no day-period part", () => {
+    const real = Intl.DateTimeFormat;
+    Intl.DateTimeFormat = function () {
+      return {
+        // A 12-hour format with no dayPeriod part at all.
+        formatToParts: () => [{ type: "hour", value: "9" }],
+        format: () => "9",
+        resolvedOptions: () => ({ hour12: true }),
+      } as unknown as Intl.DateTimeFormat;
+    } as unknown as typeof Intl.DateTimeFormat;
+    try {
+      expect(clockPlaceholder(prefs({ time: "12h" }), "en-US")).toBe("h:mm PM");
+    } finally {
+      Intl.DateTimeFormat = real;
+    }
   });
 });

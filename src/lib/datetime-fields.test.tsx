@@ -337,3 +337,179 @@ describe("splitLocal / joinLocal", () => {
     expect(joinLocal("", "14:05")).toBe("");
   });
 });
+
+describe("edge cases the UI can still reach", () => {
+  it("renders nothing for a stored value outside the clock range", () => {
+    // `value` is a wire string; a malformed one must not render "99:99".
+    render(<TimeField label="Start" value="99:99" onChange={vi.fn()} />);
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe("");
+  });
+
+  it("renders nothing for a stored date that doesn't exist", () => {
+    // `new Date(2026, 1, 31)` is 3 March; showing that would be a different
+    // day than the one stored.
+    render(<DateField label="Day" value="2026-02-31" onChange={vi.fn()} />);
+    expect((screen.getByLabelText("Day") as HTMLInputElement).value).toBe("");
+  });
+
+  it("steps a time field from midnight when there's nothing to step from", () => {
+    const onChange = vi.fn();
+    render(<TimeField label="Start" value="" onChange={onChange} />);
+    fireEvent.keyDown(screen.getByLabelText("Start"), { key: "ArrowUp" });
+    expect(onChange).toHaveBeenCalledWith("00:01");
+  });
+
+  it("steps a time field from the stored value when the draft is unparseable", () => {
+    const onChange = vi.fn();
+    render(<TimeField label="Start" value="09:00" onChange={onChange} />);
+    const input = screen.getByLabelText("Start");
+    fireEvent.change(input, { target: { value: "nonsense" } });
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(onChange).toHaveBeenCalledWith("09:01");
+  });
+
+  it("does nothing when stepping a date field with no date at all", () => {
+    const onChange = vi.fn();
+    render(<DateField label="Day" value="" onChange={onChange} />);
+    fireEvent.keyDown(screen.getByLabelText("Day"), { key: "ArrowDown" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("steps a date field from the stored value when the draft is unparseable", () => {
+    const onChange = vi.fn();
+    render(<DateField label="Day" value="2026-03-01" onChange={onChange} />);
+    const input = screen.getByLabelText("Day");
+    fireEvent.change(input, { target: { value: "gibberish" } });
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(onChange).toHaveBeenCalledWith("2026-03-02");
+  });
+
+  it("ignores keys that aren't Enter or an arrow", () => {
+    const onChange = vi.fn();
+    render(<TimeField label="Start" value="09:00" onChange={onChange} />);
+    fireEvent.keyDown(screen.getByLabelText("Start"), { key: "a" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("appends a caller's describedBy alongside the format hint", () => {
+    render(
+      <>
+        <TimeField
+          label="Start"
+          value=""
+          onChange={vi.fn()}
+          describedBy="outside-err"
+        />
+        <span id="outside-err">Start can&apos;t be in the future.</span>
+      </>,
+    );
+    const described = screen
+      .getByLabelText("Start")
+      .getAttribute("aria-describedby")!;
+    expect(described.split(" ")).toContain("outside-err");
+    // …and the format hint is still in there.
+    const text = described
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent)
+      .join(" ");
+    expect(text).toMatch(/hh:mm/i);
+    expect(text).toMatch(/future/i);
+  });
+
+  it("honours a caller-supplied id", () => {
+    render(
+      <TimeField label="Start" value="" onChange={vi.fn()} id="my-start" />,
+    );
+    expect(screen.getByLabelText("Start").id).toBe("my-start");
+  });
+
+  it("can be disabled", () => {
+    render(
+      <DateField label="Day" value="2026-12-25" onChange={vi.fn()} disabled />,
+    );
+    expect((screen.getByLabelText("Day") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("resets both halves when the value is cleared from outside", () => {
+    const { rerender } = render(
+      <DateTimeField
+        label="Start"
+        value="2026-12-25T14:05"
+        onChange={vi.fn()}
+      />,
+    );
+    rerender(<DateTimeField label="Start" value="" onChange={vi.fn()} />);
+    expect(
+      (screen.getByLabelText("Start date") as HTMLInputElement).value,
+    ).toBe("");
+    expect(
+      (screen.getByLabelText("Start time") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
+  it("re-renders its value when the format preference changes", () => {
+    const { rerender } = render(
+      <DateTimeField
+        label="Start"
+        value="2026-12-25T14:05"
+        onChange={vi.fn()}
+      />,
+    );
+    resetDateTimeFormatPrefsForTest({ time: "12h", date: "mdy" });
+    rerender(
+      <DateTimeField
+        label="Start"
+        value="2026-12-25T14:05"
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      (screen.getByLabelText("Start date") as HTMLInputElement).value,
+    ).toBe("12/25/2026");
+    expect(
+      (screen.getByLabelText("Start time") as HTMLInputElement).value,
+    ).toMatch(/2:05\s*PM/i);
+  });
+});
+
+describe("DateField parity with TimeField", () => {
+  it("lets an optional field be emptied, but not a required one", () => {
+    const optional = vi.fn();
+    const { unmount } = render(
+      <DateField label="To" value="2026-12-25" onChange={optional} />,
+    );
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "" } });
+    fireEvent.blur(screen.getByLabelText("To"));
+    expect(optional).toHaveBeenCalledWith("");
+    unmount();
+
+    const required = vi.fn();
+    render(
+      <DateField
+        label="From"
+        value="2026-12-25"
+        onChange={required}
+        required
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "" } });
+    fireEvent.blur(screen.getByLabelText("From"));
+    expect(required).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("From").getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+  });
+
+  it("clears the error as soon as the user edits again", () => {
+    render(<DateField label="Day" value="" onChange={vi.fn()} />);
+    const input = screen.getByLabelText("Day");
+    fireEvent.change(input, { target: { value: "nope" } });
+    fireEvent.blur(input);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+
+    fireEvent.change(input, { target: { value: "25/12/2026" } });
+    expect(input.getAttribute("aria-invalid")).toBeNull();
+  });
+});
