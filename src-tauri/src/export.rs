@@ -996,4 +996,70 @@ mod tests {
         assert_eq!(seconds, 1800);
         assert_eq!(minutes, seconds / 60);
     }
+
+    // ── Write-path failures (#276) ────────────────────────────────────
+    //
+    // Both exports write to a path the user picked in a save dialog, so an
+    // unwritable destination is a real outcome, not a hypothetical. Each
+    // must surface it as an error rather than reporting a successful export
+    // that wrote nothing.
+
+    #[tokio::test]
+    async fn csv_export_errors_when_the_parent_cannot_be_created() {
+        let (_dir, db) = test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+        // A *file* where the export wants a directory.
+        let blocker = tmp.path().join("blocker");
+        tokio::fs::write(&blocker, b"x").await.unwrap();
+
+        let err = export_csv_to(&db.pool, &blocker.join("out.csv"), Rounding::off())
+            .await
+            .unwrap_err();
+        assert!(!err.is_empty(), "the failure is reported, not swallowed");
+    }
+
+    #[tokio::test]
+    async fn csv_export_errors_when_the_destination_is_a_directory() {
+        let (_dir, db) = test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let as_dir = tmp.path().join("out.csv");
+        tokio::fs::create_dir(&as_dir).await.unwrap();
+
+        assert!(export_csv_to(&db.pool, &as_dir, Rounding::off())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn json_export_errors_when_the_parent_cannot_be_created() {
+        let (_dir, db) = test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        tokio::fs::write(&blocker, b"x").await.unwrap();
+
+        let err = export_json_to(
+            &db.pool,
+            &blocker.join("out.json"),
+            Rounding::off(),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[tokio::test]
+    async fn json_export_errors_when_the_destination_is_a_directory() {
+        let (_dir, db) = test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let as_dir = tmp.path().join("out.json");
+        tokio::fs::create_dir(&as_dir).await.unwrap();
+
+        assert!(
+            export_json_to(&db.pool, &as_dir, Rounding::off(), None, None)
+                .await
+                .is_err()
+        );
+    }
 }
