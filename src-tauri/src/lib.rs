@@ -1591,6 +1591,210 @@ mod tests {
         );
     }
 
+    // ---- #304: capability *sufficiency*, not just coverage ----
+    //
+    // The two tests above catch a window matched by **nothing** (#301). They
+    // do not catch the near-miss: a window that has a capability which lacks
+    // a permission it actually uses. That fails identically silently — the
+    // ACL rejects the `listen()`/`invoke()`, and the rejection surfaces only
+    // as a console error. So correlate the two sides instead of checking one.
+    //
+    // Only the Rust half is statically decidable. Every window loads the same
+    // bundle (`index.html?win=<label>`) and branches at runtime in `App.tsx`,
+    // so no frontend file belongs to a single window and "this window's code
+    // calls `hide()`" can't be derived from imports. What *is* derivable is
+    // the backend's `emit_to(<label>, …)` calls: each one names the window it
+    // targets, and that window's capability must grant event permission or
+    // the event silently never arrives.
+
+    /// `core:default` is a permission *set*, so a capability listing only it
+    /// still grants events. Expanding it is what keeps the assertion below
+    /// from failing on a perfectly valid capability.
+    /// Mirrors the set documented in `gen/schemas/desktop-schema.json`, which
+    /// `core_default_expansion_still_matches_the_schema` keeps honest.
+    const CORE_DEFAULT_IMPLIES: &[&str] = &[
+        "core:path:default",
+        "core:event:default",
+        "core:window:default",
+        "core:webview:default",
+        "core:app:default",
+        "core:image:default",
+        "core:resources:default",
+        "core:menu:default",
+        "core:tray:default",
+    ];
+
+    /// Every permission each window effectively holds, with permission sets
+    /// expanded. A window covered by several capabilities holds their union.
+    fn effective_permissions_by_window() -> std::collections::BTreeMap<String, Vec<String>> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut by_window: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for entry in std::fs::read_dir(root.join("capabilities")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let cap: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let mut granted: Vec<String> = Vec::new();
+            for p in cap["permissions"].as_array().into_iter().flatten() {
+                let Some(p) = p.as_str() else { continue };
+                granted.push(p.to_string());
+                if p == "core:default" {
+                    granted.extend(CORE_DEFAULT_IMPLIES.iter().map(|s| s.to_string()));
+                }
+            }
+            for w in cap["windows"].as_array().into_iter().flatten() {
+                if let Some(w) = w.as_str() {
+                    by_window
+                        .entry(w.to_string())
+                        .or_default()
+                        .extend(granted.iter().cloned());
+                }
+            }
+        }
+        by_window
+    }
+
+    /// The window-label constants `emit_to` call sites are allowed to name,
+    /// paired with the label each one actually resolves to. Taken from the
+    /// constants themselves rather than re-typed string literals, so renaming
+    /// a label's *value* can't desynchronise this table from the code.
+    const LABEL_CONSTANTS: &[(&str, &str)] = &[
+        ("POPOVER_LABEL", crate::popover::POPOVER_LABEL),
+        ("IDLE_LABEL", crate::signals::fanout::IDLE_LABEL),
+        ("NOTIFY_LABEL", crate::signals::fanout::NOTIFY_LABEL),
+        ("ABOUT_LABEL", crate::tray::ABOUT_LABEL),
+    ];
+
+    /// Window labels targeted by an `emit_to(<label>, …)` anywhere in `src/`.
+    ///
+    /// Deliberately strict: an `emit_to` whose first argument isn't one of
+    /// [`LABEL_CONSTANTS`] panics rather than being skipped. A scanner that
+    /// silently ignores what it can't parse would quietly stop guarding the
+    /// moment someone introduces a new label constant — which is precisely
+    /// the class of omission this test exists to catch.
+    fn emit_to_target_labels() -> std::collections::BTreeSet<String> {
+        // Assembled at runtime so the needle never appears as a literal in
+        // this file — the scanner reads `src/`, which includes itself, and a
+        // literal would match its own source and abort on a "target" that is
+        // really this line.
+        let needle = format!(".{}(", "emit_to");
+        let mut targets = std::collections::BTreeSet::new();
+        let mut stack = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                // Comments mention `emit_to(...)` in prose (and with
+                // non-constant arguments); only real code should be scanned.
+                let code: String = std::fs::read_to_string(&path)
+                    .unwrap()
+                    .lines()
+                    .filter(|l| !l.trim_start().starts_with("//"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                for (offset, _) in code.match_indices(needle.as_str()) {
+                    let rest = &code[offset + needle.len()..];
+                    let arg = rest
+                        .split(',')
+                        .next()
+                        .expect("emit_to takes a label argument")
+                        .trim();
+                    let ident = arg.rsplit("::").next().unwrap_or(arg);
+                    let label = LABEL_CONSTANTS
+                        .iter()
+                        .find(|(name, _)| *name == ident)
+                        .map(|(_, label)| *label)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{}: emit_to's target `{arg}` is not a known window-label \
+                                 constant. Add it to LABEL_CONSTANTS so its capability keeps \
+                                 being checked (#304).",
+                                path.display()
+                            )
+                        });
+                    targets.insert(label.to_string());
+                }
+            }
+        }
+        targets
+    }
+
+    /// A backend `emit_to(<label>, …)` is only half a delivery: the target
+    /// window's capability has to grant event permission or the webview's
+    /// `listen()` is denied and the event silently never arrives. That is
+    /// exactly how the notification window shipped broken (#301).
+    ///
+    /// Reach, stated honestly: because `core:default` already bundles
+    /// `core:event:default`, this fires only for a capability granting
+    /// *neither* — i.e. a deliberately minimal one written for a new window.
+    /// Dropping the explicit `core:event:default` from a capability that
+    /// keeps `core:default` is correctly not a failure; the window can still
+    /// receive events.
+    #[test]
+    fn every_emit_to_target_window_can_receive_events() {
+        let permissions = effective_permissions_by_window();
+        let mut ungranted = Vec::new();
+        for label in emit_to_target_labels() {
+            let granted = permissions.get(&label);
+            if !granted.is_some_and(|g| g.iter().any(|p| p == "core:event:default")) {
+                ungranted.push(label);
+            }
+        }
+        assert!(
+            ungranted.is_empty(),
+            "the backend emits to these windows, but their capabilities don't \
+             grant `core:event:default` — every such event is dropped by the \
+             ACL with no Rust-side error: {ungranted:?}"
+        );
+    }
+
+    /// The scanner is only a guard if it actually finds the call sites. A
+    /// refactor that moves or renames `emit_to` would otherwise leave it
+    /// silently scanning nothing and passing forever.
+    #[test]
+    fn emit_to_scanner_finds_the_known_targets() {
+        let targets = emit_to_target_labels();
+        for expected in ["popover", "idle", "notify", "about"] {
+            assert!(
+                targets.contains(expected),
+                "scanner found no emit_to targeting `{expected}`; it has stopped \
+                 guarding: {targets:?}"
+            );
+        }
+    }
+
+    /// `CORE_DEFAULT_IMPLIES` is hand-mirrored from Tauri's generated schema.
+    /// If a Tauri upgrade changes what `core:default` bundles, the expansion
+    /// above goes stale and the sufficiency test starts lying in one
+    /// direction or the other — so assert the two still agree.
+    #[test]
+    fn core_default_expansion_still_matches_the_schema() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let schema = std::fs::read_to_string(root.join("gen/schemas/desktop-schema.json")).unwrap();
+        let described = schema
+            .split("Default core plugins set.")
+            .nth(1)
+            .expect("schema documents the core:default set");
+        // The description lists the members as "- `core:x:default`" before
+        // the next JSON field begins.
+        let described = &described[..described.find("\",").unwrap_or(described.len())];
+        for implied in CORE_DEFAULT_IMPLIES {
+            assert!(
+                described.contains(implied),
+                "`core:default` no longer bundles `{implied}` — update \
+                 CORE_DEFAULT_IMPLIES to match the generated schema"
+            );
+        }
+    }
+
     #[test]
     fn ensure_data_dir_creates_missing_nested_path() {
         let tmp = tempfile::tempdir().unwrap();
