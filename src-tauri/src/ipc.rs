@@ -337,25 +337,12 @@ pub fn system_locale() -> Option<String> {
 /// so a Mac set to English with a non-US region gets American dates from a
 /// setting that claims to follow the system. Asking macOS for the current
 /// locale gives the region too.
-fn os_locale() -> Option<String> {
-    #[cfg(target_os = "macos")]
-    {
-        macos_locale()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
-/// `NSLocale.currentLocale.localeIdentifier`, normalized to BCP-47.
-///
 /// macOS reports POSIX-ish identifiers with keywords attached, e.g.
 /// `en_US@currency=nok`. Strip the keywords and swap `_` for `-`; those
 /// keywords carry currency and calendar choices that say nothing about how
 /// dates and clocks are written.
 #[cfg(target_os = "macos")]
-fn macos_locale() -> Option<String> {
+fn os_locale() -> Option<String> {
     use objc2_foundation::NSLocale;
 
     let id = NSLocale::currentLocale().localeIdentifier().to_string();
@@ -363,47 +350,69 @@ fn macos_locale() -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
+/// Windows and Linux report a complete locale already, so `sys_locale`'s
+/// answer stands on its own.
+#[cfg(not(target_os = "macos"))]
+fn os_locale() -> Option<String> {
+    None
+}
+
 /// Turn a macOS locale identifier into a BCP-47 tag.
+///
+/// Gated on `test` as well as macOS: the only caller is `macos_locale`, so on
+/// Linux and Windows this is dead code and CI builds all three with
+/// `-D warnings`. The logic is pure, though, and worth testing everywhere
+/// rather than only on the one platform that runs it.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn normalize_locale_id(id: &str) -> String {
     id.split('@').next().unwrap_or("").trim().replace('_', "-")
 }
 
 /// Append a BCP-47 `-u-hc-<cycle>` extension to `locale`.
 ///
-/// A locale that already carries a `-u-` extension is returned untouched:
-/// merging Unicode extension keywords correctly is more than this needs, and
-/// an explicit extension from the OS already says what we were about to.
+/// A locale that already carries *any* singleton extension is returned
+/// untouched. Two different reasons, one rule: a `-u-` extension already says
+/// what we were about to, and merging Unicode keywords correctly is more than
+/// this needs; while appending after a private-use `-x-` sequence would bury
+/// `-u-hc-` inside it, where `Intl` ignores it silently — the override lost
+/// with no error to notice.
 pub(crate) fn with_hour_cycle(locale: String, cycle: Option<&str>) -> String {
     match cycle {
-        Some(hc) if !locale.contains("-u-") && !locale.is_empty() => {
+        Some(hc) if !locale.is_empty() && !has_singleton_extension(&locale) => {
             format!("{locale}-u-hc-{hc}")
         }
         _ => locale,
     }
 }
 
+/// Whether a BCP-47 tag already carries a singleton extension (`-u-`, `-t-`,
+/// `-x-`, …). Singletons are the one-character subtags that introduce an
+/// extension, so nothing may simply be appended after one.
+fn has_singleton_extension(locale: &str) -> bool {
+    locale
+        .split('-')
+        .skip(1)
+        .any(|sub| sub.len() == 1 && sub.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
 /// The OS-level 12/24-hour override, as a BCP-47 hour-cycle code.
 ///
 /// Only macOS exposes one separately from the locale; Windows and Linux
 /// encode the user's choice in the locale itself, so there is nothing to add.
-fn os_hour_cycle_override() -> Option<&'static str> {
-    #[cfg(target_os = "macos")]
-    {
-        macos_hour_cycle_override()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
-/// Read macOS's forced-hour-cycle preference from the global domain.
+///
+/// Reads macOS's forced-hour-cycle preference from the global domain.
 ///
 /// `AppleICUForce24HourTime` / `AppleICUForce12HourTime` are what System
 /// Settings writes when the "24-hour time" switch is toggled. Absent both,
-/// the region's own convention stands and we add nothing.
+/// the region's own convention stands and we add nothing. If both were
+/// somehow set, 24-hour wins — macOS never writes both, but the order here
+/// makes the outcome deterministic rather than whichever read came first.
+///
+/// Read once per call, and the frontend calls `system_locale` only at boot,
+/// so toggling the switch while Cairn is running takes effect at the next
+/// launch. Matching the region, which is equally a boot-time read.
 #[cfg(target_os = "macos")]
-fn macos_hour_cycle_override() -> Option<&'static str> {
+fn os_hour_cycle_override() -> Option<&'static str> {
     use objc2_foundation::{NSString, NSUserDefaults};
 
     let defaults = NSUserDefaults::standardUserDefaults();
@@ -421,6 +430,13 @@ fn macos_hour_cycle_override() -> Option<&'static str> {
     if read("AppleICUForce12HourTime") == Some(true) {
         return Some("h12");
     }
+    None
+}
+
+/// Windows and Linux encode the user's 12/24-hour choice in the locale
+/// itself, so there is nothing separate to add.
+#[cfg(not(target_os = "macos"))]
+fn os_hour_cycle_override() -> Option<&'static str> {
     None
 }
 
@@ -11018,6 +11034,29 @@ mod system_locale_tests {
     fn does_not_clobber_an_extension_the_os_already_supplied() {
         let already = "en-US-u-hc-h11".to_string();
         assert_eq!(with_hour_cycle(already.clone(), Some("h23")), already);
+    }
+
+    #[test]
+    fn refuses_to_append_after_any_singleton_extension() {
+        // Appending after a private-use sequence would bury `-u-hc-` inside
+        // it, where `Intl` ignores it silently — worse than not trying.
+        for tag in ["en-US-x-private", "en-US-t-en-latn", "und-x-foo"] {
+            assert_eq!(
+                with_hour_cycle(tag.to_string(), Some("h23")),
+                tag,
+                "{tag} carries a singleton and must be left alone"
+            );
+        }
+    }
+
+    #[test]
+    fn still_appends_to_a_tag_with_script_and_region_subtags() {
+        // Multi-character subtags are not singletons; a script + region tag
+        // is exactly the common case that must still get the override.
+        assert_eq!(
+            with_hour_cycle("zh-Hans-CN".into(), Some("h23")),
+            "zh-Hans-CN-u-hc-h23"
+        );
     }
 
     #[test]
