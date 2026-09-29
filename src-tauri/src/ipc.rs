@@ -6407,9 +6407,17 @@ mod tests {
         let state = app.state::<crate::AppState>();
         let snap = current_snapshot(state).await.unwrap();
         assert!(snap.calendar.is_empty());
+        // `git_branch` and `browser_domain` are structurally `None` on the
+        // cold-start path — their collectors live in the stream's driver,
+        // not in `snapshot::build`.
         assert!(snap.browser_domain.is_none());
         assert!(snap.git_branch.is_none());
-        assert!(snap.ide_folder.is_none());
+        // `ide_folder` is deliberately NOT asserted here: this path reads the
+        // machine's real frontmost window, so an editor with a project folder
+        // in its title makes it `Some` and the test fails depending on what is
+        // on screen (#310). The deterministic version of that assertion lives
+        // in `signals::snapshot`'s `build_with` test, which injects the
+        // window reader.
     }
 
     // ---------------- get_git_watcher_status / browser_extension_status (#34) ----------------
