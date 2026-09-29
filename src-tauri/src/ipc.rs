@@ -314,9 +314,114 @@ pub struct ResolveIdleInput {
 /// WKWebView reports `en-US` regardless of the macOS region, so the frontend
 /// reads the real locale through this rather than `navigator.language`.
 /// `None` when the OS exposes no locale; the frontend then falls back.
+///
+/// Carries the *effective* hour cycle, not just the one the region implies.
+/// macOS lets you force a 12- or 24-hour clock independently of your region
+/// (System Settings → General → Date & Time → "24-hour time"), and that
+/// choice is not part of the locale identifier: a Mac set to `en_US` with
+/// 24-hour time still reports `en-US`, from which `Intl` infers a 12-hour
+/// clock the Mac itself never displays. The override is appended as a BCP-47
+/// `-u-hc-` extension, which `Intl` honours, so "System" means what the OS
+/// actually does rather than what its region implies (#308).
 #[tauri::command]
 pub fn system_locale() -> Option<String> {
-    sys_locale::get_locale()
+    let base = os_locale().or_else(sys_locale::get_locale)?;
+    Some(with_hour_cycle(base, os_hour_cycle_override()))
+}
+
+/// The OS's own locale identifier, where it can be read directly.
+///
+/// `sys_locale` resolves from the preferred-language list and on macOS can
+/// answer with a bare language (`"en"`), dropping the region. `Intl` then
+/// falls back to that language's default conventions — US ones for English —
+/// so a Mac set to English with a non-US region gets American dates from a
+/// setting that claims to follow the system. Asking macOS for the current
+/// locale gives the region too.
+fn os_locale() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_locale()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// `NSLocale.currentLocale.localeIdentifier`, normalized to BCP-47.
+///
+/// macOS reports POSIX-ish identifiers with keywords attached, e.g.
+/// `en_US@currency=nok`. Strip the keywords and swap `_` for `-`; those
+/// keywords carry currency and calendar choices that say nothing about how
+/// dates and clocks are written.
+#[cfg(target_os = "macos")]
+fn macos_locale() -> Option<String> {
+    use objc2_foundation::NSLocale;
+
+    let id = NSLocale::currentLocale().localeIdentifier().to_string();
+    let normalized = normalize_locale_id(&id);
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+/// Turn a macOS locale identifier into a BCP-47 tag.
+pub(crate) fn normalize_locale_id(id: &str) -> String {
+    id.split('@').next().unwrap_or("").trim().replace('_', "-")
+}
+
+/// Append a BCP-47 `-u-hc-<cycle>` extension to `locale`.
+///
+/// A locale that already carries a `-u-` extension is returned untouched:
+/// merging Unicode extension keywords correctly is more than this needs, and
+/// an explicit extension from the OS already says what we were about to.
+pub(crate) fn with_hour_cycle(locale: String, cycle: Option<&str>) -> String {
+    match cycle {
+        Some(hc) if !locale.contains("-u-") && !locale.is_empty() => {
+            format!("{locale}-u-hc-{hc}")
+        }
+        _ => locale,
+    }
+}
+
+/// The OS-level 12/24-hour override, as a BCP-47 hour-cycle code.
+///
+/// Only macOS exposes one separately from the locale; Windows and Linux
+/// encode the user's choice in the locale itself, so there is nothing to add.
+fn os_hour_cycle_override() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_hour_cycle_override()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// Read macOS's forced-hour-cycle preference from the global domain.
+///
+/// `AppleICUForce24HourTime` / `AppleICUForce12HourTime` are what System
+/// Settings writes when the "24-hour time" switch is toggled. Absent both,
+/// the region's own convention stands and we add nothing.
+#[cfg(target_os = "macos")]
+fn macos_hour_cycle_override() -> Option<&'static str> {
+    use objc2_foundation::{NSString, NSUserDefaults};
+
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let read = |key: &str| -> Option<bool> {
+        let ns = NSString::from_str(key);
+        // `objectForKey` distinguishes "unset" from "set to false"; `boolForKey`
+        // alone would read an absent key as `false` and force a 12-hour clock
+        // on every Mac that never touched the switch.
+        defaults.objectForKey(&ns).map(|_| defaults.boolForKey(&ns))
+    };
+
+    if read("AppleICUForce24HourTime") == Some(true) {
+        return Some("h23");
+    }
+    if read("AppleICUForce12HourTime") == Some(true) {
+        return Some("h12");
+    }
+    None
 }
 
 #[tauri::command]
@@ -10881,5 +10986,87 @@ mod work_hour_budget_tests {
         let (_dir, app, _db) = mock_app_with_db().await;
         let state = app.state::<AppState>();
         assert!(budget_status_impl(state).await.unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod system_locale_tests {
+    use super::with_hour_cycle;
+
+    #[test]
+    fn appends_the_override_as_a_unicode_extension() {
+        // `Intl` honours `-u-hc-`, so this is how the OS's forced clock
+        // reaches the webview — the locale identifier alone can't carry it.
+        assert_eq!(
+            with_hour_cycle("en-US".into(), Some("h23")),
+            "en-US-u-hc-h23"
+        );
+        assert_eq!(
+            with_hour_cycle("nb-NO".into(), Some("h12")),
+            "nb-NO-u-hc-h12"
+        );
+    }
+
+    #[test]
+    fn leaves_the_locale_alone_when_there_is_no_override() {
+        // Most Macs never touch the switch, and every Windows/Linux locale
+        // already encodes the convention.
+        assert_eq!(with_hour_cycle("nb-NO".into(), None), "nb-NO");
+    }
+
+    #[test]
+    fn does_not_clobber_an_extension_the_os_already_supplied() {
+        let already = "en-US-u-hc-h11".to_string();
+        assert_eq!(with_hour_cycle(already.clone(), Some("h23")), already);
+    }
+
+    #[test]
+    fn leaves_an_empty_locale_empty() {
+        // A bare `-u-hc-h23` is not a locale; `Intl` would throw on it.
+        assert_eq!(with_hour_cycle(String::new(), Some("h23")), "");
+    }
+
+    #[test]
+    fn the_reported_locale_is_usable_and_reflects_this_machine() {
+        // Ties the command to the OS it runs on: whatever it returns must be
+        // a locale, and on a Mac with the 24-hour switch on it must say so.
+        let Some(loc) = super::system_locale() else {
+            return;
+        };
+        assert!(!loc.is_empty());
+        assert!(!loc.starts_with('-'), "got {loc}");
+    }
+}
+
+#[cfg(test)]
+mod locale_id_tests {
+    use super::normalize_locale_id;
+
+    #[test]
+    fn strips_keywords_and_swaps_the_separator() {
+        // What macOS actually reports for a Mac set to English/United States
+        // with Norwegian currency — the keyword says nothing about how dates
+        // and clocks are written, so it must not reach `Intl`.
+        assert_eq!(normalize_locale_id("en_US@currency=nok"), "en-US");
+        assert_eq!(normalize_locale_id("nb_NO"), "nb-NO");
+        assert_eq!(
+            normalize_locale_id("en_GB@calendar=gregorian;currency=gbp"),
+            "en-GB"
+        );
+    }
+
+    #[test]
+    fn passes_a_plain_tag_through() {
+        assert_eq!(normalize_locale_id("en-US"), "en-US");
+        assert_eq!(normalize_locale_id("en"), "en");
+    }
+
+    #[test]
+    fn yields_empty_for_nothing_usable() {
+        // The caller treats empty as "ask sys_locale instead" rather than
+        // handing `Intl` a tag it would throw on.
+        assert_eq!(normalize_locale_id(""), "");
+        assert_eq!(normalize_locale_id("@currency=nok"), "");
+        assert_eq!(normalize_locale_id("   "), "");
     }
 }
