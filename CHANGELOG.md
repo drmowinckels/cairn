@@ -30,6 +30,16 @@ as the GitHub Release body, so keep the most recent version at the top.
   stable contract downstream plugins consume instead of reading the
   database (#109).
 
+### Security
+
+- `[capabilities]` Every window's capability granted `log:default`, but the
+  frontend has never used the log plugin — `@tauri-apps/plugin-log` is not a
+  dependency and nothing in `src/` imports it. Logging is entirely Rust-side
+  and needs no webview permission, so the grant is dropped from all four
+  capabilities on least-privilege grounds. It had already propagated once:
+  `notify.json` inherited it in #301 by copying `idle.json`'s list rather than
+  re-deriving what that window needs (#305).
+
 ### Fixed
 
 - `[tray]` The About window no longer becomes an invisible window in

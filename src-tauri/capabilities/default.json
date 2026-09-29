@@ -17,7 +17,6 @@
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     "autostart:default",
-    "log:default",
     "dialog:allow-message",
     "dialog:allow-open",
     "dialog:allow-save",
