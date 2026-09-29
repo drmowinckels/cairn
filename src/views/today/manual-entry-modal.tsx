@@ -13,6 +13,7 @@ import { isSafeExternalUrl } from "../../lib/url";
 import type { Connector, SaveProjectInput } from "../../lib/ipc";
 import type { Project, Task } from "../../lib/types";
 import { RemoteTaskPicker, type PickedRemoteTask } from "./remote-task-picker";
+import { DateTimeField } from "../../lib/datetime-fields";
 
 /** Swatches offered when creating a project inline. Mirrors the
  *  default-seed palette so new projects look at home next to them. */
@@ -646,31 +647,34 @@ export function ManualEntryModal({
           )}
 
           <div className="field-row">
-            <label className="field">
+            {/* A group, not a <label>: each DateTimeField renders a date and
+                a time control, and one label can only name one of them. The
+                sub-fields carry their own accessible names. */}
+            <div className="field" role="group" aria-label="Start">
               <span className="field-label">Start</span>
-              <input
-                type="datetime-local"
+              <DateTimeField
                 className="field-input"
+                label="Start"
                 value={draft.startedLocal}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, startedLocal: e.target.value }))
+                onChange={(next) =>
+                  setDraft((d) => ({ ...d, startedLocal: next }))
                 }
                 required
               />
-            </label>
-            <label className="field">
+            </div>
+            <div className="field" role="group" aria-label="End">
               <span className="field-label">
                 End <span className="field-hint">(blank = running)</span>
               </span>
-              <input
-                type="datetime-local"
+              <DateTimeField
                 className="field-input"
+                label="End"
                 value={draft.endedLocal}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, endedLocal: e.target.value }))
+                onChange={(next) =>
+                  setDraft((d) => ({ ...d, endedLocal: next }))
                 }
               />
-            </label>
+            </div>
           </div>
 
           {validation.startError && (
@@ -765,8 +769,9 @@ export function validateDraft(
       overlapWarning: null,
     };
   }
-  // `<input type="datetime-local">` normally yields "" (caught above) or
-  // a well-formed local timestamp. Guard the unparseable case anyway:
+  // `DateTimeField` yields "" (caught above) or a well-formed local
+  // timestamp — it never reports a half-filled pair. Guard the
+  // unparseable case anyway:
   // `localToIso` returns "" on an invalid value, so a non-empty-but-bad
   // start would otherwise pass validation as NaN and forward "" to the
   // backend. Reject it as a missing start instead.

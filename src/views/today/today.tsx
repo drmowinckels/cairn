@@ -96,6 +96,9 @@ import {
   type RequiredFieldsPrefs,
 } from "../../lib/required-fields";
 import type { PickedRemoteTask } from "./remote-task-picker";
+import { useDateTimeFormat } from "../../lib/use-datetime-format";
+import { formatDayLabel } from "../../lib/datetime-format";
+import { DateTimeField } from "../../lib/datetime-fields";
 
 /** Build the editor's connector-task link from a resolved task, or null when
  *  the task is local / absent (#110). */
@@ -184,6 +187,7 @@ export function TodayView({
   requiredFields = REQUIRED_FIELDS_OFF,
   workdayReviewEnabled = false,
 }: Props) {
+  const { prefs: dateTimeFormat } = useDateTimeFormat();
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
   const { connectors } = useConnectors();
@@ -202,11 +206,11 @@ export function TodayView({
   };
   const dateLabel = isToday
     ? "Today"
-    : new Date(viewDate + "T00:00:00").toLocaleDateString(appLocale(), {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      });
+    : formatDayLabel(
+        new Date(viewDate + "T00:00:00"),
+        dateTimeFormat,
+        appLocale(),
+      );
   const upcoming = useUpcoming(3);
   const calendars = useCalendars();
   const timer = useTimer({ onStopped: () => void today.refresh() });
@@ -1065,15 +1069,14 @@ export function TodayView({
           )}
           {timer.running && editingStart && (
             <div className="now-start-edit">
-              <input
-                type="datetime-local"
+              <DateTimeField
                 className="field-input"
+                label="Start"
+                dateLabel="Start date"
+                timeLabel="Start time"
                 value={startDraft}
-                onChange={(e) => setStartDraft(e.target.value)}
-                max={isoToLocal(new Date().toISOString())}
-                aria-label="Start time"
-                aria-describedby={startError ? "start-edit-err" : undefined}
-                aria-invalid={startError ? true : undefined}
+                onChange={setStartDraft}
+                describedBy={startError ? "start-edit-err" : undefined}
               />
               <button
                 className="btn btn--primary btn--sm"

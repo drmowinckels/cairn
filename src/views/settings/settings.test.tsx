@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 const invokeMock = vi.fn();
 const askMock = vi.fn();
@@ -19,6 +25,7 @@ import { SettingsView } from "./index";
 import type { UseA11yPrefs } from "../../lib/use-a11y-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type { UseRoundingPrefs } from "../../lib/use-rounding-prefs";
+import type { UseDateTimeFormat } from "../../lib/use-datetime-format";
 
 function stubRounding(
   overrides: Partial<UseRoundingPrefs> = {},
@@ -620,5 +627,118 @@ describe("SettingsView · Updates section (#45)", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(toggle);
     expect(setEnabled).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("Dates & times settings (#308)", () => {
+  function stubFormat(
+    overrides: Partial<UseDateTimeFormat> = {},
+  ): UseDateTimeFormat {
+    return {
+      prefs: { time: "system", date: "system" },
+      setTimeFormat: vi.fn(),
+      setDateFormat: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("is hidden when the preference isn't wired in", () => {
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+      />,
+    );
+    expect(
+      screen.queryByRole("radiogroup", { name: /time format/i }),
+    ).toBeNull();
+  });
+
+  it("offers System, 24-hour and 12-hour, and reports the current one", () => {
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        dateTimeFormat={stubFormat({ prefs: { time: "24h", date: "system" } })}
+      />,
+    );
+    const group = screen.getByRole("radiogroup", { name: /time format/i });
+    const labels = within(group)
+      .getAllByRole("radio")
+      .map((b) => b.textContent);
+    expect(labels).toEqual(["System", "24-hour", "12-hour"]);
+    // The chosen option is what a screen reader announces as selected.
+    expect(
+      within(group)
+        .getByRole("radio", { name: "24-hour" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(within(group).getAllByRole("radio", { checked: true })).toHaveLength(
+      1,
+    );
+  });
+
+  it("choosing a time format calls setTimeFormat", () => {
+    const format = stubFormat();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        dateTimeFormat={format}
+      />,
+    );
+    fireEvent.click(
+      within(
+        screen.getByRole("radiogroup", { name: /time format/i }),
+      ).getByRole("radio", { name: "12-hour" }),
+    );
+    expect(format.setTimeFormat).toHaveBeenCalledWith("12h");
+  });
+
+  it("choosing a date format calls setDateFormat", () => {
+    const format = stubFormat();
+    render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        dateTimeFormat={format}
+      />,
+    );
+    fireEvent.click(
+      within(
+        screen.getByRole("radiogroup", { name: /date format/i }),
+      ).getByRole("radio", { name: "Y-M-D" }),
+    );
+    expect(format.setDateFormat).toHaveBeenCalledWith("ymd");
+  });
+
+  it("previews the chosen formats so the difference is visible before committing", () => {
+    // The preview date is an afternoon on the 25th precisely so 12h vs 24h
+    // and day- vs month-first are both legible at a glance.
+    const { rerender } = render(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        dateTimeFormat={stubFormat({ prefs: { time: "24h", date: "dmy" } })}
+      />,
+    );
+    expect(screen.getByText(/Preview: 13:05/)).toBeTruthy();
+    expect(screen.getByText(/Preview: .*25 Dec/)).toBeTruthy();
+
+    rerender(
+      <SettingsView
+        density="comfy"
+        a11y={stubA11y()}
+        capture={stubCapture()}
+        dateTimeFormat={stubFormat({ prefs: { time: "12h", date: "mdy" } })}
+      />,
+    );
+    expect(screen.getByText(/Preview: 1:05\s*PM/i)).toBeTruthy();
+    expect(screen.getByText(/Preview: .*Dec 25/)).toBeTruthy();
   });
 });

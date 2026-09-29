@@ -49,6 +49,7 @@ import { SettingsView, type SettingsSectionId } from "../settings";
 import { ExtensionsView } from "../extensions/extensions-view";
 import { OnboardingView } from "../onboarding";
 import { CommandPalette, type PaletteContext } from "../palette/palette";
+import { useDateTimeFormat } from "../../lib/use-datetime-format";
 
 interface Props {
   initialView?: View;
@@ -102,6 +103,7 @@ function PopoverShell({
   const popoverSize = usePopoverSize();
   const trayDetail = useTrayDetail();
   const rounding = useRoundingPrefs();
+  const dateTimeFormat = useDateTimeFormat();
   const workingHours = useWorkingHours();
   const workdayReview = useWorkdayReviewPrefs();
   const taskSwitch = useTaskSwitchPrefs();
@@ -486,6 +488,7 @@ function PopoverShell({
               popoverSize={popoverSize}
               trayDetail={trayDetail}
               rounding={rounding}
+              dateTimeFormat={dateTimeFormat}
               workingHours={workingHours}
               taskSwitch={taskSwitch}
               requiredFields={requiredFields}

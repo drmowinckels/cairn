@@ -6,6 +6,7 @@ import { useColorblindEnabled } from "../../lib/use-colorblind";
 import { fmtClockFromIso, fmtHm } from "../../lib/time";
 import { ROUNDING_OFF, roundMinutes, type Rounding } from "../../lib/rounding";
 import type { Project } from "../../lib/types";
+import { useDateTimeFormatSubscription } from "../../lib/use-datetime-format";
 
 export interface RecentEntry {
   id: string;
@@ -45,6 +46,7 @@ export function RecentList({
   rounding = ROUNDING_OFF,
   emptyToday = true,
 }: Props) {
+  useDateTimeFormatSubscription();
   const cbEnabled = useColorblindEnabled();
   if (entries.length === 0) {
     return (

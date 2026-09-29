@@ -651,13 +651,27 @@ describe("ManualEntryModal — field changes & focus return", () => {
     fireEvent.change(project, { target: { value: "" } });
     expect(project.value).toBe("");
 
-    const start = screen.getByLabelText(/^start/i) as HTMLInputElement;
-    fireEvent.change(start, { target: { value: "2026-05-26T10:00" } });
-    expect(start.value).toBe("2026-05-26T10:00");
+    // Start and End are each a date control plus a time control now (#308),
+    // and both commit on blur rather than on every keystroke.
+    const startTime = screen.getByLabelText(
+      /^start time$/i,
+    ) as HTMLInputElement;
+    fireEvent.change(startTime, { target: { value: "10:00" } });
+    fireEvent.blur(startTime);
+    expect(startTime.value).toBe("10:00");
+    expect(
+      (screen.getByLabelText(/^start date$/i) as HTMLInputElement).value,
+    ).toBe("26/05/2026");
 
-    const end = screen.getByLabelText(/^end/i) as HTMLInputElement;
-    fireEvent.change(end, { target: { value: "2026-05-26T11:00" } });
-    expect(end.value).toBe("2026-05-26T11:00");
+    // End starts empty, so it needs both halves before it becomes a value.
+    const endDate = screen.getByLabelText(/^end date$/i) as HTMLInputElement;
+    fireEvent.change(endDate, { target: { value: "2026-05-26" } });
+    fireEvent.blur(endDate);
+    const endTime = screen.getByLabelText(/^end time$/i) as HTMLInputElement;
+    fireEvent.change(endTime, { target: { value: "11:00" } });
+    fireEvent.blur(endTime);
+    expect(endTime.value).toBe("11:00");
+    expect(endDate.value).toBe("26/05/2026");
   });
 
   it("returns focus to the opener element when the modal closes", () => {

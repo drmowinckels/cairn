@@ -187,6 +187,8 @@ describe("BillingRatesPanel", () => {
     fireEvent.change(screen.getByLabelText(/effective from/i), {
       target: { value: "2026-02-15" },
     });
+    // The date field commits on blur, not on every keystroke.
+    fireEvent.blur(screen.getByLabelText(/effective from/i));
     await userEvent.click(screen.getByRole("button", { name: /add rate/i }));
 
     await waitFor(() => expect(billingSetRate).toHaveBeenCalled());

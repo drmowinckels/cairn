@@ -4,6 +4,7 @@ import { formatMoney } from "../../lib/money";
 import { isoLocalDate } from "../../lib/report-math";
 import type { Client, Project, Task } from "../../lib/types";
 import { useRates } from "../../lib/use-rates";
+import { DateField } from "../../lib/datetime-fields";
 
 type ScopeType = Rate["scopeType"];
 
@@ -209,12 +210,11 @@ export function BillingRatesPanel() {
           value={currency}
           onChange={(e) => setCurrency(e.target.value)}
         />
-        <input
+        <DateField
           className="field-input"
-          type="date"
-          aria-label="Effective from"
+          label="Effective from"
           value={effectiveFrom}
-          onChange={(e) => setEffectiveFrom(e.target.value)}
+          onChange={setEffectiveFrom}
         />
         <button
           type="button"

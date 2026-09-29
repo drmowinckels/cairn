@@ -124,9 +124,12 @@ describe("InvoicesPanel", () => {
     fireEvent.change(screen.getByLabelText(/^from$/i), {
       target: { value: "2026-06-01" },
     });
+    // The date fields commit on blur, not on every keystroke.
+    fireEvent.blur(screen.getByLabelText(/^from$/i));
     fireEvent.change(screen.getByLabelText(/^to$/i), {
       target: { value: "2026-07-01" },
     });
+    fireEvent.blur(screen.getByLabelText(/^to$/i));
     const tax = screen.getByLabelText(/tax percent/i);
     await userEvent.clear(tax);
     await userEvent.type(tax, "25");

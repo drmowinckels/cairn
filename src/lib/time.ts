@@ -1,4 +1,7 @@
 import type { BackendEntry } from "./ipc";
+import { formatClockParts } from "./datetime-format";
+import { appLocale } from "./locale";
+import { dateTimeFormatPrefs } from "./use-datetime-format";
 
 export const minutesOf = (hours: number, minutes = 0): number =>
   hours * 60 + minutes;
@@ -36,19 +39,27 @@ export const fmtHm = (totalMinutes: number): string => {
   return `${m}m`;
 };
 
+/**
+ * Format minutes-since-midnight as a clock reading, honouring the user's
+ * time-format preference (#308). Every caller is a time of day — timeline
+ * tick labels, the now-marker, split points — never a duration, so switching
+ * to a 12-hour clock is always the right thing here. Durations go through
+ * {@link fmtHm} and are unaffected.
+ */
 export const fmtClock = (totalMinutes: number): string => {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return formatClockParts(h, m, dateTimeFormatPrefs(), appLocale());
 };
 
 export const fmtRange = (start: number, end: number): string =>
   `${fmtClock(start)}–${fmtClock(end)}`;
 
 /**
- * Format an ISO-8601 timestamp string as a `HH:MM` clock in the
- * user's local timezone. Used by the idle modal to render
- * `since`/`until` from the `signal:idle-resume` event.
+ * Format an ISO-8601 timestamp string as a clock reading in the user's local
+ * timezone, honouring the time-format preference (#308). Used by the idle
+ * modal to render `since`/`until` from the `signal:idle-resume` event, and by
+ * the entry rows and activity log.
  */
 export const fmtClockFromIso = (iso: string): string => {
   const d = new Date(iso);
@@ -56,7 +67,12 @@ export const fmtClockFromIso = (iso: string): string => {
   // rendering "NaN:NaN" in the idle prompt — mirrors the NaN guards on
   // the other helpers in this module.
   if (Number.isNaN(d.getTime())) return "—";
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return formatClockParts(
+    d.getHours(),
+    d.getMinutes(),
+    dateTimeFormatPrefs(),
+    appLocale(),
+  );
 };
 
 /**

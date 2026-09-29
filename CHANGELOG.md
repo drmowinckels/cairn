@@ -29,6 +29,32 @@ as the GitHub Release body, so keep the most recent version at the top.
   per-project rounding overrides), and the billable flag. This is the
   stable contract downstream plugins consume instead of reading the
   database (#109).
+- `[settings]` **Dates & times** — a new Settings section to choose how Cairn
+  renders clocks and dates. **Time format** is System / 24-hour / 12-hour and
+  **Date format** is System / D/M/Y / M/D/Y / Y-M-D, each with a live preview.
+  `System` follows your OS region. Cairn previously hard-coded a zero-padded
+  24-hour clock everywhere with no way to ask for anything else, so a 12-hour
+  user had no option at all; dates followed the OS but couldn't be overridden.
+  The choice applies to the timeline axis and now-marker, entry rows, the
+  activity log, Up Next, the running timer and the idle prompt, and it reaches
+  the separate overlay windows live — switching it in the popover repaints the
+  idle prompt's clock without a reload. Durations (`1h 15m`) are unaffected;
+  the preference is a _clock_, not a number format (#308).
+- `[settings]` Every date and time **field you type into** now follows that
+  same preference — the manual-entry Start/End, the running timer's start
+  edit, working-hours start/end, the invoice range and a rate's effective
+  date. These were native `<input type="date" | "time" | "datetime-local">`
+  controls, which render in the _webview's_ locale; WKWebView reports that as
+  `en-US` no matter the machine's region, so they showed a 12-hour clock and a
+  month-first date to everyone and ignored both the OS locale and the new
+  preference. A native picker's format isn't scriptable, so they're replaced
+  with fields Cairn renders itself. They accept what you'd actually type
+  (`1405`, `14.05`, `9:05pm`, `25-12-2026`, or an ISO date in any field order)
+  and normalise on blur; an unparseable entry is flagged with the expected
+  format instead of being silently dropped; and Up/Down step by a minute or a
+  day. What's stored is unchanged — 24-hour `HH:MM` and ISO dates — so
+  switching the preference never rewrites an entry. The trade is the loss of
+  the OS calendar popup (#308).
 
 ### Security
 

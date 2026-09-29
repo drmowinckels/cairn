@@ -5584,3 +5584,17 @@ select.rule-conf {
 .onboarding-foot .spacer {
   flex: 1 1 auto;
 }
+
+/* Date + time pair (#308). The two controls read as one field, so they sit
+   on one line and wrap together rather than splitting across a row. */
+.dt-field {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.dt-field .field-input {
+  min-width: 0;
+  flex: 1 1 7ch;
+}

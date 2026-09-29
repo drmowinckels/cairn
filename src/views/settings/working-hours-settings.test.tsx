@@ -152,9 +152,12 @@ describe("WorkingHoursSection", () => {
         { setStartMinute },
       ),
     );
+    // The field normalises on commit (blur/Enter), not on every keystroke —
+    // reformatting mid-typing would fight the user.
     fireEvent.change(screen.getByLabelText(/working hours start/i), {
       target: { value: "08:15" },
     });
+    fireEvent.blur(screen.getByLabelText(/working hours start/i));
     expect(setStartMinute).toHaveBeenCalledWith(8 * 60 + 15);
   });
 
@@ -169,6 +172,7 @@ describe("WorkingHoursSection", () => {
     fireEvent.change(screen.getByLabelText(/working hours end/i), {
       target: { value: "18:45" },
     });
+    fireEvent.blur(screen.getByLabelText(/working hours end/i));
     expect(setEndMinute).toHaveBeenCalledWith(18 * 60 + 45);
   });
 

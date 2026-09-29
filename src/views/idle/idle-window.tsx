@@ -5,6 +5,7 @@ import { useIdleWindow } from "../../lib/use-idle-window";
 import { useApplyA11yChrome } from "../../lib/use-apply-a11y-chrome";
 import { useFocusTrap } from "../../lib/use-focus-trap";
 import type { IdleChoice } from "../../lib/ipc";
+import { useDateTimeFormatSubscription } from "../../lib/use-datetime-format";
 
 interface ChoiceDef {
   choice: IdleChoice;
@@ -42,6 +43,7 @@ const CHOICES: ChoiceDef[] = [
  * they were away while a timer kept running.
  */
 export function IdleWindow() {
+  useDateTimeFormatSubscription();
   const { prompt, tracking, resolve, dismiss } = useIdleWindow();
   useApplyA11yChrome();
   const trap = useFocusTrap(() => void dismiss());

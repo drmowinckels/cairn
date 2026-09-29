@@ -18,6 +18,7 @@ import { useMinuteClock } from "../../lib/use-minute-clock";
 import { useAnnounce } from "../../lib/use-announce";
 import type { BackendEntry } from "../../lib/ipc";
 import type { Project } from "../../lib/types";
+import { useDateTimeFormatSubscription } from "../../lib/use-datetime-format";
 
 const PX_PER_HOUR = 44;
 const MIN_BLOCK_PX = 18;
@@ -89,6 +90,7 @@ export function TimelineStrip({
   onSplit,
   onMerge,
 }: Props) {
+  useDateTimeFormatSubscription();
   const nowMin = useMinuteClock();
 
   const segments = useMemo(
