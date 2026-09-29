@@ -57,6 +57,8 @@ import {
   type WorkingHours,
 } from "../../lib/use-working-hours";
 import { useWorkingHoursReminder } from "../../lib/use-working-hours-reminder";
+import { useBudgetAlerts } from "../../lib/use-budget-alerts";
+import { BudgetBanner } from "./budget-banner";
 import { useWorkdayReview } from "../../lib/use-workday-review";
 import {
   isSwitchCandidate,
@@ -386,6 +388,7 @@ export function TodayView({
   // timer running, offer to start tracking. Only offers — the user's tap
   // starts a blank timer they then fill in (suggestion ≠ auto-log).
   const reminder = useWorkingHoursReminder({ workingHours });
+  const budgets = useBudgetAlerts();
 
   const onReminderStart = useCallback(() => {
     reminder.acknowledge();
@@ -992,6 +995,21 @@ export function TodayView({
           onDismiss={workdayReview.dismiss}
         />
       )}
+
+      {/* Budgets yield to every other banner (#307): a suggestion or a
+          reminder is about what to do next, while a budget warning is
+          information about what already happened — it can wait a beat. */}
+      {budgets.alert &&
+        !suggestion &&
+        !reminder.active &&
+        !workdayReview.active && (
+          <BudgetBanner
+            status={budgets.alert}
+            style={bannerStyle}
+            announce={announce}
+            onDismiss={budgets.dismiss}
+          />
+        )}
 
       {timer.error && (
         <ErrorBanner

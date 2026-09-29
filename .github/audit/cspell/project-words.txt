@@ -177,6 +177,7 @@ tauri-apps
 TEAMID
 testthat
 thiserror
+Timelike
 timesheet
 TMPDIR
 todotxt

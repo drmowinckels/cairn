@@ -1,6 +1,7 @@
 mod activity_log;
 mod auto_backup;
 mod backup;
+mod budgets;
 mod connectors;
 mod db;
 mod export;
@@ -181,6 +182,40 @@ async fn export_entries_json(
     to: Option<String>,
 ) -> Result<String, String> {
     export::export_entries_json(state, dest, rounding, from, to).await
+}
+
+/// Every configured work-hour budget (#307). Thin shim over the testable
+/// `ipc::list_budgets_impl`.
+#[tauri::command]
+async fn list_budgets(state: tauri::State<'_, AppState>) -> Result<Vec<budgets::Budget>, String> {
+    ipc::list_budgets_impl(state).await
+}
+
+/// Create or replace a budget for a scope and period (#307).
+#[tauri::command]
+async fn set_budget(
+    state: tauri::State<'_, AppState>,
+    input: budgets::BudgetInput,
+) -> Result<Vec<budgets::Budget>, String> {
+    ipc::set_budget_impl(state, input).await
+}
+
+/// Remove a budget (#307).
+#[tauri::command]
+async fn delete_budget(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Vec<budgets::Budget>, String> {
+    ipc::delete_budget_impl(state, id).await
+}
+
+/// How every budget is doing right now (#307). Drives the approaching /
+/// over-budget prompts.
+#[tauri::command]
+async fn budget_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<budgets::BudgetStatus>, String> {
+    ipc::budget_status_impl(state).await
 }
 
 #[tauri::command]
@@ -1163,6 +1198,10 @@ pub fn run() {
             backup::cancel_pending_import,
             export_csv,
             export_entries_json,
+            list_budgets,
+            set_budget,
+            delete_budget,
+            budget_status,
             export::suggested_json_name,
             backup::delete_everything,
             backup::suggested_backup_name,
