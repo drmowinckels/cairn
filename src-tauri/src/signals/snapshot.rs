@@ -35,15 +35,35 @@ pub async fn build(
     exclusions: &Arc<RwLock<ExclusionMatcher>>,
     at: DateTime<Utc>,
 ) -> SignalSnapshot {
+    build_with(calendar, exclusions, at, crate::signals::window::current).await
+}
+
+/// [`build`] with the front-window reader injected.
+///
+/// Exists so tests can supply one. `signals::window::current` reads the
+/// machine's *real* frontmost window, so a test asserting the shape of an
+/// empty snapshot was really asserting against whatever happened to be on
+/// the developer's screen — an IDE with a project folder in its title made
+/// `ide_folder` `Some` and the assertion failed (#310). Production passes
+/// the real reader; tests pass one that returns `None`.
+pub async fn build_with<F>(
+    calendar: &CalendarRegistry,
+    exclusions: &Arc<RwLock<ExclusionMatcher>>,
+    at: DateTime<Utc>,
+    front_window: F,
+) -> SignalSnapshot
+where
+    F: FnOnce() -> Option<crate::signals::window::FrontWindow> + Send + 'static,
+{
     let calendar =
         crate::plugins::calendar::to_calendar_events(calendar.active_events_at(at).await);
 
-    // `signals::window::current` shells out on every platform —
-    // run it on the blocking pool so the IPC worker isn't stalled
-    // by `osascript` / `xdotool`. The fallback uses `None` when the
-    // blocking task fails (panic / cancellation), matching what the
-    // snapshot stream's window source does on the steady-state path.
-    let front = tokio::task::spawn_blocking(crate::signals::window::current)
+    // The window reader shells out on every platform — run it on the
+    // blocking pool so the IPC worker isn't stalled by `osascript` /
+    // `xdotool`. The fallback uses `None` when the blocking task fails
+    // (panic / cancellation), matching what the snapshot stream's window
+    // source does on the steady-state path.
+    let front = tokio::task::spawn_blocking(front_window)
         .await
         .unwrap_or_else(|e| {
             log::warn!("snapshot::build window spawn_blocking failed: {e}");
@@ -105,21 +125,26 @@ mod tests {
         Arc::new(RwLock::new(ExclusionMatcher::default()))
     }
 
+    /// No frontmost window. Every assertion about an *empty* snapshot needs
+    /// this: `build` otherwise reads the real machine, and the developer's
+    /// focused editor would supply `app_name`, `window_title` and an
+    /// `ide_folder` derived from its title (#310).
+    fn no_window() -> Option<crate::signals::window::FrontWindow> {
+        None
+    }
+
     #[tokio::test]
     async fn build_returns_empty_signals_for_empty_registry() {
         let (_dir, db) = test_db().await;
         let registry = CalendarRegistry::new(db.pool.clone()).expect("calendar registry builds");
-        let snap = build(&registry, &fresh_exclusions(), Utc::now()).await;
+        let snap = build_with(&registry, &fresh_exclusions(), Utc::now(), no_window).await;
         assert!(snap.ide_folder.is_none());
         assert!(snap.git_branch.is_none());
         assert!(snap.browser_domain.is_none());
         assert!(snap.calendar.is_empty());
-        if snap.window_title.is_some() {
-            assert!(
-                snap.app_name.is_some(),
-                "window_title without app_name is not a valid front-window shape"
-            );
-        }
+        // Now deterministic: with no front window there is nothing to report.
+        assert!(snap.window_title.is_none());
+        assert!(snap.app_name.is_none());
     }
 
     #[tokio::test]
