@@ -11066,14 +11066,20 @@ mod system_locale_tests {
     }
 
     #[test]
-    fn the_reported_locale_is_usable_and_reflects_this_machine() {
-        // Ties the command to the OS it runs on: whatever it returns must be
-        // a locale, and on a Mac with the 24-hour switch on it must say so.
-        let Some(loc) = super::system_locale() else {
-            return;
-        };
-        assert!(!loc.is_empty());
-        assert!(!loc.starts_with('-'), "got {loc}");
+    fn whatever_the_os_reports_is_a_usable_tag() {
+        // Ties the command to the OS it runs on. Asserted over the `Option`
+        // rather than behind an early return: a CI runner with no locale
+        // configured legitimately yields `None`, and a test that quietly
+        // skips its assertions on that path is a test that proves nothing.
+        // Expressed this way `None` has nothing to violate, which is the
+        // honest reading, and there is no untaken branch to leave uncovered.
+        let reported = super::system_locale();
+        assert!(
+            reported
+                .iter()
+                .all(|loc| !loc.is_empty() && !loc.starts_with('-')),
+            "got {reported:?}"
+        );
     }
 }
 
