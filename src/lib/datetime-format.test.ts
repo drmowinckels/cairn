@@ -6,6 +6,10 @@ import {
   formatDayLabel,
   formatNumericDate,
   isoDate,
+  clockPlaceholder,
+  datePlaceholder,
+  parseClock,
+  parseNumericDate,
   resolveDateOrder,
   resolveHour12,
   type DateTimeFormatPrefs,
@@ -200,5 +204,199 @@ describe("isoDate", () => {
 
   it("pads single-digit months and days", () => {
     expect(isoDate(new Date(2026, 2, 3))).toBe("2026-03-03");
+  });
+});
+
+describe("parseClock", () => {
+  const h24 = prefs({ time: "24h" });
+  const h12 = prefs({ time: "12h" });
+
+  it("accepts the shapes people actually type", () => {
+    for (const text of ["14:05", "14.05", "1405", "14 05", " 14:05 "]) {
+      expect(parseClock(text, h24, "en-US")).toBe(14 * 60 + 5);
+    }
+  });
+
+  it("accepts a leading-zero and a bare hour", () => {
+    expect(parseClock("09:05", h24, "en-US")).toBe(9 * 60 + 5);
+    expect(parseClock("905", h24, "en-US")).toBe(9 * 60 + 5);
+    expect(parseClock("9", h24, "en-US")).toBe(9 * 60);
+  });
+
+  it("reads a day-period marker in any of its written forms", () => {
+    for (const text of ["9:05 pm", "9:05PM", "9:05 p.m.", "9.05 pm"]) {
+      expect(parseClock(text, h12, "en-US")).toBe(21 * 60 + 5);
+    }
+  });
+
+  it("maps 12 AM to midnight and 12 PM to noon", () => {
+    expect(parseClock("12:00 am", h12, "en-US")).toBe(0);
+    expect(parseClock("12:00 pm", h12, "en-US")).toBe(12 * 60);
+  });
+
+  it("lets a typed marker override a 24-hour preference", () => {
+    // Someone typing "pm" means the afternoon whatever the field is set to.
+    expect(parseClock("9:05 pm", h24, "en-US")).toBe(21 * 60 + 5);
+  });
+
+  it("rejects impossible times instead of clamping them", () => {
+    // Silently turning a typo into a different valid time is worse than
+    // saying so — the user would file hours against a time they never chose.
+    for (const text of ["25:00", "10:75", "13:00 pm", "0:30 am"]) {
+      expect(parseClock(text, h24, "en-US")).toBeNull();
+    }
+  });
+
+  it("rejects empty and non-numeric input", () => {
+    for (const text of ["", "   ", "lunch", "--:--"]) {
+      expect(parseClock(text, h24, "en-US")).toBeNull();
+    }
+  });
+
+  it("round-trips whatever formatClockParts renders", () => {
+    for (const p of [h12, h24]) {
+      for (const [h, m] of [
+        [0, 0],
+        [9, 5],
+        [12, 0],
+        [13, 30],
+        [23, 59],
+      ] as const) {
+        const rendered = formatClockParts(h, m, p, "en-US");
+        expect(parseClock(rendered, p, "en-US")).toBe(h * 60 + m);
+      }
+    }
+  });
+});
+
+describe("parseNumericDate", () => {
+  it("respects the field order — the whole point of the setting", () => {
+    // 03/04/2026 is 3 April to a D/M/Y user and 4 March to an M/D/Y one.
+    const dmy = parseNumericDate(
+      "03/04/2026",
+      prefs({ date: "dmy" }),
+      "en-US",
+    )!;
+    expect([dmy.getDate(), dmy.getMonth() + 1]).toEqual([3, 4]);
+
+    const mdy = parseNumericDate(
+      "03/04/2026",
+      prefs({ date: "mdy" }),
+      "en-US",
+    )!;
+    expect([mdy.getDate(), mdy.getMonth() + 1]).toEqual([4, 3]);
+  });
+
+  it("accepts any common separator", () => {
+    for (const text of ["25/12/2026", "25-12-2026", "25.12.2026"]) {
+      const d = parseNumericDate(text, prefs({ date: "dmy" }), "en-US")!;
+      expect(isoDate(d)).toBe("2026-12-25");
+    }
+  });
+
+  it("reads a 4-digit group as the year wherever it lands", () => {
+    // Typing an ISO date into a D/M/Y field still means what it says.
+    const d = parseNumericDate("2026-03-04", prefs({ date: "dmy" }), "en-US")!;
+    expect(isoDate(d)).toBe("2026-03-04");
+  });
+
+  it("reads a two-digit year as this century", () => {
+    const d = parseNumericDate("25/12/26", prefs({ date: "dmy" }), "en-US")!;
+    expect(d.getFullYear()).toBe(2026);
+  });
+
+  it("rejects a date that doesn't exist rather than rolling it over", () => {
+    // `new Date(2026, 1, 31)` would silently become 3 March — time logged
+    // against a day the user never picked.
+    expect(
+      parseNumericDate("31/02/2026", prefs({ date: "dmy" }), "en-US"),
+    ).toBeNull();
+    expect(
+      parseNumericDate("32/01/2026", prefs({ date: "dmy" }), "en-US"),
+    ).toBeNull();
+    // Month-first, so a 13 in the month slot is the impossible one.
+    expect(
+      parseNumericDate("13/01/2026", prefs({ date: "mdy" }), "en-US"),
+    ).toBeNull();
+    // …while the same digits under M/D/Y are simply 13 January.
+    expect(
+      isoDate(parseNumericDate("01/13/2026", prefs({ date: "mdy" }), "en-US")!),
+    ).toBe("2026-01-13");
+  });
+
+  it("accepts a real leap day and rejects a fake one", () => {
+    expect(
+      parseNumericDate("29/02/2028", prefs({ date: "dmy" }), "en-US"),
+    ).not.toBeNull();
+    expect(
+      parseNumericDate("29/02/2026", prefs({ date: "dmy" }), "en-US"),
+    ).toBeNull();
+  });
+
+  it("rejects input that isn't three numbers", () => {
+    for (const text of ["", "25/12", "25/12/2026/11", "tomorrow"]) {
+      expect(
+        parseNumericDate(text, prefs({ date: "dmy" }), "en-US"),
+      ).toBeNull();
+    }
+  });
+
+  it("round-trips whatever formatNumericDate renders", () => {
+    for (const d of ["dmy", "mdy", "ymd", "system"] as const) {
+      const p = prefs({ date: d });
+      const date = new Date(2026, 11, 25);
+      const parsed = parseNumericDate(
+        formatNumericDate(date, p, "en-US"),
+        p,
+        "en-US",
+      );
+      expect(parsed && isoDate(parsed)).toBe("2026-12-25");
+    }
+  });
+});
+
+describe("placeholders", () => {
+  it("describe the clock the field expects", () => {
+    expect(clockPlaceholder(prefs({ time: "24h" }), "en-US")).toBe("hh:mm");
+    expect(clockPlaceholder(prefs({ time: "12h" }), "en-US")).toMatch(
+      /h:mm\s*PM/i,
+    );
+  });
+
+  it("describe the date order the field expects", () => {
+    expect(datePlaceholder(prefs({ date: "dmy" }), "en-US")).toBe("dd/mm/yyyy");
+    expect(datePlaceholder(prefs({ date: "mdy" }), "en-US")).toBe("mm/dd/yyyy");
+    expect(datePlaceholder(prefs({ date: "ymd" }), "en-US")).toBe("yyyy-mm-dd");
+  });
+});
+
+describe("parseNumericDate — a typed 4-digit year", () => {
+  it("is read as ISO under every field order", () => {
+    // A leading 4-digit group means the user typed an ISO date, which is
+    // year-month-day. Reading it as year-day-month (by naively swapping the
+    // year into place) turned 2026-09-29 into month 29 under M/D/Y.
+    for (const d of ["dmy", "mdy", "ymd"] as const) {
+      const parsed = parseNumericDate(
+        "2026-09-29",
+        prefs({ date: d }),
+        "en-US",
+      );
+      expect(isoDate(parsed!)).toBe("2026-09-29");
+    }
+  });
+
+  it("keeps the configured order when the year is last", () => {
+    expect(
+      isoDate(parseNumericDate("03/04/2026", prefs({ date: "dmy" }), "en-US")!),
+    ).toBe("2026-04-03");
+    expect(
+      isoDate(parseNumericDate("03/04/2026", prefs({ date: "mdy" }), "en-US")!),
+    ).toBe("2026-03-04");
+  });
+
+  it("rejects a year in the middle, which matches no convention", () => {
+    expect(
+      parseNumericDate("03/2026/04", prefs({ date: "dmy" }), "en-US"),
+    ).toBeNull();
   });
 });

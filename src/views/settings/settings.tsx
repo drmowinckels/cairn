@@ -21,6 +21,7 @@ import {
   type TimeFormat,
 } from "../../lib/datetime-format";
 import { appLocale } from "../../lib/locale";
+import { TimeField } from "../../lib/datetime-fields";
 import { ActivityLogCard } from "./activity-log-card";
 import {
   ROUNDING_INTERVALS,
@@ -182,7 +183,7 @@ const REMINDER_THROTTLES = [15, 30, 60, 120];
 const REMINDER_IDLE_MINUTES = [5, 10, 15, 30];
 const TASK_SWITCH_DWELLS = [30, 60, 120, 300];
 
-/** minutes-since-midnight → "HH:MM" for an `<input type="time">`. */
+/** minutes-since-midnight → the 24-hour `HH:MM` a `TimeField` takes. */
 export function minutesToHhMm(minutes: number): string {
   const clamped = Math.min(Math.max(0, Math.floor(minutes)), 24 * 60 - 1);
   const hh = String(Math.floor(clamped / 60)).padStart(2, "0");
@@ -847,13 +848,12 @@ function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
             label="Working hours start"
             hint="When the reminder window opens."
           >
-            <input
-              type="time"
+            <TimeField
               className="field-input"
-              aria-label="Working hours start"
+              label="Working hours start"
               value={minutesToHhMm(cfg.startMinute)}
-              onChange={(e) => {
-                const m = hhMmToMinutes(e.target.value);
+              onChange={(next) => {
+                const m = hhMmToMinutes(next);
                 if (m !== null) workingHours.setStartMinute(m);
               }}
             />
@@ -863,13 +863,12 @@ function WorkingHoursSection({ workingHours }: WorkingHoursSectionProps) {
             label="Working hours end"
             hint="When the reminder window closes."
           >
-            <input
-              type="time"
+            <TimeField
               className="field-input"
-              aria-label="Working hours end"
+              label="Working hours end"
               value={minutesToHhMm(cfg.endMinute)}
-              onChange={(e) => {
-                const m = hhMmToMinutes(e.target.value);
+              onChange={(next) => {
+                const m = hhMmToMinutes(next);
                 if (m !== null) workingHours.setEndMinute(m);
               }}
             />

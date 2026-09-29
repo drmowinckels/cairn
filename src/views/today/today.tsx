@@ -98,6 +98,7 @@ import {
 import type { PickedRemoteTask } from "./remote-task-picker";
 import { useDateTimeFormat } from "../../lib/use-datetime-format";
 import { formatDayLabel } from "../../lib/datetime-format";
+import { DateTimeField } from "../../lib/datetime-fields";
 
 /** Build the editor's connector-task link from a resolved task, or null when
  *  the task is local / absent (#110). */
@@ -1068,15 +1069,14 @@ export function TodayView({
           )}
           {timer.running && editingStart && (
             <div className="now-start-edit">
-              <input
-                type="datetime-local"
+              <DateTimeField
                 className="field-input"
+                label="Start"
+                dateLabel="Start date"
+                timeLabel="Start time"
                 value={startDraft}
-                onChange={(e) => setStartDraft(e.target.value)}
-                max={isoToLocal(new Date().toISOString())}
-                aria-label="Start time"
-                aria-describedby={startError ? "start-edit-err" : undefined}
-                aria-invalid={startError ? true : undefined}
+                onChange={setStartDraft}
+                describedBy={startError ? "start-edit-err" : undefined}
               />
               <button
                 className="btn btn--primary btn--sm"

@@ -14,6 +14,7 @@ import type { Rounding } from "../../lib/rounding";
 import type { Client } from "../../lib/types";
 import { withPopoverPinned } from "../../lib/use-backup";
 import { useInvoices } from "../../lib/use-invoices";
+import { DateField } from "../../lib/datetime-fields";
 
 const STATUSES: InvoiceStatus[] = ["draft", "sent", "paid"];
 
@@ -163,19 +164,17 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
             </option>
           ))}
         </select>
-        <input
+        <DateField
           className="field-input"
-          type="date"
-          aria-label="From"
+          label="From"
           value={from}
-          onChange={(e) => setFrom(e.target.value)}
+          onChange={setFrom}
         />
-        <input
+        <DateField
           className="field-input"
-          type="date"
-          aria-label="To"
+          label="To"
           value={to}
-          onChange={(e) => setTo(e.target.value)}
+          onChange={setTo}
         />
         <input
           className="field-input"

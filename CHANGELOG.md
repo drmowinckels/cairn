@@ -40,6 +40,21 @@ as the GitHub Release body, so keep the most recent version at the top.
   the separate overlay windows live — switching it in the popover repaints the
   idle prompt's clock without a reload. Durations (`1h 15m`) are unaffected;
   the preference is a _clock_, not a number format (#308).
+- `[settings]` Every date and time **field you type into** now follows that
+  same preference — the manual-entry Start/End, the running timer's start
+  edit, working-hours start/end, the invoice range and a rate's effective
+  date. These were native `<input type="date" | "time" | "datetime-local">`
+  controls, which render in the _webview's_ locale; WKWebView reports that as
+  `en-US` no matter the machine's region, so they showed a 12-hour clock and a
+  month-first date to everyone and ignored both the OS locale and the new
+  preference. A native picker's format isn't scriptable, so they're replaced
+  with fields Cairn renders itself. They accept what you'd actually type
+  (`1405`, `14.05`, `9:05pm`, `25-12-2026`, or an ISO date in any field order)
+  and normalise on blur; an unparseable entry is flagged with the expected
+  format instead of being silently dropped; and Up/Down step by a minute or a
+  day. What's stored is unchanged — 24-hour `HH:MM` and ISO dates — so
+  switching the preference never rewrites an entry. The trade is the loss of
+  the OS calendar popup (#308).
 
 ### Fixed
 

@@ -22,6 +22,27 @@ vi.mock("../../lib/use-task-switch-prompt", () => ({
   }),
 }));
 
+/**
+ * Set the running-start editor's date and time halves (#308). The editor is
+ * two controls now, not one `datetime-local` box, and each commits on blur.
+ * The date field accepts an ISO date whatever the user's chosen field order.
+ */
+function setStartDateTime(when: Date): void {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = screen.getByLabelText(/^start date$/i);
+  fireEvent.change(date, {
+    target: {
+      value: `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`,
+    },
+  });
+  fireEvent.blur(date);
+  const time = screen.getByLabelText(/^start time$/i);
+  fireEvent.change(time, {
+    target: { value: `${pad(when.getHours())}:${pad(when.getMinutes())}` },
+  });
+  fireEvent.blur(time);
+}
+
 describe("TodayView running-start edit (inside Tauri)", () => {
   type WithInternals = { __TAURI_INTERNALS__?: unknown };
 
@@ -93,14 +114,9 @@ describe("TodayView running-start edit (inside Tauri)", () => {
   it("commits a valid earlier start via update_entry and closes the editor", async () => {
     const { invoke } = await renderToday();
     fireEvent.click(screen.getByRole("button", { name: /edit start time/i }));
-    const input = screen.getByLabelText(/^start time$/i) as HTMLInputElement;
     // 30 minutes before the original start — comfortably in the past.
     const earlier = new Date(Date.now() - 32 * 60_000);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const local =
-      `${earlier.getFullYear()}-${pad(earlier.getMonth() + 1)}-${pad(earlier.getDate())}` +
-      `T${pad(earlier.getHours())}:${pad(earlier.getMinutes())}`;
-    fireEvent.change(input, { target: { value: local } });
+    setStartDateTime(earlier);
     fireEvent.click(screen.getByRole("button", { name: /set start/i }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(
@@ -121,13 +137,8 @@ describe("TodayView running-start edit (inside Tauri)", () => {
   it("rejects a future start with an error and no update", async () => {
     const { invoke } = await renderToday();
     fireEvent.click(screen.getByRole("button", { name: /edit start time/i }));
-    const input = screen.getByLabelText(/^start time$/i) as HTMLInputElement;
     const future = new Date(Date.now() + 60 * 60_000);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const local =
-      `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}` +
-      `T${pad(future.getHours())}:${pad(future.getMinutes())}`;
-    fireEvent.change(input, { target: { value: local } });
+    setStartDateTime(future);
     fireEvent.click(screen.getByRole("button", { name: /set start/i }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
@@ -140,13 +151,8 @@ describe("TodayView running-start edit (inside Tauri)", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     await renderToday({ updateRejects: true });
     fireEvent.click(screen.getByRole("button", { name: /edit start time/i }));
-    const input = screen.getByLabelText(/^start time$/i) as HTMLInputElement;
     const earlier = new Date(Date.now() - 32 * 60_000);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const local =
-      `${earlier.getFullYear()}-${pad(earlier.getMonth() + 1)}-${pad(earlier.getDate())}` +
-      `T${pad(earlier.getHours())}:${pad(earlier.getMinutes())}`;
-    fireEvent.change(input, { target: { value: local } });
+    setStartDateTime(earlier);
     fireEvent.click(screen.getByRole("button", { name: /set start/i }));
     await waitFor(() => expect(err).toHaveBeenCalled());
     expect(screen.queryByLabelText(/^start time$/i)).toBeNull();
