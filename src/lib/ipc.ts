@@ -674,6 +674,16 @@ export async function idleWindowPainted(): Promise<void> {
   await invoke("idle_window_painted");
 }
 
+/** Confirm the About window's webview has painted (#300). The backend shows
+ *  the About window click-through until this lands, then makes it
+ *  interactive, focuses it and cancels the paint watchdog — mirrors
+ *  `idleWindowPainted`, so a webview that never renders can't become an
+ *  invisible, always-on-top input trap. */
+export async function aboutWindowPainted(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("about_window_painted");
+}
+
 /** Show the suggestion-notification overlay window and forward `payload`
  *  to it (#267). Called by `useSuggestionNotifier` when the "Detection
  *  prompts" setting is `"notification"` and a Suggestive/`Prompt` rule

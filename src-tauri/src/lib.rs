@@ -5,6 +5,7 @@ mod connectors;
 mod db;
 mod export;
 mod ipc;
+mod overlay;
 mod plugins;
 mod popover;
 mod prompt_scheduler;
@@ -392,6 +393,17 @@ fn idle_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>)
     ipc::idle_window_painted_impl(&app, &state);
 }
 
+/// The About window's frontend calls this once its webview has rendered
+/// (#300), confirming the overlay actually painted. Same contract as
+/// `idle_window_painted`: the window is shown click-through with a watchdog
+/// armed, so a webview that never renders can't sit invisibly in the middle
+/// of the screen swallowing clicks. Thin shim over the testable
+/// `ipc::about_window_painted_impl`.
+#[tauri::command]
+fn about_window_painted(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    ipc::about_window_painted_impl(&app, &state);
+}
+
 /// Show the suggestion-notification overlay window and forward the match
 /// payload to it (#267). Called by the always-mounted `useSuggestionNotifier`
 /// hook when the "Detection prompts" setting is `"notification"` and a
@@ -555,6 +567,57 @@ async fn list_connector_tasks(
     ipc::list_connector_tasks_impl(state, connector_id, project_id).await
 }
 
+/// Compose the text shown when Cairn can't start. Kept pure (and
+/// separate from the dialog that displays it) so the wording is
+/// unit-tested: this is the only thing the user ever sees for a fatal
+/// startup failure, so it has to carry the underlying reason verbatim
+/// plus somewhere to go next.
+pub(crate) fn startup_error_text(reason: &str) -> String {
+    format!(
+        "Cairn couldn't start.\n\n{reason}\n\nYour tracked time is not affected — \
+         this stopped Cairn before it opened anything. If this keeps happening, \
+         report it at {ISSUES_URL} with the text above."
+    )
+}
+
+/// Where the fatal-startup dialog points the user. Mirrors the frontend's
+/// `PRIVACY_REPO_URL`.
+const ISSUES_URL: &str = "https://github.com/drmowinckels/cairn/issues";
+
+/// Handle a fatal startup failure and terminate.
+///
+/// The setup hook must NOT return `Err` for these: Tauri raises that with
+/// `panic!("Failed to setup app: …")` from inside the event loop's `Ready`
+/// callback (`tauri::app`), which is an `extern "C"` context that cannot
+/// unwind — so the panic becomes `panic_cannot_unwind` → `abort()`, and the
+/// user gets a silent `SIGABRT` with the actual reason visible only by
+/// running the binary from a terminal. That is exactly how a migration
+/// mismatch presented as "Cairn just crashes" (#302).
+///
+/// So: log it, show a native message box, and exit non-zero ourselves.
+///
+/// The exit skips `shutdown::drain_db_pool`. Two of the three callers fail
+/// before the pool exists at all; the third (`calendar_registry_for_setup`)
+/// runs just after `open_db_for_setup`, so a pool does exist — but setup has
+/// not yet spawned anything that writes to it, so there is nothing in flight
+/// to lose. If a future fatal branch is added after the first writer starts,
+/// it must drain rather than call this.
+fn fatal_startup(reason: &str) -> ! {
+    log::error!("cairn: fatal startup failure: {reason}");
+    // Not shown under `cargo test`: the helper is only ever reached from the
+    // real setup hook, and a modal in CI would hang the run. `startup_error_text`
+    // is composed inside the block so it isn't dead work (or an unused binding)
+    // in test builds; it's covered directly by its own unit test.
+    #[cfg(not(test))]
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("Cairn can't start")
+        .set_description(startup_error_text(reason))
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+    std::process::exit(1);
+}
+
 /// Open the SQLite database for the `.setup()` hook, mapping any
 /// failure (locked/corrupt DB, unwritable path, disk full) to a
 /// user-actionable message. Extracted from the Tauri `.setup()`
@@ -688,14 +751,11 @@ pub struct AppState {
     /// `dismiss_suggestion_notification`. Mirrors `last_idle`.
     ///
     /// This field plus the `notify_*` trio below duplicate the shape of
-    /// `last_idle`/`idle_show_gen`/`idle_painted` one-for-one (see
-    /// `signals::fanout`'s `show_idle_with_watchdog`/`show_notify_with_watchdog`
-    /// pair for the same duplication in the show/watchdog functions — kept
-    /// separate deliberately for now since idle and notify diverge in
-    /// positioning, focus behavior, and the notify-only `currently_shown`
-    /// dedup). If a third overlay window is ever added, that's the signal
-    /// to stop duplicating and factor a shared `OverlayWindowState { show_gen,
-    /// painted, currently_shown }` both windows embed instead.
+    /// `last_idle`/`idle_show_gen`/`idle_painted` one-for-one. The
+    /// *behaviour* that reads them is no longer duplicated: `crate::overlay`
+    /// owns one show/watchdog/paint-ack implementation and each window
+    /// contributes an `Overlay` descriptor naming its pair of atomics
+    /// (#300 added the third such window, About).
     pub last_notification: std::sync::Mutex<Option<rules::RuleMatch>>,
     /// Notification-window paint coordination (#267). Same pattern as
     /// `idle_show_gen` / `idle_painted`: the window is transparent +
@@ -716,6 +776,14 @@ pub struct AppState {
     /// re-arming the show/position/watchdog on every tick (no flicker),
     /// only refreshing the emitted payload and cold-start stash.
     pub notify_currently_shown: AtomicBool,
+    /// About-window paint coordination (#300). The About window is the
+    /// third transparent + always-on-top + undecorated overlay and had none
+    /// of the #261/#267 hardening: opening it on a build whose webview
+    /// doesn't paint left an invisible, undismissable window swallowing
+    /// clicks in the middle of the screen. Same contract as the pair above,
+    /// driven by `crate::overlay::ABOUT`.
+    pub about_show_gen: AtomicU64,
+    pub about_painted: AtomicBool,
     /// Browser-extension liveness ledger (#34, #35). Heartbeats land
     /// here on every push from the `browser` plugin's local-IPC listener
     /// (`plugins::browser`); the IPC handler `browser_extension_status`
@@ -988,6 +1056,7 @@ pub fn run() {
             ipc::pending_idle,
             ipc::dismiss_idle,
             idle_window_painted,
+            about_window_painted,
             show_suggestion_notification,
             pending_notification,
             dismiss_suggestion_notification,
@@ -1086,10 +1155,18 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let data_dir = app.path().app_data_dir().map_err(|e| {
-                format!("could not resolve the app data directory; Cairn cannot start: {e}")
-            })?;
-            ensure_data_dir(&data_dir)?;
+            // Every fatal branch below goes through `fatal_startup` rather
+            // than `?`: a setup-hook `Err` becomes a non-unwinding panic
+            // inside Tauri's event loop, i.e. a silent SIGABRT (#302).
+            let data_dir = match app.path().app_data_dir() {
+                Ok(dir) => dir,
+                Err(e) => fatal_startup(&format!(
+                    "could not resolve the app data directory; Cairn cannot start: {e}"
+                )),
+            };
+            if let Err(e) = ensure_data_dir(&data_dir) {
+                fatal_startup(&e);
+            }
 
             if let Err(e) = backup::apply_pending_import(&data_dir) {
                 log::warn!("backup: could not apply pending import: {e}");
@@ -1106,9 +1183,12 @@ pub fn run() {
                 log::warn!("capture: stale-file cleanup failed: {e}");
             }
 
-            let db = tauri::async_runtime::block_on(async {
+            let db = match tauri::async_runtime::block_on(async {
                 open_db_for_setup(&backup::db_path(&data_dir)).await
-            })?;
+            }) {
+                Ok(db) => db,
+                Err(e) => fatal_startup(&e),
+            };
 
             // Detect + repair a stale launch-at-login LaunchAgent (#264):
             // one baked before #263's dev-build guard existed, still
@@ -1120,11 +1200,14 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             autostart_repair::repair_stale_launch_agent(&db.pool);
 
-            let calendar = calendar_registry_for_setup(
+            let calendar = match calendar_registry_for_setup(
                 db.pool.clone(),
                 &data_dir,
                 plugins::calendar::fetcher::Fetcher::new,
-            )?;
+            ) {
+                Ok(registry) => registry,
+                Err(e) => fatal_startup(&e),
+            };
             tauri::async_runtime::spawn(calendar.clone().run_scheduler());
 
             // Load the exclusion list once at startup; mutator IPC
@@ -1358,6 +1441,8 @@ pub fn run() {
                 notify_show_gen: AtomicU64::new(0),
                 notify_painted: AtomicBool::new(false),
                 notify_currently_shown: AtomicBool::new(false),
+                about_show_gen: AtomicU64::new(0),
+                about_painted: AtomicBool::new(false),
                 browser_extension: browser_extension_state,
                 auto_backup_lock,
             });
@@ -1424,6 +1509,87 @@ pub fn run() {
 mod tests {
     use super::{calendar_registry_for_setup, ensure_data_dir, open_db_for_setup};
     use crate::plugins::calendar::fetcher::Fetcher;
+
+    #[test]
+    fn startup_error_text_carries_the_reason_and_somewhere_to_go() {
+        let text = super::startup_error_text(
+            "could not open the database; Cairn cannot start: migration 16 \
+             was previously applied but has been modified",
+        );
+        // The underlying reason must survive verbatim — it's the only
+        // diagnostic the user gets, and the whole point of #302 is that it
+        // used to be visible only from a terminal.
+        assert!(text.contains("migration 16 was previously applied but has been modified"));
+        assert!(text.contains("could not open the database"));
+        assert!(text.contains("https://github.com/drmowinckels/cairn/issues"));
+        // Reassure before instruct: a startup crash reads as data loss.
+        assert!(text.contains("Your tracked time is not affected"));
+    }
+
+    /// Window labels declared in `tauri.conf.json`, and the window labels
+    /// every `capabilities/*.json` claims to cover.
+    fn declared_windows_and_capability_coverage() -> (Vec<String>, Vec<String>) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let conf: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("tauri.conf.json")).unwrap())
+                .unwrap();
+        let labels = conf["app"]["windows"]
+            .as_array()
+            .expect("tauri.conf.json declares app.windows")
+            .iter()
+            .map(|w| w["label"].as_str().expect("window has a label").to_string())
+            .collect();
+
+        let mut covered = Vec::new();
+        for entry in std::fs::read_dir(root.join("capabilities")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let cap: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            if let Some(windows) = cap["windows"].as_array() {
+                covered.extend(
+                    windows
+                        .iter()
+                        .filter_map(|w| w.as_str())
+                        .map(str::to_string),
+                );
+            }
+        }
+        (labels, covered)
+    }
+
+    /// A window matched by no capability is granted **nothing** — not even
+    /// `core:event:default`, so its `listen()` calls are denied by the ACL.
+    /// That is silent from Rust's side: the window loads, renders nothing,
+    /// and (for the overlay windows) gets hidden by its paint watchdog.
+    /// It's exactly how the notification window shipped broken (#301), so
+    /// assert coverage rather than trusting the next window to remember.
+    #[test]
+    fn every_declared_window_is_covered_by_a_capability() {
+        let (labels, covered) = declared_windows_and_capability_coverage();
+        let missing: Vec<&String> = labels.iter().filter(|l| !covered.contains(l)).collect();
+        assert!(
+            missing.is_empty(),
+            "these windows are matched by no capability, so every ACL-gated \
+             call from them (events, window ops) is denied: {missing:?}"
+        );
+    }
+
+    /// The other direction: a capability naming a window that no longer
+    /// exists grants nothing and silently rots. Usually a typo or a
+    /// renamed/removed window.
+    #[test]
+    fn every_capability_targets_a_declared_window() {
+        let (labels, covered) = declared_windows_and_capability_coverage();
+        let stale: Vec<&String> = covered.iter().filter(|w| !labels.contains(w)).collect();
+        assert!(
+            stale.is_empty(),
+            "these capabilities target windows that aren't declared in \
+             tauri.conf.json: {stale:?}"
+        );
+    }
 
     #[test]
     fn ensure_data_dir_creates_missing_nested_path() {

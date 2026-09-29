@@ -188,6 +188,8 @@ pub async fn mock_app_with_db() -> (TempDir, App<MockRuntime>, Db) {
         notify_show_gen: std::sync::atomic::AtomicU64::new(0),
         notify_painted: AtomicBool::new(false),
         notify_currently_shown: AtomicBool::new(false),
+        about_show_gen: std::sync::atomic::AtomicU64::new(0),
+        about_painted: AtomicBool::new(false),
         browser_extension: Arc::new(
             crate::signals::browser_extension::BrowserExtensionState::new(),
         ),

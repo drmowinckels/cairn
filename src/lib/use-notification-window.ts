@@ -86,13 +86,21 @@ export function useNotificationWindow(
 
     void listenFn<RuleMatchEvent>(SIGNAL_MATCH_EVENT, (event) => {
       setSuggestion(event.payload);
-    }).then((un) => {
-      if (cancelled) {
-        un();
-      } else {
-        unlisten = un;
-      }
-    });
+    })
+      .then((un) => {
+        if (cancelled) {
+          un();
+        } else {
+          unlisten = un;
+        }
+      })
+      // Without this the ACL denial that made every notification invisible
+      // (#301 — the window was matched by no capability, so `listen` was
+      // rejected) surfaced only as an unhandled rejection, and the sole
+      // symptom was the paint watchdog hiding the window 4s later.
+      .catch((e) =>
+        console.error("notification: signal:match listen failed", e),
+      );
 
     return () => {
       cancelled = true;

@@ -66,6 +66,13 @@ describe("ipc helpers (inside Tauri)", () => {
     expect(invokeMock).toHaveBeenCalledWith("idle_window_painted");
   });
 
+  it("aboutWindowPainted invokes the paint-ack command (#300)", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const { aboutWindowPainted } = await import("./ipc");
+    await aboutWindowPainted();
+    expect(invokeMock).toHaveBeenCalledWith("about_window_painted");
+  });
+
   it("showSuggestionNotification forwards the payload (#267)", async () => {
     invokeMock.mockResolvedValue(undefined);
     const { showSuggestionNotification } = await import("./ipc");
@@ -846,6 +853,12 @@ describe("ipc helpers (outside Tauri)", () => {
   it("idleWindowPainted short-circuits without the backend", async () => {
     const { idleWindowPainted } = await import("./ipc");
     await idleWindowPainted();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("aboutWindowPainted short-circuits without the backend (#300)", async () => {
+    const { aboutWindowPainted } = await import("./ipc");
+    await aboutWindowPainted();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

@@ -57,6 +57,26 @@ describe("useNotificationWindow", () => {
     await waitFor(() => expect(result.current.suggestion).toEqual(SUGGESTION));
   });
 
+  it("logs a rejected signal:match subscribe instead of swallowing it (#301)", async () => {
+    // The window shipped matched by no capability, so `listen` was denied
+    // by the ACL and the rejection vanished as an unhandled promise — the
+    // only symptom was the paint watchdog hiding the window 4s later.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const opts = {
+      enabled: true,
+      listen: vi.fn().mockRejectedValue(new Error("not allowed")) as never,
+      pendingNotification: vi.fn().mockResolvedValue(null) as never,
+    };
+    renderHook(() => useNotificationWindow(opts));
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "notification: signal:match listen failed",
+        expect.any(Error),
+      ),
+    );
+    error.mockRestore();
+  });
+
   it("resolves projectsById once a suggestion arrives", async () => {
     const opts = {
       enabled: true,
