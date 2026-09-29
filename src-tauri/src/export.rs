@@ -727,6 +727,21 @@ mod tests {
         assert!(name.ends_with(".json"));
     }
 
+    #[tokio::test]
+    async fn suggested_csv_name_is_dated() {
+        // Came across from backup.rs untested, while its JSON counterpart
+        // above always had one — the asymmetry codecov caught.
+        let name = suggested_csv_name().await;
+        assert!(name.starts_with("cairn-entries-"), "got {name}");
+        assert!(name.ends_with(".csv"), "got {name}");
+        // The date is what makes repeated exports distinguishable, so assert
+        // it's actually there rather than just the affixes.
+        assert!(
+            name.contains(&chrono::Utc::now().format("%Y-%m-%d").to_string()),
+            "got {name}"
+        );
+    }
+
     // ── CSV entries export (moved here from backup.rs, #276) ──────────
 
     async fn insert_entry_with_task(
