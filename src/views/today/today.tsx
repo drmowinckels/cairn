@@ -96,6 +96,8 @@ import {
   type RequiredFieldsPrefs,
 } from "../../lib/required-fields";
 import type { PickedRemoteTask } from "./remote-task-picker";
+import { useDateTimeFormat } from "../../lib/use-datetime-format";
+import { formatDayLabel } from "../../lib/datetime-format";
 
 /** Build the editor's connector-task link from a resolved task, or null when
  *  the task is local / absent (#110). */
@@ -184,6 +186,7 @@ export function TodayView({
   requiredFields = REQUIRED_FIELDS_OFF,
   workdayReviewEnabled = false,
 }: Props) {
+  const { prefs: dateTimeFormat } = useDateTimeFormat();
   const compact = density === "compact";
   const { projects, create: createProject } = useProjects();
   const { connectors } = useConnectors();
@@ -202,11 +205,11 @@ export function TodayView({
   };
   const dateLabel = isToday
     ? "Today"
-    : new Date(viewDate + "T00:00:00").toLocaleDateString(appLocale(), {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      });
+    : formatDayLabel(
+        new Date(viewDate + "T00:00:00"),
+        dateTimeFormat,
+        appLocale(),
+      );
   const upcoming = useUpcoming(3);
   const calendars = useCalendars();
   const timer = useTimer({ onStopped: () => void today.refresh() });

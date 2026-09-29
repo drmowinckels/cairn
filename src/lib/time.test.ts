@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import {
   fmtClock,
   fmtClockFromIso,
@@ -9,6 +9,8 @@ import {
   totalTrackedMinutes,
 } from "./time";
 import type { BackendEntry } from "./ipc";
+import { resetDateTimeFormatPrefsForTest } from "./use-datetime-format";
+import { setLocaleForTest } from "./locale";
 
 function entry(over: Partial<BackendEntry> = {}): BackendEntry {
   return {
@@ -122,5 +124,51 @@ describe("totalTrackedMinutes", () => {
 
   it("returns 0 when handed a non-array (malformed backend response)", () => {
     expect(totalTrackedMinutes(null as unknown as BackendEntry[])).toBe(0);
+  });
+});
+
+describe("time formatters honour the format preference (#308)", () => {
+  // `test-setup.ts` pins 24-hour for the rest of the suite; these tests opt
+  // into the 12-hour clock to prove the preference actually reaches the
+  // module-level formatters the components call.
+  beforeEach(() => {
+    setLocaleForTest("en-US");
+  });
+
+  afterEach(() => {
+    resetDateTimeFormatPrefsForTest({ time: "24h", date: "dmy" });
+    setLocaleForTest(undefined);
+  });
+
+  it("fmtClock switches to a 12-hour clock", () => {
+    resetDateTimeFormatPrefsForTest({ time: "12h", date: "dmy" });
+    expect(fmtClock(minutesOf(15, 2))).toMatch(/^3:02\s*PM$/i);
+    expect(fmtClock(0)).toMatch(/^12:00\s*AM$/i);
+  });
+
+  it("fmtRange switches with it, keeping the en-dash", () => {
+    resetDateTimeFormatPrefsForTest({ time: "12h", date: "dmy" });
+    const out = fmtRange(minutesOf(9, 12), minutesOf(15, 45));
+    expect(out).toContain("–");
+    expect(out).toMatch(/AM/i);
+    expect(out).toMatch(/PM/i);
+  });
+
+  it("fmtClockFromIso switches with it", () => {
+    resetDateTimeFormatPrefsForTest({ time: "12h", date: "dmy" });
+    expect(fmtClockFromIso("2026-05-25T14:50:00Z")).toMatch(/[AP]M/i);
+  });
+
+  it("goes back to padded 24-hour when the preference does", () => {
+    resetDateTimeFormatPrefsForTest({ time: "24h", date: "dmy" });
+    expect(fmtClock(minutesOf(15, 2))).toBe("15:02");
+    expect(fmtClockFromIso("2026-05-25T14:50:00Z")).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it("leaves durations alone — fmtHm is not a clock", () => {
+    // A 12-hour *clock* preference must never turn "75m" into a time of day.
+    resetDateTimeFormatPrefsForTest({ time: "12h", date: "dmy" });
+    expect(fmtHm(75)).toBe("1h 15m");
+    expect(fmtIdleDuration(90)).toBe("1 min");
   });
 });

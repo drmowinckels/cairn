@@ -29,6 +29,17 @@ as the GitHub Release body, so keep the most recent version at the top.
   per-project rounding overrides), and the billable flag. This is the
   stable contract downstream plugins consume instead of reading the
   database (#109).
+- `[settings]` **Dates & times** — a new Settings section to choose how Cairn
+  renders clocks and dates. **Time format** is System / 24-hour / 12-hour and
+  **Date format** is System / D/M/Y / M/D/Y / Y-M-D, each with a live preview.
+  `System` follows your OS region. Cairn previously hard-coded a zero-padded
+  24-hour clock everywhere with no way to ask for anything else, so a 12-hour
+  user had no option at all; dates followed the OS but couldn't be overridden.
+  The choice applies to the timeline axis and now-marker, entry rows, the
+  activity log, Up Next, the running timer and the idle prompt, and it reaches
+  the separate overlay windows live — switching it in the popover repaints the
+  idle prompt's clock without a reload. Durations (`1h 15m`) are unaffected;
+  the preference is a _clock_, not a number format (#308).
 
 ### Fixed
 

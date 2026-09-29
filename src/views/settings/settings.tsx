@@ -13,6 +13,14 @@ import type { UseUpdatePrefs } from "../../lib/use-update-prefs";
 import type { UseSignalCapture } from "../../lib/use-signal-capture";
 import type { UseActivityLog } from "../../lib/use-activity-log";
 import type { UseWorkdayReviewPrefs } from "../../lib/use-workday-review-prefs";
+import type { UseDateTimeFormat } from "../../lib/use-datetime-format";
+import {
+  formatDayLabel,
+  formatClockParts,
+  type DateFormat,
+  type TimeFormat,
+} from "../../lib/datetime-format";
+import { appLocale } from "../../lib/locale";
 import { ActivityLogCard } from "./activity-log-card";
 import {
   ROUNDING_INTERVALS,
@@ -44,6 +52,7 @@ import {
 export type SettingsSectionId =
   | "privacy"
   | "accessibility"
+  | "datetime"
   | "shortcuts"
   | "updates"
   | "activity-log"
@@ -96,6 +105,11 @@ interface Props {
    */
   rounding?: UseRoundingPrefs;
   /**
+   * Date/time format preference (#308). Optional so tests can render without
+   * it; when absent the Dates & times section is hidden.
+   */
+  dateTimeFormat?: UseDateTimeFormat;
+  /**
    * Working-hours reminder preference (issue #99). Optional so tests can
    * render without it; when absent the reminder rows are hidden.
    */
@@ -140,6 +154,23 @@ const TEXT_SCALES: Array<{ value: TextScale; label: string }> = [
   { value: "lg", label: "A+" },
   { value: "xl", label: "A++" },
 ];
+
+const TIME_FORMAT_OPTIONS: Array<{ value: TimeFormat; label: string }> = [
+  { value: "system", label: "System" },
+  { value: "24h", label: "24-hour" },
+  { value: "12h", label: "12-hour" },
+];
+
+const DATE_FORMAT_OPTIONS: Array<{ value: DateFormat; label: string }> = [
+  { value: "system", label: "System" },
+  { value: "dmy", label: "D/M/Y" },
+  { value: "mdy", label: "M/D/Y" },
+  { value: "ymd", label: "Y-M-D" },
+];
+
+/** A fixed afternoon date, so the preview distinguishes 12- from 24-hour and
+ *  day- from month-first at a glance (13 ≠ 1, and 25 can only be a day). */
+const FORMAT_PREVIEW_DATE = new Date(2026, 11, 25, 13, 5);
 
 const DETECTION_OPTIONS: Array<{ value: DetectionPrompts; label: string }> = [
   { value: "off", label: "Off" },
@@ -202,6 +233,7 @@ export function SettingsView({
   popoverSize,
   trayDetail,
   rounding,
+  dateTimeFormat,
   workingHours,
   taskSwitch,
   requiredFields,
@@ -438,6 +470,72 @@ export function SettingsView({
           </div>
         </SetRow>
       </section>
+
+      {dateTimeFormat && (
+        <section className="settings-block" data-section="datetime">
+          <h3 className="settings-h">Dates &amp; times</h3>
+          <p className="settings-sub">
+            Applies everywhere Cairn shows a date or a time — the timeline,
+            entry rows, the idle prompt and every date and time field you type
+            into. <strong>System</strong> follows your OS region.
+          </p>
+
+          <SetRow
+            label="Time format"
+            hint={`Preview: ${formatClockParts(
+              FORMAT_PREVIEW_DATE.getHours(),
+              FORMAT_PREVIEW_DATE.getMinutes(),
+              dateTimeFormat.prefs,
+              appLocale(),
+            )}`}
+          >
+            <div
+              className="seg seg--sm"
+              role="radiogroup"
+              aria-label="Time format"
+            >
+              {TIME_FORMAT_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  role="radio"
+                  aria-checked={dateTimeFormat.prefs.time === opt.value}
+                  className={`seg-btn${dateTimeFormat.prefs.time === opt.value ? " is-on" : ""}`}
+                  onClick={() => dateTimeFormat.setTimeFormat(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </SetRow>
+
+          <SetRow
+            label="Date format"
+            hint={`Preview: ${formatDayLabel(
+              FORMAT_PREVIEW_DATE,
+              dateTimeFormat.prefs,
+              appLocale(),
+            )}`}
+          >
+            <div
+              className="seg seg--sm"
+              role="radiogroup"
+              aria-label="Date format"
+            >
+              {DATE_FORMAT_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  role="radio"
+                  aria-checked={dateTimeFormat.prefs.date === opt.value}
+                  className={`seg-btn${dateTimeFormat.prefs.date === opt.value ? " is-on" : ""}`}
+                  onClick={() => dateTimeFormat.setDateFormat(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </SetRow>
+        </section>
+      )}
 
       {rounding && (
         <section className="settings-block" aria-label="Time rounding">

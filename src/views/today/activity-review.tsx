@@ -3,6 +3,7 @@ import { Empty } from "../../lib/components";
 import { fmtClockFromIso, fmtHm } from "../../lib/time";
 import { createEntry, listActivityLog, type ActivityRow } from "../../lib/ipc";
 import { appTotals, spanSeconds } from "../../lib/activity-review";
+import { useDateTimeFormatSubscription } from "../../lib/use-datetime-format";
 
 interface Props {
   /** Local day (`YYYY-MM-DD`) to review. */
@@ -18,6 +19,7 @@ interface Props {
  * Only mounted when the activity log is on.
  */
 export function ActivityReview({ date, onCreated }: Props) {
+  useDateTimeFormatSubscription();
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);

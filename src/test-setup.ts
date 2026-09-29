@@ -1,5 +1,6 @@
 import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { resetDateTimeFormatPrefsForTest } from "./lib/use-datetime-format";
 
 // Global stub for `@tauri-apps/api/event`. The real module needs the
 // Tauri IPC bridge that vitest never wires up; without this stub,
@@ -52,6 +53,15 @@ if (typeof globalThis.localStorage === "undefined") {
   }
 }
 
+// Pin the date/time format (#308) so assertions on rendered clocks don't
+// depend on the runner's locale. Left at "system", every `HH:MM` expectation
+// in the suite would flip to "1:05 PM" under an en-US runner and back under a
+// nb-NO one — the tests would be asserting against the host's region rather
+// than against Cairn. Tests covering the 12-hour path set the preference
+// explicitly instead.
+resetDateTimeFormatPrefsForTest({ time: "24h", date: "dmy" });
+
 afterEach(() => {
   cleanup();
+  resetDateTimeFormatPrefsForTest({ time: "24h", date: "dmy" });
 });

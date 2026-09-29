@@ -1,5 +1,6 @@
 import { Empty } from "../../lib/components";
 import { fmtClockFromIso } from "../../lib/time";
+import { useDateTimeFormatSubscription } from "../../lib/use-datetime-format";
 
 export interface UpcomingEvent {
   uid: string;
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export function UpcomingList({ events, onStart }: Props) {
+  useDateTimeFormatSubscription();
   if (events.length === 0) {
     return (
       <Empty
