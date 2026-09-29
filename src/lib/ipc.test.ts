@@ -1047,15 +1047,50 @@ describe("work-hour budget IPC (#307, inside Tauri)", () => {
   it("passes budgets through when the backend answers properly", async () => {
     const budget = {
       id: "b1",
-      scopeType: "workspace",
+      scopeType: "workspace" as const,
       scopeId: "",
-      period: "weekly",
+      period: "weekly" as const,
       minutes: 2400,
       warnPercent: 80,
     };
     invokeMock.mockResolvedValue([budget]);
-    const { listBudgets } = await import("./ipc");
+    const { listBudgets, setBudget, deleteBudget } = await import("./ipc");
+
     expect(await listBudgets()).toEqual([budget]);
     expect(invokeMock).toHaveBeenCalledWith("list_budgets");
+
+    // Every mutation returns the fresh list, so each has to pass a real
+    // answer through as well as coerce a null one.
+    expect(
+      await setBudget({
+        scopeType: "workspace",
+        scopeId: "",
+        period: "weekly",
+        minutes: 2400,
+        warnPercent: 80,
+      }),
+    ).toEqual([budget]);
+    expect(await deleteBudget("b1")).toEqual([budget]);
+  });
+
+  it("passes a status list through", async () => {
+    const status = {
+      budget: {
+        id: "b1",
+        scopeType: "workspace" as const,
+        scopeId: "",
+        period: "daily" as const,
+        minutes: 480,
+        warnPercent: 80,
+      },
+      usedMinutes: 500,
+      percent: 104,
+      state: "over" as const,
+      periodStart: "2026-09-29T00:00:00+00:00",
+    };
+    invokeMock.mockResolvedValue([status]);
+    const { budgetStatus } = await import("./ipc");
+    expect(await budgetStatus()).toEqual([status]);
+    expect(invokeMock).toHaveBeenCalledWith("budget_status");
   });
 });

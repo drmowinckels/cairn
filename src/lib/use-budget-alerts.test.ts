@@ -265,3 +265,76 @@ describe("a malformed backend reply", () => {
     expect(result.current.alert).toBeNull();
   });
 });
+
+describe("pickAlert comparison ordering", () => {
+  // The reduce compares in both directions depending on input order, and its
+  // lookups fall back for values that aren't in the tables. Drive each.
+
+  it("picks the breach whichever order it arrives in", () => {
+    const warn = status({ id: "warn", state: "approaching", percent: 90 });
+    const breach = status({ id: "breach", state: "over", percent: 101 });
+    expect(pickAlert([warn, breach])?.budget.id).toBe("breach");
+    expect(pickAlert([breach, warn])?.budget.id).toBe("breach");
+  });
+
+  it("picks the most specific scope whichever order it arrives in", () => {
+    const ws = status({ id: "ws", scopeType: "workspace", percent: 130 });
+    const pr = status({
+      id: "pr",
+      scopeType: "project",
+      scopeId: "p1",
+      percent: 110,
+    });
+    expect(pickAlert([ws, pr])?.budget.id).toBe("pr");
+    expect(pickAlert([pr, ws])?.budget.id).toBe("pr");
+  });
+
+  it("picks the furthest past whichever order it arrives in", () => {
+    const a = status({ id: "a", percent: 105 });
+    const b = status({ id: "b", percent: 180 });
+    expect(pickAlert([a, b])?.budget.id).toBe("b");
+    expect(pickAlert([b, a])?.budget.id).toBe("b");
+  });
+
+  it("treats an unrecognised state or scope as the lowest rank", () => {
+    // Defensive: a value that escaped the backend's CHECK constraints must
+    // not out-rank a real one, and must not make the comparison NaN.
+    const odd = status({
+      id: "odd",
+      state: "sideways" as never,
+      scopeType: "galaxy" as never,
+      percent: 999,
+    });
+    const real = status({ id: "real", state: "over", percent: 101 });
+    expect(pickAlert([odd, real])?.budget.id).toBe("real");
+    expect(pickAlert([real, odd])?.budget.id).toBe("real");
+  });
+});
+
+describe("dismissing with nothing shown", () => {
+  it("is a no-op rather than recording an empty key", async () => {
+    const { result } = renderHook(() =>
+      useBudgetAlerts({
+        enabled: true,
+        fetchStatus: vi
+          .fn()
+          .mockResolvedValue([status({ state: "under", percent: 10 })]),
+      }),
+    );
+    await waitFor(() => expect(result.current.statuses).toHaveLength(1));
+    expect(result.current.alert).toBeNull();
+
+    act(() => result.current.dismiss());
+    expect(result.current.alert).toBeNull();
+  });
+});
+
+describe("default options", () => {
+  it("uses the real IPC and poll interval when none are injected", () => {
+    // Outside Tauri `enabled` defaults false, so nothing is fetched — this
+    // exercises the defaults without touching the backend.
+    const { result } = renderHook(() => useBudgetAlerts());
+    expect(result.current.alert).toBeNull();
+    expect(result.current.statuses).toEqual([]);
+  });
+});

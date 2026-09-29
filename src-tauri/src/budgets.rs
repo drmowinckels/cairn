@@ -1042,15 +1042,22 @@ mod tests {
 
     #[test]
     fn resolve_local_takes_the_single_instant_when_there_is_one() {
+        // A constructed `Single` rather than one probed from the runner's
+        // zone: probing makes the assertion conditional on where the machine
+        // happens to be, which is the same mistake as #310.
         let naive = NaiveDate::from_ymd_opt(2026, 6, 15)
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
-        let single = chrono::Local.from_local_datetime(&naive);
-        // Only meaningful if the runner's zone actually has one answer here.
-        if let chrono::LocalResult::Single(dt) = single {
-            assert_eq!(resolve_local(naive, single), dt.with_timezone(&Utc));
-        }
+        let instant = chrono::Utc
+            .with_ymd_and_hms(2026, 6, 14, 22, 0, 0)
+            .unwrap()
+            .with_timezone(&chrono::Local);
+
+        assert_eq!(
+            resolve_local(naive, chrono::LocalResult::Single(instant)),
+            instant.with_timezone(&Utc)
+        );
     }
 
     #[test]
