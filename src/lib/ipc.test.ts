@@ -1000,6 +1000,24 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("the budget mutations short-circuit without the backend (#307)", async () => {
+    // Outside Tauri every budget call answers with an empty list rather than
+    // reaching for an `invoke` that isn't there.
+    const { setBudget, deleteBudget, budgetStatus } = await import("./ipc");
+    expect(
+      await setBudget({
+        scopeType: "workspace",
+        scopeId: "",
+        period: "weekly",
+        minutes: 2400,
+        warnPercent: 80,
+      }),
+    ).toEqual([]);
+    expect(await deleteBudget("b1")).toEqual([]);
+    expect(await budgetStatus()).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("dismissAutostartRepairNotice short-circuits without the backend", async () => {
     const { dismissAutostartRepairNotice } = await import("./ipc");
     await dismissAutostartRepairNotice();

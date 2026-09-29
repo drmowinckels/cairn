@@ -296,6 +296,26 @@ describe("pickAlert comparison ordering", () => {
     expect(pickAlert([b, a])?.budget.id).toBe("b");
   });
 
+  it("treats an unrecognised scope as the lowest rank", () => {
+    // Same state on both, so the severity tie-break can't short-circuit and
+    // the scope lookup actually runs — which is what exercises its fallback.
+    const odd = status({
+      id: "odd",
+      state: "over",
+      scopeType: "galaxy" as never,
+      percent: 101,
+    });
+    const real = status({
+      id: "real",
+      state: "over",
+      scopeType: "project",
+      scopeId: "p1",
+      percent: 101,
+    });
+    expect(pickAlert([odd, real])?.budget.id).toBe("real");
+    expect(pickAlert([real, odd])?.budget.id).toBe("real");
+  });
+
   it("treats an unrecognised state or scope as the lowest rank", () => {
     // Defensive: a value that escaped the backend's CHECK constraints must
     // not out-rank a real one, and must not make the comparison NaN.
