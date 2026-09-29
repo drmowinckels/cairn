@@ -29,6 +29,19 @@ as the GitHub Release body, so keep the most recent version at the top.
   per-project rounding overrides), and the billable flag. This is the
   stable contract downstream plugins consume instead of reading the
   database (#109).
+- `[settings]` **Work-hour budgets** — recurring daily, weekly and monthly
+  caps on how much you work, with a warning as you approach one and again once
+  you pass it. Budgets can apply to everything, to a client, or to a single
+  project, and the most specific one speaks first (project ▸ client ▸
+  everything). A running timer counts toward the cap in real time, so you're
+  warned before the overrun rather than after it.
+
+  A cap, not a target, and deliberately advisory: Cairn never stops a timer to
+  enforce one — that would destroy real tracked time over a number you set as
+  guidance. It also lives in core rather than behind the billing plugin;
+  knowing you've worked too much this week is not a billing feature. Distinct
+  from a project's estimate, which is a one-off total for the whole job (#307).
+
 - `[settings]` **Dates & times** — a new Settings section to choose how Cairn
   renders clocks and dates. **Time format** is System / 24-hour / 12-hour and
   **Date format** is System / D/M/Y / M/D/Y / Y-M-D, each with a live preview.

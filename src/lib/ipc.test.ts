@@ -1000,9 +1000,115 @@ describe("ipc helpers (outside Tauri)", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("the budget mutations short-circuit without the backend (#307)", async () => {
+    // Outside Tauri every budget call answers with an empty list rather than
+    // reaching for an `invoke` that isn't there.
+    const { setBudget, deleteBudget, budgetStatus } = await import("./ipc");
+    expect(
+      await setBudget({
+        scopeType: "workspace",
+        scopeId: "",
+        period: "weekly",
+        minutes: 2400,
+        warnPercent: 80,
+      }),
+    ).toEqual([]);
+    expect(await deleteBudget("b1")).toEqual([]);
+    expect(await budgetStatus()).toEqual([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("dismissAutostartRepairNotice short-circuits without the backend", async () => {
     const { dismissAutostartRepairNotice } = await import("./ipc");
     await dismissAutostartRepairNotice();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("work-hour budget IPC (#307, inside Tauri)", () => {
+  let original: unknown;
+
+  beforeEach(() => {
+    original = (globalThis as WithInternals).__TAURI_INTERNALS__;
+    (globalThis as WithInternals).__TAURI_INTERNALS__ = {};
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete (globalThis as WithInternals).__TAURI_INTERNALS__;
+    } else {
+      (globalThis as WithInternals).__TAURI_INTERNALS__ = original;
+    }
+  });
+
+  it("coerces a null reply to an empty array", async () => {
+    // The backend answering `null` crashed `pickAlert` from inside a render —
+    // 90 unhandled rejections in CI while every test still passed.
+    invokeMock.mockResolvedValue(null);
+    const { listBudgets, budgetStatus, setBudget, deleteBudget } =
+      await import("./ipc");
+    expect(await listBudgets()).toEqual([]);
+    expect(await budgetStatus()).toEqual([]);
+    expect(
+      await setBudget({
+        scopeType: "workspace",
+        scopeId: "",
+        period: "weekly",
+        minutes: 2400,
+        warnPercent: 80,
+      }),
+    ).toEqual([]);
+    expect(await deleteBudget("b1")).toEqual([]);
+  });
+
+  it("passes budgets through when the backend answers properly", async () => {
+    const budget = {
+      id: "b1",
+      scopeType: "workspace" as const,
+      scopeId: "",
+      period: "weekly" as const,
+      minutes: 2400,
+      warnPercent: 80,
+    };
+    invokeMock.mockResolvedValue([budget]);
+    const { listBudgets, setBudget, deleteBudget } = await import("./ipc");
+
+    expect(await listBudgets()).toEqual([budget]);
+    expect(invokeMock).toHaveBeenCalledWith("list_budgets");
+
+    // Every mutation returns the fresh list, so each has to pass a real
+    // answer through as well as coerce a null one.
+    expect(
+      await setBudget({
+        scopeType: "workspace",
+        scopeId: "",
+        period: "weekly",
+        minutes: 2400,
+        warnPercent: 80,
+      }),
+    ).toEqual([budget]);
+    expect(await deleteBudget("b1")).toEqual([budget]);
+  });
+
+  it("passes a status list through", async () => {
+    const status = {
+      budget: {
+        id: "b1",
+        scopeType: "workspace" as const,
+        scopeId: "",
+        period: "daily" as const,
+        minutes: 480,
+        warnPercent: 80,
+      },
+      usedMinutes: 500,
+      percent: 104,
+      state: "over" as const,
+      periodStart: "2026-09-29T00:00:00+00:00",
+    };
+    invokeMock.mockResolvedValue([status]);
+    const { budgetStatus } = await import("./ipc");
+    expect(await budgetStatus()).toEqual([status]);
+    expect(invokeMock).toHaveBeenCalledWith("budget_status");
   });
 });

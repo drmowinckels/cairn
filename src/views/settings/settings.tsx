@@ -23,6 +23,7 @@ import {
 import { appLocale } from "../../lib/locale";
 import { TimeField } from "../../lib/datetime-fields";
 import { ActivityLogCard } from "./activity-log-card";
+import { WorkHourBudgetsPanel } from "./work-hour-budgets";
 import {
   ROUNDING_INTERVALS,
   ROUND_MODES,
@@ -54,6 +55,7 @@ export type SettingsSectionId =
   | "privacy"
   | "accessibility"
   | "datetime"
+  | "budgets"
   | "shortcuts"
   | "updates"
   | "activity-log"
@@ -537,6 +539,10 @@ export function SettingsView({
           </SetRow>
         </section>
       )}
+
+      <section className="settings-block" data-section="budgets">
+        <WorkHourBudgetsPanel />
+      </section>
 
       {rounding && (
         <section className="settings-block" aria-label="Time rounding">

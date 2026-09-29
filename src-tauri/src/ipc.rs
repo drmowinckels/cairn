@@ -10752,3 +10752,126 @@ mod budget_tests {
         assert_eq!(notice.message.as_deref(), Some("second"));
     }
 }
+
+// ── Work-hour budgets (#307) ──────────────────────────────────────────
+//
+// Core, not the billing plugin: a cap on how much you work is overwork
+// protection, not money. All three read/write the same table and return the
+// fresh list so the UI re-renders from one round trip.
+
+/// Every configured work-hour budget. Invoke shim in `lib.rs`.
+pub async fn list_budgets_impl(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::budgets::Budget>, String> {
+    crate::budgets::list_budgets(&state.db.pool).await
+}
+
+/// Create or replace the budget for a scope and period. Invoke shim in `lib.rs`.
+pub async fn set_budget_impl(
+    state: State<'_, AppState>,
+    input: crate::budgets::BudgetInput,
+) -> Result<Vec<crate::budgets::Budget>, String> {
+    crate::budgets::set_budget(&state.db.pool, input).await
+}
+
+/// Remove a budget. Invoke shim in `lib.rs`.
+pub async fn delete_budget_impl(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<crate::budgets::Budget>, String> {
+    crate::budgets::delete_budget(&state.db.pool, &id).await
+}
+
+/// How every budget is doing right now. Invoke shim in `lib.rs`.
+pub async fn budget_status_impl(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::budgets::BudgetStatus>, String> {
+    crate::budgets::budget_status(&state.db.pool, Utc::now()).await
+}
+
+#[cfg(test)]
+#[cfg(not(target_os = "windows"))]
+mod work_hour_budget_tests {
+    use super::*;
+    use crate::test_support::mock_app_with_db;
+    use tauri::Manager;
+
+    // Distinct from `budget_tests` above, which covers a *project estimate*
+    // (a one-off total for a whole project). These are the recurring
+    // daily/weekly/monthly caps from #307.
+    //
+    // `budgets.rs` owns the logic and its own tests; these cover the four
+    // `_impl` functions, which are all `lib.rs`'s command shims call and
+    // which `lib.rs` is codecov-ignored for.
+
+    fn input(period: &str, minutes: i64) -> crate::budgets::BudgetInput {
+        crate::budgets::BudgetInput {
+            scope_type: "workspace".into(),
+            scope_id: String::new(),
+            period: period.into(),
+            minutes,
+            warn_percent: 80,
+        }
+    }
+
+    #[tokio::test]
+    async fn set_then_list_round_trips_a_budget() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let stored = {
+            let state = app.state::<AppState>();
+            set_budget_impl(state, input("weekly", 2400)).await.unwrap()
+        };
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].minutes, 2400);
+
+        let state = app.state::<AppState>();
+        let listed = list_budgets_impl(state).await.unwrap();
+        assert_eq!(listed, stored);
+    }
+
+    #[tokio::test]
+    async fn set_surfaces_a_validation_error() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        let err = set_budget_impl(state, input("weekly", 0))
+            .await
+            .unwrap_err();
+        assert!(err.contains("at least one minute"), "got {err}");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_it_and_returns_what_is_left() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let id = {
+            let state = app.state::<AppState>();
+            set_budget_impl(state, input("daily", 480)).await.unwrap()[0]
+                .id
+                .clone()
+        };
+        let state = app.state::<AppState>();
+        assert!(delete_budget_impl(state, id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn status_reports_a_fresh_budget_as_unused() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        {
+            let state = app.state::<AppState>();
+            set_budget_impl(state, input("daily", 480)).await.unwrap();
+        }
+        let state = app.state::<AppState>();
+        let status = budget_status_impl(state).await.unwrap();
+
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].used_minutes, 0);
+        assert_eq!(status[0].percent, 0);
+        assert_eq!(status[0].state, crate::budgets::BudgetState::Under);
+    }
+
+    #[tokio::test]
+    async fn status_is_empty_when_nothing_is_configured() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<AppState>();
+        assert!(budget_status_impl(state).await.unwrap().is_empty());
+    }
+}

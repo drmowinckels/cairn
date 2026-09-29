@@ -1615,3 +1615,78 @@ export async function attributeEntryToRemoteTask(
 ): Promise<AttributedEntry> {
   return invoke<AttributedEntry>("attribute_entry_to_remote_task", { input });
 }
+
+// ── Work-hour budgets (#307) ──────────────────────────────────────────
+
+/** Which slice of tracked time a budget caps. Most-granular-wins:
+ *  `project` beats `client` beats `workspace`. */
+export type BudgetScopeType = "workspace" | "client" | "project";
+
+export type BudgetPeriod = "daily" | "weekly" | "monthly";
+
+/** Where a budget sits against its cap. */
+export type BudgetState = "under" | "approaching" | "over";
+
+/** A configured cap. `minutes` rather than hours so "7.5 hours" never drifts
+ *  through a float; the UI converts at the edges. */
+export interface Budget {
+  id: string;
+  scopeType: BudgetScopeType;
+  /** Empty for the workspace default; the client/project id otherwise. */
+  scopeId: string;
+  period: BudgetPeriod;
+  minutes: number;
+  /** Percentage at which the approaching-warning fires. 100 means only the
+   *  breach warns. */
+  warnPercent: number;
+}
+
+/** How a budget is doing in the current period. */
+export interface BudgetStatus {
+  budget: Budget;
+  usedMinutes: number;
+  /** Rounded down; can exceed 100, so the UI can say by how much. */
+  percent: number;
+  state: BudgetState;
+  /** RFC3339 start of the period the usage was measured over. */
+  periodStart: string;
+}
+
+/** Every configured work-hour budget (#307).
+ *
+ *  Coerces a non-array reply to `[]`, matching `getActivityLogSettings`: a
+ *  backend that answered `null` would otherwise make every caller's
+ *  `.map`/`.filter` throw from inside a render. */
+export async function listBudgets(): Promise<Budget[]> {
+  if (!inTauri) return [];
+  const rows = await invoke<Budget[] | null>("list_budgets");
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** Create or replace the budget for a scope and period; returns the fresh
+ *  list so the caller re-renders from one round trip. */
+export async function setBudget(input: {
+  scopeType: BudgetScopeType;
+  scopeId: string;
+  period: BudgetPeriod;
+  minutes: number;
+  warnPercent: number;
+}): Promise<Budget[]> {
+  if (!inTauri) return [];
+  const rows = await invoke<Budget[] | null>("set_budget", { input });
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** Remove a budget; returns what's left. */
+export async function deleteBudget(id: string): Promise<Budget[]> {
+  if (!inTauri) return [];
+  const rows = await invoke<Budget[] | null>("delete_budget", { id });
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** Current standing of every budget — drives the approaching/over prompts. */
+export async function budgetStatus(): Promise<BudgetStatus[]> {
+  if (!inTauri) return [];
+  const rows = await invoke<BudgetStatus[] | null>("budget_status");
+  return Array.isArray(rows) ? rows : [];
+}
