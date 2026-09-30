@@ -130,7 +130,10 @@ export function WorkHourBudgetsPanel() {
 
   return (
     <div className="budget-panel" data-budgets="panel">
-      <h4 className="rate-h">Work-hour budgets</h4>
+      {/* `settings-h`, not the billing panel's `rate-h`: this is a
+          top-level Settings section like "Dates & times" and
+          "Reporting", not a sub-panel nested inside a card. */}
+      <h3 className="settings-h">Work-hour budgets</h3>
       <p className="settings-sub">
         A cap on how much you work, not a target to hit. Cairn warns as you
         approach one and again once you pass it — it never stops a timer for
