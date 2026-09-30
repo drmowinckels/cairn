@@ -6,6 +6,18 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ## Unreleased
 
+### Fixed
+
+- `[billing]` Rates and invoices now store and show money in the
+  currency's **own** minor unit instead of assuming hundredths (#109).
+  Hourly rates in a currency with no minor unit (yen, won, króna) were
+  stored a hundredfold too large for the documented contract and
+  rendered on invoices with cents that don't exist ("JPY 1500.00"), and
+  a rate in a thousandth-unit currency (Kuwaiti dinar and its fils) lost
+  its third decimal at entry — 15.505 became 15.51 before it was ever
+  saved. Existing rows in an affected currency are rescaled on upgrade;
+  the two-decimal majority is untouched.
+
 ### Added
 
 - `[packaging]` Windows releases now also ship an **NSIS setup `.exe`**

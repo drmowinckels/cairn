@@ -204,6 +204,90 @@ describe("BillingRatesPanel", () => {
     await waitFor(() => expect((amount as HTMLInputElement).value).toBe(""));
   });
 
+  it("scales the entered amount by the currency's own minor unit (#109)", async () => {
+    billingSetRate.mockResolvedValue([]);
+    render(<BillingRatesPanel />);
+    const amount = await screen.findByLabelText(/hourly amount/i);
+    const currency = screen.getByLabelText(/^currency$/i);
+
+    // ¥15,000/hr. The yen has no minor unit, so the stored integer is 15000 —
+    // not 1500000, which under the minor-units contract would be ¥1,500,000.
+    await userEvent.clear(currency);
+    await userEvent.type(currency, "JPY");
+    await userEvent.type(amount, "15000");
+    // A whole-unit currency takes whole steps.
+    expect((amount as HTMLInputElement).step).toBe("1");
+    await userEvent.click(screen.getByRole("button", { name: /add rate/i }));
+
+    await waitFor(() => expect(billingSetRate).toHaveBeenCalled());
+    expect(billingSetRate.mock.calls[0][0]).toMatchObject({
+      amountCents: 15000,
+      currency: "JPY",
+    });
+  });
+
+  it("keeps all three decimals of a thousandth-unit currency (#109)", async () => {
+    billingSetRate.mockResolvedValue([]);
+    render(<BillingRatesPanel />);
+    const amount = await screen.findByLabelText(/hourly amount/i);
+    const currency = screen.getByLabelText(/^currency$/i);
+
+    await userEvent.clear(currency);
+    await userEvent.type(currency, "KWD");
+    // The third decimal is a real unit of this currency (a fils), so it must
+    // survive entry rather than being rounded away to 15.51.
+    expect((amount as HTMLInputElement).step).toBe("0.001");
+    await userEvent.type(amount, "15.505");
+    await userEvent.click(screen.getByRole("button", { name: /add rate/i }));
+
+    await waitFor(() => expect(billingSetRate).toHaveBeenCalled());
+    expect(billingSetRate.mock.calls[0][0]).toMatchObject({
+      amountCents: 15505,
+      currency: "KWD",
+    });
+  });
+
+  it("refuses an amount finer than the currency can hold (#109)", async () => {
+    billingSetRate.mockResolvedValue([]);
+    render(<BillingRatesPanel />);
+    const amount = await screen.findByLabelText(/hourly amount/i);
+    const currency = screen.getByLabelText(/^currency$/i);
+
+    // ¥150.50 has no representation — rounding it silently is what the old
+    // code did, so the panel must say so and refuse instead.
+    await userEvent.clear(currency);
+    await userEvent.type(currency, "JPY");
+    await userEvent.type(amount, "150.50");
+    expect(await screen.findByText(/whole numbers/i)).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: /add rate/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    // A whole yen amount clears it.
+    await userEvent.clear(amount);
+    await userEvent.type(amount, "150");
+    await waitFor(() =>
+      expect(screen.queryByText(/whole numbers/i)).toBeNull(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /add rate/i }));
+    await waitFor(() => expect(billingSetRate).toHaveBeenCalled());
+    expect(billingSetRate.mock.calls[0][0]).toMatchObject({
+      amountCents: 150,
+      currency: "JPY",
+    });
+  });
+
+  it("names the currency's decimal limit when the amount is too fine (#109)", async () => {
+    render(<BillingRatesPanel />);
+    const amount = await screen.findByLabelText(/hourly amount/i);
+    // USD holds two decimals, so a third is refused with that number named.
+    await userEvent.type(amount, "1.005");
+    expect(
+      await screen.findByText(/USD amounts have at most 2 decimal places/i),
+    ).toBeTruthy();
+  });
+
   it("requires a chosen entity for a non-workspace scope, then passes its id", async () => {
     listClients.mockResolvedValue([
       { id: "c1", name: "Acme", archived: false },
