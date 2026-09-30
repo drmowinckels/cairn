@@ -90,6 +90,7 @@ librsvg2
 libwebkit
 libxss
 llvm-cov
+LOCALAPPDATA
 lychee
 mermaid
 millis
@@ -110,6 +111,7 @@ notarytool
 NSButton
 NSControl
 NSFont
+NSIS
 NSStatusBar
 NSStatusBarButton
 NSStatusItem

@@ -34,11 +34,23 @@ Gatekeeper will warn end users, so they're required for a real release.
 
 ### Windows code-signing (#43)
 
-The Windows job builds a WiX **MSI** (Start-menu shortcut + uninstaller)
-and Authenticode-signs it when these secrets are present. They are
-**optional** — without them the MSI still builds, just unsigned (handy
-for dry runs), but Windows SmartScreen will warn end users, so a real
-release wants them set.
+The Windows job builds **two** installers (both with a Start-menu
+shortcut + uninstaller) and Authenticode-signs them when these secrets
+are present:
+
+- an **NSIS setup `.exe`**, `installMode: "currentUser"` — installs into
+  `%LOCALAPPDATA%` with no Administrator rights, which is the only way
+  onto a managed machine where `C:\Program Files` is locked (#299);
+- a WiX **MSI**, per-machine into `C:\Program Files` — for personal
+  machines and managed/Group-Policy deployment.
+
+`"currentUser"` is deliberate and guarded by `scripts/packaging.test.mjs`:
+Tauri's `"both"` mode requires elevation _even when the user chooses a
+current-user install_, which would defeat the point.
+
+The secrets are **optional** — without them both installers still build,
+just unsigned (handy for dry runs), but Windows SmartScreen will warn end
+users, so a real release wants them set.
 
 | Secret                         | What it is                                                                              | Required for    |
 | ------------------------------ | --------------------------------------------------------------------------------------- | --------------- |
@@ -47,9 +59,12 @@ release wants them set.
 
 The job decodes the PFX, imports it into the runner's certificate store,
 reads its thumbprint, and writes `src-tauri/tauri.windows.conf.json` —
-which Tauri auto-merges (RFC 7396) so the WiX bundler signs the MSI. That
-file is generated in CI and git-ignored; the signing identity never
-touches the repo.
+which Tauri auto-merges (RFC 7396) so the bundlers sign their output.
+That file is generated in CI and git-ignored; the signing identity never
+touches the repo. Note it is written with `Set-Content`, i.e. replaced
+wholesale, so it must never hold hand-maintained config: durable Windows
+settings (the NSIS install mode included) belong in
+`src-tauri/tauri.conf.json`.
 
 > **SmartScreen.** A standard OV certificate signs the binary but earns
 > SmartScreen reputation only over time/downloads; an **EV** certificate
@@ -134,8 +149,9 @@ the config.
    signs + notarizes + staples; notarization can take several minutes
    while Apple processes the submission.
 6. **Review the draft Release.** When all jobs finish, a draft
-   pre-release appears under **Releases** with the `.dmg`, the Windows
-   installer, and the Linux `.deb` + AppImage attached. Download and
+   pre-release appears under **Releases** with the `.dmg`, both Windows
+   installers (`*-setup.exe` and `*.msi`), and the Linux `.deb` +
+   AppImage attached. Download and
    smoke-test at least the macOS `.dmg` on a clean machine
    (`spctl -a -vvv /Applications/Cairn.app` should report
    `source=Notarized Developer ID`).

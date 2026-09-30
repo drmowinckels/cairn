@@ -134,7 +134,11 @@ jobs:
             args: "--bundles deb,appimage"
             rust-targets: ""
           - platform: windows-latest
-            args: "--bundles msi"
+            # Both Windows installers: the NSIS setup .exe installs per-user
+            # under %LOCALAPPDATA% with no Administrator rights (#299 — managed
+            # machines can't write C:\Program Files), and the MSI stays for
+            # per-machine and managed/Group-Policy deployment.
+            args: "--bundles msi,nsis"
             rust-targets: ""
     runs-on: ${{ matrix.platform }}
     # Only the cert is exposed job-wide, and solely so the import step's

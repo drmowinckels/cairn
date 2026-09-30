@@ -8,6 +8,12 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Added
 
+- `[packaging]` Windows releases now also ship an **NSIS setup `.exe`**
+  that installs per-user into `%LOCALAPPDATA%` and needs no
+  administrator rights (#299). The MSI still installs per-machine into
+  `C:\Program Files` for personal machines and managed deployment, but
+  it can't be used where that path is locked down — which is most work
+  and school machines.
 - `[activity]` A **minimum activity length** for the day's review
   (Settings → Activity log; default and lowest value 5 minutes, #313).
   Foreground blips shorter than it are no longer offered as entries to
