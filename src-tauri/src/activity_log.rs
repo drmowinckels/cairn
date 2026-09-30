@@ -64,9 +64,12 @@ impl Default for ActivityLogSettings {
 }
 
 impl ActivityLogSettings {
-    /// The review floor in seconds, for the SQL duration comparison.
+    /// The review floor in seconds, for the SQL duration comparison. Trusts
+    /// `min_span_minutes`: the two doors a value can come in through — the DB
+    /// column and the IPC payload — both clamp to the floor, in
+    /// [`load_settings`] and [`save_settings`] respectively.
     pub fn min_span_seconds(&self) -> i64 {
-        i64::from(self.min_span_minutes.max(MIN_SPAN_MINUTES_FLOOR)) * 60
+        i64::from(self.min_span_minutes) * 60
     }
 }
 
