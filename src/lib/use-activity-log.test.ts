@@ -9,7 +9,11 @@ const saveMock = vi.fn();
 let inTauriValue = true;
 
 vi.mock("./ipc", () => ({
-  ACTIVITY_LOG_DEFAULTS: { enabled: false, retentionDays: 7 },
+  ACTIVITY_LOG_DEFAULTS: {
+    enabled: false,
+    retentionDays: 7,
+    minSpanMinutes: 5,
+  },
   get inTauri() {
     return inTauriValue;
   },
@@ -38,7 +42,11 @@ afterEach(() => {
 
 describe("useActivityLog (#190)", () => {
   it("loads settings on mount", async () => {
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 30 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 30,
+      minSpanMinutes: 5,
+    });
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
     await waitFor(() => expect(result.current.settings.enabled).toBe(true));
@@ -46,7 +54,11 @@ describe("useActivityLog (#190)", () => {
   });
 
   it("setEnabled optimistically updates and writes through", async () => {
-    getMock.mockResolvedValue({ enabled: false, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: false,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     setMock.mockResolvedValue(undefined);
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
@@ -55,11 +67,40 @@ describe("useActivityLog (#190)", () => {
       await result.current.setEnabled(true);
     });
     expect(result.current.settings.enabled).toBe(true);
-    expect(setMock).toHaveBeenCalledWith({ enabled: true, retentionDays: 7 });
+    expect(setMock).toHaveBeenCalledWith({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
+  });
+
+  it("setMinSpanMinutes writes the new review floor (#313)", async () => {
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
+    setMock.mockResolvedValue(undefined);
+    const { useActivityLog } = await import("./use-activity-log");
+    const { result } = renderHook(() => useActivityLog());
+    await waitFor(() => expect(result.current.settings.minSpanMinutes).toBe(5));
+    await act(async () => {
+      await result.current.setMinSpanMinutes(15);
+    });
+    expect(result.current.settings.minSpanMinutes).toBe(15);
+    expect(setMock).toHaveBeenCalledWith({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 15,
+    });
   });
 
   it("setRetentionDays writes the new window", async () => {
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     setMock.mockResolvedValue(undefined);
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
@@ -68,11 +109,19 @@ describe("useActivityLog (#190)", () => {
       await result.current.setRetentionDays(0);
     });
     expect(result.current.settings.retentionDays).toBe(0);
-    expect(setMock).toHaveBeenCalledWith({ enabled: true, retentionDays: 0 });
+    expect(setMock).toHaveBeenCalledWith({
+      enabled: true,
+      retentionDays: 0,
+      minSpanMinutes: 5,
+    });
   });
 
   it("rolls back and surfaces the error when a write fails", async () => {
-    getMock.mockResolvedValue({ enabled: false, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: false,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     setMock.mockRejectedValue(new Error("db locked"));
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
@@ -85,7 +134,11 @@ describe("useActivityLog (#190)", () => {
   });
 
   it("deleteAll calls the backend", async () => {
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     deleteMock.mockResolvedValue(undefined);
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
@@ -96,7 +149,11 @@ describe("useActivityLog (#190)", () => {
   });
 
   it("exportToFile writes to the picked destination", async () => {
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     saveMock.mockResolvedValue("/tmp/cairn-activity.csv");
     exportMock.mockResolvedValue("/tmp/cairn-activity.csv");
     const { useActivityLog } = await import("./use-activity-log");
@@ -110,7 +167,11 @@ describe("useActivityLog (#190)", () => {
   });
 
   it("exportToFile is a no-op when the save dialog is cancelled", async () => {
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     saveMock.mockResolvedValue(null);
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
@@ -122,7 +183,11 @@ describe("useActivityLog (#190)", () => {
 
   it("exportToFile is a no-op outside Tauri", async () => {
     inTauriValue = false;
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
     await act(async () => {
@@ -133,7 +198,11 @@ describe("useActivityLog (#190)", () => {
   });
 
   it("exportToFile surfaces a write error", async () => {
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     saveMock.mockResolvedValue("/tmp/x.csv");
     exportMock.mockRejectedValue(new Error("disk full"));
     const { useActivityLog } = await import("./use-activity-log");
@@ -152,7 +221,11 @@ describe("useActivityLog (#190)", () => {
   });
 
   it("surfaces a deleteAll error", async () => {
-    getMock.mockResolvedValue({ enabled: true, retentionDays: 7 });
+    getMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     deleteMock.mockRejectedValue(new Error("nope"));
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
@@ -163,7 +236,11 @@ describe("useActivityLog (#190)", () => {
   });
 
   it("ignores a load resolving after unmount (no setState on a dead component)", async () => {
-    let resolve!: (v: { enabled: boolean; retentionDays: number }) => void;
+    let resolve!: (v: {
+      enabled: boolean;
+      retentionDays: number;
+      minSpanMinutes: number;
+    }) => void;
     getMock.mockReturnValue(
       new Promise((r) => {
         resolve = r;
@@ -173,7 +250,7 @@ describe("useActivityLog (#190)", () => {
     const { result, unmount } = renderHook(() => useActivityLog());
     unmount();
     await act(async () => {
-      resolve({ enabled: true, retentionDays: 30 });
+      resolve({ enabled: true, retentionDays: 30, minSpanMinutes: 5 });
       await Promise.resolve();
     });
     // The cancelled guard skipped the update — still the default.

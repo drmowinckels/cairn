@@ -1316,7 +1316,11 @@ export function TodayView({
               onMerge={onMergeEntries}
             />
           ) : effectiveView === "activity" ? (
-            <ActivityReview date={viewDate} onCreated={today.refresh} />
+            <ActivityReview
+              date={viewDate}
+              minSpanMinutes={activityLog.settings.minSpanMinutes}
+              onCreated={today.refresh}
+            />
           ) : (
             <RecentList
               entries={recentEntries}

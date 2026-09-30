@@ -107,10 +107,11 @@ describe("SettingsView (browser-dev mode)", () => {
         a11y={stubA11y()}
         capture={stubCapture()}
         activityLog={{
-          settings: { enabled: false, retentionDays: 7 },
+          settings: { enabled: false, retentionDays: 7, minSpanMinutes: 5 },
           error: null,
           setEnabled: vi.fn(async () => undefined),
           setRetentionDays: vi.fn(async () => undefined),
+          setMinSpanMinutes: vi.fn(async () => undefined),
           deleteAll: vi.fn(async () => undefined),
           exportToFile: vi.fn(async () => undefined),
         }}

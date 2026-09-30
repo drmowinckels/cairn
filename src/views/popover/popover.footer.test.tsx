@@ -119,7 +119,11 @@ interface Backend {
     keep: number;
   };
   autoBackupStatus?: { lastBackupAt: string | null; count: number };
-  activityLogSettings?: { enabled: boolean; retentionDays: number };
+  activityLogSettings?: {
+    enabled: boolean;
+    retentionDays: number;
+    minSpanMinutes: number;
+  };
 }
 
 async function mountPopover(backend: Backend) {
@@ -161,7 +165,11 @@ async function mountPopover(backend: Backend) {
           return { active: false };
         case "get_activity_log_settings":
           return (
-            backend.activityLogSettings ?? { enabled: false, retentionDays: 7 }
+            backend.activityLogSettings ?? {
+              enabled: false,
+              retentionDays: 7,
+              minSpanMinutes: 5,
+            }
           );
         default:
           // Arrays for any list_* command so consumers that `.map`
@@ -252,7 +260,11 @@ describe("Popover footer — live totals (#142)", () => {
 
   it("shows the activity-log recording indicator when the log is on (#190)", async () => {
     await mountPopover({
-      activityLogSettings: { enabled: true, retentionDays: 7 },
+      activityLogSettings: {
+        enabled: true,
+        retentionDays: 7,
+        minSpanMinutes: 5,
+      },
     });
     const footer = document.querySelector(".pop-foot") as HTMLElement;
     // Both assertions inside the wait (#275): the indicator element and its

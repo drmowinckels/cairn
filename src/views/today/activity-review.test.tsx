@@ -30,7 +30,11 @@ describe("ActivityReview (#190)", () => {
   it("renders the day's spans and the Time-by-app totals", async () => {
     listMock.mockResolvedValue([SPAN]);
     const { container } = render(
-      <ActivityReview date="2026-06-16" onCreated={vi.fn()} />,
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
     );
     await waitFor(() =>
       expect(container.querySelector(".act-row")).toBeTruthy(),
@@ -43,9 +47,99 @@ describe("ActivityReview (#190)", () => {
     expect(listMock).toHaveBeenCalledWith("2026-06-16");
   });
 
+  it("holds short spans out of the list and reveals them on request (#313)", async () => {
+    const BLIP = {
+      ...SPAN,
+      id: 2,
+      appName: "Slack",
+      titleHint: null,
+      startedAt: "2026-06-16T10:00:00+00:00",
+      endedAt: "2026-06-16T10:01:30+00:00", // 90s — under the 5m floor
+    };
+    listMock.mockResolvedValue([SPAN, BLIP]);
+    const { container } = render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".act-row")).toBeTruthy(),
+    );
+    // Only the 30m span is offered; the blip is summarised in the note.
+    expect(container.querySelectorAll(".act-row")).toHaveLength(1);
+    expect(container.querySelector(".act-list")?.textContent).not.toMatch(
+      /Slack/,
+    );
+    expect(container.querySelector(".act-short-note")?.textContent).toMatch(
+      /1 span under 5m/,
+    );
+    // "Time by app" still accounts for every span — the floor decides what's
+    // worth adding, not where the day went.
+    expect(screen.getByLabelText(/time by app/i).textContent).toMatch(/Slack/);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /show short activity/i }),
+    );
+    expect(container.querySelectorAll(".act-row")).toHaveLength(2);
+    expect(container.querySelector(".act-list")?.textContent).toMatch(/Slack/);
+    fireEvent.click(
+      screen.getByRole("button", { name: /hide short activity/i }),
+    );
+    expect(container.querySelectorAll(".act-row")).toHaveLength(1);
+  });
+
+  it("says so when every span was shorter than the minimum (#313)", async () => {
+    listMock.mockResolvedValue([
+      {
+        ...SPAN,
+        endedAt: "2026-06-16T09:02:00+00:00",
+      },
+    ]);
+    render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(/nothing long enough to review/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/shorter than 5 minutes/i)).toBeTruthy();
+  });
+
+  it("pluralises the hidden-span note for several short spans (#313)", async () => {
+    listMock.mockResolvedValue([
+      SPAN,
+      { ...SPAN, id: 2, endedAt: "2026-06-16T09:02:00+00:00" },
+      { ...SPAN, id: 3, endedAt: "2026-06-16T09:03:00+00:00" },
+    ]);
+    const { container } = render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".act-short-note")).toBeTruthy(),
+    );
+    expect(container.querySelector(".act-short-note")?.textContent).toMatch(
+      /2 spans under 5m/,
+    );
+  });
+
   it("shows an empty state when nothing was recorded", async () => {
     listMock.mockResolvedValue([]);
-    render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
     expect(await screen.findByText(/no activity recorded/i)).toBeTruthy();
   });
 
@@ -54,7 +148,13 @@ describe("ActivityReview (#190)", () => {
     listMock.mockResolvedValue([SPAN, OTHER_SPAN]);
     createMock.mockResolvedValue({ id: "e1" });
     const onCreated = vi.fn().mockResolvedValue(undefined);
-    render(<ActivityReview date="2026-06-16" onCreated={onCreated} />);
+    render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={onCreated}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", {
         name: /add a time entry from zoom/i,
@@ -83,7 +183,13 @@ describe("ActivityReview (#190)", () => {
 
   it("a span already linked to an entry (hasEntry) renders Added on load, not after a click", async () => {
     listMock.mockResolvedValue([{ ...SPAN, hasEntry: true }]);
-    render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
     const btn = await screen.findByRole("button", { name: /already added/i });
     expect((btn as HTMLButtonElement).disabled).toBe(true);
     expect(createMock).not.toHaveBeenCalled();
@@ -98,7 +204,13 @@ describe("ActivityReview (#190)", () => {
         endedAt: "2026-06-16T09:02:25+00:00",
       },
     ]);
-    render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
     const totals = await screen.findByLabelText(/time by app/i);
     expect(totals.textContent).toMatch(/2m/);
     expect(totals.textContent).not.toMatch(/\./);
@@ -107,7 +219,13 @@ describe("ActivityReview (#190)", () => {
   it("surfaces a create error", async () => {
     listMock.mockResolvedValue([SPAN]);
     createMock.mockRejectedValue(new Error("db locked"));
-    render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: /add a time entry/i }),
     );
@@ -118,7 +236,13 @@ describe("ActivityReview (#190)", () => {
 
   it("surfaces a load error", async () => {
     listMock.mockRejectedValue(new Error("boom"));
-    render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
     expect((await screen.findByRole("alert")).textContent).toContain("boom");
   });
 
@@ -126,7 +250,11 @@ describe("ActivityReview (#190)", () => {
     listMock.mockResolvedValue([{ ...SPAN, titleHint: null }]);
     createMock.mockResolvedValue({ id: "e1" });
     const { container } = render(
-      <ActivityReview date="2026-06-16" onCreated={vi.fn()} />,
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
     );
     await waitFor(() =>
       expect(container.querySelector(".act-row")).toBeTruthy(),
@@ -144,7 +272,13 @@ describe("ActivityReview (#190)", () => {
         resolve = r;
       }),
     );
-    const a = render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    const a = render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
     a.unmount();
     resolve([SPAN]); // late resolve — the cancelled guard skips setState
     await Promise.resolve();
@@ -155,7 +289,13 @@ describe("ActivityReview (#190)", () => {
         reject = rej;
       }),
     );
-    const b = render(<ActivityReview date="2026-06-16" onCreated={vi.fn()} />);
+    const b = render(
+      <ActivityReview
+        date="2026-06-16"
+        minSpanMinutes={5}
+        onCreated={vi.fn()}
+      />,
+    );
     b.unmount();
     reject(new Error("late")); // late reject — guard skips setError
     await Promise.resolve();

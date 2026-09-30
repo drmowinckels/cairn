@@ -34,6 +34,11 @@ pub struct ActivityRow {
     pub has_entry: bool,
 }
 
+/// Lowest selectable "minimum activity length" (#313), in minutes. Also the
+/// default: spans shorter than this are recorded but not offered for review,
+/// because 1–2 minute foreground blips are noise rather than work.
+pub const MIN_SPAN_MINUTES_FLOOR: u32 = 5;
+
 /// User-controlled activity-log settings, stored on the singleton app_state
 /// row so the collector can read them without the webview open.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +47,10 @@ pub struct ActivityLogSettings {
     pub enabled: bool,
     /// Days to keep rows; `0` means keep until the user deletes.
     pub retention_days: u32,
+    /// Shortest span offered for review, in minutes. Never below
+    /// [`MIN_SPAN_MINUTES_FLOOR`]; a smaller stored or incoming value is
+    /// raised to the floor.
+    pub min_span_minutes: u32,
 }
 
 impl Default for ActivityLogSettings {
@@ -49,7 +58,15 @@ impl Default for ActivityLogSettings {
         Self {
             enabled: false,
             retention_days: 7,
+            min_span_minutes: MIN_SPAN_MINUTES_FLOOR,
         }
+    }
+}
+
+impl ActivityLogSettings {
+    /// The review floor in seconds, for the SQL duration comparison.
+    pub fn min_span_seconds(&self) -> i64 {
+        i64::from(self.min_span_minutes.max(MIN_SPAN_MINUTES_FLOOR)) * 60
     }
 }
 
@@ -150,21 +167,30 @@ pub async fn list_in_range(
         .collect())
 }
 
-/// Count of spans in `[start, end)` with no linked `entries` row yet — the
+/// Count of spans in `[start, end)` at least `min_span_seconds` long with no
+/// linked `entries` row yet — the
 /// cheap check the "Workday in Review" banner trigger polls, so it doesn't
 /// need to pull every row just to know whether anything's left to review.
 pub async fn count_uncategorized_in_range(
     pool: &SqlitePool,
     start: &str,
     end: &str,
+    min_span_seconds: i64,
 ) -> Result<i64, sqlx::Error> {
+    // ROUND before the integer cast: julianday is a float, so a span of exactly
+    // the threshold computes to a hair under it and would otherwise be skipped.
+    // An unparseable bound makes the duration NULL, failing the comparison —
+    // a malformed row can't trigger the banner, which is the safe direction.
     let row = sqlx::query(
         "SELECT COUNT(*) AS n FROM activity_log a \
           WHERE a.started_at >= ?1 AND a.started_at < ?2 \
+            AND CAST(ROUND((julianday(a.ended_at) - julianday(a.started_at)) * 86400.0) \
+                AS INTEGER) >= ?3 \
             AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.activity_row_id = a.id)",
     )
     .bind(start)
     .bind(end)
+    .bind(min_span_seconds)
     .fetch_one(pool)
     .await?;
     Ok(row.get::<i64, _>("n"))
@@ -200,7 +226,8 @@ pub async fn purge_older_than(
 /// Load the on/off + retention settings; defaults on any read error.
 pub async fn load_settings(pool: &SqlitePool) -> ActivityLogSettings {
     let row = sqlx::query(
-        "SELECT activity_log_enabled, activity_log_retention_days \
+        "SELECT activity_log_enabled, activity_log_retention_days, \
+                activity_log_min_span_minutes \
            FROM app_state WHERE singleton = 1",
     )
     .fetch_optional(pool)
@@ -214,6 +241,10 @@ pub async fn load_settings(pool: &SqlitePool) -> ActivityLogSettings {
             retention_days: r
                 .get::<i64, _>("activity_log_retention_days")
                 .clamp(0, i64::from(u32::MAX)) as u32,
+            min_span_minutes: r
+                .get::<i64, _>("activity_log_min_span_minutes")
+                .clamp(i64::from(MIN_SPAN_MINUTES_FLOOR), i64::from(u32::MAX))
+                as u32,
         },
     }
 }
@@ -225,11 +256,15 @@ pub async fn save_settings(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE app_state \
-            SET activity_log_enabled = ?1, activity_log_retention_days = ?2 \
+            SET activity_log_enabled = ?1, activity_log_retention_days = ?2, \
+                activity_log_min_span_minutes = ?3 \
           WHERE singleton = 1",
     )
     .bind(i64::from(settings.enabled))
     .bind(i64::from(settings.retention_days))
+    .bind(i64::from(
+        settings.min_span_minutes.max(MIN_SPAN_MINUTES_FLOOR),
+    ))
     .execute(pool)
     .await?;
     Ok(())
@@ -427,29 +462,55 @@ mod tests {
         assert!(!rows.iter().find(|r| r.id == 2).unwrap().has_entry);
     }
 
+    /// Counts the day's unreviewed spans at a 5-minute floor.
+    async fn count_day(pool: &SqlitePool, min_span_seconds: i64) -> i64 {
+        count_uncategorized_in_range(
+            pool,
+            "2026-06-16T00:00:00+00:00",
+            "2026-06-17T00:00:00+00:00",
+            min_span_seconds,
+        )
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn count_uncategorized_in_range_excludes_linked_spans_and_out_of_window_ones() {
         let (_dir, db) = test_db().await;
-        for start in [
-            "2026-06-16T09:00:00+00:00",
-            "2026-06-16T10:00:00+00:00",
-            "2026-06-15T23:00:00+00:00", // previous day, out of window
+        for (start, end) in [
+            ("2026-06-16T09:00:00+00:00", "2026-06-16T09:30:00+00:00"),
+            ("2026-06-16T10:00:00+00:00", "2026-06-16T10:30:00+00:00"),
+            // Previous day, out of window.
+            ("2026-06-15T23:00:00+00:00", "2026-06-15T23:30:00+00:00"),
         ] {
-            insert(&db.pool, start, start, "Code", None, "window", Utc::now())
+            insert(&db.pool, start, end, "Code", None, "window", Utc::now())
                 .await
                 .unwrap();
         }
         link_entry(&db.pool, "e-linked", 1).await;
 
-        let n = count_uncategorized_in_range(
-            &db.pool,
-            "2026-06-16T00:00:00+00:00",
-            "2026-06-17T00:00:00+00:00",
-        )
-        .await
-        .unwrap();
         // Row 1 is linked, row 3 is outside the window — only row 2 counts.
-        assert_eq!(n, 1);
+        assert_eq!(count_day(&db.pool, 300).await, 1);
+    }
+
+    #[tokio::test]
+    async fn count_uncategorized_in_range_skips_spans_under_the_minimum() {
+        let (_dir, db) = test_db().await;
+        for (start, end) in [
+            // Exactly at the 5-minute floor — counts (the boundary is >=, and
+            // julianday's float drift must not push it under).
+            ("2026-06-16T09:00:00+00:00", "2026-06-16T09:05:00+00:00"),
+            // 90 seconds — the blip the floor exists to hide.
+            ("2026-06-16T10:00:00+00:00", "2026-06-16T10:01:30+00:00"),
+            ("2026-06-16T11:00:00+00:00", "2026-06-16T11:20:00+00:00"),
+        ] {
+            insert(&db.pool, start, end, "Code", None, "window", Utc::now())
+                .await
+                .unwrap();
+        }
+        assert_eq!(count_day(&db.pool, 300).await, 2);
+        // Raising the floor to 10 minutes leaves only the 20-minute span.
+        assert_eq!(count_day(&db.pool, 600).await, 1);
     }
 
     #[tokio::test]
@@ -613,6 +674,7 @@ mod tests {
             ActivityLogSettings {
                 enabled: true,
                 retention_days: 30,
+                min_span_minutes: 15,
             },
         )
         .await
@@ -620,5 +682,43 @@ mod tests {
         let s = load_settings(&db.pool).await;
         assert!(s.enabled);
         assert_eq!(s.retention_days, 30);
+        assert_eq!(s.min_span_minutes, 15);
+        assert_eq!(s.min_span_seconds(), 15 * 60);
+    }
+
+    #[tokio::test]
+    async fn a_min_span_below_the_floor_is_raised_on_write_and_on_read() {
+        let (_dir, db) = test_db().await;
+        save_settings(
+            &db.pool,
+            ActivityLogSettings {
+                enabled: true,
+                retention_days: 7,
+                min_span_minutes: 1,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            load_settings(&db.pool).await.min_span_minutes,
+            MIN_SPAN_MINUTES_FLOOR,
+        );
+        // A value written straight to the column below the floor also reads
+        // back raised — the review floor can never dip under 5 minutes.
+        sqlx::query("UPDATE app_state SET activity_log_min_span_minutes = 0")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            load_settings(&db.pool).await.min_span_minutes,
+            MIN_SPAN_MINUTES_FLOOR,
+        );
+    }
+
+    #[test]
+    fn min_span_seconds_defaults_to_the_floor() {
+        let s = ActivityLogSettings::default();
+        assert_eq!(s.min_span_minutes, MIN_SPAN_MINUTES_FLOOR);
+        assert_eq!(s.min_span_seconds(), 300);
     }
 }

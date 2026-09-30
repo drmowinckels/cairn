@@ -1,8 +1,18 @@
 import { useState } from "react";
 import { Icon } from "../../lib/icon";
+import { ACTIVITY_MIN_SPAN_FLOOR_MINUTES } from "../../lib/ipc";
 import type { UseActivityLog } from "../../lib/use-activity-log";
 import type { UseWorkdayReviewPrefs } from "../../lib/use-workday-review-prefs";
 import { SetRow, Toggle } from "./settings";
+
+/** Minimum activity length choices (#313). The lowest is the backend floor —
+ *  shorter spans are noise, not work, so they're never offered for review. */
+const MIN_SPAN_OPTIONS: Array<{ value: number; label: string }> = [
+  ACTIVITY_MIN_SPAN_FLOOR_MINUTES,
+  10,
+  15,
+  30,
+].map((value) => ({ value, label: `${value} minutes` }));
 
 const RETENTION_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 1, label: "1 day" },
@@ -30,6 +40,7 @@ export function ActivityLogCard({ activityLog, workdayReview }: Props) {
     error,
     setEnabled,
     setRetentionDays,
+    setMinSpanMinutes,
     deleteAll,
     exportToFile,
   } = activityLog;
@@ -72,6 +83,26 @@ export function ActivityLogCard({ activityLog, workdayReview }: Props) {
             onChange={(e) => void setRetentionDays(Number(e.target.value))}
           >
             {RETENTION_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </SetRow>
+      )}
+
+      {settings.enabled && (
+        <SetRow
+          label="Ignore activity shorter than"
+          hint="Shorter spans stay in the log and in Time by app, but aren't offered as entries to add."
+        >
+          <select
+            className="field-input"
+            aria-label="Minimum activity length"
+            value={settings.minSpanMinutes}
+            onChange={(e) => void setMinSpanMinutes(Number(e.target.value))}
+          >
+            {MIN_SPAN_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>

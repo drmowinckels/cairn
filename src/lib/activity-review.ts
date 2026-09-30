@@ -30,3 +30,39 @@ export function appTotals(rows: ActivityRow[]): AppTotal[] {
     .map(([appName, seconds]) => ({ appName, seconds }))
     .sort((a, b) => b.seconds - a.seconds);
 }
+
+export interface ActivitySplit {
+  /** Spans long enough to offer as entries, in the original order. */
+  reviewable: ActivityRow[];
+  /** Spans below the minimum — kept out of the list, counted here. */
+  hidden: ActivityRow[];
+  /** Total seconds in `hidden`, for the "shorter activity" footnote. */
+  hiddenSeconds: number;
+}
+
+/**
+ * Split a day's spans at the user's minimum activity length (#313). Spans
+ * shorter than `minMinutes` are noise in the review list (a 30-second glance
+ * at Slack is not an entry worth adding), so they're held back — but they stay
+ * in `hidden` so the UI can account for the time and offer to show them, and
+ * "Time by app" still totals every span.
+ */
+export function splitByMinLength(
+  rows: ActivityRow[],
+  minMinutes: number,
+): ActivitySplit {
+  const minSeconds = Math.max(0, minMinutes) * 60;
+  const reviewable: ActivityRow[] = [];
+  const hidden: ActivityRow[] = [];
+  let hiddenSeconds = 0;
+  for (const r of rows) {
+    const seconds = spanSeconds(r);
+    if (seconds >= minSeconds) {
+      reviewable.push(r);
+    } else {
+      hidden.push(r);
+      hiddenSeconds += seconds;
+    }
+  }
+  return { reviewable, hidden, hiddenSeconds };
+}

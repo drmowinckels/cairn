@@ -18,6 +18,8 @@ export interface UseActivityLog {
   setEnabled: (enabled: boolean) => Promise<void>;
   /** Change the retention window (days; 0 = keep until deleted). */
   setRetentionDays: (days: number) => Promise<void>;
+  /** Change the shortest span offered for review (minutes; #313). */
+  setMinSpanMinutes: (minutes: number) => Promise<void>;
   /** Hard-delete every row now, leaving the toggle on. */
   deleteAll: () => Promise<void>;
   /** Pick a destination and write the log to CSV. No-op if cancelled. */
@@ -75,6 +77,11 @@ export function useActivityLog(): UseActivityLog {
     [settings, write],
   );
 
+  const setMinSpanMinutes = useCallback(
+    (minSpanMinutes: number) => write({ ...settings, minSpanMinutes }),
+    [settings, write],
+  );
+
   const deleteAll = useCallback(async () => {
     setError(null);
     try {
@@ -108,6 +115,7 @@ export function useActivityLog(): UseActivityLog {
     error,
     setEnabled,
     setRetentionDays,
+    setMinSpanMinutes,
     deleteAll,
     exportToFile,
   };
