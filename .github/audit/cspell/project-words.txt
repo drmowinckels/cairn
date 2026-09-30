@@ -146,6 +146,8 @@ rrggbb
 RRULE
 rustdoc
 Rustdoc
+rustls
+RUSTSEC
 rustup
 secinit
 serde
