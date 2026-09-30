@@ -1525,11 +1525,13 @@ pub async fn list_activity_log_impl(
         .map_err(err)
 }
 
-/// Count of the day's activity-log spans with no linked entry yet — the
-/// cheap poll behind the "Workday in Review" banner trigger (#190 follow-up),
-/// so it doesn't need to pull full rows just to know whether there's
-/// anything left to review. Logic here (tested); the thin `#[tauri::command]`
-/// shim is in the codecov-ignored `lib.rs`.
+/// Count of the day's activity-log spans with no linked entry yet — the cheap
+/// poll behind the "Workday in Review" banner trigger (#190 follow-up), so it
+/// doesn't need to pull full rows just to know whether there's anything left to
+/// review. Spans under the user's minimum activity length don't count (#313),
+/// so the banner never nags about blips the review list itself holds back.
+/// Logic here (tested); the thin `#[tauri::command]` shim is in the
+/// codecov-ignored `lib.rs`.
 pub async fn count_uncategorized_activity_impl(
     state: State<'_, AppState>,
     date: String,
@@ -1538,10 +1540,12 @@ pub async fn count_uncategorized_activity_impl(
         .map_err(|e| format!("invalid date '{date}': {e}"))?;
     let start = local_midnight_utc(day);
     let end = local_midnight_utc(day + Duration::days(1));
+    let settings = crate::activity_log::load_settings(&state.db.pool).await;
     crate::activity_log::count_uncategorized_in_range(
         &state.db.pool,
         &start.to_rfc3339(),
         &end.to_rfc3339(),
+        settings.min_span_seconds(),
     )
     .await
     .map_err(err)
@@ -3286,6 +3290,7 @@ mod tests {
             crate::activity_log::ActivityLogSettings {
                 enabled: true,
                 retention_days: 30,
+                min_span_minutes: 5,
             },
         )
         .await
@@ -3319,6 +3324,7 @@ mod tests {
             crate::activity_log::ActivityLogSettings {
                 enabled: false,
                 retention_days: 30,
+                min_span_minutes: 5,
             },
         )
         .await
@@ -3418,6 +3424,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn count_uncategorized_activity_honours_the_stored_minimum() {
+        let (_dir, app, db) = mock_app_with_db().await;
+        let today = Local::now().date_naive();
+        let start = local_midnight_utc(today) + Duration::hours(9);
+        // A 2-minute blip and a 20-minute span, neither reviewed yet.
+        for (offset, minutes, app_name) in [(0i64, 2i64, "Slack"), (1, 20, "Code")] {
+            let s = start + Duration::hours(offset);
+            crate::activity_log::insert(
+                &db.pool,
+                &s.to_rfc3339(),
+                &(s + Duration::minutes(minutes)).to_rfc3339(),
+                app_name,
+                None,
+                "window",
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+        }
+        let date = today.format("%Y-%m-%d").to_string();
+
+        // Default floor (5 min): the blip doesn't count toward the banner.
+        let n = count_uncategorized_activity_impl(app.state::<crate::AppState>(), date.clone())
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+
+        // Raise it past the 20-minute span and nothing is left to review.
+        crate::activity_log::save_settings(
+            &db.pool,
+            crate::activity_log::ActivityLogSettings {
+                enabled: true,
+                retention_days: 7,
+                min_span_minutes: 30,
+            },
+        )
+        .await
+        .unwrap();
+        let n = count_uncategorized_activity_impl(app.state::<crate::AppState>(), date)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]

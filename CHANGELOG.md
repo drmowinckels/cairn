@@ -8,6 +8,13 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Added
 
+- `[activity]` A **minimum activity length** for the day's review
+  (Settings → Activity log; default and lowest value 5 minutes, #313).
+  Foreground blips shorter than it are no longer offered as entries to
+  add and no longer trigger the "Workday in Review" reminder — a note
+  under the list says how many were held back and reveals them on
+  request. Nothing is dropped from the log itself, so "Time by app"
+  totals still account for every minute.
 - `[billing]` The billing plugin scaffold (#109): Extensions → Plugins
   now lists **Billing (Pro)** — opt-in, off by default, with "Pro" and
   "Network" capability badges. Enabling it reveals the license row:

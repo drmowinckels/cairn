@@ -720,7 +720,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
           },
         ];
       if (cmd === "get_activity_log_settings")
-        return { enabled: true, retentionDays: 7 };
+        return { enabled: true, retentionDays: 7, minSpanMinutes: 5 };
       if (cmd === "list_activity_log") return [span];
       return null;
     });
@@ -740,6 +740,43 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
     expect(await screen.findByText("Standup")).toBeTruthy();
   });
 
+  it("passes the stored minimum activity length to the review list (#313)", async () => {
+    const blip = {
+      id: 2,
+      startedAt: "2026-06-16T10:00:00+00:00",
+      endedAt: "2026-06-16T10:06:00+00:00", // 6m — under a 10m minimum
+      appName: "Slack",
+      titleHint: "General",
+      source: "window",
+      hasEntry: false,
+    };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "current_running") return null;
+      if (cmd === "list_day") return [];
+      if (cmd === "list_projects") return [];
+      if (cmd === "get_activity_log_settings")
+        return { enabled: true, retentionDays: 7, minSpanMinutes: 10 };
+      if (cmd === "list_activity_log") return [blip];
+      return null;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { TodayView } = await import("./today");
+    render(
+      <TodayView
+        density="comfy"
+        layoutVariant="default"
+        onOpenRule={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /activity view/i }),
+    );
+    // The 6m span is under the user's 10m floor, so it isn't offered as an
+    // entry — the note reflects the stored setting, not the 5m default.
+    expect(await screen.findByText(/1 span under 10m/)).toBeTruthy();
+    expect(screen.queryByText("General")).toBeNull();
+  });
+
   it("Workday in Review banner's Review action acknowledges and switches to the Activity view (#190 follow-up)", async () => {
     workdayReviewActive = true;
     suggestionOverride = null; // the banner is suppressed while a suggestion is showing
@@ -748,7 +785,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_day") return [];
       if (cmd === "list_projects") return [];
       if (cmd === "get_activity_log_settings")
-        return { enabled: true, retentionDays: 7 };
+        return { enabled: true, retentionDays: 7, minSpanMinutes: 5 };
       if (cmd === "list_activity_log") return [];
       return null;
     });
@@ -797,7 +834,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_day") return [];
       if (cmd === "list_projects") return [];
       if (cmd === "get_activity_log_settings")
-        return { enabled: true, retentionDays: 7 };
+        return { enabled: true, retentionDays: 7, minSpanMinutes: 5 };
       if (cmd === "list_activity_log") return [];
       return null;
     });
@@ -830,7 +867,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_day") return [];
       if (cmd === "list_projects") return [];
       if (cmd === "get_activity_log_settings")
-        return { enabled: true, retentionDays: 7 };
+        return { enabled: true, retentionDays: 7, minSpanMinutes: 5 };
       if (cmd === "list_activity_log") return [];
       return null;
     });
@@ -857,7 +894,7 @@ describe("TodayView (inside Tauri — running entry from backend)", () => {
       if (cmd === "list_day") return [];
       if (cmd === "list_projects") return [];
       if (cmd === "get_activity_log_settings")
-        return { enabled: true, retentionDays: 7 };
+        return { enabled: true, retentionDays: 7, minSpanMinutes: 5 };
       if (cmd === "list_activity_log") return [];
       return null;
     });

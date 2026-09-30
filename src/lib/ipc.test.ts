@@ -144,11 +144,16 @@ describe("ipc helpers (inside Tauri)", () => {
   });
 
   it("getActivityLogSettings returns the backend settings", async () => {
-    invokeMock.mockResolvedValue({ enabled: true, retentionDays: 30 });
+    invokeMock.mockResolvedValue({
+      enabled: true,
+      retentionDays: 30,
+      minSpanMinutes: 5,
+    });
     const { getActivityLogSettings } = await import("./ipc");
     expect(await getActivityLogSettings()).toEqual({
       enabled: true,
       retentionDays: 30,
+      minSpanMinutes: 5,
     });
     expect(invokeMock).toHaveBeenCalledWith("get_activity_log_settings");
   });
@@ -163,9 +168,13 @@ describe("ipc helpers (inside Tauri)", () => {
   it("setActivityLogSettings forwards the settings under a `settings` key", async () => {
     invokeMock.mockResolvedValue(null);
     const { setActivityLogSettings } = await import("./ipc");
-    await setActivityLogSettings({ enabled: true, retentionDays: 7 });
+    await setActivityLogSettings({
+      enabled: true,
+      retentionDays: 7,
+      minSpanMinutes: 5,
+    });
     expect(invokeMock).toHaveBeenCalledWith("set_activity_log_settings", {
-      settings: { enabled: true, retentionDays: 7 },
+      settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
     });
   });
 
@@ -830,7 +839,11 @@ describe("ipc helpers (outside Tauri)", () => {
       ACTIVITY_LOG_DEFAULTS,
     } = await import("./ipc");
     expect(await getActivityLogSettings()).toEqual(ACTIVITY_LOG_DEFAULTS);
-    await setActivityLogSettings({ enabled: true, retentionDays: 1 });
+    await setActivityLogSettings({
+      enabled: true,
+      retentionDays: 1,
+      minSpanMinutes: 5,
+    });
     await deleteActivityLog();
     expect(await listActivityLog("2026-06-16")).toEqual([]);
     expect(await countUncategorizedActivity("2026-06-16")).toBe(0);

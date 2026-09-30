@@ -806,16 +806,24 @@ export async function signalCaptureStatus(): Promise<SignalCaptureStatus> {
   return invoke<SignalCaptureStatus>("signal_capture_status");
 }
 
+/** Lowest selectable minimum activity length (#313), in minutes — also the
+ *  default. Mirrors Rust `activity_log::MIN_SPAN_MINUTES_FLOOR`; the backend
+ *  raises anything smaller, so the UI must never offer a lower value. */
+export const ACTIVITY_MIN_SPAN_FLOOR_MINUTES = 5;
+
 /** Opt-in activity-log settings (#190). Mirrors Rust `ActivityLogSettings`.
- *  `retentionDays === 0` means "keep until I delete". */
+ *  `retentionDays === 0` means "keep until I delete"; `minSpanMinutes` is the
+ *  shortest span offered for review (#313). */
 export interface ActivityLogSettings {
   enabled: boolean;
   retentionDays: number;
+  minSpanMinutes: number;
 }
 
 export const ACTIVITY_LOG_DEFAULTS: ActivityLogSettings = {
   enabled: false,
   retentionDays: 7,
+  minSpanMinutes: ACTIVITY_MIN_SPAN_FLOOR_MINUTES,
 };
 
 export async function getActivityLogSettings(): Promise<ActivityLogSettings> {
@@ -828,8 +836,9 @@ export async function getActivityLogSettings(): Promise<ActivityLogSettings> {
   );
 }
 
-/** Persist the toggle + retention. Enabling starts recording + applies
- *  retention; disabling stops recording and purges every row (backend). */
+/** Persist the toggle + retention + review minimum. Enabling starts recording
+ *  and applies retention; disabling stops recording and purges every row
+ *  (backend). */
 export async function setActivityLogSettings(
   settings: ActivityLogSettings,
 ): Promise<void> {

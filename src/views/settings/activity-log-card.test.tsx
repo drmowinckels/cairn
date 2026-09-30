@@ -6,10 +6,11 @@ import type { UseWorkdayReviewPrefs } from "../../lib/use-workday-review-prefs";
 
 function stub(over: Partial<UseActivityLog> = {}): UseActivityLog {
   return {
-    settings: { enabled: false, retentionDays: 7 },
+    settings: { enabled: false, retentionDays: 7, minSpanMinutes: 5 },
     error: null,
     setEnabled: vi.fn().mockResolvedValue(undefined),
     setRetentionDays: vi.fn().mockResolvedValue(undefined),
+    setMinSpanMinutes: vi.fn().mockResolvedValue(undefined),
     deleteAll: vi.fn().mockResolvedValue(undefined),
     exportToFile: vi.fn().mockResolvedValue(undefined),
     ...over,
@@ -62,7 +63,9 @@ describe("ActivityLogCard (#190)", () => {
   });
 
   it("disabling turns off immediately (no confirm — backend purges)", () => {
-    const al = stub({ settings: { enabled: true, retentionDays: 7 } });
+    const al = stub({
+      settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
+    });
     render(<ActivityLogCard activityLog={al} />);
     fireEvent.click(screen.getByRole("switch", { name: /save activity log/i }));
     expect(al.setEnabled).toHaveBeenCalledWith(false);
@@ -70,7 +73,9 @@ describe("ActivityLogCard (#190)", () => {
   });
 
   it("shows the retention dropdown when on and writes a change", () => {
-    const al = stub({ settings: { enabled: true, retentionDays: 7 } });
+    const al = stub({
+      settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
+    });
     render(<ActivityLogCard activityLog={al} />);
     const sel = screen.getByLabelText(
       /activity log retention/i,
@@ -80,8 +85,31 @@ describe("ActivityLogCard (#190)", () => {
     expect(al.setRetentionDays).toHaveBeenCalledWith(0);
   });
 
+  it("shows the minimum-activity dropdown when on and writes a change (#313)", () => {
+    const al = stub({
+      settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
+    });
+    render(<ActivityLogCard activityLog={al} />);
+    const sel = screen.getByLabelText(
+      /minimum activity length/i,
+    ) as HTMLSelectElement;
+    expect(sel.value).toBe("5");
+    // 5 minutes is the floor — nothing shorter is offered.
+    const values = [...sel.options].map((o) => o.value);
+    expect(values).toEqual(["5", "10", "15", "30"]);
+    fireEvent.change(sel, { target: { value: "15" } });
+    expect(al.setMinSpanMinutes).toHaveBeenCalledWith(15);
+  });
+
+  it("hides the minimum-activity dropdown while the log is off (#313)", () => {
+    render(<ActivityLogCard activityLog={stub()} />);
+    expect(screen.queryByLabelText(/minimum activity length/i)).toBeNull();
+  });
+
   it("Delete activity log now calls deleteAll", () => {
-    const al = stub({ settings: { enabled: true, retentionDays: 7 } });
+    const al = stub({
+      settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
+    });
     render(<ActivityLogCard activityLog={al} />);
     fireEvent.click(
       screen.getByRole("button", { name: /delete activity log/i }),
@@ -94,7 +122,9 @@ describe("ActivityLogCard (#190)", () => {
     const { rerender } = render(<ActivityLogCard activityLog={off} />);
     expect(screen.queryByRole("button", { name: /export csv/i })).toBeNull();
 
-    const on = stub({ settings: { enabled: true, retentionDays: 7 } });
+    const on = stub({
+      settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
+    });
     rerender(<ActivityLogCard activityLog={on} />);
     fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
     expect(on.exportToFile).toHaveBeenCalledTimes(1);
@@ -117,7 +147,9 @@ describe("ActivityLogCard (#190)", () => {
   it("hides the Workday in review row when the prop is absent, even while the log is on", () => {
     render(
       <ActivityLogCard
-        activityLog={stub({ settings: { enabled: true, retentionDays: 7 } })}
+        activityLog={stub({
+          settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
+        })}
       />,
     );
     expect(
@@ -129,7 +161,9 @@ describe("ActivityLogCard (#190)", () => {
     const workdayReview = workdayStub();
     render(
       <ActivityLogCard
-        activityLog={stub({ settings: { enabled: true, retentionDays: 7 } })}
+        activityLog={stub({
+          settings: { enabled: true, retentionDays: 7, minSpanMinutes: 5 },
+        })}
         workdayReview={workdayReview}
       />,
     );
