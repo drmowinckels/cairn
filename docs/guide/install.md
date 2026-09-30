@@ -16,7 +16,14 @@ Reading window titles needs Accessibility permission — Cairn prompts for it on
 
 ## Windows
 
-Download the `*_x64_en-US.msi` and run it. Signing is optional per build — if SmartScreen warns, click **More info → Run anyway**.
+Two installers ship, and which you want depends on whether you can install software as an administrator:
+
+- **`*-setup.exe`** (recommended) — installs for **your user only**, into `%LOCALAPPDATA%`, and needs **no administrator rights**. This is the one to use on a work or school machine where `C:\Program Files` isn't writable.
+- **`*_x64_en-US.msi`** — installs **per machine** into `C:\Program Files`, so it needs administrator rights. Use it for a personal machine you administer, or for managed/Group-Policy deployment.
+
+Pick one or the other — installing both leaves two copies of Cairn on the machine, each with its own Start-menu entry. If you're switching, uninstall the first from **Settings → Apps** before running the other.
+
+Either way, signing is optional per build — if SmartScreen warns, click **More info → Run anyway**.
 
 ## Linux
 

@@ -112,6 +112,11 @@
           "libayatana-appindicator3-1"
         ]
       }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }
