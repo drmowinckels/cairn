@@ -54,12 +54,12 @@ fn issuer_lines(b: &BusinessDetails) -> String {
     s
 }
 
-/// `<currency> <major>.<minor>` — e.g. `USD 150.00`. Assumes a 2-decimal
-/// currency, which covers the common case; zero-decimal currencies are a
-/// later concern. Invoice amounts are always non-negative (durations times
-/// non-negative rates), so the formatting doesn't handle a sign.
-fn money(cents: i64, currency: &str) -> String {
-    format!("{} {}.{:02}", currency, cents / 100, cents % 100)
+/// `<currency> <amount>`, with the number of decimals the currency actually
+/// has — see [`super::currency::format_money`]. An invoice is a document
+/// someone sends a client, so "JPY 1500.00" (a yen amount with cents that
+/// don't exist) is not a cosmetic problem.
+fn money(minor_units: i64, currency: &str) -> String {
+    super::currency::format_money(minor_units, currency)
 }
 
 fn hours(seconds: i64) -> String {

@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { listClients, listProjects, listTasks, type Rate } from "../../lib/ipc";
-import { formatMoney } from "../../lib/money";
+import {
+  currencyExponent,
+  formatMoney,
+  minorUnitsPerMajor,
+} from "../../lib/money";
 import { isoLocalDate } from "../../lib/report-math";
 import type { Client, Project, Task } from "../../lib/types";
 import { useRates } from "../../lib/use-rates";
@@ -89,8 +93,22 @@ export function BillingRatesPanel() {
   const scopeOptions = entitiesFor(scopeType, entities);
 
   const amountNum = Number(amount);
-  const amountValid =
+  // The stored integer is minor units of the chosen currency, and how many of
+  // those make a major unit differs by currency (1 for JPY, 1000 for KWD), so
+  // the entry step and factor follow the currency rather than assuming cents.
+  const exponent = currencyExponent(currency);
+  const amountStep = (10 ** -exponent).toFixed(exponent);
+  // A finer amount than the currency can hold — ¥150.50, or $1.005 — would be
+  // rounded on the way into the database. Say so instead: silently altering
+  // money is the failure this whole scale change exists to remove. The
+  // tolerance absorbs binary-float error (15.505 × 1000 lands just under).
+  const scaled = amountNum * minorUnitsPerMajor(currency);
+  const amountFitsCurrency = Math.abs(scaled - Math.round(scaled)) < 1e-6;
+  // Split from `amountValid` so the Add button and the "too many decimals"
+  // message below can't disagree about what a plausible number even is.
+  const amountIsPlausible =
     amount.trim() !== "" && Number.isFinite(amountNum) && amountNum >= 0;
+  const amountValid = amountIsPlausible && amountFitsCurrency;
   const scopeReady = scopeType === "workspace" || scopeId !== "";
   // A 3-letter code, not just any 3 chars — so `Intl` never chokes on it
   // and the user learns before a pointless backend round trip.
@@ -108,7 +126,7 @@ export function BillingRatesPanel() {
     void addRate({
       scopeType,
       scopeId: scopeType === "workspace" ? "" : scopeId,
-      amountCents: Math.round(amountNum * 100),
+      amountCents: Math.round(amountNum * minorUnitsPerMajor(currency)),
       currency: currency.trim().toUpperCase(),
       effectiveFrom,
     }).then((ok) => {
@@ -195,10 +213,10 @@ export function BillingRatesPanel() {
           className="field-input"
           type="number"
           min="0"
-          step="0.01"
+          step={amountStep}
           inputMode="decimal"
           aria-label="Hourly amount"
-          placeholder="0.00"
+          placeholder={(0).toFixed(exponent)}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
@@ -225,6 +243,14 @@ export function BillingRatesPanel() {
           Add rate
         </button>
       </div>
+
+      {amountIsPlausible && !amountFitsCurrency && (
+        <p className="field-error" role="alert">
+          {exponent === 0
+            ? `${currency.trim().toUpperCase()} amounts are whole numbers.`
+            : `${currency.trim().toUpperCase()} amounts have at most ${exponent} decimal places.`}
+        </p>
+      )}
 
       {error && (
         <p className="field-error" role="alert">

@@ -11,6 +11,7 @@
 //! any tracked time data. See `docs/PRIVACY.md`.
 
 pub mod business;
+pub mod currency;
 pub mod invoice_html;
 pub mod invoices;
 pub mod lemonsqueezy;
