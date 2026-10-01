@@ -26,7 +26,7 @@ const report: ProfitabilityReport = {
   nonbillableSeconds: 3600 * 2,
   unratedBillableSeconds: 3600,
   totals: [
-    { currency: "USD", amountCents: 150000, billableSeconds: 3600 * 10 },
+    { currency: "USD", amountMinorUnits: 150000, billableSeconds: 3600 * 10 },
   ],
   byProject: [
     {
@@ -36,7 +36,11 @@ const report: ProfitabilityReport = {
       nonbillableSeconds: 0,
       unratedBillableSeconds: 0,
       amounts: [
-        { currency: "USD", amountCents: 150000, billableSeconds: 3600 * 10 },
+        {
+          currency: "USD",
+          amountMinorUnits: 150000,
+          billableSeconds: 3600 * 10,
+        },
       ],
     },
     {

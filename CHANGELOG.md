@@ -41,6 +41,18 @@ as the GitHub Release body, so keep the most recent version at the top.
   saved. Existing rows in an affected currency are rescaled on upgrade;
   the two-decimal majority is untouched.
 
+- `[billing]` The billing money columns are renamed to say what they hold
+  (#321). In your `cairn.sqlite`, `billing_rates.amount_cents` and
+  `billing_invoice_lines.amount_cents` become `amount_minor_units`, and
+  `billing_invoices`' `subtotal_cents` / `tax_cents` / `total_cents`
+  become `subtotal_minor_units` / `tax_minor_units` /
+  `total_minor_units` — relevant if you query or export the database
+  yourself. "Cents" stopped being true for the two dozen currencies that
+  aren't hundredth-based, and the name was the last thing still inviting
+  the hardcoded ÷100 the change above removed. No value changes. Note
+  that, as with any schema change, once this upgrade has run the
+  database can no longer be opened by an older Cairn.
+
 ### Added
 
 - `[packaging]` Cairn is installable with **Scoop** on Windows (#319):

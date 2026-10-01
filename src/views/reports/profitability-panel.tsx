@@ -56,7 +56,7 @@ export function ProfitabilityPanel({ range, rounding, projectsById }: Props) {
         {data.totals.map((t) => (
           <div className="total" key={t.currency}>
             <span className="total-num">
-              <Mono>{formatMoney(t.amountCents, t.currency)}</Mono>
+              <Mono>{formatMoney(t.amountMinorUnits, t.currency)}</Mono>
             </span>
             <span className="total-lbl">{t.currency} billable</span>
           </div>
@@ -105,7 +105,7 @@ export function ProfitabilityPanel({ range, rounding, projectsById }: Props) {
                 <td>
                   {p.amounts.length
                     ? p.amounts
-                        .map((a) => formatMoney(a.amountCents, a.currency))
+                        .map((a) => formatMoney(a.amountMinorUnits, a.currency))
                         .join(" · ")
                     : "—"}
                 </td>

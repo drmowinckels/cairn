@@ -9,7 +9,7 @@ use sqlx::{Row, SqlitePool};
 
 use super::err;
 
-/// A stored hourly rate. `amount_cents` is minor units of `currency`.
+/// A stored hourly rate. `amount_minor_units` is minor units of `currency`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rate {
@@ -17,7 +17,7 @@ pub struct Rate {
     pub scope_type: String,
     /// Empty for the `workspace` default; the client/project/task id otherwise.
     pub scope_id: String,
-    pub amount_cents: i64,
+    pub amount_minor_units: i64,
     pub currency: String,
     /// ISO date (`YYYY-MM-DD`); the rate applies to work on or after it.
     pub effective_from: String,
@@ -29,16 +29,17 @@ pub struct Rate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedRate {
-    pub amount_cents: i64,
+    pub amount_minor_units: i64,
     pub currency: String,
     pub scope_type: String,
     pub effective_from: String,
 }
 
-/// Bill an hourly rate for a span: hourly cents × seconds ÷ 3600, rounded to
-/// the nearest cent. Shared by the profitability report and invoices.
-pub fn amount_cents(hourly_cents: i64, seconds: i64) -> i64 {
-    (hourly_cents as f64 * seconds as f64 / 3600.0).round() as i64
+/// Bill an hourly rate for a span: hourly minor units × seconds ÷ 3600,
+/// rounded to the nearest minor unit. Shared by the profitability report and
+/// invoices.
+pub fn amount_minor_units(hourly_minor_units: i64, seconds: i64) -> i64 {
+    (hourly_minor_units as f64 * seconds as f64 / 3600.0).round() as i64
 }
 
 const SCOPES: [&str; 4] = ["workspace", "client", "project", "task"];
@@ -112,7 +113,7 @@ fn row_to_rate(r: &sqlx::sqlite::SqliteRow) -> Rate {
         id: r.get("id"),
         scope_type: r.get("scope_type"),
         scope_id: r.get("scope_id"),
-        amount_cents: r.get("amount_cents"),
+        amount_minor_units: r.get("amount_minor_units"),
         currency: r.get("currency"),
         effective_from: r.get("effective_from"),
         created_at: r.get("created_at"),
@@ -126,11 +127,11 @@ pub async fn set_rate(
     pool: &SqlitePool,
     scope_type: &str,
     scope_id: &str,
-    amount_cents: i64,
+    amount_minor_units: i64,
     currency: &str,
     effective_from: &str,
 ) -> Result<Rate, String> {
-    if amount_cents < 0 {
+    if amount_minor_units < 0 {
         return Err("a rate can't be negative".into());
     }
     let (scope_type, scope_id) = normalize_scope(scope_type, scope_id)?;
@@ -139,16 +140,16 @@ pub async fn set_rate(
     let id = uuid::Uuid::new_v4().to_string();
     let row = sqlx::query(
         "INSERT INTO billing_rates \
-           (id, scope_type, scope_id, amount_cents, currency, effective_from) \
+           (id, scope_type, scope_id, amount_minor_units, currency, effective_from) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
          ON CONFLICT(scope_type, scope_id, effective_from) DO UPDATE SET \
-           amount_cents = excluded.amount_cents, currency = excluded.currency \
-         RETURNING id, scope_type, scope_id, amount_cents, currency, effective_from, created_at",
+           amount_minor_units = excluded.amount_minor_units, currency = excluded.currency \
+         RETURNING id, scope_type, scope_id, amount_minor_units, currency, effective_from, created_at",
     )
     .bind(&id)
     .bind(&scope_type)
     .bind(&scope_id)
-    .bind(amount_cents)
+    .bind(amount_minor_units)
     .bind(&currency)
     .bind(&effective_from)
     .fetch_one(pool)
@@ -161,7 +162,7 @@ pub async fn set_rate(
 /// first — the shape the rate table renders.
 pub async fn list_rates(pool: &SqlitePool) -> Result<Vec<Rate>, String> {
     let rows = sqlx::query(
-        "SELECT id, scope_type, scope_id, amount_cents, currency, effective_from, created_at \
+        "SELECT id, scope_type, scope_id, amount_minor_units, currency, effective_from, created_at \
            FROM billing_rates \
           ORDER BY scope_type, scope_id, effective_from DESC",
     )
@@ -243,7 +244,7 @@ pub fn resolve_from(
                 .cmp(&(scope_priority(&b.scope_type), b.effective_from.as_str()))
         })
         .map(|r| ResolvedRate {
-            amount_cents: r.amount_cents,
+            amount_minor_units: r.amount_minor_units,
             currency: r.currency.clone(),
             scope_type: r.scope_type.clone(),
             effective_from: r.effective_from.clone(),
@@ -264,7 +265,7 @@ mod tests {
         // Workspace id is canonicalized to empty; currency upper-cased.
         assert_eq!(r.scope_id, "");
         assert_eq!(r.currency, "USD");
-        assert_eq!(r.amount_cents, 12000);
+        assert_eq!(r.amount_minor_units, 12000);
 
         let all = list_rates(&db.pool).await.unwrap();
         assert_eq!(all.len(), 1);
@@ -282,7 +283,7 @@ mod tests {
             .unwrap();
         let all = list_rates(&db.pool).await.unwrap();
         assert_eq!(all.len(), 1, "same scope + date updates in place");
-        assert_eq!(all[0].amount_cents, 11000);
+        assert_eq!(all[0].amount_minor_units, 11000);
     }
 
     #[tokio::test]
@@ -346,7 +347,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(full.scope_type, "task");
-        assert_eq!(full.amount_cents, 15000);
+        assert_eq!(full.amount_minor_units, 15000);
 
         // Drop the task ⇒ project rate; drop the project ⇒ client; then workspace.
         let proj = resolve_rate(&db.pool, Some("c1"), Some("p1"), None, "2026-06-01")
@@ -382,12 +383,12 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(spring.amount_cents, 10000);
+        assert_eq!(spring.amount_minor_units, 10000);
         let summer = resolve_rate(&db.pool, None, Some("p1"), None, "2026-07-01")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(summer.amount_cents, 12000);
+        assert_eq!(summer.amount_minor_units, 12000);
     }
 
     #[tokio::test]
@@ -421,7 +422,7 @@ mod tests {
             r.scope_type, "task",
             "most-granular wins regardless of date"
         );
-        assert_eq!(r.amount_cents, 15000);
+        assert_eq!(r.amount_minor_units, 15000);
     }
 
     #[tokio::test]
@@ -447,7 +448,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert_eq!(r.amount_cents, 8000);
+        assert_eq!(r.amount_minor_units, 8000);
         assert_eq!(r.currency, "USD");
         assert_eq!(r.effective_from, "2026-06-01");
     }
@@ -471,12 +472,12 @@ mod tests {
             .contains("ISO 8601"));
     }
 
-    fn rate_row(scope_type: &str, scope_id: &str, cents: i64) -> Rate {
+    fn rate_row(scope_type: &str, scope_id: &str, minor_units: i64) -> Rate {
         Rate {
             id: format!("{scope_type}-{scope_id}"),
             scope_type: scope_type.into(),
             scope_id: scope_id.into(),
-            amount_cents: cents,
+            amount_minor_units: minor_units,
             currency: "USD".into(),
             effective_from: "2026-01-01".into(),
             created_at: "x".into(),
@@ -484,10 +485,10 @@ mod tests {
     }
 
     #[test]
-    fn amount_cents_bills_the_hourly_rate_by_hours() {
+    fn amount_minor_units_bills_the_hourly_rate_by_hours() {
         // $150/hr for 90 min = $225.00; 20 min at $30/hr = $10.00.
-        assert_eq!(amount_cents(15000, 90 * 60), 22500);
-        assert_eq!(amount_cents(3000, 20 * 60), 1000);
+        assert_eq!(amount_minor_units(15000, 90 * 60), 22500);
+        assert_eq!(amount_minor_units(3000, 20 * 60), 1000);
     }
 
     #[test]
@@ -503,6 +504,6 @@ mod tests {
         ];
         let r = resolve_from(&rates, Some("c1"), None, None, "2026-06-01").unwrap();
         assert_eq!(r.scope_type, "workspace");
-        assert_eq!(r.amount_cents, 5000);
+        assert_eq!(r.amount_minor_units, 5000);
     }
 }

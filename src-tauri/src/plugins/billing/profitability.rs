@@ -16,7 +16,7 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use super::err;
-use super::rates::{amount_cents, list_rates, resolve_from, Rate};
+use super::rates::{amount_minor_units, list_rates, resolve_from, Rate};
 use crate::ipc::parse_ts;
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 
@@ -25,7 +25,7 @@ use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 #[serde(rename_all = "camelCase")]
 pub struct CurrencyAmount {
     pub currency: String,
-    pub amount_cents: i64,
+    pub amount_minor_units: i64,
     /// The billable seconds that produced this amount (excludes unrated time).
     pub billable_seconds: i64,
 }
@@ -146,7 +146,7 @@ struct Accum {
     billable_seconds: i64,
     nonbillable_seconds: i64,
     unrated_billable_seconds: i64,
-    /// currency → (amount_cents, billable_seconds)
+    /// currency → (amount_minor_units, billable_seconds)
     by_currency: BTreeMap<String, (i64, i64)>,
 }
 
@@ -154,9 +154,9 @@ fn to_amounts(by_currency: BTreeMap<String, (i64, i64)>) -> Vec<CurrencyAmount> 
     by_currency
         .into_iter()
         .map(
-            |(currency, (amount_cents, billable_seconds))| CurrencyAmount {
+            |(currency, (amount_minor_units, billable_seconds))| CurrencyAmount {
                 currency,
-                amount_cents,
+                amount_minor_units,
                 billable_seconds,
             },
         )
@@ -207,12 +207,12 @@ fn compute(
             &r.started_raw,
         ) {
             Some(rate) => {
-                let cents = amount_cents(rate.amount_cents, secs);
+                let amount = amount_minor_units(rate.amount_minor_units, secs);
                 let e = acc.by_currency.entry(rate.currency.clone()).or_default();
-                e.0 += cents;
+                e.0 += amount;
                 e.1 += secs;
                 let t = totals.entry(rate.currency).or_default();
-                t.0 += cents;
+                t.0 += amount;
                 t.1 += secs;
             }
             None => {
@@ -293,12 +293,18 @@ mod tests {
         }
     }
 
-    fn rate(scope_type: &str, scope_id: &str, cents: i64, currency: &str, from: &str) -> Rate {
+    fn rate(
+        scope_type: &str,
+        scope_id: &str,
+        minor_units: i64,
+        currency: &str,
+        from: &str,
+    ) -> Rate {
         Rate {
             id: format!("{scope_type}-{scope_id}-{from}"),
             scope_type: scope_type.into(),
             scope_id: scope_id.into(),
-            amount_cents: cents,
+            amount_minor_units: minor_units,
             currency: currency.into(),
             effective_from: from.into(),
             created_at: "x".into(),
@@ -323,13 +329,13 @@ mod tests {
         assert_eq!(rep.unrated_billable_seconds, 0);
         assert_eq!(rep.totals.len(), 1);
         assert_eq!(rep.totals[0].currency, "USD");
-        assert_eq!(rep.totals[0].amount_cents, 12000);
+        assert_eq!(rep.totals[0].amount_minor_units, 12000);
         assert_eq!(rep.by_project.len(), 1);
         let p = &rep.by_project[0];
         assert_eq!(p.project_id.as_deref(), Some("p1"));
         assert_eq!(p.billable_seconds, 3600);
         assert_eq!(p.nonbillable_seconds, 1800);
-        assert_eq!(p.amounts[0].amount_cents, 12000);
+        assert_eq!(p.amounts[0].amount_minor_units, 12000);
     }
 
     #[test]
@@ -354,7 +360,7 @@ mod tests {
         ];
         let rep = compute(&rows, &rates, off(), "a".into(), "b".into());
         // Spring hour billed at 100, summer hour at 120 → 220 total.
-        assert_eq!(rep.totals[0].amount_cents, 22000);
+        assert_eq!(rep.totals[0].amount_minor_units, 22000);
     }
 
     #[test]
@@ -371,8 +377,8 @@ mod tests {
         assert_eq!(rep.totals.len(), 2, "one bucket per currency");
         let usd = rep.totals.iter().find(|t| t.currency == "USD").unwrap();
         let eur = rep.totals.iter().find(|t| t.currency == "EUR").unwrap();
-        assert_eq!(usd.amount_cents, 10000);
-        assert_eq!(eur.amount_cents, 9000);
+        assert_eq!(usd.amount_minor_units, 10000);
+        assert_eq!(eur.amount_minor_units, 9000);
     }
 
     #[test]
@@ -386,7 +392,7 @@ mod tests {
         };
         let rep = compute(&rows, &rates, nearest_15, "a".into(), "b".into());
         assert_eq!(rep.billable_seconds, 900);
-        assert_eq!(rep.totals[0].amount_cents, 3000);
+        assert_eq!(rep.totals[0].amount_minor_units, 3000);
     }
 
     #[test]
@@ -452,7 +458,7 @@ mod tests {
 
         // One billable hour at the client's $150 rate.
         assert_eq!(rep.billable_seconds, 3600);
-        assert_eq!(rep.totals[0].amount_cents, 15000);
+        assert_eq!(rep.totals[0].amount_minor_units, 15000);
         assert_eq!(rep.by_project[0].project_id.as_deref(), Some("p1"));
     }
 

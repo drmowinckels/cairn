@@ -13,7 +13,7 @@
 //! Distinct from `projects.estimate_hours`, a one-off total for a whole
 //! project. These recur every day, week or month.
 //!
-//! Minutes are integers throughout, for the same reason money is cents.
+//! Minutes are integers throughout, for the same reason money is minor units.
 
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};

@@ -405,7 +405,7 @@ describe("ipc helpers (inside Tauri)", () => {
     const rate = {
       scopeType: "client" as const,
       scopeId: "c1",
-      amountCents: 15000,
+      amountMinorUnits: 15000,
       currency: "USD",
       effectiveFrom: "2026-01-01",
     };
@@ -418,14 +418,14 @@ describe("ipc helpers (inside Tauri)", () => {
     });
 
     invokeMock.mockResolvedValue({
-      amountCents: 15000,
+      amountMinorUnits: 15000,
       currency: "USD",
       scopeType: "client",
       effectiveFrom: "2026-01-01",
     });
     const at = { projectId: "p1", at: "2026-06-01" };
     expect(await billingEffectiveRate(at)).toMatchObject({
-      amountCents: 15000,
+      amountMinorUnits: 15000,
     });
     expect(invokeMock).toHaveBeenCalledWith("billing_effective_rate", at);
   });
@@ -738,7 +738,7 @@ describe("ipc helpers (outside Tauri)", () => {
       await billingSetRate({
         scopeType: "workspace",
         scopeId: "",
-        amountCents: 1,
+        amountMinorUnits: 1,
         currency: "USD",
         effectiveFrom: "2026-01-01",
       }),

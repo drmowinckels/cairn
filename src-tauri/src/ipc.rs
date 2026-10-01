@@ -7758,7 +7758,7 @@ pub async fn billing_set_rate_impl(
     state: State<'_, AppState>,
     scope_type: String,
     scope_id: String,
-    amount_cents: i64,
+    amount_minor_units: i64,
     currency: String,
     effective_from: String,
 ) -> Result<Vec<crate::plugins::billing::rates::Rate>, String> {
@@ -7768,7 +7768,7 @@ pub async fn billing_set_rate_impl(
         pool,
         &scope_type,
         &scope_id,
-        amount_cents,
+        amount_minor_units,
         &currency,
         &effective_from,
     )
@@ -9656,7 +9656,7 @@ mod plugin_tests {
         .await
         .unwrap()
         .expect("a project rate applies");
-        assert_eq!(resolved.amount_cents, 15000);
+        assert_eq!(resolved.amount_minor_units, 15000);
         assert_eq!(resolved.scope_type, "project");
 
         // Delete empties the list.
@@ -9876,7 +9876,7 @@ mod plugin_tests {
 
         let inv = make("2026-07-01", "2026-08-01", 2500).await.unwrap();
         assert_eq!(inv.number, "INV-0001");
-        assert_eq!(inv.total_cents, 18750);
+        assert_eq!(inv.total_minor_units, 18750);
 
         assert_eq!(list_invoices_impl(state.clone()).await.unwrap().len(), 1);
         assert_eq!(

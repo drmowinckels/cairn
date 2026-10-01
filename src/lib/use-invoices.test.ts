@@ -25,7 +25,7 @@ const summary = {
   clientName: "Acme",
   currency: "USD",
   issueDate: "2026-07-15",
-  totalCents: 18750,
+  totalMinorUnits: 18750,
   status: "draft" as const,
 };
 
@@ -36,8 +36,8 @@ const invoice = {
   toDate: "2026-08-01",
   taxRateBps: 2500,
   taxLabel: "",
-  subtotalCents: 15000,
-  taxCents: 3750,
+  subtotalMinorUnits: 15000,
+  taxMinorUnits: 3750,
   unratedSeconds: 0,
   notes: null,
   createdAt: "x",
@@ -46,7 +46,7 @@ const invoice = {
       id: "l1",
       description: "Website",
       seconds: 3600,
-      amountCents: 15000,
+      amountMinorUnits: 15000,
       sort: 0,
     },
   ],
