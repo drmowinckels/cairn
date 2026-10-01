@@ -149,6 +149,7 @@ jobs:
     # it never reaches the test steps or the third-party build action.
     env:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -215,6 +216,50 @@ jobs:
           Set-Content -Path src-tauri/tauri.windows.conf.json -Value $signing -Encoding utf8
           Write-Host "MSI signing enabled (thumbprint $($cert.Thumbprint))."
 
+      # macOS provisioning profile for the App Group entitlement (#250).
+      # Optional, like every other signing secret.
+      #
+      # The app declares `com.apple.security.application-groups`
+      # (src-tauri/entitlements.plist) so the sandboxed Safari handler can
+      # reach the IPC socket in the shared container. macOS only HONOURS a
+      # restricted entitlement like that on a Developer ID build when the
+      # bundle embeds a provisioning profile authorizing it — 1Password, the
+      # same non-sandboxed-Developer-ID-plus-app-groups case, embeds one.
+      #
+      # Without the profile the app still builds, signs and notarizes; it just
+      # never gets the group container, so Safari silently can't reach the
+      # socket. That is precisely the silent failure #250 exists to remove, so
+      # the absence is logged loudly below rather than passed over.
+      #
+      # `bundle.macOS.files` copies the profile into `Contents/` before Tauri
+      # signs the bundle, so a generated platform config (auto-merged by Tauri
+      # per RFC 7396, same trick as the Windows thumbprint) is all it takes.
+      - name: Embed the macOS provisioning profile (optional)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_PROVISIONING_PROFILE:-}" ]; then
+            echo "::warning::No APPLE_PROVISIONING_PROFILE secret: the App Group entitlement (#250) is signed but NOT authorized, so the Safari extension cannot reach the IPC socket. See RELEASING.md."
+            exit 0
+          fi
+          echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode \
+            >src-tauri/embedded.provisionprofile
+          cat >src-tauri/tauri.macos.conf.json <<'JSON'
+          {
+            "bundle": {
+              "macOS": {
+                "files": {
+                  "embedded.provisionprofile": "embedded.provisionprofile"
+                }
+              }
+            }
+          }
+          JSON
+          echo "App Group provisioning profile will be embedded."
+
       - name: Build, sign, notarize, and upload to the draft release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -233,6 +278,31 @@ jobs:
           # rather than each matrix job creating its own. No race.
           releaseId: ${{ needs.prepare.outputs.release_id }}
           args: ${{ matrix.args }}
+
+      # Assert the profile actually landed in the bundle (#250). The whole
+      # failure mode this guards against is SILENT — an entitlement that is
+      # signed but unauthorized produces no error anywhere, it just means the
+      # Safari extension never reaches the socket. So rather than trust that
+      # `bundle.macOS.files` resolved its source path the way we expect, check
+      # the built bundle and fail the release if it didn't.
+      - name: Verify the provisioning profile is embedded
+        if: matrix.platform == 'macos-latest' && env.APPLE_PROVISIONING_PROFILE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find src-tauri/target -type d -name 'Cairn.app' -print -quit)"
+          if [ -z "$app" ]; then
+            echo "::error::No Cairn.app found under src-tauri/target."
+            exit 1
+          fi
+          if [ ! -f "$app/Contents/embedded.provisionprofile" ]; then
+            echo "::error::$app is missing Contents/embedded.provisionprofile, so"\
+              "the App Group entitlement (#250) is signed but NOT authorized."\
+              "Check that bundle.macOS.files in the generated"\
+              "src-tauri/tauri.macos.conf.json resolves its source path."
+            exit 1
+          fi
+          echo "Provisioning profile embedded in $app."
 
       # Portable zip for Scoop (#319). Scoop extracts an archive rather than
       # running an installer, so neither Windows bundle suits it. Tauri has no
@@ -277,7 +347,7 @@ jobs:
   # IDs (the app + its extension). This job uses automatic signing via an
   # App Store Connect API key (`-allowProvisioningUpdates`) so Xcode manages
   # that profile. PREREQUISITES (one-time, maintainer):
-  #   1. Register the App Group `group.io.drmowinckels.cairn` and enable the
+  #   1. Register the App Group `ZA246B9H75.group.io.drmowinckels.cairn` and enable the
   #      App Groups capability on BOTH App IDs — the app `io.drmowinckels.cairn`
   #      and the extension `io.drmowinckels.cairn.Extension`.
   #   2. Add secrets `APPLE_API_KEY` (base64 of the .p8), `APPLE_API_KEY_ID`,
@@ -338,7 +408,7 @@ jobs:
       # release run proved a bare Developer ID archive fails — the App
       # Groups capability needs a provisioning profile (#37). `xcodebuild
       # -allowProvisioningUpdates` with the API key lets Xcode generate +
-      # manage that profile, provided the App Group `group.io.drmowinckels.cairn`
+      # manage that profile, provided the App Group `ZA246B9H75.group.io.drmowinckels.cairn`
       # is registered to the team. The Developer ID Application *certificate*
       # (imported above) still does the actual signing; the API key only
       # authorizes provisioning.

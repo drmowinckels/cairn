@@ -14,7 +14,12 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 out="${1:?usage: build-wrapper.sh <output-dir>}"
-group="group.io.drmowinckels.cairn"
+# The Team ID prefix is required: macOS only grants the app-groups
+# entitlement for a group owned by the signing team. Keep in lockstep with
+# APP_GROUP_ID (src-tauri/src/plugins/browser/mod.rs), MACOS_APP_GROUP_ID
+# (browser-extension/native-host/src/main.rs), cairnAppGroupID
+# (safari/handler/Handler.swift), and src-tauri/entitlements.plist.
+group="ZA246B9H75.group.io.drmowinckels.cairn"
 
 rm -rf "$out"
 mkdir -p "$out"

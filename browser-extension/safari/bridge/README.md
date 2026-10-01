@@ -45,6 +45,6 @@ The IO and packaging land with the wrapper (#37 slice 2):
 
 - the `SafariWebExtensionHandler` entry point that calls `BridgeCore.process`
   and writes an `emit` line to the App Group socket
-  (`~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock`, #250),
+  (`~/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock`, #250),
 - the generated Xcode wrapper app + extension target,
 - the `com.apple.security.application-groups` entitlement + signing.

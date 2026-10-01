@@ -12,7 +12,7 @@
 // is unit-testable with `swiftc` alone (no full Xcode, no XCTest). The
 // eventual `SafariWebExtensionHandler` (#37 slice 2) calls `process(_:)`
 // and writes an `.emit` line to the App Group socket
-// (`~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock`,
+// (`~/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock`,
 // #250); a `.drop` is silently discarded.
 //
 // It mirrors the Rust host's `project_inbound` + the serde `Inbound`/

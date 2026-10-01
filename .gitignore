@@ -24,6 +24,11 @@ Cargo.lock.bak
 # Generated in CI to inject the Windows signing thumbprint (#43); the
 # signing identity must never be committed.
 /src-tauri/tauri.windows.conf.json
+# Generated in CI to embed the macOS provisioning profile that authorizes the
+# App Group entitlement (#250). The profile expires annually, so it lives in a
+# secret rather than in the tree.
+/src-tauri/tauri.macos.conf.json
+/src-tauri/embedded.provisionprofile
 
 # Browser extension (M7)
 /browser-extension/native-host/target/

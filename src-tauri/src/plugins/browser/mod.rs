@@ -47,7 +47,23 @@ pub use plugin::BrowserPlugin;
 /// (`browser-extension/native-host/src/main.rs`) hard-codes the **same**
 /// id and must stay in lockstep — changing one without the other silently
 /// breaks the macOS browser signal.
-pub const APP_GROUP_ID: &str = "group.io.drmowinckels.cairn";
+///
+/// The `ZA246B9H75.` prefix is the Apple Team ID, and it is **required**:
+/// macOS only grants `com.apple.security.application-groups` for a group
+/// owned by the signing team, and an unprefixed id is not. Shipping apps
+/// confirm it — 1Password declares `2BUA8C4S2C.com.1password` while *not*
+/// sandboxed, exactly Cairn's situation. Without the prefix the entitlement
+/// is rejected and the sandboxed Safari handler cannot reach the socket,
+/// which is the whole point of moving it here.
+///
+/// An unsigned local build carries no entitlement at all, so this is just a
+/// directory it creates — Chrome/Firefox (unsandboxed) still work. Only
+/// Safari needs the real, provisioned container.
+///
+/// A fork signing with a different team must change this, the same constant
+/// in the native host, and `group` in
+/// `browser-extension/safari/build-wrapper.sh`.
+pub const APP_GROUP_ID: &str = "ZA246B9H75.group.io.drmowinckels.cairn";
 
 /// The App Group container directory under `home`:
 /// `<home>/Library/Group Containers/<APP_GROUP_ID>`. Pure.
@@ -93,10 +109,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn app_group_id_is_prefixed_with_the_apple_team_id() {
+        // macOS only grants the app-groups entitlement for a group owned by
+        // the signing team, so an unprefixed id silently costs us the Safari
+        // extension — the one thing the move to a group container bought.
+        let (team, group) = APP_GROUP_ID
+            .split_once('.')
+            .expect("app group id must carry a Team ID prefix");
+        assert_eq!(team.len(), 10, "Apple Team IDs are 10 characters");
+        assert!(team
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+        assert_eq!(group, "group.io.drmowinckels.cairn");
+    }
+
+    #[test]
     fn app_group_container_is_under_group_containers() {
         assert_eq!(
             app_group_container(Path::new("/Users/test")),
-            Path::new("/Users/test/Library/Group Containers/group.io.drmowinckels.cairn"),
+            Path::new(
+                "/Users/test/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn"
+            ),
         );
     }
 
@@ -105,7 +138,9 @@ mod tests {
         let base = resolve_socket_base(true, Some(Path::new("/Users/test")), Path::new("/data"));
         assert_eq!(
             base,
-            Path::new("/Users/test/Library/Group Containers/group.io.drmowinckels.cairn"),
+            Path::new(
+                "/Users/test/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn"
+            ),
         );
     }
 

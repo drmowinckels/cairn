@@ -23,8 +23,10 @@ import SafariServices
 
 /// The App Group whose container holds the IPC socket. MUST match
 /// `APP_GROUP_ID` in src-tauri (`plugins::browser`) and `MACOS_APP_GROUP_ID`
-/// in the native host — the socket move (#250) put it here.
-private let cairnAppGroupID = "group.io.drmowinckels.cairn"
+/// in the native host — the socket move (#250) put it here. The Team ID
+/// prefix is required: macOS only grants the app-groups entitlement for a
+/// group owned by the signing team.
+private let cairnAppGroupID = "ZA246B9H75.group.io.drmowinckels.cairn"
 
 final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     func beginRequest(with context: NSExtensionContext) {

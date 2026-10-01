@@ -15,7 +15,7 @@ code stays merged but inert — the release `safari` job is gated behind
 `vars.SAFARI_RELEASE`, so it's skipped until someone opts in.
 
 **To activate** (when there's demand): register the App Group
-`group.io.drmowinckels.cairn` on both App IDs (app + extension), add the
+`ZA246B9H75.group.io.drmowinckels.cairn` on both App IDs (app + extension), add the
 `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER_ID` secrets
 (Admin/App-Manager key), set `vars.SAFARI_RELEASE=true`, dispatch a release,
 then do the GUI tab-switch confirmation. The rest of this doc is the

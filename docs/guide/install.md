@@ -98,11 +98,21 @@ These use a small native-messaging host. Until the extensions are published
 to the web stores, follow the developer install in
 [`browser-extension/README.md`](https://github.com/drmowinckels/cairn/tree/main/browser-extension#installing-for-local-development).
 
-::: tip macOS: rebuild the native host after upgrading
-On macOS the IPC socket lives in the App Group container
-(`~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock`). If you
-installed the Chrome/Firefox native host from an **older** Cairn that used
-the previous `Application Support` path, rebuild and reinstall it
-(`browser-extension/native-host`) after upgrading — otherwise it connects to
-the old path and **Settings → Integrations** stays disconnected.
+::: warning macOS: rebuild the native host after upgrading
+On macOS the IPC socket lives in Cairn's App Group container:
+
+```
+~/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock
+```
+
+The native host hard-codes that path, and it has now changed **twice** —
+first from `Application Support`, then gaining the `ZA246B9H75.` Team ID
+prefix macOS requires for a real App Group. A host built against either
+older path connects to a socket nothing is listening on, so
+**Settings → Integrations** just reads disconnected, with no error to
+explain it.
+
+If you installed the Chrome/Firefox native host from an earlier Cairn,
+rebuild and reinstall it from `browser-extension/native-host` after
+upgrading. Safari is unaffected — its handler ships inside the app.
 :::
