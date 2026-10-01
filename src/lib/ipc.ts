@@ -6,6 +6,7 @@ import type {
   RuleMatchEvent,
   Task,
 } from "./types";
+import type { Money } from "./money";
 import { ROUNDING_OFF, type Rounding } from "./rounding";
 import type { TrayMenuModel } from "./tray-menu";
 
@@ -1100,15 +1101,15 @@ export async function deactivateBillingLicense(): Promise<BillingStatus> {
   return invoke<BillingStatus>("deactivate_billing_license");
 }
 
-/** A stored Pro hourly rate (#109). Mirrors the Rust `Rate`. `amountMinorUnits`
- *  is integer minor units of `currency`; `scopeId` is `""` for the
- *  workspace default, else the client/project/task id. */
+/** A stored Pro hourly rate (#109). Mirrors the Rust `Rate`. The amount and
+ *  its currency arrive as one `Money`, so neither can be read without the
+ *  other; `scopeId` is `""` for the workspace default, else the
+ *  client/project/task id. */
 export interface Rate {
   id: string;
   scopeType: "workspace" | "client" | "project" | "task";
   scopeId: string;
-  amountMinorUnits: number;
-  currency: string;
+  amount: Money;
   /** ISO date (`YYYY-MM-DD`); the rate applies to work on or after it. */
   effectiveFrom: string;
   createdAt: string;
@@ -1117,8 +1118,7 @@ export interface Rate {
 /** The rate that applies to a piece of work, plus which scope supplied it
  *  (mirrors the Rust `ResolvedRate`). */
 export interface ResolvedRate {
-  amountMinorUnits: number;
-  currency: string;
+  amount: Money;
   scopeType: string;
   effectiveFrom: string;
 }
@@ -1193,15 +1193,19 @@ export async function billingLogoFromPath(path: string): Promise<string> {
   return invoke<string>("billing_logo_from_path", { path });
 }
 
-/** Upsert the rate for a scope effective from a date (one rate per scope
- *  per date). Requires an active Pro license; returns the fresh list. */
-export async function billingSetRate(input: {
+/** The rate to upsert — declared once, because both `billingSetRate` and the
+ *  `useRates` hook take it and a field added to one belongs in the other. */
+export interface RateInput extends Record<string, unknown> {
   scopeType: Rate["scopeType"];
   scopeId: string;
-  amountMinorUnits: number;
-  currency: string;
+  amount: Money;
+  /** ISO date (`YYYY-MM-DD`) the rate takes effect on. */
   effectiveFrom: string;
-}): Promise<Rate[]> {
+}
+
+/** Upsert the rate for a scope effective from a date (one rate per scope
+ *  per date). Requires an active Pro license; returns the fresh list. */
+export async function billingSetRate(input: RateInput): Promise<Rate[]> {
   if (!inTauri) return [];
   return invoke<Rate[]>("billing_set_rate", input);
 }
@@ -1229,8 +1233,7 @@ export async function billingEffectiveRate(input: {
 /** A billable subtotal in one currency (amounts never mix currencies).
  *  Mirrors the Rust `CurrencyAmount`. */
 export interface CurrencyAmount {
-  currency: string;
-  amountMinorUnits: number;
+  amount: Money;
   billableSeconds: number;
 }
 
@@ -1277,7 +1280,8 @@ export interface InvoiceLine {
   id: string;
   description: string;
   seconds: number;
-  amountMinorUnits: number;
+  /** Carries its own currency rather than inheriting the invoice's. */
+  amount: Money;
   sort: number;
 }
 
@@ -1287,16 +1291,17 @@ export interface Invoice {
   number: string;
   clientId: string;
   clientName: string;
-  currency: string;
   issueDate: string;
   fromDate: string;
   toDate: string;
   taxRateBps: number;
   /** The issuer's tax-line label frozen at creation; "" renders as "Tax". */
   taxLabel: string;
-  subtotalMinorUnits: number;
-  taxMinorUnits: number;
-  totalMinorUnits: number;
+  /** The invoice's three figures, all in its single currency — which is
+   *  `total.currency`, since every amount already carries it. */
+  subtotal: Money;
+  tax: Money;
+  total: Money;
   /** Billable time in range that had no rate — uninvoiced, flagged. */
   unratedSeconds: number;
   status: InvoiceStatus;
@@ -1310,9 +1315,8 @@ export interface InvoiceSummary {
   id: string;
   number: string;
   clientName: string;
-  currency: string;
   issueDate: string;
-  totalMinorUnits: number;
+  total: Money;
   status: InvoiceStatus;
 }
 

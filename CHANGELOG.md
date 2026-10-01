@@ -53,6 +53,15 @@ as the GitHub Release body, so keep the most recent version at the top.
   that, as with any schema change, once this upgrade has run the
   database can no longer be opened by an older Cairn.
 
+- `[billing]` A money amount now carries its currency wherever it goes
+  (#321), so no part of the billing plugin can read a figure without the
+  scale needed to interpret it, and an invoice line no longer silently
+  inherits the invoice's currency. Two consequences you might see: an
+  amount too large to be a real rate or tax rate is refused with a clear
+  message instead of quietly wrapping into a negative figure on an
+  invoice, and amounts are formatted from one place, so a currency's own
+  number of decimals is always used.
+
 ### Added
 
 - `[packaging]` Cairn is installable with **Scoop** on Windows (#319):

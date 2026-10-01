@@ -24,13 +24,13 @@ vi.mock("../../lib/ipc", async () => {
 });
 
 import { BillingRatesPanel } from "./billing-rates";
+import { money } from "../../lib/money";
 
 const rate = (over: Record<string, unknown>) => ({
   id: "id",
   scopeType: "workspace",
   scopeId: "",
-  amountMinorUnits: 12000,
-  currency: "USD",
+  amount: money(12000, "USD"),
   effectiveFrom: "2026-01-01",
   createdAt: "x",
   ...over,
@@ -57,26 +57,26 @@ describe("BillingRatesPanel", () => {
         id: "w",
         scopeType: "workspace",
         scopeId: "",
-        amountMinorUnits: 12000,
+        amount: money(12000, "USD"),
       }),
       rate({
         id: "c",
         scopeType: "client",
         scopeId: "c1",
-        amountMinorUnits: 15000,
+        amount: money(15000, "USD"),
         effectiveFrom: "2026-03-01",
       }),
       rate({
         id: "p",
         scopeType: "project",
         scopeId: "p1",
-        amountMinorUnits: 9000,
+        amount: money(9000, "USD"),
       }),
       rate({
         id: "t",
         scopeType: "task",
         scopeId: "t1",
-        amountMinorUnits: 20000,
+        amount: money(20000, "USD"),
       }),
       // Rates whose entity was deleted — each falls back to the raw id.
       rate({ id: "o", scopeType: "client", scopeId: "gone" }),
@@ -111,7 +111,7 @@ describe("BillingRatesPanel", () => {
 
   it("renders an unusual but well-formed currency code as-is", async () => {
     billingListRates.mockResolvedValue([
-      rate({ id: "z", currency: "ZZZ", amountMinorUnits: 5000 }),
+      rate({ id: "z", amount: money(5000, "ZZZ") }),
     ]);
     render(<BillingRatesPanel />);
     const amount = await screen.findByText(/ZZZ/);
@@ -190,7 +190,7 @@ describe("BillingRatesPanel", () => {
 
   it("adds a workspace rate with the entered amount in minor units", async () => {
     billingSetRate.mockResolvedValue([
-      rate({ id: "w", amountMinorUnits: 12000 }),
+      rate({ id: "w", amount: money(12000, "USD") }),
     ]);
     render(<BillingRatesPanel />);
     const amount = await screen.findByLabelText(/hourly amount/i);
@@ -208,8 +208,7 @@ describe("BillingRatesPanel", () => {
     expect(arg).toMatchObject({
       scopeType: "workspace",
       scopeId: "",
-      amountMinorUnits: 12000,
-      currency: "USD",
+      amount: money(12000, "USD"),
       effectiveFrom: "2026-02-15",
     });
     // The amount clears on success.
@@ -233,8 +232,7 @@ describe("BillingRatesPanel", () => {
 
     await waitFor(() => expect(billingSetRate).toHaveBeenCalled());
     expect(billingSetRate.mock.calls[0][0]).toMatchObject({
-      amountMinorUnits: 15000,
-      currency: "JPY",
+      amount: money(15000, "JPY"),
     });
   });
 
@@ -254,8 +252,7 @@ describe("BillingRatesPanel", () => {
 
     await waitFor(() => expect(billingSetRate).toHaveBeenCalled());
     expect(billingSetRate.mock.calls[0][0]).toMatchObject({
-      amountMinorUnits: 15505,
-      currency: "KWD",
+      amount: money(15505, "KWD"),
     });
   });
 
@@ -285,8 +282,7 @@ describe("BillingRatesPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /add rate/i }));
     await waitFor(() => expect(billingSetRate).toHaveBeenCalled());
     expect(billingSetRate.mock.calls[0][0]).toMatchObject({
-      amountMinorUnits: 150,
-      currency: "JPY",
+      amount: money(150, "JPY"),
     });
   });
 
@@ -324,7 +320,7 @@ describe("BillingRatesPanel", () => {
     expect(billingSetRate.mock.calls[0][0]).toMatchObject({
       scopeType: "client",
       scopeId: "c1",
-      amountMinorUnits: 15000,
+      amount: money(15000, "USD"),
     });
   });
 

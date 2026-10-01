@@ -9,6 +9,7 @@
 //! separately as `unrated_billable_seconds` — hours you could bill but the
 //! report can't price yet.
 
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -16,7 +17,8 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use super::err;
-use super::rates::{amount_minor_units, list_rates, resolve_from, Rate};
+use super::money::Money;
+use super::rates::{list_rates, resolve_from, Rate};
 use crate::ipc::parse_ts;
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 
@@ -24,8 +26,7 @@ use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrencyAmount {
-    pub currency: String,
-    pub amount_minor_units: i64,
+    pub amount: Money,
     /// The billable seconds that produced this amount (excludes unrated time).
     pub billable_seconds: i64,
 }
@@ -146,35 +147,55 @@ struct Accum {
     billable_seconds: i64,
     nonbillable_seconds: i64,
     unrated_billable_seconds: i64,
-    /// currency → (amount_minor_units, billable_seconds)
-    by_currency: BTreeMap<String, (i64, i64)>,
+    /// currency → (running amount, billable_seconds).
+    by_currency: BTreeMap<String, (Money, i64)>,
 }
 
-fn to_amounts(by_currency: BTreeMap<String, (i64, i64)>) -> Vec<CurrencyAmount> {
+/// Add a priced amount into its own currency's bucket, which is what keeps the
+/// running sums unmixable: the key *is* the currency, so a bucket only ever
+/// combines amounts that belong together.
+fn accumulate(
+    by_currency: &mut BTreeMap<String, (Money, i64)>,
+    priced: &Money,
+    seconds: i64,
+) -> Result<(), String> {
+    match by_currency.entry(priced.currency.clone()) {
+        Entry::Vacant(slot) => {
+            slot.insert((priced.clone(), seconds));
+        }
+        Entry::Occupied(mut slot) => {
+            let bucket = slot.get_mut();
+            bucket.0 = bucket.0.checked_add(priced).map_err(err)?;
+            bucket.1 += seconds;
+        }
+    }
+    Ok(())
+}
+
+fn to_amounts(by_currency: BTreeMap<String, (Money, i64)>) -> Vec<CurrencyAmount> {
     by_currency
-        .into_iter()
-        .map(
-            |(currency, (amount_minor_units, billable_seconds))| CurrencyAmount {
-                currency,
-                amount_minor_units,
-                billable_seconds,
-            },
-        )
+        .into_values()
+        .map(|(amount, billable_seconds)| CurrencyAmount {
+            amount,
+            billable_seconds,
+        })
         .collect()
 }
 
-/// Pure aggregation: price each row against `rates` and roll up by project
-/// and (within billable amounts) by currency.
+/// Pure aggregation: price each row against `rates` and roll up by project and
+/// (within billable amounts) by currency. Fallible only because money
+/// arithmetic is: a rate so large that pricing it overflows refuses the report
+/// rather than reporting a figure that wrapped or was quietly clamped.
 fn compute(
     rows: &[ProfitRow],
     rates: &[Rate],
     global_rounding: Rounding,
     from: String,
     to: String,
-) -> ProfitabilityReport {
+) -> Result<ProfitabilityReport, String> {
     let mut groups: BTreeMap<GroupKey, Accum> = BTreeMap::new();
     // Top-level currency totals, summed across every project.
-    let mut totals: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    let mut totals: BTreeMap<String, (Money, i64)> = BTreeMap::new();
     let mut billable_seconds = 0;
     let mut nonbillable_seconds = 0;
     let mut unrated_billable_seconds = 0;
@@ -207,13 +228,9 @@ fn compute(
             &r.started_raw,
         ) {
             Some(rate) => {
-                let amount = amount_minor_units(rate.amount_minor_units, secs);
-                let e = acc.by_currency.entry(rate.currency.clone()).or_default();
-                e.0 += amount;
-                e.1 += secs;
-                let t = totals.entry(rate.currency).or_default();
-                t.0 += amount;
-                t.1 += secs;
+                let priced = rate.amount.bill_hourly(secs).map_err(err)?;
+                accumulate(&mut acc.by_currency, &priced, secs)?;
+                accumulate(&mut totals, &priced, secs)?;
             }
             None => {
                 acc.unrated_billable_seconds += secs;
@@ -234,7 +251,7 @@ fn compute(
         })
         .collect();
 
-    ProfitabilityReport {
+    Ok(ProfitabilityReport {
         from,
         to,
         billable_seconds,
@@ -242,7 +259,7 @@ fn compute(
         unrated_billable_seconds,
         totals: to_amounts(totals),
         by_project,
-    }
+    })
 }
 
 /// Build the report for `[start_utc, end_utc)`. Loads the rate set once and
@@ -258,7 +275,7 @@ pub async fn profitability(
 ) -> Result<ProfitabilityReport, String> {
     let rows = fetch_profit_rows(pool, start_utc, end_utc, now).await?;
     let rates = list_rates(pool).await?;
-    Ok(compute(&rows, &rates, global_rounding, from, to))
+    compute(&rows, &rates, global_rounding, from, to)
 }
 
 #[cfg(test)]
@@ -304,8 +321,7 @@ mod tests {
             id: format!("{scope_type}-{scope_id}-{from}"),
             scope_type: scope_type.into(),
             scope_id: scope_id.into(),
-            amount_minor_units: minor_units,
-            currency: currency.into(),
+            amount: Money::new(minor_units, currency),
             effective_from: from.into(),
             created_at: "x".into(),
         }
@@ -322,26 +338,26 @@ mod tests {
             row(Some("p1"), Some("c1"), None, false, "2026-07-02", 30),
         ];
         let rates = vec![rate("project", "p1", 12000, "USD", "2026-01-01")];
-        let rep = compute(&rows, &rates, off(), "a".into(), "b".into());
+        let rep = compute(&rows, &rates, off(), "a".into(), "b".into()).unwrap();
 
         assert_eq!(rep.billable_seconds, 3600);
         assert_eq!(rep.nonbillable_seconds, 1800);
         assert_eq!(rep.unrated_billable_seconds, 0);
         assert_eq!(rep.totals.len(), 1);
-        assert_eq!(rep.totals[0].currency, "USD");
-        assert_eq!(rep.totals[0].amount_minor_units, 12000);
+        assert_eq!(rep.totals[0].amount.currency, "USD");
+        assert_eq!(rep.totals[0].amount.minor_units, 12000);
         assert_eq!(rep.by_project.len(), 1);
         let p = &rep.by_project[0];
         assert_eq!(p.project_id.as_deref(), Some("p1"));
         assert_eq!(p.billable_seconds, 3600);
         assert_eq!(p.nonbillable_seconds, 1800);
-        assert_eq!(p.amounts[0].amount_minor_units, 12000);
+        assert_eq!(p.amounts[0].amount.minor_units, 12000);
     }
 
     #[test]
     fn billable_time_with_no_rate_is_unrated_not_zero() {
         let rows = vec![row(Some("p1"), None, None, true, "2026-07-01", 60)];
-        let rep = compute(&rows, &[], off(), "a".into(), "b".into());
+        let rep = compute(&rows, &[], off(), "a".into(), "b".into()).unwrap();
         assert_eq!(rep.billable_seconds, 3600);
         assert_eq!(rep.unrated_billable_seconds, 3600);
         assert!(rep.totals.is_empty(), "nothing priced");
@@ -358,9 +374,41 @@ mod tests {
             rate("project", "p1", 10000, "USD", "2026-01-01"),
             rate("project", "p1", 12000, "USD", "2026-07-01"),
         ];
-        let rep = compute(&rows, &rates, off(), "a".into(), "b".into());
+        let rep = compute(&rows, &rates, off(), "a".into(), "b".into()).unwrap();
         // Spring hour billed at 100, summer hour at 120 → 220 total.
-        assert_eq!(rep.totals[0].amount_minor_units, 22000);
+        assert_eq!(rep.totals[0].amount.minor_units, 22000);
+    }
+
+    /// A rate no real engagement could carry. The report refuses rather than
+    /// reporting a wrapped or silently clamped figure — a profit number that is
+    /// wrong is worse than a report that says it can't be built.
+    #[test]
+    fn refuses_a_rate_too_large_to_price() {
+        let rows = vec![
+            row(Some("p1"), None, None, true, "2026-07-01", 60),
+            row(Some("p1"), None, None, true, "2026-07-02", 60),
+        ];
+        let rates = vec![rate("project", "p1", i64::MAX, "USD", "2026-01-01")];
+        let err = compute(&rows, &rates, off(), "a".into(), "b".into())
+            .expect_err("an unpriceable rate must not produce a number");
+        assert!(err.contains("too large"), "{err}");
+    }
+
+    /// Two rows that each price fine but can't be summed — the accumulator's
+    /// own overflow, distinct from a single amount being too large.
+    #[test]
+    fn refuses_a_total_too_large_to_sum() {
+        let rows = vec![
+            row(Some("p1"), None, None, true, "2026-07-01", 60),
+            row(Some("p2"), None, None, true, "2026-07-01", 60),
+        ];
+        let rates = vec![
+            rate("project", "p1", i64::MAX / 2 + 1, "USD", "2026-01-01"),
+            rate("project", "p2", i64::MAX / 2 + 1, "USD", "2026-01-01"),
+        ];
+        let err = compute(&rows, &rates, off(), "a".into(), "b".into())
+            .expect_err("an overflowing total must not wrap");
+        assert!(err.contains("too large"), "{err}");
     }
 
     #[test]
@@ -373,12 +421,20 @@ mod tests {
             rate("project", "p1", 10000, "USD", "2026-01-01"),
             rate("project", "p2", 9000, "EUR", "2026-01-01"),
         ];
-        let rep = compute(&rows, &rates, off(), "a".into(), "b".into());
+        let rep = compute(&rows, &rates, off(), "a".into(), "b".into()).unwrap();
         assert_eq!(rep.totals.len(), 2, "one bucket per currency");
-        let usd = rep.totals.iter().find(|t| t.currency == "USD").unwrap();
-        let eur = rep.totals.iter().find(|t| t.currency == "EUR").unwrap();
-        assert_eq!(usd.amount_minor_units, 10000);
-        assert_eq!(eur.amount_minor_units, 9000);
+        let usd = rep
+            .totals
+            .iter()
+            .find(|t| t.amount.currency == "USD")
+            .unwrap();
+        let eur = rep
+            .totals
+            .iter()
+            .find(|t| t.amount.currency == "EUR")
+            .unwrap();
+        assert_eq!(usd.amount.minor_units, 10000);
+        assert_eq!(eur.amount.minor_units, 9000);
     }
 
     #[test]
@@ -390,9 +446,9 @@ mod tests {
             interval_minutes: 15,
             mode: RoundMode::Nearest,
         };
-        let rep = compute(&rows, &rates, nearest_15, "a".into(), "b".into());
+        let rep = compute(&rows, &rates, nearest_15, "a".into(), "b".into()).unwrap();
         assert_eq!(rep.billable_seconds, 900);
-        assert_eq!(rep.totals[0].amount_minor_units, 3000);
+        assert_eq!(rep.totals[0].amount.minor_units, 3000);
     }
 
     #[test]
@@ -404,7 +460,7 @@ mod tests {
             interval_minutes: 15,
             mode: RoundMode::Nearest,
         };
-        let rep = compute(&rows, &rates, nearest_15, "a".into(), "b".into());
+        let rep = compute(&rows, &rates, nearest_15, "a".into(), "b".into()).unwrap();
         assert_eq!(rep.billable_seconds, 0);
         assert!(rep.totals.is_empty(), "no phantom $0 currency total");
         assert!(rep.by_project.is_empty(), "no phantom project slice");
@@ -413,7 +469,7 @@ mod tests {
     #[test]
     fn groups_entries_without_a_project_into_their_own_bucket() {
         let rows = vec![row(None, None, None, true, "2026-07-01", 60)];
-        let rep = compute(&rows, &[], off(), "a".into(), "b".into());
+        let rep = compute(&rows, &[], off(), "a".into(), "b".into()).unwrap();
         assert_eq!(rep.by_project.len(), 1);
         assert!(rep.by_project[0].project_id.is_none());
         assert!(rep.by_project[0].remote_project_name.is_none());
@@ -438,9 +494,15 @@ mod tests {
             "INSERT INTO entries (id, project_id, task_id, description, started_at, ended_at, source, billable, created_at, updated_at) \
              VALUES ('e1','p1',NULL,'work','2026-07-01T09:00:00+00:00','2026-07-01T10:00:00+00:00','manual',1,?1,?1)",
         ).bind(now).execute(&db.pool).await.unwrap();
-        super::super::rates::set_rate(&db.pool, "client", "c1", 15000, "USD", "2026-01-01")
-            .await
-            .unwrap();
+        super::super::rates::set_rate(
+            &db.pool,
+            "client",
+            "c1",
+            &Money::new(15000, "USD"),
+            "2026-01-01",
+        )
+        .await
+        .unwrap();
 
         let start = ts("2026-07-01");
         let end = ts("2026-07-31");
@@ -458,7 +520,7 @@ mod tests {
 
         // One billable hour at the client's $150 rate.
         assert_eq!(rep.billable_seconds, 3600);
-        assert_eq!(rep.totals[0].amount_minor_units, 15000);
+        assert_eq!(rep.totals[0].amount.minor_units, 15000);
         assert_eq!(rep.by_project[0].project_id.as_deref(), Some("p1"));
     }
 
@@ -476,7 +538,7 @@ mod tests {
             start,
             end: start + chrono::Duration::minutes(30),
         };
-        let rep = compute(&[remote], &[], off(), "a".into(), "b".into());
+        let rep = compute(&[remote], &[], off(), "a".into(), "b".into()).unwrap();
         assert_eq!(rep.by_project.len(), 1);
         assert!(rep.by_project[0].project_id.is_none());
         assert_eq!(

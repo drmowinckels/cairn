@@ -41,16 +41,48 @@ export function minorUnitsPerMajor(currency: string): number {
   return 10 ** currencyExponent(currency);
 }
 
-/** Money for display, from integer minor units. The scale comes from the
- *  currency rather than a hardcoded 100, so ¥150,000 is stored as 150000 and
- *  shown as ¥150,000 — not as ¥1,500.
+/** An amount and the currency that says what it means — the mirror of the
+ *  Rust `Money` in `src-tauri/src/plugins/billing/money.rs`, and the only
+ *  shape a billing amount crosses the IPC boundary in. Pairing them in the
+ *  type is what stops an amount from reaching a formatter without the scale
+ *  needed to read it.
+ *
+ *  Being a structural interface, an object literal satisfies it without going
+ *  through `money()`, so the canonical-code guarantee the Rust side enforces
+ *  holds here only for values built by these constructors or received from the
+ *  backend (which always sends canonical codes). Nothing in the frontend does
+ *  arithmetic on money — amounts arrive priced and are only formatted — so
+ *  there is deliberately no `add`. */
+export interface Money {
+  readonly minorUnits: number;
+  readonly currency: string;
+}
+
+/** An amount in `currency`'s minor units. The code is canonicalized, so this
+ *  and the Rust constructor agree on what "jpy" means. */
+export function money(minorUnits: number, currency: string): Money {
+  return { minorUnits, currency: currency.trim().toUpperCase() };
+}
+
+/** An amount from what a user typed in major units — 15.505 KWD becomes
+ *  15505 fils. Rounds to the nearest whole minor unit, which is the finest the
+ *  currency can hold. It rounds whatever it is given: refusing an amount with
+ *  more decimals than the currency has is the rate form's job, because only
+ *  the form can say so in a message the user can act on. */
+export function moneyFromMajor(major: number, currency: string): Money {
+  return money(Math.round(major * minorUnitsPerMajor(currency)), currency);
+}
+
+/** Money for display. The scale comes from the amount's own currency rather
+ *  than a hardcoded 100, so ¥150,000 is stored as 150000 and shown as
+ *  ¥150,000 — not as ¥1,500.
  *
  *  `Intl` accepts any well-formed 3-letter code (which the backend
  *  guarantees), rendering the code itself when it doesn't name a known
  *  currency — so an unusual code shows through rather than throwing. */
-export function formatMoney(minorUnits: number, currency: string): string {
+export function formatMoney(amount: Money): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
-    currency,
-  }).format(minorUnits / minorUnitsPerMajor(currency));
+    currency: amount.currency,
+  }).format(amount.minorUnits / minorUnitsPerMajor(amount.currency));
 }
