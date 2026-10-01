@@ -8,8 +8,10 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use super::err;
+use super::money::Money;
 
-/// A stored hourly rate. `amount_minor_units` is minor units of `currency`.
+/// A stored hourly rate. The amount and its currency are one value, so a rate
+/// can't be read without the scale needed to interpret it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rate {
@@ -17,8 +19,7 @@ pub struct Rate {
     pub scope_type: String,
     /// Empty for the `workspace` default; the client/project/task id otherwise.
     pub scope_id: String,
-    pub amount_minor_units: i64,
-    pub currency: String,
+    pub amount: Money,
     /// ISO date (`YYYY-MM-DD`); the rate applies to work on or after it.
     pub effective_from: String,
     pub created_at: String,
@@ -29,17 +30,9 @@ pub struct Rate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedRate {
-    pub amount_minor_units: i64,
-    pub currency: String,
+    pub amount: Money,
     pub scope_type: String,
     pub effective_from: String,
-}
-
-/// Bill an hourly rate for a span: hourly minor units × seconds ÷ 3600,
-/// rounded to the nearest minor unit. Shared by the profitability report and
-/// invoices.
-pub fn amount_minor_units(hourly_minor_units: i64, seconds: i64) -> i64 {
-    (hourly_minor_units as f64 * seconds as f64 / 3600.0).round() as i64
 }
 
 const SCOPES: [&str; 4] = ["workspace", "client", "project", "task"];
@@ -113,8 +106,7 @@ fn row_to_rate(r: &sqlx::sqlite::SqliteRow) -> Rate {
         id: r.get("id"),
         scope_type: r.get("scope_type"),
         scope_id: r.get("scope_id"),
-        amount_minor_units: r.get("amount_minor_units"),
-        currency: r.get("currency"),
+        amount: Money::new(r.get("amount_minor_units"), &r.get::<String, _>("currency")),
         effective_from: r.get("effective_from"),
         created_at: r.get("created_at"),
     }
@@ -127,15 +119,17 @@ pub async fn set_rate(
     pool: &SqlitePool,
     scope_type: &str,
     scope_id: &str,
-    amount_minor_units: i64,
-    currency: &str,
+    amount: &Money,
     effective_from: &str,
 ) -> Result<Rate, String> {
-    if amount_minor_units < 0 {
+    if amount.minor_units < 0 {
         return Err("a rate can't be negative".into());
     }
     let (scope_type, scope_id) = normalize_scope(scope_type, scope_id)?;
-    let currency = normalize_currency(currency)?;
+    // `Money` already canonicalizes the code's case and spacing; this is kept
+    // for the *3-letter* check, which the type deliberately doesn't make — so
+    // don't delete it as duplicated work.
+    let currency = normalize_currency(&amount.currency)?;
     let effective_from = validate_date(effective_from)?;
     let id = uuid::Uuid::new_v4().to_string();
     let row = sqlx::query(
@@ -149,7 +143,7 @@ pub async fn set_rate(
     .bind(&id)
     .bind(&scope_type)
     .bind(&scope_id)
-    .bind(amount_minor_units)
+    .bind(amount.minor_units)
     .bind(&currency)
     .bind(&effective_from)
     .fetch_one(pool)
@@ -244,8 +238,7 @@ pub fn resolve_from(
                 .cmp(&(scope_priority(&b.scope_type), b.effective_from.as_str()))
         })
         .map(|r| ResolvedRate {
-            amount_minor_units: r.amount_minor_units,
-            currency: r.currency.clone(),
+            amount: r.amount.clone(),
             scope_type: r.scope_type.clone(),
             effective_from: r.effective_from.clone(),
         })
@@ -256,16 +249,35 @@ mod tests {
     use super::*;
     use crate::test_support::test_db;
 
+    /// `set_rate` with the amount and code spelled inline, so a test reads as
+    /// scope ▸ amount ▸ date instead of a nine-line struct literal.
+    async fn seed(
+        pool: &SqlitePool,
+        scope_type: &str,
+        scope_id: &str,
+        minor_units: i64,
+        code: &str,
+        from: &str,
+    ) -> Result<Rate, String> {
+        set_rate(
+            pool,
+            scope_type,
+            scope_id,
+            &Money::new(minor_units, code),
+            from,
+        )
+        .await
+    }
+
     #[tokio::test]
     async fn set_rate_stores_normalizes_and_lists() {
         let (_dir, db) = test_db().await;
-        let r = set_rate(&db.pool, "workspace", "ignored", 12000, "usd", "2026-01-01")
+        let r = seed(&db.pool, "workspace", "ignored", 12000, "usd", "2026-01-01")
             .await
             .unwrap();
         // Workspace id is canonicalized to empty; currency upper-cased.
         assert_eq!(r.scope_id, "");
-        assert_eq!(r.currency, "USD");
-        assert_eq!(r.amount_minor_units, 12000);
+        assert_eq!(r.amount, Money::new(12000, "USD"));
 
         let all = list_rates(&db.pool).await.unwrap();
         assert_eq!(all.len(), 1);
@@ -275,42 +287,42 @@ mod tests {
     #[tokio::test]
     async fn set_rate_upserts_the_same_scope_and_date() {
         let (_dir, db) = test_db().await;
-        set_rate(&db.pool, "client", "c1", 10000, "EUR", "2026-01-01")
+        seed(&db.pool, "client", "c1", 10000, "EUR", "2026-01-01")
             .await
             .unwrap();
-        set_rate(&db.pool, "client", "c1", 11000, "EUR", "2026-01-01")
+        seed(&db.pool, "client", "c1", 11000, "EUR", "2026-01-01")
             .await
             .unwrap();
         let all = list_rates(&db.pool).await.unwrap();
         assert_eq!(all.len(), 1, "same scope + date updates in place");
-        assert_eq!(all[0].amount_minor_units, 11000);
+        assert_eq!(all[0].amount.minor_units, 11000);
     }
 
     #[tokio::test]
     async fn set_rate_rejects_bad_input() {
         let (_dir, db) = test_db().await;
-        assert!(set_rate(&db.pool, "client", "c1", -1, "USD", "2026-01-01")
+        assert!(seed(&db.pool, "client", "c1", -1, "USD", "2026-01-01")
             .await
             .unwrap_err()
             .contains("negative"));
-        assert!(set_rate(&db.pool, "planet", "c1", 100, "USD", "2026-01-01")
+        assert!(seed(&db.pool, "planet", "c1", 100, "USD", "2026-01-01")
             .await
             .unwrap_err()
             .contains("unknown rate scope"));
-        assert!(set_rate(&db.pool, "client", "  ", 100, "USD", "2026-01-01")
+        assert!(seed(&db.pool, "client", "  ", 100, "USD", "2026-01-01")
             .await
             .unwrap_err()
             .contains("needs a client id"));
-        assert!(set_rate(&db.pool, "client", "c1", 100, "US", "2026-01-01")
+        assert!(seed(&db.pool, "client", "c1", 100, "US", "2026-01-01")
             .await
             .unwrap_err()
             .contains("3-letter code"));
         // 3 chars but not all alphabetic — exercises the letter check itself.
-        assert!(set_rate(&db.pool, "client", "c1", 100, "US1", "2026-01-01")
+        assert!(seed(&db.pool, "client", "c1", 100, "US1", "2026-01-01")
             .await
             .unwrap_err()
             .contains("3-letter code"));
-        assert!(set_rate(&db.pool, "client", "c1", 100, "USD", "01-2026")
+        assert!(seed(&db.pool, "client", "c1", 100, "USD", "01-2026")
             .await
             .unwrap_err()
             .contains("YYYY-MM-DD"));
@@ -319,7 +331,7 @@ mod tests {
     #[tokio::test]
     async fn delete_rate_removes_it() {
         let (_dir, db) = test_db().await;
-        let r = set_rate(&db.pool, "project", "p1", 9000, "USD", "2026-01-01")
+        let r = seed(&db.pool, "project", "p1", 9000, "USD", "2026-01-01")
             .await
             .unwrap();
         delete_rate(&db.pool, &r.id).await.unwrap();
@@ -329,16 +341,16 @@ mod tests {
     #[tokio::test]
     async fn resolve_prefers_the_most_granular_scope() {
         let (_dir, db) = test_db().await;
-        set_rate(&db.pool, "workspace", "", 5000, "USD", "2026-01-01")
+        seed(&db.pool, "workspace", "", 5000, "USD", "2026-01-01")
             .await
             .unwrap();
-        set_rate(&db.pool, "client", "c1", 8000, "USD", "2026-01-01")
+        seed(&db.pool, "client", "c1", 8000, "USD", "2026-01-01")
             .await
             .unwrap();
-        set_rate(&db.pool, "project", "p1", 10000, "USD", "2026-01-01")
+        seed(&db.pool, "project", "p1", 10000, "USD", "2026-01-01")
             .await
             .unwrap();
-        set_rate(&db.pool, "task", "t1", 15000, "USD", "2026-01-01")
+        seed(&db.pool, "task", "t1", 15000, "USD", "2026-01-01")
             .await
             .unwrap();
 
@@ -347,7 +359,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(full.scope_type, "task");
-        assert_eq!(full.amount_minor_units, 15000);
+        assert_eq!(full.amount.minor_units, 15000);
 
         // Drop the task ⇒ project rate; drop the project ⇒ client; then workspace.
         let proj = resolve_rate(&db.pool, Some("c1"), Some("p1"), None, "2026-06-01")
@@ -370,10 +382,10 @@ mod tests {
     #[tokio::test]
     async fn resolve_uses_the_rate_effective_at_the_work_date() {
         let (_dir, db) = test_db().await;
-        set_rate(&db.pool, "project", "p1", 10000, "USD", "2026-01-01")
+        seed(&db.pool, "project", "p1", 10000, "USD", "2026-01-01")
             .await
             .unwrap();
-        set_rate(&db.pool, "project", "p1", 12000, "USD", "2026-07-01")
+        seed(&db.pool, "project", "p1", 12000, "USD", "2026-07-01")
             .await
             .unwrap();
 
@@ -383,18 +395,18 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(spring.amount_minor_units, 10000);
+        assert_eq!(spring.amount.minor_units, 10000);
         let summer = resolve_rate(&db.pool, None, Some("p1"), None, "2026-07-01")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(summer.amount_minor_units, 12000);
+        assert_eq!(summer.amount.minor_units, 12000);
     }
 
     #[tokio::test]
     async fn resolve_ignores_rates_that_are_not_yet_effective() {
         let (_dir, db) = test_db().await;
-        set_rate(&db.pool, "project", "p1", 10000, "USD", "2026-07-01")
+        seed(&db.pool, "project", "p1", 10000, "USD", "2026-07-01")
             .await
             .unwrap();
         // Work before the only rate's effective date has no applicable rate.
@@ -408,10 +420,10 @@ mod tests {
     async fn granularity_beats_a_newer_broader_rate() {
         let (_dir, db) = test_db().await;
         // An old task rate and a much newer client rate.
-        set_rate(&db.pool, "task", "t1", 15000, "USD", "2025-01-01")
+        seed(&db.pool, "task", "t1", 15000, "USD", "2025-01-01")
             .await
             .unwrap();
-        set_rate(&db.pool, "client", "c1", 9000, "USD", "2026-07-01")
+        seed(&db.pool, "client", "c1", 9000, "USD", "2026-07-01")
             .await
             .unwrap();
         let r = resolve_rate(&db.pool, Some("c1"), Some("p1"), Some("t1"), "2026-07-15")
@@ -422,7 +434,7 @@ mod tests {
             r.scope_type, "task",
             "most-granular wins regardless of date"
         );
-        assert_eq!(r.amount_minor_units, 15000);
+        assert_eq!(r.amount.minor_units, 15000);
     }
 
     #[tokio::test]
@@ -433,7 +445,7 @@ mod tests {
             .unwrap()
             .is_none());
 
-        set_rate(&db.pool, "client", "c1", 8000, "USD", "2026-06-01")
+        seed(&db.pool, "client", "c1", 8000, "USD", "2026-06-01")
             .await
             .unwrap();
         // An RFC3339 timestamp on the effective date resolves (lexicographic
@@ -448,8 +460,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert_eq!(r.amount_minor_units, 8000);
-        assert_eq!(r.currency, "USD");
+        assert_eq!(r.amount, Money::new(8000, "USD"));
         assert_eq!(r.effective_from, "2026-06-01");
     }
 
@@ -477,18 +488,10 @@ mod tests {
             id: format!("{scope_type}-{scope_id}"),
             scope_type: scope_type.into(),
             scope_id: scope_id.into(),
-            amount_minor_units: minor_units,
-            currency: "USD".into(),
+            amount: Money::new(minor_units, "USD"),
             effective_from: "2026-01-01".into(),
             created_at: "x".into(),
         }
-    }
-
-    #[test]
-    fn amount_minor_units_bills_the_hourly_rate_by_hours() {
-        // $150/hr for 90 min = $225.00; 20 min at $30/hr = $10.00.
-        assert_eq!(amount_minor_units(15000, 90 * 60), 22500);
-        assert_eq!(amount_minor_units(3000, 20 * 60), 1000);
     }
 
     #[test]
@@ -504,6 +507,6 @@ mod tests {
         ];
         let r = resolve_from(&rates, Some("c1"), None, None, "2026-06-01").unwrap();
         assert_eq!(r.scope_type, "workspace");
-        assert_eq!(r.amount_minor_units, 5000);
+        assert_eq!(r.amount.minor_units, 5000);
     }
 }

@@ -4,15 +4,10 @@ import {
   billingListRates,
   billingSetRate,
   type Rate,
+  type RateInput,
 } from "./ipc";
 
-export interface RateInput {
-  scopeType: Rate["scopeType"];
-  scopeId: string;
-  amountMinorUnits: number;
-  currency: string;
-  effectiveFrom: string;
-}
+export type { RateInput };
 
 export interface UseRates {
   /** `null` while the first load is in flight or outside Tauri. */

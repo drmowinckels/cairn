@@ -225,9 +225,7 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
               >
                 <span className="inv-number">{inv.number}</span>
                 <span className="inv-client">{inv.clientName}</span>
-                <span className="inv-total">
-                  {formatMoney(inv.totalMinorUnits, inv.currency)}
-                </span>
+                <span className="inv-total">{formatMoney(inv.total)}</span>
                 <span className={`inv-badge inv-badge--${inv.status}`}>
                   {inv.status}
                 </span>
@@ -252,12 +250,7 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
                           <tr key={line.id}>
                             <td>{line.description}</td>
                             <td>{hours(line.seconds)}h</td>
-                            <td>
-                              {formatMoney(
-                                line.amountMinorUnits,
-                                detail.currency,
-                              )}
-                            </td>
+                            <td>{formatMoney(line.amount)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -266,27 +259,18 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
                     <dl className="inv-totals">
                       <div>
                         <dt>Subtotal</dt>
-                        <dd>
-                          {formatMoney(
-                            detail.subtotalMinorUnits,
-                            detail.currency,
-                          )}
-                        </dd>
+                        <dd>{formatMoney(detail.subtotal)}</dd>
                       </div>
                       <div>
                         <dt>
                           {detail.taxLabel || "Tax"} (
                           {taxPercentLabel(detail.taxRateBps)}%)
                         </dt>
-                        <dd>
-                          {formatMoney(detail.taxMinorUnits, detail.currency)}
-                        </dd>
+                        <dd>{formatMoney(detail.tax)}</dd>
                       </div>
                       <div className="inv-grand">
                         <dt>Total</dt>
-                        <dd>
-                          {formatMoney(detail.totalMinorUnits, detail.currency)}
-                        </dd>
+                        <dd>{formatMoney(detail.total)}</dd>
                       </div>
                     </dl>
 

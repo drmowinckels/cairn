@@ -11,6 +11,9 @@
 //! before it was ever saved — the third decimal that currency actually has,
 //! silently dropped. This module is the one place that knows the scale, so
 //! entry, arithmetic, and display all agree on what a stored integer means.
+//! It is the scale table only — an amount and its currency travel together as
+//! [`super::money::Money`], which is the one thing that reads it. Entry happens
+//! in the UI, against the mirrored table in `src/lib/money.ts`.
 //!
 //! Unknown or malformed codes fall back to 2, which is the commonest scale and
 //! matches what `Intl.NumberFormat` does with a code it doesn't recognise (see
@@ -37,30 +40,6 @@ pub fn exponent(currency: &str) -> u32 {
     } else {
         2
     }
-}
-
-/// How many minor units make one major unit of `currency` — 1, 100, or 1000.
-/// This is the factor between what a user types and what gets stored.
-pub fn minor_units_per_major(currency: &str) -> i64 {
-    10_i64.pow(exponent(currency))
-}
-
-/// `<code> <amount>` with the currency's own number of decimals — `JPY 150000`,
-/// `USD 1500.00`, `KWD 15.505`. Invoice amounts are always non-negative
-/// (durations times non-negative rates), so no sign handling is needed.
-pub fn format_money(minor_units: i64, currency: &str) -> String {
-    let exp = exponent(currency);
-    let code = currency.trim();
-    if exp == 0 {
-        return format!("{code} {minor_units}");
-    }
-    let per_major = minor_units_per_major(code);
-    let major = minor_units / per_major;
-    let minor = minor_units % per_major;
-    format!(
-        "{code} {major}.{minor:0width$}",
-        width = usize::try_from(exp).unwrap_or(2),
-    )
 }
 
 #[cfg(test)]
@@ -104,40 +83,6 @@ mod tests {
         // Unknown and malformed codes take the common scale rather than panic.
         assert_eq!(exponent("ZZZ"), 2);
         assert_eq!(exponent(""), 2);
-    }
-
-    #[test]
-    fn minor_units_per_major_is_the_entry_factor() {
-        assert_eq!(minor_units_per_major("USD"), 100);
-        assert_eq!(minor_units_per_major("JPY"), 1);
-        assert_eq!(minor_units_per_major("KWD"), 1000);
-    }
-
-    #[test]
-    fn format_money_uses_the_currencys_own_decimals() {
-        assert_eq!(format_money(150_000, "USD"), "USD 1500.00");
-        assert_eq!(format_money(5, "USD"), "USD 0.05");
-        // The bug this module exists for: a yen amount is whole, so no
-        // decimal point at all — never "JPY 1500.00" for ¥150,000.
-        assert_eq!(format_money(150_000, "JPY"), "JPY 150000");
-        assert_eq!(format_money(0, "JPY"), "JPY 0");
-        // And a dinar keeps all three of its digits.
-        assert_eq!(format_money(15_505, "KWD"), "KWD 15.505");
-        assert_eq!(format_money(5, "KWD"), "KWD 0.005");
-    }
-
-    #[test]
-    fn format_money_pads_the_minor_part() {
-        assert_eq!(format_money(1_000, "USD"), "USD 10.00");
-        assert_eq!(format_money(1_005, "USD"), "USD 10.05");
-        assert_eq!(format_money(10_050, "KWD"), "KWD 10.050");
-        assert_eq!(format_money(10_005, "KWD"), "KWD 10.005");
-    }
-
-    #[test]
-    fn format_money_trims_the_code_and_survives_an_unknown_one() {
-        assert_eq!(format_money(150, " USD "), "USD 1.50");
-        assert_eq!(format_money(150, "ZZZ"), "ZZZ 1.50");
     }
 
     async fn insert_rate(pool: &sqlx::SqlitePool, id: &str, minor: i64, currency: &str) {

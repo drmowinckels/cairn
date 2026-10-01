@@ -4,6 +4,7 @@ import {
   currencyExponent,
   formatMoney,
   minorUnitsPerMajor,
+  moneyFromMajor,
 } from "../../lib/money";
 import { isoLocalDate } from "../../lib/report-math";
 import type { Client, Project, Task } from "../../lib/types";
@@ -126,8 +127,7 @@ export function BillingRatesPanel() {
     void addRate({
       scopeType,
       scopeId: scopeType === "workspace" ? "" : scopeId,
-      amountMinorUnits: Math.round(amountNum * minorUnitsPerMajor(currency)),
-      currency: currency.trim().toUpperCase(),
+      amount: moneyFromMajor(amountNum, currency),
       effectiveFrom,
     }).then((ok) => {
       if (ok) setAmount("");
@@ -160,7 +160,7 @@ export function BillingRatesPanel() {
                   {label.kind ? <em> · {label.kind}</em> : null}
                 </span>
                 <span className="rate-amount">
-                  {formatMoney(rate.amountMinorUnits, rate.currency)} / hr
+                  {formatMoney(rate.amount)} / hr
                 </span>
                 <span className="rate-from">from {rate.effectiveFrom}</span>
                 <button

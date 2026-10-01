@@ -7758,8 +7758,7 @@ pub async fn billing_set_rate_impl(
     state: State<'_, AppState>,
     scope_type: String,
     scope_id: String,
-    amount_minor_units: i64,
-    currency: String,
+    amount: crate::plugins::billing::money::Money,
     effective_from: String,
 ) -> Result<Vec<crate::plugins::billing::rates::Rate>, String> {
     let pool = &state.db.pool;
@@ -7768,8 +7767,7 @@ pub async fn billing_set_rate_impl(
         pool,
         &scope_type,
         &scope_id,
-        amount_minor_units,
-        &currency,
+        &amount,
         &effective_from,
     )
     .await?;
@@ -9390,6 +9388,7 @@ mod onboarding_tests {
 #[cfg(not(target_os = "windows"))]
 mod plugin_tests {
     use super::*;
+    use crate::plugins::billing::money::Money;
     use crate::plugins::Capability;
     use crate::test_support::mock_app_with_db;
     use tauri::Manager;
@@ -9599,8 +9598,7 @@ mod plugin_tests {
             state.clone(),
             "workspace".into(),
             String::new(),
-            10000,
-            "USD".into(),
+            Money::new(10000, "USD"),
             "2026-01-01".into(),
         )
         .await
@@ -9633,14 +9631,13 @@ mod plugin_tests {
             state.clone(),
             "project".into(),
             "p1".into(),
-            15000,
-            "usd".into(),
+            Money::new(15000, "usd"),
             "2026-01-01".into(),
         )
         .await
         .unwrap();
         assert_eq!(after.len(), 1);
-        assert_eq!(after[0].currency, "USD");
+        assert_eq!(after[0].amount, Money::new(15000, "USD"));
 
         let listed = billing_list_rates_impl(state.clone()).await.unwrap();
         assert_eq!(listed.len(), 1);
@@ -9656,7 +9653,7 @@ mod plugin_tests {
         .await
         .unwrap()
         .expect("a project rate applies");
-        assert_eq!(resolved.amount_minor_units, 15000);
+        assert_eq!(resolved.amount, Money::new(15000, "USD"));
         assert_eq!(resolved.scope_type, "project");
 
         // Delete empties the list.
@@ -9863,8 +9860,7 @@ mod plugin_tests {
             &db.pool,
             "project",
             "p1",
-            15000,
-            "USD",
+            &Money::new(15000, "USD"),
             "2020-01-01",
         )
         .await
@@ -9876,7 +9872,7 @@ mod plugin_tests {
 
         let inv = make("2026-07-01", "2026-08-01", 2500).await.unwrap();
         assert_eq!(inv.number, "INV-0001");
-        assert_eq!(inv.total_minor_units, 18750);
+        assert_eq!(inv.total, Money::new(18750, "USD"));
 
         assert_eq!(list_invoices_impl(state.clone()).await.unwrap().len(), 1);
         assert_eq!(
@@ -9967,8 +9963,7 @@ mod plugin_tests {
             &db.pool,
             "project",
             "p1",
-            15000,
-            "USD",
+            &Money::new(15000, "USD"),
             "2020-01-01",
         )
         .await
