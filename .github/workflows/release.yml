@@ -16,7 +16,9 @@ name: Release
 #
 # The Windows job builds a WiX MSI (Start-menu shortcut + uninstaller) and
 # Authenticode-signs it when WINDOWS_CERTIFICATE is set, falling back to an
-# unsigned installer otherwise — same optional pattern as macOS (#43).
+# unsigned installer otherwise — same optional pattern as macOS (#43). It also
+# uploads a portable zip of the bare exe, which is what the Scoop bucket
+# installs (#319) — see `.github/workflows/scoop.yml` for the manifest bump.
 #
 # The Linux job builds a `.deb` (Debian 12 / Ubuntu 22.04+) and an AppImage
 # (universal — Ubuntu 22.04 LTS, Fedora 39+); building on the oldest
@@ -231,6 +233,30 @@ jobs:
           # rather than each matrix job creating its own. No race.
           releaseId: ${{ needs.prepare.outputs.release_id }}
           args: ${{ matrix.args }}
+
+      # Portable zip for Scoop (#319). Scoop extracts an archive rather than
+      # running an installer, so neither Windows bundle suits it. Tauri has no
+      # portable target, but it doesn't need one: the app is a single
+      # self-contained exe (WebView2 comes from the OS), so staging the Cargo
+      # output under the product name and zipping it is the whole job. The
+      # rename matters — Cargo emits `cairn.exe`, and the bucket manifest's
+      # `bin`/`shortcuts` name what is inside the zip.
+      - name: Package the portable zip (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TAG -replace '^v', ''
+          $stage = Join-Path $env:RUNNER_TEMP 'portable'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item src-tauri/target/release/cairn.exe (Join-Path $stage 'Cairn.exe')
+          Copy-Item LICENSE $stage
+          $zip = Join-Path $env:RUNNER_TEMP "Cairn-$version-x64-portable.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          gh release upload "$env:TAG" "$zip" --clobber
 
   # Safari Web Extension wrapper (#37). Separate from the tauri-action
   # matrix because it is a hand-built Xcode app (containing app + extension),

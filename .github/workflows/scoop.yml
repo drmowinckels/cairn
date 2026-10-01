@@ -1,0 +1,88 @@
+name: Scoop manifest
+
+# Keeps the in-repo Scoop bucket pointing at the newest release (#319).
+#
+# The bucket lives in this repo rather than a separate `scoop-cairn` one:
+# Scoop reads manifests from a repository's `bucket/` directory, so
+# `scoop bucket add cairn https://github.com/drmowinckels/cairn` works with no
+# second repo and no cross-repo token.
+#
+# It runs on `release: published`, NOT on the tag push that builds the release.
+# `release.yml` produces a DRAFT whose assets 404 for anyone but the
+# maintainer, so bumping the manifest then would advertise a download nobody
+# could fetch. Publishing the draft is the moment the URL becomes real.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published tag to point the manifest at (e.g. v0.1.0-beta)."
+        required: true
+        type: string
+
+concurrency:
+  group: scoop-manifest
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The manifest belongs on the default branch, not on the detached
+          # tag the release event points at.
+          ref: main
+          # Full history, because the commit step rebases if `main` moved: a
+          # shallow clone has no merge base to rebase onto.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - name: Regenerate bucket/cairn-timetracker.json
+        shell: bash
+        # Both the event tag and the dispatch input reach the script through
+        # `env`, never interpolated into the shell body — a crafted tag name
+        # would otherwise be executable text.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$EVENT_TAG}"
+          version="${tag#v}"
+          asset="Cairn-$version-x64-portable.zip"
+          gh release download "$tag" --pattern "$asset" --dir "$RUNNER_TEMP"
+          hash="$(sha256sum "$RUNNER_TEMP/$asset" | cut -d' ' -f1)"
+          node scripts/scoop-manifest.mjs "$version" "$hash"
+
+      - name: Commit the bump
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stage FIRST, then ask whether anything changed. On the very first
+          # release the manifest is untracked, and `git diff` says nothing
+          # changed about a file it has never heard of — which would have made
+          # the one run that matters most a silent no-op.
+          git add bucket/cairn-timetracker.json
+          if git diff --cached --quiet; then
+            echo "Manifest already current for $TAG."
+            exit 0
+          fi
+          git commit -m "chore(scoop): point the bucket at $TAG"
+          # `main` can move while a release is being published; rebase rather
+          # than fail the bump (or, worse, force past someone else's commit).
+          git pull --rebase origin main
+          git push origin HEAD:main
