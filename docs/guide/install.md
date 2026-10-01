@@ -25,6 +25,35 @@ Pick one or the other — installing both leaves two copies of Cairn on the mach
 
 Either way, signing is optional per build — if SmartScreen warns, click **More info → Run anyway**.
 
+### Scoop
+
+If you manage your tools with [Scoop](https://scoop.sh/), Cairn has its own
+bucket:
+
+```powershell
+scoop bucket add cairn https://github.com/drmowinckels/cairn
+scoop install cairn/cairn-timetracker
+```
+
+The name is `cairn-timetracker`, not `cairn` — plain `scoop install cairn`
+resolves to [an unrelated app](https://github.com/R0kshan/cairn).
+
+Scoop installs the portable `*-x64-portable.zip` rather than either installer,
+so there's no setup program to run and `scoop update cairn-timetracker` is the
+whole upgrade. Your data lives in `%APPDATA%\io.drmowinckels.cairn`, outside
+Scoop's app directory, so uninstalling leaves your time entries in place.
+
+::: warning From the next release onwards
+The portable zip is new, so the bucket is empty until the first release that
+ships one — `v0.0.1-beta` predates it. Use one of the installers above in the
+meantime.
+:::
+
+### Portable zip
+
+`*-x64-portable.zip` is just `Cairn.exe` and the licence: unzip it anywhere you
+can write and run it. No installer, no Start-menu entry, no uninstaller.
+
 ## Linux
 
 - **`.deb`** (Debian 12 / Ubuntu 22.04+): `sudo dpkg -i Cairn_*_amd64.deb`

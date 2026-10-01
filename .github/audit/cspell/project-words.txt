@@ -81,6 +81,7 @@ kbds
 keychain
 keyutils
 knip
+kshan
 lcov
 lede
 lemonsqueezy
@@ -181,6 +182,7 @@ testthat
 thiserror
 Timelike
 timesheet
+timetracker
 TMPDIR
 todotxt
 Toggl

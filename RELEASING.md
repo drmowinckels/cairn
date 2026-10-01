@@ -150,12 +150,35 @@ the config.
    while Apple processes the submission.
 6. **Review the draft Release.** When all jobs finish, a draft
    pre-release appears under **Releases** with the `.dmg`, both Windows
-   installers (`*-setup.exe` and `*.msi`), and the Linux `.deb` +
+   installers (`*-setup.exe` and `*.msi`), the portable
+   `*-x64-portable.zip` for Scoop, and the Linux `.deb` +
    AppImage attached. Download and
    smoke-test at least the macOS `.dmg` on a clean machine
    (`spctl -a -vvv /Applications/Cairn.app` should report
    `source=Notarized Developer ID`).
 7. **Publish** from the GitHub UI when satisfied.
+8. **Check the Scoop bump.** Publishing fires
+   [`scoop.yml`](.github/workflows/scoop.yml), which hashes the portable zip
+   and commits a regenerated `bucket/cairn-timetracker.json` to `main`. It runs
+   on _publish_ rather than on the tag push because a draft release's assets
+   404 for everyone but you. If it fails (or you published before the zip
+   existed), re-run it from **Actions → Scoop manifest → Run workflow** with
+   the tag.
+
+## Verifying the Scoop bucket (#319)
+
+On a Windows machine with Scoop installed:
+
+```powershell
+scoop bucket add cairn https://github.com/drmowinckels/cairn
+scoop install cairn/cairn-timetracker   # hash mismatch here = a bad bump
+cairn-timetracker                       # or the Start-menu shortcut
+scoop uninstall cairn-timetracker
+```
+
+A hash mismatch means the manifest and the published asset disagree — re-run
+the Scoop manifest workflow rather than editing `bucket/*.json` by hand; it is
+generated from [`scripts/scoop-manifest.mjs`](scripts/scoop-manifest.mjs).
 
 ## Verifying a signed + notarized macOS build
 

@@ -20,6 +20,12 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Added
 
+- `[packaging]` Cairn is installable with **Scoop** on Windows (#319):
+  `scoop bucket add cairn https://github.com/drmowinckels/cairn` then
+  `scoop install cairn/cairn-timetracker`. The suffix avoids an existing,
+  unrelated `cairn` on Scoop. Releases now also carry a portable
+  `*-x64-portable.zip` — the bare exe, no installer — which is what the
+  bucket installs and is usable on its own.
 - `[packaging]` Windows releases now also ship an **NSIS setup `.exe`**
   that installs per-user into `%LOCALAPPDATA%` and needs no
   administrator rights (#299). The MSI still installs per-machine into
