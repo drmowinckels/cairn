@@ -83,7 +83,11 @@ describe("useActivityLog (#190)", () => {
     setMock.mockResolvedValue(undefined);
     const { useActivityLog } = await import("./use-activity-log");
     const { result } = renderHook(() => useActivityLog());
-    await waitFor(() => expect(result.current.settings.minSpanMinutes).toBe(5));
+    // `enabled` is what tells a loaded snapshot apart from the mocked
+    // defaults: those also carry minSpanMinutes 5, so waiting on the floor
+    // itself would fall through before the load landed.
+    await waitFor(() => expect(result.current.settings.enabled).toBe(true));
+    expect(result.current.settings.minSpanMinutes).toBe(5);
     await act(async () => {
       await result.current.setMinSpanMinutes(15);
     });

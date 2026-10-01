@@ -65,7 +65,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.11",
     "axe-core": "^4.11.4",
     "cspell": "^10.0.0",
     "eslint": "9.39.4",
@@ -82,8 +82,8 @@
     "stylelint-config-standard": "40.0.0",
     "typescript": "~5.8.3",
     "typescript-eslint": "8.60.1",
-    "vite": "^7.0.4",
-    "vitest": "^4.1.6",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11",
     "vitest-axe": "^1.0.0-pre.5"
   }
 }

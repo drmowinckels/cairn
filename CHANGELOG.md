@@ -8,6 +8,16 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Fixed
 
+- `[deps]` Cleared every advisory the dependency audit was reporting.
+  `rustls` (TLS 1.3 handshake messages accepted at the wrong encryption
+  level, RUSTSEC-2026-0285), `h2`, `anyhow` and the yanked `spin` are
+  lockfile bumps; `plist` 1.9 → 1.10 pulls in `quick-xml` 0.42, which
+  fixes the two XML parser denial-of-service advisories the old version
+  carried. On the frontend, `vite` and `vitest` move above the ranges
+  their advisories name — dev-tooling only, but the dev server's
+  `server.fs.deny` bypass and `@vitest/mocker`'s arbitrary file read are
+  worth not carrying. `cargo deny check` and `npm audit` are both clean.
+
 - `[billing]` Rates and invoices now store and show money in the
   currency's **own** minor unit instead of assuming hundredths (#109).
   Hourly rates in a currency with no minor unit (yen, won, króna) were
