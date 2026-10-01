@@ -14,7 +14,7 @@
 //! `app_data_dir` for the `io.drmowinckels.cairn` bundle identifier
 //! (see [`socket_path`]):
 //!
-//! - macOS: `~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock`
+//! - macOS: `~/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock`
 //!   (the App Group container, so the Safari handler can reach it — #250)
 //! - Linux: `<XDG_DATA_HOME or ~/.local/share>/io.drmowinckels.cairn/ipc/sock`
 //! - Windows: `\\.\pipe\cairn`
@@ -52,8 +52,14 @@ const MAX_INBOUND_BYTES: u32 = 64 * 1024;
 /// app hard-codes the SAME id in `src-tauri/src/plugins/browser/mod.rs`
 /// (`APP_GROUP_ID`); change one without the other and the macOS browser
 /// signal silently stops reaching Cairn.
+///
+/// The `ZA246B9H75.` prefix is the Apple Team ID. macOS only grants the
+/// app-groups entitlement for a group owned by the signing team, so the
+/// prefix is what makes the container reachable from the sandboxed Safari
+/// handler. This host is never sandboxed, so it would work either way —
+/// but it has to point at the path the app actually binds.
 #[cfg(target_os = "macos")]
-const MACOS_APP_GROUP_ID: &str = "group.io.drmowinckels.cairn";
+const MACOS_APP_GROUP_ID: &str = "ZA246B9H75.group.io.drmowinckels.cairn";
 
 /// Maximum size of any frame we emit back to the browser. Today we
 /// never reply (the extension is fire-and-forget), but Chrome reads
@@ -472,7 +478,7 @@ mod tests {
         // reach the same socket. Must match the main app's APP_GROUP_ID.
         let p = socket_path(false);
         assert!(
-            p.ends_with("Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock"),
+            p.ends_with("Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock"),
             "expected the App Group container path, got {p:?}"
         );
     }

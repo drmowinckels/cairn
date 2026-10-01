@@ -10,7 +10,7 @@
 // reaches the Cairn native host (`io.drmowinckels.cairn`), which writes
 // newline-delimited JSON to
 // the local IPC socket the main app listens on
-// (`~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock` on
+// (`~/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock` on
 // macOS — the App Group container, so a sandboxed Safari handler can reach
 // it (#250); `$XDG_DATA_HOME/io.drmowinckels.cairn/ipc/sock` on Linux,
 // `\\.\pipe\cairn` on Windows).

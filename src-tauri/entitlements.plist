@@ -28,5 +28,44 @@
   -->
   <key>com.apple.security.network.client</key>
   <true/>
+
+  <!--
+    App Group shared with the Safari Web Extension (#250).
+
+    The extension's handler runs under the App Sandbox, which refuses
+    connect(2) to a Unix socket outside its container - proven in
+    browser-extension/safari/spike/SPIKE.md, where the only variable
+    between the working and the EPERM case was the sandbox entitlement.
+    The group container is the one filesystem location both the
+    non-sandboxed main app and the sandboxed extension can reach, so the
+    browser IPC socket binds there on macOS
+    (~/Library/Group Containers/<group>/ipc/sock).
+
+    This does NOT sandbox Cairn. The main app stays a non-sandboxed
+    Developer ID build; app-groups and app-sandbox are separate
+    entitlements, and only the extension gets the latter. 1Password ships
+    exactly this combination (group entitlement, no sandbox).
+
+    The ZA246B9H75. prefix is the Apple Team ID and is required: macOS
+    only grants this entitlement for a group owned by the signing team.
+
+    Declaring it here is NOT enough on its own. On a Developer ID build
+    macOS honours a restricted entitlement only when the bundle embeds a
+    provisioning profile authorizing it, so the release job embeds one
+    from the APPLE_PROVISIONING_PROFILE secret and then FAILS if it
+    didn't land - an unauthorized entitlement reports no error anywhere,
+    it just silently costs us the group container. Creating that profile
+    needs the App Groups capability enabled on the App ID in the
+    developer account. See "macOS App Group provisioning" in RELEASING.md.
+
+    Keep in lockstep with APP_GROUP_ID in
+    src-tauri/src/plugins/browser/mod.rs, MACOS_APP_GROUP_ID in
+    browser-extension/native-host/src/main.rs, and `group` in
+    browser-extension/safari/build-wrapper.sh.
+  -->
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>ZA246B9H75.group.io.drmowinckels.cairn</string>
+  </array>
 </dict>
 </plist>

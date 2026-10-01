@@ -49,7 +49,7 @@ permissions it requests are:
 - `nativeMessaging` — to launch and pipe to the native host
 
 The native host in turn talks to **one socket** — Cairn's local IPC
-endpoint at `~/Library/Group Containers/group.io.drmowinckels.cairn/ipc/sock`
+endpoint at `~/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock`
 on macOS (the App Group container, shared with the Safari extension so a
 sandboxed handler can reach it — #250),
 `$XDG_DATA_HOME/io.drmowinckels.cairn/ipc/sock` on Linux, or

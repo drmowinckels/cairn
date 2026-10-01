@@ -17,20 +17,73 @@ macOS signing secrets are optional — without them the pipeline still
 runs and produces an _unsigned_ macOS bundle (useful for dry runs), but
 Gatekeeper will warn end users, so they're required for a real release.
 
-| Secret                       | What it is                                                                                                                                   | Required for       |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| `APPLE_CERTIFICATE`          | Base64 of your **Developer ID Application** cert exported as `.p12`. `base64 -i cert.p12 \| pbcopy`                                          | macOS signing      |
-| `APPLE_CERTIFICATE_PASSWORD` | The password you set when exporting the `.p12`                                                                                               | macOS signing      |
-| `APPLE_SIGNING_IDENTITY`     | The identity string, e.g. `Developer ID Application: Your Name (TEAMID)`                                                                     | macOS signing      |
-| `APPLE_ID`                   | The Apple ID email of the Developer account                                                                                                  | macOS notarization |
-| `APPLE_PASSWORD`             | An **app-specific password** for that Apple ID (appleid.apple.com → Sign-In & Security → App-Specific Passwords), _not_ the account password | macOS notarization |
-| `APPLE_TEAM_ID`              | Your 10-character Apple Developer Team ID                                                                                                    | macOS notarization |
+| Secret                       | What it is                                                                                                                                          | Required for           |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `APPLE_CERTIFICATE`          | Base64 of your **Developer ID Application** cert exported as `.p12`. `base64 -i cert.p12 \| pbcopy`                                                 | macOS signing          |
+| `APPLE_CERTIFICATE_PASSWORD` | The password you set when exporting the `.p12`                                                                                                      | macOS signing          |
+| `APPLE_SIGNING_IDENTITY`     | The identity string, e.g. `Developer ID Application: Your Name (TEAMID)`                                                                            | macOS signing          |
+| `APPLE_ID`                   | The Apple ID email of the Developer account                                                                                                         | macOS notarization     |
+| `APPLE_PASSWORD`             | An **app-specific password** for that Apple ID (appleid.apple.com → Sign-In & Security → App-Specific Passwords), _not_ the account password        | macOS notarization     |
+| `APPLE_TEAM_ID`              | Your 10-character Apple Developer Team ID                                                                                                           | macOS notarization     |
+| `APPLE_PROVISIONING_PROFILE` | Base64 of a **Developer ID** provisioning profile for `io.drmowinckels.cairn` with App Groups enabled. `base64 -i Cairn.provisionprofile \| pbcopy` | macOS App Group (#250) |
 
 > Notarization auth can alternatively use an App Store Connect API key
 > (`APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_PATH`). We use
 > the Apple-ID + app-specific-password path above because it needs no
 > key file in CI. If you switch, update the `env:` block in
 > `release.yml` accordingly.
+
+### macOS App Group provisioning (#250)
+
+The browser IPC socket lives in a shared **App Group container** on macOS,
+because the Safari extension's handler runs under the App Sandbox and cannot
+`connect(2)` to a socket outside its container. The app therefore declares
+`com.apple.security.application-groups` for
+`ZA246B9H75.group.io.drmowinckels.cairn` in
+[`entitlements.plist`](src-tauri/entitlements.plist).
+
+**The Team ID prefix is not cosmetic.** macOS only grants the entitlement for a
+group owned by the signing team, so an unprefixed id is not an App Group at all
+
+- just a directory. And on a **Developer ID** build macOS only _honours_ a
+  restricted entitlement when the bundle embeds a provisioning profile
+  authorizing it. 1Password - the same non-sandboxed Developer ID plus app-groups
+  case - embeds one, at
+  `/Applications/1Password.app/Contents/embedded.provisionprofile`.
+
+Without the profile the build still signs and notarizes **and reports no
+error**. It simply never gets the container, so the Safari extension can't
+reach the socket - the exact silent failure #250 exists to remove. The release
+job logs a GitHub warning when the secret is absent, so this can't pass
+unnoticed.
+
+One-time setup in the [Developer portal](https://developer.apple.com/account):
+
+1. **Register the App Group** `ZA246B9H75.group.io.drmowinckels.cairn`
+   (Identifiers -> App Groups).
+2. **Enable the App Groups capability** on the App ID
+   `io.drmowinckels.cairn` - and on `io.drmowinckels.cairn.Extension` too if
+   you are activating the Safari wrapper (#37).
+3. **Create a Developer ID provisioning profile** for
+   `io.drmowinckels.cairn`, download it, and store it base64-encoded as
+   `APPLE_PROVISIONING_PROFILE`.
+
+> Profiles **expire annually**. If the macOS browser signal stops reaching
+> Safari after a year with no code changes, an expired profile is the first
+> thing to check. The profile carries no private key, so it is not secret - it
+> lives in a secret only so it can be rotated without a commit.
+
+The release job verifies the profile landed in the built bundle and fails if it
+didn't. **That check runs after the upload**, because `tauri-action` builds and
+uploads in one step - so a failure leaves a macOS asset attached to the draft
+release. The run is red and the release is still a draft, so nothing reaches
+users on its own, but **delete the macOS assets from the draft before
+re-running**, or you will publish the bundle that failed verification.
+
+Chrome and Firefox are unaffected either way: their native host isn't
+sandboxed, so it reaches the container path as an ordinary directory. Only
+Safari needs the provisioned group. An unsigned local `tauri dev` build carries
+no entitlement at all and also works.
 
 ### Windows code-signing (#43)
 

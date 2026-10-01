@@ -14,7 +14,12 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 out="${1:?usage: build-wrapper.sh <output-dir>}"
-group="group.io.drmowinckels.cairn"
+# The Team ID prefix is required: macOS only grants the app-groups
+# entitlement for a group owned by the signing team. Keep in lockstep with
+# APP_GROUP_ID (src-tauri/src/plugins/browser/mod.rs), MACOS_APP_GROUP_ID
+# (browser-extension/native-host/src/main.rs), cairnAppGroupID
+# (safari/handler/Handler.swift), and src-tauri/entitlements.plist.
+group="ZA246B9H75.group.io.drmowinckels.cairn"
 
 rm -rf "$out"
 mkdir -p "$out"
@@ -42,6 +47,37 @@ xcrun safari-web-extension-converter "$src" \
 
 ext="$out/Cairn/Cairn Extension"
 proj="$out/Cairn/Cairn.xcodeproj"
+
+# Force the containing app's bundle id to match `--bundle-identifier`.
+#
+# Newer Xcode (26.x) derives the APP target's id from `--app-name` instead of
+# using `--bundle-identifier` verbatim, so `--app-name Cairn` yields
+# `io.drmowinckels.Cairn` while the extension still gets
+# `io.drmowinckels.cairn.Extension`. Xcode then refuses to build:
+# "Embedded binary's bundle identifier is not prefixed with the parent app's".
+# Renaming the app to lowercase would fix the prefix and show "cairn" in
+# Finder; changing `--bundle-identifier` would move the App IDs that have to
+# be registered for the App Group. Pinning the app target is the narrow fix.
+app_id="io.drmowinckels.cairn"
+/usr/bin/sed -i '' \
+  "s/PRODUCT_BUNDLE_IDENTIFIER = io\.drmowinckels\.Cairn;/PRODUCT_BUNDLE_IDENTIFIER = $app_id;/g" \
+  "$proj/project.pbxproj"
+
+# Assert the prefix rule holds rather than trusting the substitution: the
+# converter's naming has moved once already, and the next change would
+# otherwise surface as the same opaque xcodebuild error.
+ids="$(/usr/bin/grep -o 'PRODUCT_BUNDLE_IDENTIFIER = [^;]*;' "$proj/project.pbxproj" \
+  | /usr/bin/sed 's/PRODUCT_BUNDLE_IDENTIFIER = //; s/;$//' | sort -u)"
+for id in $ids; do
+  case "$id" in
+    "$app_id" | "$app_id".*) ;;
+    *)
+      echo "error: bundle id '$id' is not '$app_id' or prefixed by it." >&2
+      echo "       All ids found: $ids" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # Inject the handler: BridgeCore (the SAME source run-tests.sh proves) + the
 # IO glue, concatenated into the target's existing handler file. Overwriting

@@ -8,6 +8,19 @@ as the GitHub Release body, so keep the most recent version at the top.
 
 ### Fixed
 
+- `[browser]` **macOS: the browser IPC socket moved again**, to
+  `~/Library/Group Containers/ZA246B9H75.group.io.drmowinckels.cairn/ipc/sock`
+  (#250). The App Group it previously used carried no Apple Team ID
+  prefix, and macOS only grants the `application-groups` entitlement for a
+  group owned by the signing team — so the old id could never have been a
+  real App Group, only a directory Cairn created for itself. That worked
+  for Chrome and Firefox, whose native host isn't sandboxed, and would
+  have failed for the Safari extension, which is the entire reason the
+  socket lives there. The main app now also _declares_ the entitlement.
+  **If you installed the Chrome/Firefox native host from an earlier
+  Cairn, rebuild and reinstall it** (`browser-extension/native-host`) —
+  otherwise Settings → Integrations silently reads disconnected. Safari is
+  unaffected; its handler ships inside the app.
 - `[deps]` Cleared every advisory the dependency audit was reporting.
   `rustls` (TLS 1.3 handshake messages accepted at the wrong encryption
   level, RUSTSEC-2026-0285), `h2`, `anyhow` and the yanked `spin` are
