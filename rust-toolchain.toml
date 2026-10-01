@@ -1,0 +1,27 @@
+# The Rust toolchain is pinned to an EXACT version, deliberately.
+#
+# Before this file, CI used `dtolnay/rust-toolchain@stable`, so every Rust job
+# followed whatever stable happened to be that day. On 2026-09-28 stable moved
+# to 1.99.0, which extended `clippy::double_must_use` to see through
+# `async_trait`'s expansion, and `-D warnings` turned that into six errors
+# across three traits. Nothing in the tree had changed; main and every open PR
+# went red at once (#324).
+#
+# A pin does not avoid new lints — it decides WHEN we meet them. Upgrades now
+# arrive as a one-line change to this file, reviewed on its own branch with the
+# full matrix behind it, instead of as a surprise failure on unrelated work.
+#
+# Keeping it current is not left to memory: `.github/workflows/rust-next.yml`
+# runs the Rust checks against the latest stable on a schedule and opens an
+# issue either way — "stable X is clean, bump the pin" or "stable X breaks us,
+# here's what". A green canary makes the bump a known-safe one-liner.
+#
+# The version lives HERE and nowhere else. The workflows read this file rather
+# than naming a toolchain, so they cannot drift from it, and
+# `scripts/toolchain.test.mjs` fails if one goes back to naming `@stable`.
+# rustup applies this file to any cargo invocation under the repo root, so it
+# covers both crates (src-tauri and browser-extension/native-host) and local
+# development as well as CI.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]

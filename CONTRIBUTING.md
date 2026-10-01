@@ -10,9 +10,14 @@ Thanks for considering a contribution! Cairn is open-source under [Apache 2.0](L
 
 ## Workflow
 
+The Rust toolchain is **pinned** in [`rust-toolchain.toml`](rust-toolchain.toml);
+rustup reads it automatically, so you don't pick a toolchain and shouldn't need
+`rustup default`. A new stable release can't break your build or CI's — upgrades
+land as a reviewed one-line bump, prompted by the weekly canary in
+`.github/workflows/rust-next.yml`. You do need rustup itself installed.
+
 ```bash
-# Toolchain
-rustup default stable
+# Toolchain (rustup installs the pinned version on first use)
 cargo install tauri-cli
 npm install
 
