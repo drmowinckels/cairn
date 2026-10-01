@@ -87,8 +87,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev
-      - uses: dtolnay/rust-toolchain@stable
+      # Install the toolchain pinned in rust-toolchain.toml, NOT whatever
+      # stable is today. The version is read from that file so it lives in
+      # exactly one place; `@stable` here would silently defeat the pin, which
+      # scripts/toolchain.test.mjs guards against.
+      - id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$channel" || { echo "::error::No channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >>"$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy, rustfmt, llvm-tools-preview
       - uses: swatinem/rust-cache@v2
         with:

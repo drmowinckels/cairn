@@ -1,0 +1,143 @@
+name: Rust stable canary
+
+# Runs the Rust checks against the LATEST stable while the repo stays pinned
+# (rust-toolchain.toml), so a toolchain upgrade is something we schedule rather
+# than something that happens to us.
+#
+# This exists because of #324: stable moved to 1.99.0, `clippy::double_must_use`
+# started seeing through `async_trait`'s expansion, and `-D warnings` failed
+# every Rust job on a tree nobody had touched. The pin stops that from landing
+# on unrelated work; this job stops the pin from quietly rotting behind stable.
+#
+# It reports either way, to an evergreen tracking issue:
+#   - checks clean + a newer stable exists -> "bump the pin to X", a one-liner
+#     that is already known to pass;
+#   - checks fail -> "X breaks us", with the failing output, before it is
+#     anyone's problem.
+#
+# It never edits the pin itself. A PR opened by GITHUB_TOKEN does not trigger
+# `pull_request` workflows, so an auto-bump would arrive with no CI behind it —
+# the opposite of the point.
+
+on:
+  schedule:
+    # Mondays, 06:00 UTC. Rust ships every six weeks, so weekly catches a new
+    # stable within days of release while costing one Ubuntu job.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: rust-next
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-22.04
+    # RUSTUP_TOOLCHAIN outranks rust-toolchain.toml, so every cargo call below
+    # uses the stable installed next, not the pinned version. This is the one
+    # place in the repo that is SUPPOSED to ignore the pin.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # A separate cache namespace: artifacts built by an unpinned stable
+          # must never be served to the pinned jobs in ci.yml.
+          prefix-key: rust-next
+
+      - id: versions
+        name: Compare the pin against stable
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$pinned" || { echo "::error::No channel in rust-toolchain.toml"; exit 1; }
+          latest="$(rustc --version | cut -d' ' -f2)"
+          echo "pinned=$pinned" >>"$GITHUB_OUTPUT"
+          echo "latest=$latest" >>"$GITHUB_OUTPUT"
+          echo "Pinned $pinned; latest stable $latest."
+
+      - id: checks
+        name: Rust checks against stable
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eo pipefail
+          {
+            cargo fmt --manifest-path src-tauri/Cargo.toml --check
+            cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+            cargo test --manifest-path src-tauri/Cargo.toml --lib
+            cargo fmt --manifest-path browser-extension/native-host/Cargo.toml --check
+            cargo clippy --manifest-path browser-extension/native-host/Cargo.toml --all-targets -- -D warnings
+            cargo test --manifest-path browser-extension/native-host/Cargo.toml
+          } 2>&1 | tee "$RUNNER_TEMP/canary.log"
+
+      - name: Report to the tracking issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.checks.outcome }}
+          PINNED: ${{ steps.versions.outputs.pinned }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Rust toolchain: keep the pin current"
+          body="$RUNNER_TEMP/body.md"
+
+          if [ "$OUTCOME" = "success" ] && [ "$PINNED" = "$LATEST" ]; then
+            echo "Pin is already at the latest stable ($LATEST) and clean. Nothing to report."
+            exit 0
+          fi
+
+          if [ "$OUTCOME" = "success" ]; then
+            {
+              echo "### Stable \`$LATEST\` is clean — the pin can move"
+              echo
+              echo "\`rust-toolchain.toml\` pins \`$PINNED\`. Stable is now \`$LATEST\`,"
+              echo "and \`fmt\`, \`clippy -D warnings\` and the tests all pass against it"
+              echo "on both crates ([run]($RUN_URL))."
+              echo
+              echo "Bump \`channel\` in \`rust-toolchain.toml\` to \`$LATEST\` — the full"
+              echo "matrix runs on that PR, and this canary has already shown it green."
+            } >"$body"
+          else
+            {
+              echo "### Stable \`$LATEST\` breaks the build — do NOT bump the pin yet"
+              echo
+              echo "\`rust-toolchain.toml\` pins \`$PINNED\`, so nothing is broken today."
+              echo "The checks below failed against stable \`$LATEST\` ([run]($RUN_URL)):"
+              echo
+              echo '```'
+              tail -n 40 "$RUNNER_TEMP/canary.log" 2>/dev/null || echo "(no output captured)"
+              echo '```'
+              echo
+              echo "Usually this is a new lint firing through a macro, or a dependency"
+              echo "needing a bump. Fix it on a branch (the fix is normally a dependency"
+              echo "bump, not an \`#[allow]\`), then move the pin in the same PR."
+            } >"$body"
+          fi
+
+          num="$(gh issue list --state open --limit 100 --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")"
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file "$body"
+            echo "Commented on #$num."
+          else
+            gh issue create --title "$title" --body-file "$body"
+          fi
