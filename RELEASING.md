@@ -73,6 +73,13 @@ One-time setup in the [Developer portal](https://developer.apple.com/account):
 > thing to check. The profile carries no private key, so it is not secret - it
 > lives in a secret only so it can be rotated without a commit.
 
+The release job verifies the profile landed in the built bundle and fails if it
+didn't. **That check runs after the upload**, because `tauri-action` builds and
+uploads in one step - so a failure leaves a macOS asset attached to the draft
+release. The run is red and the release is still a draft, so nothing reaches
+users on its own, but **delete the macOS assets from the draft before
+re-running**, or you will publish the bundle that failed verification.
+
 Chrome and Firefox are unaffected either way: their native host isn't
 sandboxed, so it reaches the container path as an ordinary directory. Only
 Safari needs the provisioned group. An unsigned local `tauri dev` build carries

@@ -143,10 +143,16 @@ jobs:
             args: "--bundles msi,nsis"
             rust-targets: ""
     runs-on: ${{ matrix.platform }}
-    # Only the cert is exposed job-wide, and solely so the import step's
-    # `if:` can test for its presence (the env context isn't available in a
-    # step's own `env:`). The password is scoped to the import step alone so
-    # it never reaches the test steps or the third-party build action.
+    # Both values here are job-wide for ONE reason: a step's `if:` can read
+    # the `env` context but not a secret, and each gates a step on its own
+    # presence. Nothing else is exposed job-wide.
+    #
+    # The Windows cert PASSWORD is deliberately NOT here — it stays scoped to
+    # the import step alone, so it never reaches the test steps or the
+    # third-party build action. The Apple provisioning profile carries no
+    # private key (it is public certs, an App ID, entitlements and a UUID), so
+    # job-wide exposure costs nothing; it lives in a secret only to be
+    # rotatable without a commit. Anything with a key in it goes step-scoped.
     env:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
@@ -237,8 +243,6 @@ jobs:
       - name: Embed the macOS provisioning profile (optional)
         if: matrix.platform == 'macos-latest'
         shell: bash
-        env:
-          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
           if [ -z "${APPLE_PROVISIONING_PROFILE:-}" ]; then
@@ -285,14 +289,26 @@ jobs:
       # Safari extension never reaches the socket. So rather than trust that
       # `bundle.macOS.files` resolved its source path the way we expect, check
       # the built bundle and fail the release if it didn't.
+      #
+      # NOTE ON ORDERING: tauri-action already uploaded the bundle to the draft
+      # release by the time this runs, so this step cannot prevent a bad asset
+      # from being attached — it fails the run with the asset in place. The
+      # release is a DRAFT and the run is red, so publishing still takes a
+      # human; that human must delete the macOS assets before re-running.
+      # RELEASING.md says so under "macOS App Group provisioning".
+      #
+      # The bundle path is pinned rather than searched: a cache-restored
+      # per-arch tree under target/{aarch64,x86_64}-apple-darwin could
+      # otherwise be verified instead of the universal bundle actually shipped.
       - name: Verify the provisioning profile is embedded
         if: matrix.platform == 'macos-latest' && env.APPLE_PROVISIONING_PROFILE != ''
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find src-tauri/target -type d -name 'Cairn.app' -print -quit)"
-          if [ -z "$app" ]; then
-            echo "::error::No Cairn.app found under src-tauri/target."
+          app="src-tauri/target/universal-apple-darwin/release/bundle/macos/Cairn.app"
+          if [ ! -d "$app" ]; then
+            echo "::error::No bundle at $app. If the bundle path changed, this"\
+              "check is now verifying nothing — fix the path, don't delete it."
             exit 1
           fi
           if [ ! -f "$app/Contents/embedded.provisionprofile" ]; then
