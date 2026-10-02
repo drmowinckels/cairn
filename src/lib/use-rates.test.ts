@@ -15,14 +15,14 @@ vi.mock("./ipc", async () => {
   };
 });
 
+import { money } from "./money";
 import { useRates } from "./use-rates";
 
 const rate = (over: Record<string, unknown> = {}) => ({
   id: "r1",
   scopeType: "workspace" as const,
   scopeId: "",
-  amountMinorUnits: 12000,
-  currency: "USD",
+  amount: money(12000, "USD"),
   effectiveFrom: "2026-01-01",
   createdAt: "2026-01-01T00:00:00Z",
   ...over,
@@ -31,8 +31,7 @@ const rate = (over: Record<string, unknown> = {}) => ({
 const wsInput = {
   scopeType: "workspace" as const,
   scopeId: "",
-  amountMinorUnits: 12000,
-  currency: "USD",
+  amount: money(12000, "USD"),
   effectiveFrom: "2026-01-01",
 };
 
@@ -82,7 +81,10 @@ describe("useRates", () => {
 
     let ok = true;
     await act(async () => {
-      ok = await result.current.addRate({ ...wsInput, amountMinorUnits: 1 });
+      ok = await result.current.addRate({
+        ...wsInput,
+        amount: money(1, "USD"),
+      });
     });
     expect(ok).toBe(false);
     expect(result.current.error).toContain("isn't active");

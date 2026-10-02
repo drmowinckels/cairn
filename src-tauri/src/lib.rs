@@ -253,19 +253,10 @@ async fn billing_set_rate(
     state: tauri::State<'_, AppState>,
     scope_type: String,
     scope_id: String,
-    amount_minor_units: i64,
-    currency: String,
+    amount: plugins::billing::money::Money,
     effective_from: String,
 ) -> Result<Vec<plugins::billing::rates::Rate>, String> {
-    ipc::billing_set_rate_impl(
-        state,
-        scope_type,
-        scope_id,
-        amount_minor_units,
-        currency,
-        effective_from,
-    )
-    .await
+    ipc::billing_set_rate_impl(state, scope_type, scope_id, amount, effective_from).await
 }
 
 #[tauri::command]

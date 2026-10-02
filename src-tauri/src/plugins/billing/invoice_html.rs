@@ -4,6 +4,7 @@
 
 use super::business::BusinessDetails;
 use super::invoices::Invoice;
+use super::money::Money;
 
 /// Escape the five HTML-significant characters so user text (client name,
 /// notes, line descriptions) can never break out of the document. Single pass
@@ -22,6 +23,13 @@ fn escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// An amount as the document shows it. The digits are safe by construction, but
+/// the currency code is free text in the database, so it goes through `escape`
+/// like every other value that reaches the document.
+fn money(m: &Money) -> String {
+    escape(&m.to_string())
 }
 
 /// Escape user text and turn its newlines into `<br>` for display. The escape
@@ -52,14 +60,6 @@ fn issuer_lines(b: &BusinessDetails) -> String {
         s += &format!("<p>Tax ID: {}</p>", escape(&b.tax_id));
     }
     s
-}
-
-/// `<currency> <amount>`, with the number of decimals the currency actually
-/// has — see [`super::currency::format_money`]. An invoice is a document
-/// someone sends a client, so "JPY 1500.00" (a yen amount with decimals that
-/// don't exist) is not a cosmetic problem.
-fn money(minor_units: i64, currency: &str) -> String {
-    super::currency::format_money(minor_units, currency)
 }
 
 fn hours(seconds: i64) -> String {
@@ -164,7 +164,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
                 "<tr><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
                 escape(&l.description),
                 hours(l.seconds),
-                money(l.amount_minor_units, &inv.currency),
+                money(&l.amount),
             )
         })
         .collect();
@@ -263,11 +263,11 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         client = escape(&inv.client_name),
         from_block = from_block,
         rows = rows,
-        subtotal = money(inv.subtotal_minor_units, &inv.currency),
-        tax = money(inv.tax_minor_units, &inv.currency),
+        subtotal = money(&inv.subtotal),
+        tax = money(&inv.tax),
         tax_label = tax_label,
         tax_pct = inv.tax_rate_bps as f64 / 100.0,
-        total = money(inv.total_minor_units, &inv.currency),
+        total = money(&inv.total),
         payment = payment,
         notes = notes,
         unrated = unrated,
@@ -302,15 +302,14 @@ mod tests {
             number: "INV-0007".into(),
             client_id: "c1".into(),
             client_name: "Acme & Co".into(),
-            currency: "USD".into(),
             issue_date: "2026-07-15".into(),
             from_date: "2026-07-01".into(),
             to_date: "2026-08-01".into(),
             tax_rate_bps: 2500,
             tax_label: String::new(),
-            subtotal_minor_units: 15000,
-            tax_minor_units: 3750,
-            total_minor_units: 18750,
+            subtotal: Money::new(15000, "USD"),
+            tax: Money::new(3750, "USD"),
+            total: Money::new(18750, "USD"),
             unrated_seconds: 1800,
             status: "draft".into(),
             notes: Some("Thanks <3".into()),
@@ -319,16 +318,26 @@ mod tests {
                 id: "l1".into(),
                 description: "Website <redesign>".into(),
                 seconds: 5400,
-                amount_minor_units: 15000,
+                amount: Money::new(15000, "USD"),
                 sort: 0,
             }],
         }
     }
 
     #[test]
-    fn money_and_hours_format() {
-        assert_eq!(money(18750, "USD"), "USD 187.50");
-        assert_eq!(money(0, "EUR"), "EUR 0.00");
+    fn a_tampered_currency_code_cannot_inject_markup() {
+        let mut inv = invoice();
+        inv.total = Money::new(18750, "<script>");
+        let html = render_html(&inv, &business());
+        assert!(
+            !html.contains("<script>"),
+            "raw markup reached the document"
+        );
+        assert!(html.contains("&lt;SCRIPT&gt;"), "{html}");
+    }
+
+    #[test]
+    fn hours_renders_one_decimal() {
         assert_eq!(hours(5400), "1.5");
     }
 

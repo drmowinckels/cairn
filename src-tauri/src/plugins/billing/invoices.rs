@@ -4,6 +4,7 @@
 //! amounts are snapshotted so a past invoice stays reproducible. All money
 //! lives here; core has none.
 
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -12,18 +13,21 @@ use sqlx::{Row, SqlitePool};
 
 use super::business::BusinessDetails;
 use super::err;
-use super::rates::{amount_minor_units, list_rates, resolve_from, Rate};
+use super::money::{Money, MoneyError};
+use super::rates::{list_rates, resolve_from, Rate};
 use crate::ipc::parse_ts;
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 
-/// One invoice line: a project's billable time and what it bills to.
+/// One invoice line: a project's billable time and what it bills to. The
+/// amount carries its currency rather than silently inheriting the invoice's,
+/// so a line can be read, formatted or summed on its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InvoiceLine {
     pub id: String,
     pub description: String,
     pub seconds: i64,
-    pub amount_minor_units: i64,
+    pub amount: Money,
     pub sort: i64,
 }
 
@@ -35,7 +39,6 @@ pub struct Invoice {
     pub number: String,
     pub client_id: String,
     pub client_name: String,
-    pub currency: String,
     pub issue_date: String,
     pub from_date: String,
     pub to_date: String,
@@ -45,9 +48,13 @@ pub struct Invoice {
     /// in-app tax line matches the exported document even after the business
     /// profile's label changes.
     pub tax_label: String,
-    pub subtotal_minor_units: i64,
-    pub tax_minor_units: i64,
-    pub total_minor_units: i64,
+    /// The three figures that must agree: `subtotal` = sum of the lines,
+    /// `tax` = `subtotal` × `tax_rate_bps`, `total` = the two added. All in
+    /// the invoice's single currency, which is `total.currency` — an invoice
+    /// has no currency field of its own because its amounts already carry it.
+    pub subtotal: Money,
+    pub tax: Money,
+    pub total: Money,
     /// Billable time in range that had no rate — uninvoiced, flagged for the UI.
     pub unrated_seconds: i64,
     pub status: String,
@@ -63,9 +70,8 @@ pub struct InvoiceSummary {
     pub id: String,
     pub number: String,
     pub client_name: String,
-    pub currency: String,
     pub issue_date: String,
-    pub total_minor_units: i64,
+    pub total: Money,
     pub status: String,
 }
 
@@ -84,11 +90,13 @@ struct InvoiceRow {
 struct DraftLine {
     description: String,
     seconds: i64,
-    amount_minor_units: i64,
+    amount: Money,
 }
 
 struct Built {
-    currency: String,
+    /// The lines added up, and the single-currency guard that produced them.
+    /// `None` when nothing priced — exactly when `lines` is empty.
+    subtotal: Option<Money>,
     lines: Vec<DraftLine>,
     unrated_seconds: i64,
     /// The entries that landed on a priced line — recorded against the
@@ -109,8 +117,7 @@ fn build_lines_from(
     global_rounding: Rounding,
 ) -> Result<Built, String> {
     // Preserve project order by name for a stable invoice.
-    let mut by_project: BTreeMap<String, (i64, i64)> = BTreeMap::new();
-    let mut currency: Option<String> = None;
+    let mut by_project: BTreeMap<String, (i64, Money)> = BTreeMap::new();
     let mut unrated_seconds = 0;
     let mut billed_entry_ids = Vec::new();
 
@@ -128,44 +135,61 @@ fn build_lines_from(
             &r.started_raw,
         ) {
             Some(rate) => {
-                match &currency {
-                    Some(c) if c != &rate.currency => {
-                        return Err(format!(
-                            "this range mixes currencies ({c} and {}); \
-                             invoice one currency at a time",
-                            rate.currency
-                        ));
+                let priced = rate.amount.bill_hourly(secs).map_err(pricing_error)?;
+                match by_project.entry(r.project_name.clone()) {
+                    Entry::Vacant(slot) => {
+                        slot.insert((secs, priced));
                     }
-                    None => currency = Some(rate.currency.clone()),
-                    _ => {}
+                    Entry::Occupied(mut slot) => {
+                        let line = slot.get_mut();
+                        line.0 += secs;
+                        line.1 = line.1.checked_add(&priced).map_err(pricing_error)?;
+                    }
                 }
-                let entry = by_project.entry(r.project_name.clone()).or_insert((0, 0));
-                entry.0 += secs;
-                entry.1 += amount_minor_units(rate.amount_minor_units, secs);
                 billed_entry_ids.push(r.entry_id.clone());
             }
             None => unrated_seconds += secs,
         }
     }
 
-    let lines = by_project
+    let lines: Vec<DraftLine> = by_project
         .into_iter()
-        .map(|(description, (seconds, amount_minor_units))| DraftLine {
+        .map(|(description, (seconds, amount))| DraftLine {
             description,
             seconds,
-            amount_minor_units,
+            amount,
         })
         .collect();
+    // Adding the lines up is the single-currency rule: an invoice is one
+    // currency, and combining amounts in two is a refused operation rather than
+    // a wrong number. No lines means nothing priced, hence no subtotal.
+    let subtotal = lines
+        .iter()
+        .try_fold(None::<Money>, |running, line| match running {
+            None => Ok(Some(line.amount.clone())),
+            Some(so_far) => so_far.checked_add(&line.amount).map(Some),
+        })
+        .map_err(pricing_error)?;
     Ok(Built {
-        currency: currency.unwrap_or_default(),
+        subtotal,
         lines,
         unrated_seconds,
         billed_entry_ids,
     })
 }
 
-fn tax_minor_units(subtotal_minor_units: i64, tax_rate_bps: i64) -> i64 {
-    (subtotal_minor_units as f64 * tax_rate_bps as f64 / 10_000.0).round() as i64
+/// The user-facing form of a refused money add while pricing an invoice.
+/// A mismatch means the range spans two currencies, which the user fixes by
+/// narrowing it; an overflow means a rate or tax rate that isn't a real figure,
+/// and the type's own message says so.
+fn pricing_error(e: MoneyError) -> String {
+    match e {
+        MoneyError::CurrencyMismatch { left, right } => format!(
+            "this range mixes currencies ({left} and {right}); \
+             invoice one currency at a time"
+        ),
+        MoneyError::Overflow { .. } => e.to_string(),
+    }
 }
 
 /// The `FROM`/`WHERE` selecting a client's completed, billable entries in
@@ -318,7 +342,7 @@ pub async fn create_invoice(
     let rows = fetch_invoice_rows(pool, client_id, from_utc, to_utc).await?;
     let rates = list_rates(pool).await?;
     let built = build_lines_from(&rows, client_id, &rates, global_rounding)?;
-    if built.lines.is_empty() {
+    let Some(subtotal) = built.subtotal else {
         // Distinguish "nothing left to bill because it's all already invoiced"
         // from "no priced time here at all", so a retry over an invoiced range
         // doesn't read as if the time went missing.
@@ -329,11 +353,12 @@ pub async fn create_invoice(
         return Err(format!(
             "no billable, priced time for {name} between {from_date} and {to_date}"
         ));
-    }
+    };
 
-    let subtotal_minor_units: i64 = built.lines.iter().map(|l| l.amount_minor_units).sum();
-    let tax = tax_minor_units(subtotal_minor_units, tax_rate_bps);
-    let total_minor_units = subtotal_minor_units + tax;
+    // The subtotal was summed through `Money::checked_add` as the amounts were
+    // priced; the tax and gross come off it, so all three share a currency by
+    // construction rather than by three call sites agreeing.
+    let (tax, total) = subtotal.with_tax_bps(tax_rate_bps).map_err(pricing_error)?;
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = now.to_rfc3339();
     // The issuer's number format is applied when the number is minted below;
@@ -392,14 +417,14 @@ pub async fn create_invoice(
     .bind(&number)
     .bind(client_id)
     .bind(&name)
-    .bind(&built.currency)
+    .bind(&subtotal.currency)
     .bind(issue_date)
     .bind(from_date)
     .bind(to_date)
     .bind(tax_rate_bps)
-    .bind(subtotal_minor_units)
-    .bind(tax)
-    .bind(total_minor_units)
+    .bind(subtotal.minor_units)
+    .bind(tax.minor_units)
+    .bind(total.minor_units)
     .bind(built.unrated_seconds)
     .bind(notes)
     .bind(&created_at)
@@ -423,7 +448,7 @@ pub async fn create_invoice(
         .bind(&id)
         .bind(&line.description)
         .bind(line.seconds)
-        .bind(line.amount_minor_units)
+        .bind(line.amount.minor_units)
         .bind(sort)
         .execute(&mut *tx)
         .await
@@ -432,7 +457,7 @@ pub async fn create_invoice(
             id: line_id,
             description: line.description.clone(),
             seconds: line.seconds,
-            amount_minor_units: line.amount_minor_units,
+            amount: line.amount.clone(),
             sort,
         });
     }
@@ -448,15 +473,14 @@ pub async fn create_invoice(
         number,
         client_id: client_id.to_string(),
         client_name: name,
-        currency: built.currency,
         issue_date: issue_date.to_string(),
         from_date: from_date.to_string(),
         to_date: to_date.to_string(),
         tax_rate_bps,
         tax_label: business.tax_label,
-        subtotal_minor_units,
-        tax_minor_units: tax,
-        total_minor_units,
+        subtotal,
+        tax,
+        total,
         unrated_seconds: built.unrated_seconds,
         status: "draft".to_string(),
         notes: notes.map(str::to_string),
@@ -479,9 +503,8 @@ pub async fn list_invoices(pool: &SqlitePool) -> Result<Vec<InvoiceSummary>, Str
             id: r.get("id"),
             number: r.get("number"),
             client_name: r.get("client_name"),
-            currency: r.get("currency"),
             issue_date: r.get("issue_date"),
-            total_minor_units: r.get("total_minor_units"),
+            total: Money::new(r.get("total_minor_units"), &r.get::<String, _>("currency")),
             status: r.get("status"),
         })
         .collect())
@@ -505,6 +528,9 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
     // snapshot (the single source of truth) so the in-app tax line matches the
     // exported document. This runs only on a user-initiated detail open.
     let tax_label = parse_issuer(&head.get::<String, _>("issuer_snapshot")).tax_label;
+    // The stored document currency, handed to every amount read below so no
+    // line leaves this function without the scale needed to read it.
+    let currency: String = head.get("currency");
 
     let lines = sqlx::query(
         "SELECT id, description, seconds, amount_minor_units, sort \
@@ -519,7 +545,7 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
         id: r.get("id"),
         description: r.get("description"),
         seconds: r.get("seconds"),
-        amount_minor_units: r.get("amount_minor_units"),
+        amount: Money::new(r.get("amount_minor_units"), &currency),
         sort: r.get("sort"),
     })
     .collect();
@@ -529,15 +555,14 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
         number: head.get("number"),
         client_id: head.get("client_id"),
         client_name: head.get("client_name"),
-        currency: head.get("currency"),
         issue_date: head.get("issue_date"),
         from_date: head.get("from_date"),
         to_date: head.get("to_date"),
         tax_rate_bps: head.get("tax_rate_bps"),
         tax_label,
-        subtotal_minor_units: head.get("subtotal_minor_units"),
-        tax_minor_units: head.get("tax_minor_units"),
-        total_minor_units: head.get("total_minor_units"),
+        subtotal: Money::new(head.get("subtotal_minor_units"), &currency),
+        tax: Money::new(head.get("tax_minor_units"), &currency),
+        total: Money::new(head.get("total_minor_units"), &currency),
         unrated_seconds: head.get("unrated_seconds"),
         status: head.get("status"),
         notes: head.get("notes"),
@@ -679,8 +704,7 @@ mod tests {
             id: format!("{scope_type}-{scope_id}-{from}"),
             scope_type: scope_type.into(),
             scope_id: scope_id.into(),
-            amount_minor_units: minor_units,
-            currency: currency.into(),
+            amount: Money::new(minor_units, currency),
             effective_from: from.into(),
             created_at: "x".into(),
         }
@@ -688,12 +712,6 @@ mod tests {
 
     fn off() -> Rounding {
         Rounding::off()
-    }
-
-    #[test]
-    fn tax_is_bps_of_subtotal() {
-        assert_eq!(tax_minor_units(10000, 2500), 2500); // 25% of $100 = $25
-        assert_eq!(tax_minor_units(10000, 0), 0);
     }
 
     #[test]
@@ -708,15 +726,15 @@ mod tests {
             rate("project", "p2", 20000, "USD", "2026-01-01"),
         ];
         let built = build_lines_from(&rows, "c1", &rates, off()).unwrap();
-        assert_eq!(built.currency, "USD");
+        assert_eq!(built.subtotal, Some(Money::new(55000, "USD")));
         assert_eq!(built.lines.len(), 2);
         // Alphabetical: Audit then Website.
         assert_eq!(built.lines[0].description, "Audit");
         assert_eq!(built.lines[0].seconds, 7200);
-        assert_eq!(built.lines[0].amount_minor_units, 40000); // 2h @ $200
+        assert_eq!(built.lines[0].amount.minor_units, 40000); // 2h @ $200
         assert_eq!(built.lines[1].description, "Website");
         assert_eq!(built.lines[1].seconds, 5400); // 90 min
-        assert_eq!(built.lines[1].amount_minor_units, 15000); // 1.5h @ $100
+        assert_eq!(built.lines[1].amount.minor_units, 15000); // 1.5h @ $100
         assert_eq!(built.unrated_seconds, 0);
         // Every priced row is recorded as billed, so it can't be re-invoiced.
         assert_eq!(built.billed_entry_ids.len(), 3);
@@ -731,10 +749,42 @@ mod tests {
         let built = build_lines_from(&rows, "c1", &[], off()).unwrap();
         assert!(built.lines.is_empty());
         assert_eq!(built.unrated_seconds, 3600);
-        assert_eq!(built.currency, "");
+        assert_eq!(built.subtotal, None, "nothing priced, so no currency");
         // Unrated time isn't billed, so it's not recorded — a future invoice
         // (once a rate exists) can still pick it up.
         assert!(built.billed_entry_ids.is_empty());
+    }
+
+    /// Two currencies inside *one* project — a task-scoped rate in a different
+    /// currency from the project's. This is the per-project add refusing, not
+    /// the cross-project subtotal.
+    #[test]
+    fn build_rejects_two_currencies_within_one_project() {
+        let mut usd_row = row("p1", "Website", "2026-07-01", 60);
+        let mut eur_row = row("p1", "Website", "2026-07-02", 60);
+        usd_row.task_id = None;
+        eur_row.task_id = Some("t1".into());
+        let rates = vec![
+            rate("project", "p1", 10000, "USD", "2026-01-01"),
+            rate("task", "t1", 9000, "EUR", "2026-01-01"),
+        ];
+        let e = build_lines_from(&[usd_row, eur_row], "c1", &rates, off())
+            .err()
+            .expect("one line can't hold two currencies");
+        assert!(e.contains("mixes currencies"), "{e}");
+    }
+
+    /// A rate no real engagement could carry: pricing one hour of it overflows.
+    /// An invoice is a document a client is sent, so it is refused rather than
+    /// built from a figure that wrapped.
+    #[test]
+    fn build_rejects_a_rate_too_large_to_price() {
+        let rows = vec![row("p1", "Website", "2026-07-01", 120)];
+        let rates = vec![rate("project", "p1", i64::MAX, "USD", "2026-01-01")];
+        let e = build_lines_from(&rows, "c1", &rates, off())
+            .err()
+            .expect("an unpriceable rate must not produce an invoice");
+        assert!(e.contains("too large"), "{e}");
     }
 
     #[test]
@@ -768,7 +818,7 @@ mod tests {
         let built = build_lines_from(&rows, "c1", &rates, nearest_15).unwrap();
         assert_eq!(built.lines.len(), 1);
         assert_eq!(built.lines[0].seconds, 900);
-        assert_eq!(built.lines[0].amount_minor_units, 3000); // 15 min @ $120
+        assert_eq!(built.lines[0].amount.minor_units, 3000); // 15 min @ $120
                                                              // Only the row that survived rounding is billed; the zeroed one isn't.
         assert_eq!(built.billed_entry_ids, vec!["p1-2026-07-02-8".to_string()]);
     }
@@ -786,9 +836,15 @@ mod tests {
             "INSERT INTO projects (id, name, client_id, color, archived, billable_default, created_at, updated_at) \
              VALUES ('p1','Website','c1','#000',0,1,?1,?1)",
         ).bind(now).execute(pool).await.unwrap();
-        super::super::rates::set_rate(pool, "project", "p1", 15000, "USD", "2020-01-01")
-            .await
-            .unwrap();
+        super::super::rates::set_rate(
+            pool,
+            "project",
+            "p1",
+            &Money::new(15000, "USD"),
+            "2020-01-01",
+        )
+        .await
+        .unwrap();
     }
 
     /// Insert one completed, billable hour on `p1` on `day` (09:00–10:00).
@@ -1040,16 +1096,16 @@ mod tests {
         let inv = create(&db.pool, 2500).await;
         assert_eq!(inv.number, "INV-0001");
         assert_eq!(inv.client_name, "Acme");
-        assert_eq!(inv.currency, "USD");
-        assert_eq!(inv.subtotal_minor_units, 15000);
-        assert_eq!(inv.tax_minor_units, 3750); // 25%
-        assert_eq!(inv.total_minor_units, 18750);
+        assert_eq!(inv.total.currency, "USD");
+        assert_eq!(inv.subtotal.minor_units, 15000);
+        assert_eq!(inv.tax.minor_units, 3750); // 25%
+        assert_eq!(inv.total.minor_units, 18750);
         assert_eq!(inv.status, "draft");
         assert_eq!(inv.notes.as_deref(), Some("thanks"));
         // Only the priced project is a line; the unpriced hour is recorded.
         assert_eq!(inv.lines.len(), 1);
         assert_eq!(inv.lines[0].description, "Website");
-        assert_eq!(inv.lines[0].amount_minor_units, 15000);
+        assert_eq!(inv.lines[0].amount.minor_units, 15000);
         assert_eq!(inv.unrated_seconds, 3600);
 
         // Numbers increment monotonically — a fresh hour, since the first is
@@ -1057,9 +1113,9 @@ mod tests {
         insert_billable_hour(&db.pool, "e3", "2026-07-20").await;
         let inv2 = create(&db.pool, 0).await;
         assert_eq!(inv2.number, "INV-0002");
-        assert_eq!(inv2.tax_minor_units, 0);
+        assert_eq!(inv2.tax.minor_units, 0);
         // Only the fresh hour — a regressed exclusion would re-bill e1 (30000).
-        assert_eq!(inv2.subtotal_minor_units, 15000);
+        assert_eq!(inv2.subtotal.minor_units, 15000);
     }
 
     #[tokio::test]
@@ -1138,7 +1194,7 @@ mod tests {
         // Only the completed hour is on the invoice.
         assert_eq!(inv.lines.len(), 1);
         assert_eq!(inv.lines[0].seconds, 3600);
-        assert_eq!(inv.subtotal_minor_units, 15000);
+        assert_eq!(inv.subtotal.minor_units, 15000);
     }
 
     #[tokio::test]
@@ -1167,7 +1223,7 @@ mod tests {
 
         let a = create(&db.pool, 0).await;
         assert_eq!(a.number, "INV-0001");
-        assert_eq!(a.subtotal_minor_units, 15000);
+        assert_eq!(a.subtotal.minor_units, 15000);
         // The billed entry is recorded against the invoice.
         assert_eq!(ledger_count(&db.pool).await, 1);
 
@@ -1196,7 +1252,7 @@ mod tests {
         assert_eq!(ledger_count(&db.pool).await, 0);
         let b = create(&db.pool, 0).await;
         assert_eq!(b.number, "INV-0002");
-        assert_eq!(b.subtotal_minor_units, 15000);
+        assert_eq!(b.subtotal.minor_units, 15000);
     }
 
     #[tokio::test]
@@ -1299,14 +1355,84 @@ mod tests {
 
         // Add a rate for p2, then invoice the same range again. p1's entry is
         // already billed (excluded); p2's — never billed — now prices onto a line.
-        super::super::rates::set_rate(&db.pool, "project", "p2", 9000, "USD", "2020-01-01")
-            .await
-            .unwrap();
+        super::super::rates::set_rate(
+            &db.pool,
+            "project",
+            "p2",
+            &Money::new(9000, "USD"),
+            "2020-01-01",
+        )
+        .await
+        .unwrap();
         let b = create(&db.pool, 0).await;
         assert_eq!(b.lines.len(), 1);
         assert_eq!(b.lines[0].description, "Research");
-        assert_eq!(b.subtotal_minor_units, 9000); // 1h @ $90
+        assert_eq!(b.subtotal.minor_units, 9000); // 1h @ $90
         assert_eq!(b.unrated_seconds, 0);
+    }
+
+    /// The whole point of #320/#321 in one pass: a yen rate priced onto an
+    /// invoice, stored, read back, and rendered — with no step assuming ÷100
+    /// and nothing losing the currency along the way.
+    #[tokio::test]
+    async fn a_zero_decimal_currency_survives_the_round_trip() {
+        let (_dir, db) = test_db().await;
+        let now = "2026-07-01T00:00:00+00:00";
+        sqlx::query(
+            "INSERT INTO clients (id, name, created_at, updated_at) VALUES ('c1','Acme',?1,?1)",
+        )
+        .bind(now)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO projects (id, name, client_id, color, archived, billable_default, created_at, updated_at) \
+             VALUES ('p1','Website','c1','#000',0,1,?1,?1)",
+        ).bind(now).execute(&db.pool).await.unwrap();
+        // ¥15,000/hr — whole yen, so the stored integer is 15000, not 1500000.
+        super::super::rates::set_rate(
+            &db.pool,
+            "project",
+            "p1",
+            &Money::new(15_000, "JPY"),
+            "2020-01-01",
+        )
+        .await
+        .unwrap();
+        seed_billable_hour(&db.pool).await;
+
+        // 10% tax on one hour: ¥15,000 + ¥1,500 = ¥16,500.
+        let inv = create(&db.pool, 1_000).await;
+        assert_eq!(inv.subtotal, Money::new(15_000, "JPY"));
+        assert_eq!(inv.tax, Money::new(1_500, "JPY"));
+        assert_eq!(inv.total, Money::new(16_500, "JPY"));
+
+        let got = get_invoice(&db.pool, &inv.id).await.unwrap().unwrap();
+        assert_eq!(got.total, Money::new(16_500, "JPY"));
+        assert_eq!(got.lines[0].amount, Money::new(15_000, "JPY"));
+        // And it renders as whole yen — never "JPY 165.00".
+        assert_eq!(got.total.to_string(), "JPY 16500");
+        assert_eq!(
+            list_invoices(&db.pool).await.unwrap()[0].total.currency,
+            "JPY"
+        );
+    }
+
+    #[test]
+    fn pricing_error_explains_both_ways_an_add_can_fail() {
+        let mixed = pricing_error(MoneyError::CurrencyMismatch {
+            left: "USD".into(),
+            right: "EUR".into(),
+        });
+        assert!(mixed.contains("mixes currencies (USD and EUR)"), "{mixed}");
+        assert!(mixed.contains("one currency at a time"), "{mixed}");
+        // An overflow isn't a currency problem, so it keeps the type's wording
+        // rather than telling the user to narrow a range that would not help.
+        let huge = pricing_error(MoneyError::Overflow {
+            currency: "USD".into(),
+        });
+        assert!(huge.contains("too large"), "{huge}");
+        assert!(!huge.contains("mixes currencies"), "{huge}");
     }
 
     #[tokio::test]
@@ -1319,10 +1445,18 @@ mod tests {
         let list = list_invoices(&db.pool).await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].number, "INV-0001");
-        assert_eq!(list[0].total_minor_units, 15000);
+        // Amount *and* currency: the summary's currency is read from the stored
+        // column, so a wrong column would otherwise pass unnoticed.
+        assert_eq!(list[0].total, Money::new(15000, "USD"));
 
         let got = get_invoice(&db.pool, &inv.id).await.unwrap().unwrap();
         assert_eq!(got.lines.len(), 1);
+        // Each line's currency comes from the invoice row, not from the rate it
+        // was priced at — the one thing a read can now get wrong.
+        assert_eq!(got.lines[0].amount, Money::new(15000, "USD"));
+        assert_eq!(got.subtotal, Money::new(15000, "USD"));
+        assert_eq!(got.tax, Money::new(0, "USD"));
+        assert_eq!(got.total, Money::new(15000, "USD"));
 
         let sent = set_invoice_status(&db.pool, &inv.id, "sent").await.unwrap();
         assert_eq!(sent.status, "sent");

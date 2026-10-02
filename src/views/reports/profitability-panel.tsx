@@ -54,11 +54,11 @@ export function ProfitabilityPanel({ range, rounding, projectsById }: Props) {
     <section className="rep-profit" aria-label="Profitability">
       <div className="totals" aria-label="Billable totals">
         {data.totals.map((t) => (
-          <div className="total" key={t.currency}>
+          <div className="total" key={t.amount.currency}>
             <span className="total-num">
-              <Mono>{formatMoney(t.amountMinorUnits, t.currency)}</Mono>
+              <Mono>{formatMoney(t.amount)}</Mono>
             </span>
-            <span className="total-lbl">{t.currency} billable</span>
+            <span className="total-lbl">{t.amount.currency} billable</span>
           </div>
         ))}
         <div className="total">
@@ -104,9 +104,7 @@ export function ProfitabilityPanel({ range, rounding, projectsById }: Props) {
                 </td>
                 <td>
                   {p.amounts.length
-                    ? p.amounts
-                        .map((a) => formatMoney(a.amountMinorUnits, a.currency))
-                        .join(" · ")
+                    ? p.amounts.map((a) => formatMoney(a.amount)).join(" · ")
                     : "—"}
                 </td>
               </tr>

@@ -18,14 +18,14 @@ vi.mock("./ipc", async () => {
 });
 
 import { useInvoices } from "./use-invoices";
+import { money } from "./money";
 
 const summary = {
   id: "i1",
   number: "INV-0001",
   clientName: "Acme",
-  currency: "USD",
   issueDate: "2026-07-15",
-  totalMinorUnits: 18750,
+  total: money(18750, "USD"),
   status: "draft" as const,
 };
 
@@ -36,8 +36,8 @@ const invoice = {
   toDate: "2026-08-01",
   taxRateBps: 2500,
   taxLabel: "",
-  subtotalMinorUnits: 15000,
-  taxMinorUnits: 3750,
+  subtotal: money(15000, "USD"),
+  tax: money(3750, "USD"),
   unratedSeconds: 0,
   notes: null,
   createdAt: "x",
@@ -46,7 +46,7 @@ const invoice = {
       id: "l1",
       description: "Website",
       seconds: 3600,
-      amountMinorUnits: 15000,
+      amount: money(15000, "USD"),
       sort: 0,
     },
   ],

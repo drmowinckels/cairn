@@ -10,6 +10,7 @@ import { ProfitabilityPanel } from "./profitability-panel";
 import { ROUNDING_OFF } from "../../lib/rounding";
 import type { Project } from "../../lib/types";
 import type { ProfitabilityReport } from "../../lib/ipc";
+import { money } from "../../lib/money";
 
 const projectsById = {
   p1: { id: "p1", name: "Website" },
@@ -25,9 +26,7 @@ const report: ProfitabilityReport = {
   billableSeconds: 3600 * 10,
   nonbillableSeconds: 3600 * 2,
   unratedBillableSeconds: 3600,
-  totals: [
-    { currency: "USD", amountMinorUnits: 150000, billableSeconds: 3600 * 10 },
-  ],
+  totals: [{ amount: money(150000, "USD"), billableSeconds: 3600 * 10 }],
   byProject: [
     {
       projectId: "p1",
@@ -35,13 +34,7 @@ const report: ProfitabilityReport = {
       billableSeconds: 3600 * 10,
       nonbillableSeconds: 0,
       unratedBillableSeconds: 0,
-      amounts: [
-        {
-          currency: "USD",
-          amountMinorUnits: 150000,
-          billableSeconds: 3600 * 10,
-        },
-      ],
+      amounts: [{ amount: money(150000, "USD"), billableSeconds: 3600 * 10 }],
     },
     {
       projectId: "missing",

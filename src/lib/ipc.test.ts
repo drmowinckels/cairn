@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { money } from "./money";
 
 const invokeMock = vi.fn();
 
@@ -405,8 +406,7 @@ describe("ipc helpers (inside Tauri)", () => {
     const rate = {
       scopeType: "client" as const,
       scopeId: "c1",
-      amountMinorUnits: 15000,
-      currency: "USD",
+      amount: money(15000, "USD"),
       effectiveFrom: "2026-01-01",
     };
     await billingSetRate(rate);
@@ -418,14 +418,13 @@ describe("ipc helpers (inside Tauri)", () => {
     });
 
     invokeMock.mockResolvedValue({
-      amountMinorUnits: 15000,
-      currency: "USD",
+      amount: money(15000, "USD"),
       scopeType: "client",
       effectiveFrom: "2026-01-01",
     });
     const at = { projectId: "p1", at: "2026-06-01" };
     expect(await billingEffectiveRate(at)).toMatchObject({
-      amountMinorUnits: 15000,
+      amount: money(15000, "USD"),
     });
     expect(invokeMock).toHaveBeenCalledWith("billing_effective_rate", at);
   });
@@ -738,8 +737,7 @@ describe("ipc helpers (outside Tauri)", () => {
       await billingSetRate({
         scopeType: "workspace",
         scopeId: "",
-        amountMinorUnits: 1,
-        currency: "USD",
+        amount: money(1, "USD"),
         effectiveFrom: "2026-01-01",
       }),
     ).toEqual([]);
