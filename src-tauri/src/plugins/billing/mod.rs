@@ -16,6 +16,7 @@ pub mod invoice_html;
 pub mod invoices;
 pub mod lemonsqueezy;
 pub mod money;
+pub mod money_locale;
 pub mod profitability;
 pub mod rates;
 

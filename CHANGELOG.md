@@ -62,6 +62,22 @@ as the GitHub Release body, so keep the most recent version at the top.
   invoice, and amounts are formatted from one place, so a currency's own
   number of decimals is always used.
 
+- `[billing]` **Exported invoices now show money the way your client reads
+  it** (#330) — `$1,500.00`, `1 500,00 kr`, `1.500,00 €`, `￥150,000` —
+  instead of the bare `USD 1500.00` form, which had no symbol, no
+  thousands separator and no locale. The conventions come from the
+  amount's own **currency**, not from the machine that generated the
+  document: an invoice in EUR reads as a eurozone client expects even
+  when it was issued from an `en-US` laptop. A currency Cairn has no
+  entry for keeps the ISO code and gains the grouping
+  (`BHD 1,500.000`), and because a localized amount can render a bare
+  `$` (Canadian, Australian, Singapore and Mexican dollars all do), the
+  document now states the ISO code once — on the Amount column and the
+  Total. All three templates (Classic / Modern / Minimal) share the
+  rendering. Currencies with no minor unit (yen, won) and with three
+  (dinar, fils) are unaffected in value; only their presentation
+  changes.
+
 ### Added
 
 - `[packaging]` Cairn is installable with **Scoop** on Windows (#319):
