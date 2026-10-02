@@ -25,11 +25,15 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// An amount as the document shows it. The digits are safe by construction, but
-/// the currency code is free text in the database, so it goes through `escape`
-/// like every other value that reaches the document.
+/// An amount as the client's document shows it: locale-aware, from the
+/// amount's own currency (`money_locale`, #330) rather than `Money`'s plain
+/// diagnostic `Display`. One function, so all three template presets render
+/// amounts identically. The digits and separators are safe by construction, but
+/// the currency code is free text in the database and an unlisted one renders
+/// verbatim, so this goes through `escape` like every other value that reaches
+/// the document.
 fn money(m: &Money) -> String {
-    escape(&m.to_string())
+    escape(&super::money_locale::format(m))
 }
 
 /// Escape user text and turn its newlines into `<br>` for display. The escape
@@ -247,12 +251,13 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 <div class=\"parties\">{from_block}\
 <section class=\"to\"><h2>Billed to</h2><p class=\"pname\">{client}</p></section></div>\
 <table><thead><tr><th>Description</th><th class=\"num\">Hours</th>\
-<th class=\"num\">Amount</th></tr></thead><tbody>{rows}</tbody></table>\
+<th class=\"num\">Amount ({currency})</th></tr></thead><tbody>{rows}</tbody></table>\
 <dl class=\"totals\"><div><dt>Subtotal</dt><dd>{subtotal}</dd></div>\
 <div><dt>{tax_label} ({tax_pct}%)</dt><dd>{tax}</dd></div>\
-<div class=\"grand\"><dt>Total</dt><dd>{total}</dd></div></dl>\
+<div class=\"grand\"><dt>Total ({currency})</dt><dd>{total}</dd></div></dl>\
 {payment}{notes}{unrated}</body></html>",
         number = escape(&inv.number),
+        currency = escape(&inv.total.currency),
         style = BASE,
         template_override = template_override,
         template_key = template_key,
@@ -361,7 +366,7 @@ mod tests {
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("Invoice INV-0007"));
         assert!(html.contains("Period 2026-07-01 – 2026-08-01"));
-        assert!(html.contains("USD 187.50")); // total
+        assert!(html.contains("$187.50")); // total, locale-aware (#330)
         assert!(html.contains("Tax (25%)"));
         assert!(html.contains("1.5")); // line hours
         assert!(html.contains("0.5 h of billable time")); // unrated note
@@ -491,6 +496,88 @@ mod tests {
         assert!(html.contains("Thanks &lt;3"));
         assert!(!html.contains("<redesign>"));
         assert!(!html.contains("Acme & Co"));
+    }
+
+    /// An invoice in `currency`, with every figure in it — `invoices.rs`
+    /// enforces one currency per invoice (`Money::checked_add` refuses a
+    /// mismatch, and `get_invoice` reads every amount with the single stored
+    /// code), so a test invoice has to be built the same way or it pins a
+    /// document the app cannot produce.
+    fn invoice_in(currency: &str, subtotal_minor: i64) -> Invoice {
+        let subtotal = Money::new(subtotal_minor, currency);
+        // The invoice's own 25% rate, applied with the same arithmetic
+        // `invoices.rs` uses, so the figures agree with each other.
+        let (tax, total) = subtotal
+            .with_tax_bps(2_500)
+            .expect("the test figures must fit");
+        let mut inv = invoice();
+        inv.lines[0].amount = subtotal.clone();
+        inv.subtotal = subtotal;
+        inv.tax = tax;
+        inv.total = total;
+        inv
+    }
+
+    /// The amount the client reads, not the `USD 187.50` developer form — and
+    /// the symbol, grouping and separators of the amount's own currency, not
+    /// the machine's (#330).
+    #[test]
+    fn renders_amounts_in_the_currencys_own_locale() {
+        // The total is covered by the preset loop below; these are the two
+        // figures it doesn't reach.
+        let html = render_html(&invoice(), &business());
+        assert!(html.contains("$150.00"), "line amount: {html}");
+        assert!(html.contains("$37.50"), "tax");
+
+        // The same invoice in EUR reads the way a eurozone client expects:
+        // dot grouping, comma decimal, symbol last.
+        let html = render_html(&invoice_in("EUR", 150_000), &business());
+        assert!(html.contains("1.875,00\u{a0}\u{20ac}"), "{html}");
+
+        // A yen invoice keeps whole amounts, grouped — no decimals that
+        // currency doesn't have.
+        let html = render_html(&invoice_in("JPY", 150_000), &business());
+        assert!(html.contains("\u{ffe5}187,500"), "{html}");
+        assert!(!html.contains("187,500.00"), "a yen amount has no decimals");
+
+        // And a three-decimal currency keeps all three.
+        let html = render_html(&invoice_in("BHD", 1_500_000), &business());
+        assert!(html.contains("BHD\u{a0}1,875.000"), "{html}");
+    }
+
+    /// The group separator is one of the five characters `escape` encodes, so a
+    /// Swiss amount round-trips through the escaper rather than being mangled
+    /// by it (#321's escaping still wraps every rendered amount).
+    #[test]
+    fn escapes_a_group_separator_that_is_html_significant() {
+        let html = render_html(&invoice_in("CHF", 150_000), &business());
+        assert!(html.contains("CHF\u{a0}1&#39;875.00"), "{html}");
+        assert!(
+            !html.contains("1'875.00"),
+            "a raw apostrophe reached the document"
+        );
+    }
+
+    /// All three presets share one `money()`, so the fix can't reach some looks
+    /// and miss others.
+    #[test]
+    fn every_template_preset_renders_the_same_amounts() {
+        for template in ["", "classic", "modern", "minimal"] {
+            let mut b = business();
+            b.template = template.into();
+            let html = render_html(&invoice(), &b);
+            assert!(html.contains("$187.50"), "preset {template:?}: {html}");
+            assert!(!html.contains("USD 187.50"), "preset {template:?}");
+        }
+    }
+
+    /// A localized amount can render a bare `$` (CAD, AUD, SGD and MXN all do),
+    /// so the document has to say which currency it is somewhere.
+    #[test]
+    fn states_the_currency_code_once_per_section() {
+        let html = render_html(&invoice_in("CAD", 150_000), &business());
+        assert!(html.contains("Amount (CAD)"), "{html}");
+        assert!(html.contains("Total (CAD)"), "{html}");
     }
 
     #[test]
