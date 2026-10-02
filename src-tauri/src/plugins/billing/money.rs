@@ -147,6 +147,11 @@ impl Money {
 /// 150000`, `USD 1500.00`, `KWD 15.505`. The sign is carried once, in front
 /// of the whole number: splitting a negative amount with `/` and `%` would
 /// print it twice (`USD -15.-50`), since both truncate toward zero.
+///
+/// Unambiguous and locale-free, which is what logs, errors and tests want. It
+/// is **not** what a client's invoice should read: that goes through
+/// [`super::money_locale::format`], which renders the currency's own symbol,
+/// grouping and separators (#330).
 impl fmt::Display for Money {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let exp = currency::exponent(&self.currency);

@@ -1,0 +1,1226 @@
+{
+  "currencies": [
+    {
+      "currency": "USD",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "EUR",
+      "locale": "de-DE",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 €"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 €"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 €"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1.500,00 €"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1.234.567,89 €"
+        }
+      ]
+    },
+    {
+      "currency": "GBP",
+      "locale": "en-GB",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "£0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "£0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "£15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "£1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "£1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "NOK",
+      "locale": "nb-NO",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 kr"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 kr"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 kr"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1 500,00 kr"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1 234 567,89 kr"
+        }
+      ]
+    },
+    {
+      "currency": "SEK",
+      "locale": "sv-SE",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 kr"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 kr"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 kr"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1 500,00 kr"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1 234 567,89 kr"
+        }
+      ]
+    },
+    {
+      "currency": "DKK",
+      "locale": "da-DK",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 kr."
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 kr."
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 kr."
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1.500,00 kr."
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1.234.567,89 kr."
+        }
+      ]
+    },
+    {
+      "currency": "CHF",
+      "locale": "de-CH",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "CHF 0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "CHF 0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "CHF 15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "CHF 1'500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "CHF 1'234'567.89"
+        }
+      ]
+    },
+    {
+      "currency": "ISK",
+      "locale": "is-IS",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0 kr."
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "1 kr."
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "1.500 kr."
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "150.000 kr."
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "123.456.789 kr."
+        }
+      ]
+    },
+    {
+      "currency": "PLN",
+      "locale": "pl-PL",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 zł"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 zł"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 zł"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1500,00 zł"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1 234 567,89 zł"
+        }
+      ]
+    },
+    {
+      "currency": "CZK",
+      "locale": "cs-CZ",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 Kč"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 Kč"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 Kč"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1 500,00 Kč"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1 234 567,89 Kč"
+        }
+      ]
+    },
+    {
+      "currency": "HUF",
+      "locale": "hu-HU",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 Ft"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 Ft"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 Ft"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1500,00 Ft"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1 234 567,89 Ft"
+        }
+      ]
+    },
+    {
+      "currency": "RON",
+      "locale": "ro-RO",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 RON"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 RON"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 RON"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1.500,00 RON"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1.234.567,89 RON"
+        }
+      ]
+    },
+    {
+      "currency": "UAH",
+      "locale": "uk-UA",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 ₴"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 ₴"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 ₴"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1 500,00 ₴"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1 234 567,89 ₴"
+        }
+      ]
+    },
+    {
+      "currency": "TRY",
+      "locale": "tr-TR",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "₺0,00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "₺0,01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "₺15,00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "₺1.500,00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "₺1.234.567,89"
+        }
+      ]
+    },
+    {
+      "currency": "RUB",
+      "locale": "ru-RU",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0,00 ₽"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "0,01 ₽"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "15,00 ₽"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "1 500,00 ₽"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "1 234 567,89 ₽"
+        }
+      ]
+    },
+    {
+      "currency": "ILS",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "₪0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "₪0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "₪15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "₪1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "₪1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "JPY",
+      "locale": "ja-JP",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "￥0"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "￥1"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "￥1,500"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "￥150,000"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "￥123,456,789"
+        }
+      ]
+    },
+    {
+      "currency": "CNY",
+      "locale": "zh-CN",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "¥0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "¥0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "¥15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "¥1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "¥1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "TWD",
+      "locale": "zh-TW",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "KRW",
+      "locale": "ko-KR",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "₩0"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "₩1"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "₩1,500"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "₩150,000"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "₩123,456,789"
+        }
+      ]
+    },
+    {
+      "currency": "HKD",
+      "locale": "en-HK",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "HK$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "HK$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "HK$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "HK$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "HK$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "SGD",
+      "locale": "en-SG",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "THB",
+      "locale": "th-TH",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "฿0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "฿0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "฿15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "฿1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "฿1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "VND",
+      "locale": "vi-VN",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0 ₫"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "1 ₫"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "1.500 ₫"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "150.000 ₫"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "123.456.789 ₫"
+        }
+      ]
+    },
+    {
+      "currency": "IDR",
+      "locale": "id-ID",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "Rp 0,00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "Rp 0,01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "Rp 15,00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "Rp 1.500,00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "Rp 1.234.567,89"
+        }
+      ]
+    },
+    {
+      "currency": "MYR",
+      "locale": "ms-MY",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "RM 0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "RM 0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "RM 15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "RM 1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "RM 1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "PHP",
+      "locale": "en-PH",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "₱0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "₱0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "₱15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "₱1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "₱1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "INR",
+      "locale": "en-IN",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "₹0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "₹0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "₹15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "₹1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "₹12,34,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "AUD",
+      "locale": "en-AU",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "NZD",
+      "locale": "en-NZ",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "CAD",
+      "locale": "en-CA",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "MXN",
+      "locale": "es-MX",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "R$ 0,00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "R$ 0,01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "R$ 15,00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "R$ 1.500,00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "R$ 1.234.567,89"
+        }
+      ]
+    },
+    {
+      "currency": "ARS",
+      "locale": "es-AR",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$ 0,00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$ 0,01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$ 15,00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$ 1.500,00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$ 1.234.567,89"
+        }
+      ]
+    },
+    {
+      "currency": "CLP",
+      "locale": "es-CL",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$0"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$1"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$1.500"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$150.000"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$123.456.789"
+        }
+      ]
+    },
+    {
+      "currency": "COP",
+      "locale": "es-CO",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "$ 0,00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "$ 0,01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "$ 15,00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "$ 1.500,00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "$ 1.234.567,89"
+        }
+      ]
+    },
+    {
+      "currency": "ZAR",
+      "locale": "en-ZA",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "R 0,00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "R 0,01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "R 15,00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "R 1 500,00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "R 1 234 567,89"
+        }
+      ]
+    },
+    {
+      "currency": "NGN",
+      "locale": "en-NG",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "₦0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "₦0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "₦15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "₦1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "₦1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "KES",
+      "locale": "en-KE",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "Ksh 0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "Ksh 0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "Ksh 15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "Ksh 1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "Ksh 1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "XOF",
+      "locale": "fr-SN",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0 F CFA"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "1 F CFA"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "1 500 F CFA"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "150 000 F CFA"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "123 456 789 F CFA"
+        }
+      ]
+    },
+    {
+      "currency": "XAF",
+      "locale": "fr-CM",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "0 FCFA"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "1 FCFA"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "1 500 FCFA"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "150 000 FCFA"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "123 456 789 FCFA"
+        }
+      ]
+    },
+    {
+      "currency": "BHD",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "BHD 0.000"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "BHD 0.001"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "BHD 1.500"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "BHD 150.000"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "BHD 123,456.789"
+        }
+      ]
+    },
+    {
+      "currency": "KWD",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "KWD 0.000"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "KWD 0.001"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "KWD 1.500"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "KWD 150.000"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "KWD 123,456.789"
+        }
+      ]
+    },
+    {
+      "currency": "AED",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "AED 0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "AED 0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "AED 15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "AED 1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "AED 1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "SAR",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "SAR 0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "SAR 0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "SAR 15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "SAR 1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "SAR 1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "PKR",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "PKR 0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "PKR 0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "PKR 15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "PKR 1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "PKR 1,234,567.89"
+        }
+      ]
+    },
+    {
+      "currency": "ZZZ",
+      "locale": "en-US",
+      "amounts": [
+        {
+          "minorUnits": 0,
+          "formatted": "ZZZ 0.00"
+        },
+        {
+          "minorUnits": 1,
+          "formatted": "ZZZ 0.01"
+        },
+        {
+          "minorUnits": 1500,
+          "formatted": "ZZZ 15.00"
+        },
+        {
+          "minorUnits": 150000,
+          "formatted": "ZZZ 1,500.00"
+        },
+        {
+          "minorUnits": 123456789,
+          "formatted": "ZZZ 1,234,567.89"
+        }
+      ]
+    }
+  ]
+}
