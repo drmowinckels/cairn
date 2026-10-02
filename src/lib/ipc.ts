@@ -52,6 +52,8 @@ export interface SaveClientInput {
   name: string;
   color?: string | null;
   archived?: boolean;
+  address?: string | null;
+  taxId?: string | null;
 }
 
 export async function saveClient(client: SaveClientInput): Promise<Client> {
@@ -1285,12 +1287,23 @@ export interface InvoiceLine {
   sort: number;
 }
 
+/** The buyer's details as frozen onto an invoice at creation (#331) — the
+ *  counterpart to the issuer snapshot. Empty strings when the client had none;
+ *  the name itself is the invoice's own `clientName`. */
+export interface InvoiceClient {
+  address: string;
+  taxId: string;
+}
+
 /** A stored invoice with its lines (mirrors the Rust `Invoice`). */
 export interface Invoice {
   id: string;
   number: string;
   clientId: string;
   clientName: string;
+  /** Buyer address and tax id, frozen at creation — editing the client later
+   *  never alters an already-issued invoice. */
+  client: InvoiceClient;
   issueDate: string;
   fromDate: string;
   toDate: string;

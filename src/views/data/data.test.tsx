@@ -317,6 +317,46 @@ describe("DataView", () => {
     );
   });
 
+  it("edits a client's buyer details, prefilled from the record (#331)", async () => {
+    render(<DataView density="comfy" />);
+    const clients = screen.getByRole("region", { name: /^clients$/i });
+    // ACME Co. has both fields in the fixtures; Open source has neither.
+    fireEvent.click(
+      within(clients).getAllByRole("button", { name: /^edit$/i })[0],
+    );
+    expect(within(clients).getByLabelText(/client address/i)).toHaveProperty(
+      "value",
+      "9 Buyer Rd\nBerlin",
+    );
+    expect(within(clients).getByLabelText(/client tax id/i)).toHaveProperty(
+      "value",
+      "DE 123456789",
+    );
+    fireEvent.change(within(clients).getByLabelText(/client address/i), {
+      target: { value: "2 New Rd" },
+    });
+    fireEvent.click(within(clients).getByRole("button", { name: /^save$/i }));
+    // The form closes on save.
+    await waitFor(() =>
+      expect(within(clients).queryByLabelText(/client address/i)).toBeNull(),
+    );
+
+    // A client with no address or tax id opens with empty fields.
+    fireEvent.click(
+      within(clients).getAllByRole("button", { name: /^edit$/i })[1],
+    );
+    expect(within(clients).getByLabelText(/client address/i)).toHaveProperty(
+      "value",
+      "",
+    );
+    expect(within(clients).getByLabelText(/client tax id/i)).toHaveProperty(
+      "value",
+      "",
+    );
+    fireEvent.click(within(clients).getByRole("button", { name: /^cancel$/i }));
+    expect(within(clients).queryByLabelText(/client address/i)).toBeNull();
+  });
+
   it("adds a task to the selected project", async () => {
     render(<DataView density="comfy" />);
     const tasksRegion = screen.getByRole("region", { name: /^tasks$/i });
@@ -353,7 +393,16 @@ describe("DataView (inside Tauri)", () => {
         archived: false,
       },
     ];
-    const clients = [{ id: "c1", name: "ACME", color: null, archived: false }];
+    const clients = [
+      {
+        id: "c1",
+        name: "ACME",
+        color: null,
+        archived: false,
+        address: "1 Old St",
+        taxId: null,
+      },
+    ];
     let listProjectsCalls = 0;
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd in overrides) {
@@ -422,6 +471,106 @@ describe("DataView (inside Tauri)", () => {
     );
     await waitFor(() =>
       expect(tracker.listProjectsCalls).toBeGreaterThan(callsBefore),
+    );
+  });
+
+  it("saves a client's address and tax ID through the Edit form (#331)", async () => {
+    backend({
+      save_client: {
+        id: "c1",
+        name: "ACME",
+        color: null,
+        archived: false,
+        address: "9 Buyer Rd",
+        taxId: "DE 123",
+      },
+    });
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const clients = screen.getByRole("region", { name: /^clients$/i });
+    await within(clients).findByText("ACME");
+    fireEvent.click(within(clients).getByRole("button", { name: /^edit$/i }));
+    // Prefilled from the stored record.
+    expect(within(clients).getByLabelText(/client address/i)).toHaveProperty(
+      "value",
+      "1 Old St",
+    );
+    fireEvent.change(within(clients).getByLabelText(/client address/i), {
+      target: { value: "  9 Buyer Rd  " },
+    });
+    fireEvent.change(within(clients).getByLabelText(/client tax id/i), {
+      target: { value: "  DE 123  " },
+    });
+    // A key that isn't Enter submits nothing.
+    fireEvent.keyDown(within(clients).getByLabelText(/^client name$/i), {
+      key: "a",
+    });
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "save_client",
+      expect.anything(),
+    );
+    fireEvent.click(within(clients).getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("save_client", {
+        client: {
+          id: "c1",
+          name: "ACME",
+          // Untouched fields pass through rather than being cleared.
+          color: null,
+          archived: false,
+          address: "9 Buyer Rd",
+          taxId: "DE 123",
+        },
+      }),
+    );
+  });
+
+  it("clearing a client's buyer details sends null, and a blank name never saves", async () => {
+    backend({
+      save_client: {
+        id: "c1",
+        name: "ACME",
+        color: null,
+        archived: false,
+        address: null,
+        taxId: null,
+      },
+    });
+    const { DataView: Fresh } = await import("./data");
+    render(<Fresh density="comfy" />);
+    const clients = screen.getByRole("region", { name: /^clients$/i });
+    await within(clients).findByText("ACME");
+    fireEvent.click(within(clients).getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(within(clients).getByLabelText(/client address/i), {
+      target: { value: "   " },
+    });
+
+    // A blank name is refused: Enter submits nothing and Save is disabled.
+    const name = within(clients).getByLabelText(/^client name$/i);
+    fireEvent.change(name, { target: { value: "  " } });
+    fireEvent.keyDown(name, { key: "Enter" });
+    expect(
+      within(clients).getByRole("button", { name: /^save$/i }),
+    ).toHaveProperty("disabled", true);
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "save_client",
+      expect.anything(),
+    );
+
+    // With a name back, the cleared address is sent as null.
+    fireEvent.change(name, { target: { value: "ACME" } });
+    fireEvent.keyDown(name, { key: "Enter" });
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("save_client", {
+        client: {
+          id: "c1",
+          name: "ACME",
+          color: null,
+          archived: false,
+          address: null,
+          taxId: null,
+        },
+      }),
     );
   });
 

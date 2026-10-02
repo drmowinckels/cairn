@@ -23,6 +23,8 @@ function localClient(input: SaveClientInput, id?: string): Client {
     name: input.name.trim(),
     color: input.color ?? null,
     archived: input.archived ?? false,
+    address: input.address?.trim() || null,
+    taxId: input.taxId?.trim() || null,
   };
 }
 

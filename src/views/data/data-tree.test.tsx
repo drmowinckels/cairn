@@ -498,7 +498,14 @@ describe("DataTree", () => {
 
   it("shows an empty projects message inside a client group with no projects", () => {
     const clientsOnly: Client[] = [
-      { id: "c-empty", name: "Ghost client", color: null, archived: false },
+      {
+        id: "c-empty",
+        name: "Ghost client",
+        color: null,
+        archived: false,
+        address: null,
+        taxId: null,
+      },
     ];
     const projectsUnderOtherClient: Project[] = [
       {

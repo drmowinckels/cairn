@@ -8,7 +8,7 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use super::business::BusinessDetails;
@@ -17,6 +17,28 @@ use super::money::{Money, MoneyError};
 use super::rates::{list_rates, resolve_from, Rate};
 use crate::ipc::parse_ts;
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
+
+/// The buyer's details **as frozen onto the invoice at creation** (#331) — the
+/// counterpart to `issuer_snapshot`'s `BusinessDetails`, so editing a client
+/// later never rewrites an already-issued document. The client's *name* is
+/// already frozen in the `client_name` column and is deliberately not
+/// duplicated here.
+///
+/// This is a persisted wire format: it is stored as JSON in
+/// `billing_invoices.client_snapshot` and read back by deserializing that copy.
+/// Treat the fields as **append-only** — renaming or retyping one silently
+/// drops it from every already-issued invoice. Add new optional fields only;
+/// the struct-level `serde(default)` then lets an older snapshot (and a
+/// pre-`0037` invoice's `''`) deserialize with the absent field defaulted. The
+/// same convention as `BusinessDetails`; see `parse_client`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClientSnapshot {
+    /// Postal address; empty when the client had none at issue time.
+    pub address: String,
+    /// Tax / VAT id; empty when the client had none at issue time.
+    pub tax_id: String,
+}
 
 /// One invoice line: a project's billable time and what it bills to. The
 /// amount carries its currency rather than silently inheriting the invoice's,
@@ -39,6 +61,9 @@ pub struct Invoice {
     pub number: String,
     pub client_id: String,
     pub client_name: String,
+    /// The buyer's address and tax id as frozen at creation (#331); empty
+    /// fields render no line in the "Billed to" block.
+    pub client: ClientSnapshot,
     pub issue_date: String,
     pub from_date: String,
     pub to_date: String,
@@ -269,14 +294,26 @@ async fn count_billable_in_range(
     Ok(n)
 }
 
-async fn client_name(pool: &SqlitePool, client_id: &str) -> Result<String, String> {
-    sqlx::query("SELECT name FROM clients WHERE id = ?1")
+/// The client's name plus the buyer details to freeze onto the invoice. NULL
+/// address/tax-id columns (never set, or cleared) become empty strings — the
+/// snapshot's "nothing to show" form.
+async fn client_record(
+    pool: &SqlitePool,
+    client_id: &str,
+) -> Result<(String, ClientSnapshot), String> {
+    let row = sqlx::query("SELECT name, address, tax_id FROM clients WHERE id = ?1")
         .bind(client_id)
         .fetch_optional(pool)
         .await
         .map_err(err)?
-        .map(|r| r.get::<String, _>("name"))
-        .ok_or_else(|| "unknown client".to_string())
+        .ok_or_else(|| "unknown client".to_string())?;
+    Ok((
+        row.get("name"),
+        ClientSnapshot {
+            address: row.get::<Option<String>, _>("address").unwrap_or_default(),
+            tax_id: row.get::<Option<String>, _>("tax_id").unwrap_or_default(),
+        },
+    ))
 }
 
 /// Record each billed entry against the invoice on the given connection.
@@ -332,7 +369,7 @@ pub async fn create_invoice(
     if tax_rate_bps < 0 {
         return Err("tax rate can't be negative".into());
     }
-    let name = client_name(pool, client_id).await?;
+    let (name, client) = client_record(pool, client_id).await?;
     let already_invoiced = || {
         format!(
             "all billable time for {name} between {from_date} and {to_date} \
@@ -369,6 +406,9 @@ pub async fn create_invoice(
     // Serializing a plain struct can't fail; `""` on the impossible error still
     // deserializes back to an empty issuer, so the invoice stays renderable.
     let issuer_snapshot = serde_json::to_string(&business).unwrap_or_default();
+    // Same contract for the buyer side: `""` on the impossible error still
+    // deserializes back to an empty snapshot, so the invoice stays renderable.
+    let client_snapshot = serde_json::to_string(&client).unwrap_or_default();
 
     let mut tx = pool.begin().await.map_err(err)?;
     // Take the next number from the monotonic counter inside the transaction:
@@ -409,8 +449,10 @@ pub async fn create_invoice(
         "INSERT INTO billing_invoices \
            (id, seq, number, client_id, client_name, currency, issue_date, \
             from_date, to_date, tax_rate_bps, subtotal_minor_units, tax_minor_units, \
-            total_minor_units, unrated_seconds, notes, created_at, issuer_snapshot) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            total_minor_units, unrated_seconds, notes, created_at, issuer_snapshot, \
+            client_snapshot) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
+                 ?18)",
     )
     .bind(&id)
     .bind(seq)
@@ -429,6 +471,7 @@ pub async fn create_invoice(
     .bind(notes)
     .bind(&created_at)
     .bind(&issuer_snapshot)
+    .bind(&client_snapshot)
     .execute(&mut *tx)
     .await
     .map_err(err)?;
@@ -473,6 +516,7 @@ pub async fn create_invoice(
         number,
         client_id: client_id.to_string(),
         client_name: name,
+        client,
         issue_date: issue_date.to_string(),
         from_date: from_date.to_string(),
         to_date: to_date.to_string(),
@@ -514,7 +558,8 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
     let Some(head) = sqlx::query(
         "SELECT id, number, client_id, client_name, currency, issue_date, \
                 from_date, to_date, tax_rate_bps, subtotal_minor_units, tax_minor_units, \
-                total_minor_units, unrated_seconds, status, notes, created_at, issuer_snapshot \
+                total_minor_units, unrated_seconds, status, notes, created_at, \
+                issuer_snapshot, client_snapshot \
            FROM billing_invoices WHERE id = ?1",
     )
     .bind(id)
@@ -528,6 +573,8 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
     // snapshot (the single source of truth) so the in-app tax line matches the
     // exported document. This runs only on a user-initiated detail open.
     let tax_label = parse_issuer(&head.get::<String, _>("issuer_snapshot")).tax_label;
+    // The buyer details frozen at creation, from the same kind of snapshot.
+    let client = parse_client(&head.get::<String, _>("client_snapshot"));
     // The stored document currency, handed to every amount read below so no
     // line leaves this function without the scale needed to read it.
     let currency: String = head.get("currency");
@@ -555,6 +602,7 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
         number: head.get("number"),
         client_id: head.get("client_id"),
         client_name: head.get("client_name"),
+        client,
         issue_date: head.get("issue_date"),
         from_date: head.get("from_date"),
         to_date: head.get("to_date"),
@@ -584,6 +632,21 @@ fn parse_issuer(snapshot: &str) -> BusinessDetails {
     serde_json::from_str(snapshot).unwrap_or_else(|e| {
         log::warn!("invoice issuer snapshot didn't parse ({e}); rendering without issuer");
         BusinessDetails::default()
+    })
+}
+
+/// Deserialize a stored client snapshot into the frozen `ClientSnapshot`. An
+/// empty snapshot (pre-`0037` invoices) is a client with no buyer details →
+/// name-only "Billed to" block. A non-empty value that fails to parse (only
+/// reachable by outside tampering) degrades the same way rather than failing the
+/// render, but is logged so genuine corruption stays visible.
+fn parse_client(snapshot: &str) -> ClientSnapshot {
+    if snapshot.is_empty() {
+        return ClientSnapshot::default();
+    }
+    serde_json::from_str(snapshot).unwrap_or_else(|e| {
+        log::warn!("invoice client snapshot didn't parse ({e}); rendering name only");
+        ClientSnapshot::default()
     })
 }
 
@@ -972,6 +1035,74 @@ mod tests {
 
         let inv = create(&db.pool, 0).await;
         assert_eq!(inv.number, "2026-001");
+    }
+
+    #[test]
+    fn parse_client_handles_empty_valid_and_garbage() {
+        // Pre-0037 rows store "" → no buyer details, no warning.
+        assert_eq!(parse_client(""), ClientSnapshot::default());
+        // Our own serialized snapshot round-trips exactly.
+        let c = ClientSnapshot {
+            address: "9 Buyer Rd\nBerlin".into(),
+            tax_id: "DE 123".into(),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        assert_eq!(parse_client(&json), c);
+        // "{}" fills every field from Default (the serde(default) path that
+        // keeps this append-only).
+        assert_eq!(parse_client("{}"), ClientSnapshot::default());
+        // A snapshot written before a field existed still parses.
+        assert_eq!(
+            parse_client(r#"{"address":"9 Buyer Rd"}"#),
+            ClientSnapshot {
+                address: "9 Buyer Rd".into(),
+                tax_id: String::new(),
+            }
+        );
+        // Non-empty garbage degrades to no buyer details instead of panicking.
+        assert_eq!(parse_client("not json"), ClientSnapshot::default());
+    }
+
+    #[tokio::test]
+    async fn the_buyer_details_are_frozen_at_creation() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await;
+        seed_billable_hour(&db.pool).await;
+        sqlx::query("UPDATE clients SET address = ?1, tax_id = ?2 WHERE id = 'c1'")
+            .bind("9 Buyer Rd\nBerlin")
+            .bind("DE 123")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        let inv = create(&db.pool, 0).await;
+        assert_eq!(inv.client.address, "9 Buyer Rd\nBerlin");
+        assert_eq!(inv.client.tax_id, "DE 123");
+
+        // Editing the client afterwards must NOT rewrite the issued invoice.
+        sqlx::query("UPDATE clients SET name = ?1, address = ?2, tax_id = ?3 WHERE id = 'c1'")
+            .bind("Renamed Co")
+            .bind("1 Moved Ave")
+            .bind("DE 999")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let reread = get_invoice(&db.pool, &inv.id).await.unwrap().unwrap();
+        assert_eq!(reread.client_name, "Acme");
+        assert_eq!(reread.client.address, "9 Buyer Rd\nBerlin");
+        assert_eq!(reread.client.tax_id, "DE 123");
+    }
+
+    #[tokio::test]
+    async fn a_client_without_buyer_details_snapshots_empty() {
+        let (_dir, db) = test_db().await;
+        seed_client_and_rate(&db.pool).await; // NULL address and tax_id
+        seed_billable_hour(&db.pool).await;
+
+        let inv = create(&db.pool, 0).await;
+        assert_eq!(inv.client, ClientSnapshot::default());
+        let reread = get_invoice(&db.pool, &inv.id).await.unwrap().unwrap();
+        assert_eq!(reread.client, ClientSnapshot::default());
     }
 
     #[test]

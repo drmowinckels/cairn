@@ -556,6 +556,95 @@ function ProjectForm({
 
 // ── Clients ───────────────────────────────────────────────────────────
 
+// Edit form for a client: the name plus the buyer details an invoice's "Billed
+// to" block needs (#331). Both are optional — blank omits the line — and are
+// frozen onto each invoice at creation, so editing here never alters an
+// already-issued invoice.
+interface ClientFormProps {
+  initial: Client;
+  onCancel: () => void;
+  onSubmit: (input: {
+    name: string;
+    address: string | null;
+    taxId: string | null;
+  }) => Promise<void>;
+}
+
+function ClientForm({ initial, onCancel, onSubmit }: ClientFormProps) {
+  const [name, setName] = useState(initial.name);
+  const [address, setAddress] = useState(initial.address ?? "");
+  const [taxId, setTaxId] = useState(initial.taxId ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    try {
+      await onSubmit({
+        name: name.trim(),
+        address: address.trim() || null,
+        taxId: taxId.trim() || null,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="data-form" role="group" aria-label="Edit client">
+      <input
+        className="field-input"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void submit();
+          }
+        }}
+        placeholder="Client name"
+        aria-label="Client name"
+        disabled={busy}
+      />
+      <textarea
+        className="field-input"
+        rows={2}
+        value={address}
+        onChange={(e) => setAddress(e.target.value)}
+        placeholder="Address — shown on invoices"
+        aria-label="Client address"
+        disabled={busy}
+      />
+      <input
+        className="field-input"
+        value={taxId}
+        onChange={(e) => setTaxId(e.target.value)}
+        placeholder="Tax / VAT ID — shown on invoices"
+        aria-label="Client tax ID"
+        disabled={busy}
+      />
+      <div className="data-form-actions">
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={onCancel}
+          disabled={busy}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary btn--sm"
+          onClick={() => void submit()}
+          disabled={busy || !name.trim()}
+        >
+          <Icon name="check" size={12} /> Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface ClientsSectionProps {
   clients: ReturnType<typeof useClients>;
   projects: Project[];
@@ -570,6 +659,7 @@ function ClientsSection({
   run,
 }: ClientsSectionProps) {
   const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const projectCount = useMemo(() => {
     const counts = new Map<string, number>();
@@ -601,7 +691,28 @@ function ClientsSection({
         <ul className="data-list">
           {clients.clients.map((c) => {
             const count = projectCount.get(c.id) ?? 0;
-            return (
+            return editing === c.id ? (
+              <li key={c.id} className="data-row data-row--editing">
+                <ClientForm
+                  initial={c}
+                  onCancel={() => setEditing(null)}
+                  onSubmit={async (input) => {
+                    await run(async () => {
+                      // `save_client` upserts the whole row, so the fields
+                      // this form doesn't edit are passed through — otherwise
+                      // saving here would clear them.
+                      await clients.update({
+                        color: c.color,
+                        archived: c.archived,
+                        ...input,
+                        id: c.id,
+                      });
+                      setEditing(null);
+                    });
+                  }}
+                />
+              </li>
+            ) : (
               <li key={c.id} className="data-row">
                 <span className="data-name">{c.name}</span>
                 <span className="data-meta">
@@ -610,6 +721,7 @@ function ClientsSection({
                 <RowActions
                   label={c.name}
                   confirming={confirmId === c.id}
+                  onEdit={() => setEditing(c.id)}
                   onAskDelete={() => setConfirmId(c.id)}
                   onConfirmDelete={() => {
                     setConfirmId(null);
