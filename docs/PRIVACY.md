@@ -130,7 +130,7 @@ Billing is an **opt-in feature plugin** (#109), off by default, and — unlike c
 
 - **What a licensing call carries — and doesn't.** Activating, re-checking, or removing a license sends only the **license key** and a per-device **instance id** to Lemon Squeezy's public license API. It never sends any tracked time data: your entries, projects, window titles, and signals never leave the machine. The device label sent is a fixed `"Cairn Desktop"`, not your hostname.
 - **When it talks to the network.** On activation, on an explicit "Re-check", and once when the billing card is opened with a stored license. Reading the stored status (and everyday app use) makes **no** network call, so a dropped connection never locks out a paying user — the last-known state stands until the next successful check.
-- **What's stored:** the license key, the Lemon Squeezy instance id, the last-known status, and display metadata (customer email, product, expiry) in `cairn.sqlite`'s `billing_license` table, plus — in later slices — rates and invoice data in billing-owned tables. "Delete everything" wipes it with the rest.
+- **What's stored:** the license key, the Lemon Squeezy instance id, the last-known status, and display metadata (customer email, product, expiry) in `cairn.sqlite`'s `billing_license` table, plus rates and invoice data in billing-owned tables. "Delete everything" wipes it with the rest.
 - **The license key is write-only across the IPC boundary** — status replies carry only the stored status and display metadata, never the key.
 - **Money never enters core.** Rates, currency, and amounts exist only inside the plugin's own tables; core entries carry a plain billable yes/no flag.
 
@@ -159,7 +159,12 @@ A note on cloud-synced folders: backup and restore are explicitly snapshot opera
 
 Any of these requires a CHANGELOG entry tagged `[privacy]` and explicit reaffirmation in the Settings privacy card:
 
-- Adding any outbound network request (including update checks). The user-configured calendar fetches in Settings → Integrations → Calendar are the one allowed exception, scoped to URLs the user explicitly added.
+- **Adding any outbound network request outside the set below.** Core itself makes exactly one, and only once the user asks for it: the [update check](#update-checks). Everything else that leaves this machine belongs to an **opt-in plugin**, is off until the user enables it, and is scoped to what the user configured:
+  - [Calendar](#calendar-integration) — ICS fetches, limited to feed URLs the user added.
+  - [PM connectors](#pm-connectors) — read-only requests to the remote tracker the user connected.
+  - [Billing (Pro)](#billing-pro-plugin) — license verification with Lemon Squeezy, carrying only the license key and a per-device instance id.
+
+  No tracked data — entries, projects, window titles, signals — is part of any of these. A request from anywhere else, in core or in a plugin, breaks this contract, and a new plugin must declare its egress in this document before it ships.
 - Persisting any field marked "not stored" above. Two deliberate, documented, local-only exceptions exist: the always-on [suggestion feedback log](#suggestion-feedback-log-191) (#191), and the **opt-in, off-by-default** [activity log](#activity-log-190) (#190) — both confined to this machine, both clearable, and the activity log purged the moment it is turned off. Any further such persistence needs the same `[privacy]` reaffirmation.
 - Adding any third-party SDK (analytics, crash reporting, anything).
 - Changing the exclusion list behavior so an excluded signal _is_ observed in any capacity.
