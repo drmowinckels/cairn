@@ -66,8 +66,8 @@ pub fn format_money(minor_units: i64, currency: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::test_db;
-    use sqlx::Row;
+    use crate::test_support::{historical_db, test_db, TempDir};
+    use sqlx::{Row, SqlitePool};
 
     /// Migration 0034 rescaled money written under the old "always 100"
     /// assumption. Tested by executing the migration file itself against rows
@@ -75,6 +75,16 @@ mod tests {
     /// that actually ships.
     const RESCALE_SQL: &str =
         include_str!("../../../migrations/0034_billing_currency_minor_units.sql");
+
+    /// Migration 0035, which renames the `*_cents` columns 0034 operates on.
+    const RENAME_SQL: &str =
+        include_str!("../../../migrations/0035_billing_amount_minor_units.sql");
+
+    /// The schema 0034 was written against — everything up to, but not
+    /// including, 0034 itself.
+    async fn legacy_db() -> (TempDir, SqlitePool) {
+        historical_db("0034").await
+    }
 
     #[test]
     fn exponent_knows_the_three_scales() {
@@ -160,30 +170,110 @@ mod tests {
         sqlx::raw_sql(RESCALE_SQL).execute(pool).await.unwrap();
     }
 
+    /// Every column migration 0035 renames, read from the live schema the app
+    /// actually migrates to — and no `*_cents` column left anywhere in it, so
+    /// this doubles as a standing guard against a new one being introduced.
+    #[tokio::test]
+    async fn migration_renames_the_money_columns_to_minor_units() {
+        let (_dir, db) = test_db().await;
+        let columns: Vec<String> = sqlx::query(
+            "SELECT m.name || '.' || p.name AS col \
+               FROM sqlite_master m JOIN pragma_table_info(m.name) p \
+              WHERE m.type = 'table'",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.get::<String, _>("col"))
+        .collect();
+
+        for renamed in [
+            "billing_rates.amount_minor_units",
+            "billing_invoices.subtotal_minor_units",
+            "billing_invoices.tax_minor_units",
+            "billing_invoices.total_minor_units",
+            "billing_invoice_lines.amount_minor_units",
+        ] {
+            assert!(columns.iter().any(|c| c == renamed), "{renamed} missing");
+        }
+        let stragglers: Vec<&String> = columns.iter().filter(|c| c.ends_with("_cents")).collect();
+        assert!(
+            stragglers.is_empty(),
+            "a *_cents column is still in the schema: {stragglers:?}",
+        );
+    }
+
+    /// `RENAME COLUMN` rewrites the column's name inside the table's own CHECK
+    /// constraints, so the non-negative guard on a rate amount must still bite
+    /// — and must name the new column, which is what proves it was rewritten.
+    #[tokio::test]
+    async fn the_rate_non_negative_check_survived_the_rename() {
+        let (_dir, db) = test_db().await;
+        let err = sqlx::query(
+            "INSERT INTO billing_rates \
+               (id, scope_type, scope_id, amount_minor_units, currency, effective_from) \
+             VALUES ('neg', 'workspace', '', -1, 'USD', '2026-01-01')",
+        )
+        .execute(&db.pool)
+        .await
+        .expect_err("a negative rate must still violate the CHECK");
+        assert!(
+            err.to_string().contains("amount_minor_units"),
+            "the CHECK must name the renamed column, got: {err}",
+        );
+    }
+
+    /// A smoke test that the two money migrations compose in the order they
+    /// ship in, on populated tables: 0034 rescales the old-scale values, then
+    /// 0035 renames the columns it just wrote, and the rescaled figures read
+    /// back under the new names. The rescale itself is covered above.
+    #[tokio::test]
+    async fn the_rename_composes_after_the_rescale() {
+        let (_dir, pool) = legacy_db().await;
+        insert_rate(&pool, "jpy", 1_500_000, "JPY").await; // ¥15,000/hr
+        insert_invoice(&pool, "inv", "JPY", 0, 1_000_000, 0).await;
+        insert_line(&pool, "l1", "inv", 1_000_000).await;
+
+        run_rescale(&pool).await;
+        sqlx::raw_sql(RENAME_SQL).execute(&pool).await.unwrap();
+
+        let row = sqlx::query(
+            "SELECT r.amount_minor_units AS rate, i.total_minor_units AS total \
+               FROM billing_rates r, billing_invoices i \
+              WHERE r.id = 'jpy' AND i.id = 'inv'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<i64, _>("rate"), 15_000);
+        assert_eq!(row.get::<i64, _>("total"), 10_000);
+    }
+
     #[tokio::test]
     async fn migration_rescales_only_the_currencies_that_need_it() {
-        let (_dir, db) = test_db().await;
+        let (_dir, pool) = legacy_db().await;
         // Amounts as the old code would have written them: major units × 100.
-        insert_rate(&db.pool, "jpy", 1_500_000, "JPY").await; // ¥15,000/hr
-        insert_rate(&db.pool, "kwd", 1_550, "KWD").await; // 15.500 KWD/hr
-        insert_rate(&db.pool, "usd", 15_000, "USD").await; // $150.00/hr
-        insert_rate(&db.pool, "lower", 1_500_000, "jpy").await; // case-insensitive
+        insert_rate(&pool, "jpy", 1_500_000, "JPY").await; // ¥15,000/hr
+        insert_rate(&pool, "kwd", 1_550, "KWD").await; // 15.500 KWD/hr
+        insert_rate(&pool, "usd", 15_000, "USD").await; // $150.00/hr
+        insert_rate(&pool, "lower", 1_500_000, "jpy").await; // case-insensitive
 
-        run_rescale(&db.pool).await;
+        run_rescale(&pool).await;
 
-        assert_eq!(rate_amount(&db.pool, "jpy").await, 15_000); // ¥15,000
-        assert_eq!(rate_amount(&db.pool, "kwd").await, 15_500); // 15.500 KWD
-        assert_eq!(rate_amount(&db.pool, "usd").await, 15_000); // untouched
-        assert_eq!(rate_amount(&db.pool, "lower").await, 15_000);
+        assert_eq!(rate_amount(&pool, "jpy").await, 15_000); // ¥15,000
+        assert_eq!(rate_amount(&pool, "kwd").await, 15_500); // 15.500 KWD
+        assert_eq!(rate_amount(&pool, "usd").await, 15_000); // untouched
+        assert_eq!(rate_amount(&pool, "lower").await, 15_000);
     }
 
     #[tokio::test]
     async fn migration_rounds_a_half_unit_up_rather_than_truncating() {
-        let (_dir, db) = test_db().await;
+        let (_dir, pool) = legacy_db().await;
         // 15000.5 yen in the old scale — must land on ¥15,001, not ¥15,000.
-        insert_rate(&db.pool, "half", 1_500_050, "JPY").await;
-        run_rescale(&db.pool).await;
-        assert_eq!(rate_amount(&db.pool, "half").await, 15_001);
+        insert_rate(&pool, "half", 1_500_050, "JPY").await;
+        run_rescale(&pool).await;
+        assert_eq!(rate_amount(&pool, "half").await, 15_001);
     }
 
     async fn insert_invoice(
@@ -246,16 +336,16 @@ mod tests {
 
     #[tokio::test]
     async fn migration_keeps_an_invoices_own_figures_consistent() {
-        let (_dir, db) = test_db().await;
+        let (_dir, pool) = legacy_db().await;
         // The case that independent per-field rounding gets wrong: ¥1.49 of
         // work plus ¥1.49 of tax in the old scale. Rounding subtotal, tax and
         // total separately yields 1 + 1 next to a total of 3.
-        insert_invoice(&db.pool, "inv", "JPY", 10_000, 149, 149).await;
-        insert_line(&db.pool, "l1", "inv", 149).await;
+        insert_invoice(&pool, "inv", "JPY", 10_000, 149, 149).await;
+        insert_line(&pool, "l1", "inv", 149).await;
 
-        run_rescale(&db.pool).await;
+        run_rescale(&pool).await;
 
-        let (subtotal, tax, total) = invoice_figures(&db.pool, "inv").await;
+        let (subtotal, tax, total) = invoice_figures(&pool, "inv").await;
         assert_eq!(
             total,
             subtotal + tax,
@@ -267,25 +357,25 @@ mod tests {
 
     #[tokio::test]
     async fn migration_keeps_the_subtotal_equal_to_the_sum_of_its_lines() {
-        let (_dir, db) = test_db().await;
-        insert_invoice(&db.pool, "inv", "JPY", 0, 447, 0).await;
+        let (_dir, pool) = legacy_db().await;
+        insert_invoice(&pool, "inv", "JPY", 0, 447, 0).await;
         // Three ¥1.49 lines. Each rounds to ¥1 on its own, so the lines add to
         // ¥3 — while rescaling the stored subtotal (447 → 4) would have left a
         // subtotal a yen larger than the lines printed beneath it.
         for (i, amount) in [149_i64, 149, 149].iter().enumerate() {
-            insert_line(&db.pool, &format!("l{i}"), "inv", *amount).await;
+            insert_line(&pool, &format!("l{i}"), "inv", *amount).await;
         }
 
-        run_rescale(&db.pool).await;
+        run_rescale(&pool).await;
 
         let lines: i64 = sqlx::query(
             "SELECT SUM(amount_cents) AS n FROM billing_invoice_lines WHERE invoice_id = 'inv'",
         )
-        .fetch_one(&db.pool)
+        .fetch_one(&pool)
         .await
         .unwrap()
         .get("n");
-        let (subtotal, _, total) = invoice_figures(&db.pool, "inv").await;
+        let (subtotal, _, total) = invoice_figures(&pool, "inv").await;
         assert_eq!(
             subtotal, lines,
             "the subtotal must be what the lines add to"
@@ -295,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn migration_rescales_invoice_totals_and_their_lines() {
-        let (_dir, db) = test_db().await;
+        let (_dir, pool) = legacy_db().await;
         sqlx::query(
             "INSERT INTO billing_invoices \
                (id, seq, number, client_id, client_name, currency, issue_date, \
@@ -304,7 +394,7 @@ mod tests {
              VALUES ('inv', 1, 'A1', 'c1', 'Acme', 'JPY', '2026-07-15', \
                      '2026-07-01', '2026-08-01', 0, 1000000, 0, 1000000, 0, 'x')",
         )
-        .execute(&db.pool)
+        .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
@@ -312,23 +402,23 @@ mod tests {
                (id, invoice_id, description, seconds, amount_cents, sort) \
              VALUES ('l1', 'inv', 'Work', 3600, 1000000, 0)",
         )
-        .execute(&db.pool)
+        .execute(&pool)
         .await
         .unwrap();
 
-        run_rescale(&db.pool).await;
+        run_rescale(&pool).await;
 
         let inv = sqlx::query(
             "SELECT subtotal_cents, total_cents FROM billing_invoices WHERE id = 'inv'",
         )
-        .fetch_one(&db.pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(inv.get::<i64, _>("subtotal_cents"), 10_000);
         assert_eq!(inv.get::<i64, _>("total_cents"), 10_000);
         // The line inherits the invoice's currency — it stores none of its own.
         let line = sqlx::query("SELECT amount_cents FROM billing_invoice_lines WHERE id = 'l1'")
-            .fetch_one(&db.pool)
+            .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(line.get::<i64, _>("amount_cents"), 10_000);

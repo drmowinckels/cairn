@@ -9,7 +9,7 @@ import {
 export interface RateInput {
   scopeType: Rate["scopeType"];
   scopeId: string;
-  amountCents: number;
+  amountMinorUnits: number;
   currency: string;
   effectiveFrom: string;
 }

@@ -67,6 +67,49 @@ pub async fn test_db_at(path: &Path) -> Db {
     Db::open(path).await.expect("db open + migrate + seed")
 }
 
+/// A database migrated with the **historical** chain: every shipped migration
+/// in filename order, stopping before the one whose name starts with `before`
+/// (e.g. `"0034"`). No seed.
+///
+/// A migration's own SQL can only be replayed against the schema of its own
+/// era — a test that exercises what `0034` did to the money columns cannot run
+/// it against today's schema, where `0035` has renamed the columns it names.
+/// Reading the shipped files in the same order the sqlx migrator uses
+/// reproduces that era exactly, rather than hand-picking the files the
+/// migration appears to need and hoping the rest didn't matter.
+pub async fn historical_db(before: &str) -> (TempDir, sqlx::SqlitePool) {
+    let dir = temp_dir();
+    // The same connect options `Db::open` uses, so a replay behaves the way
+    // the real upgrade does (foreign keys on, in particular).
+    let opts = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("historical.sqlite"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(opts)
+        .await
+        .expect("open historical db");
+
+    let migrations = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let mut files: Vec<_> = std::fs::read_dir(&migrations)
+        .expect("read migrations dir")
+        .map(|e| e.expect("migration dir entry").file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".sql"))
+        .collect();
+    files.sort();
+    for name in files {
+        if name.starts_with(before) {
+            break;
+        }
+        let sql = std::fs::read_to_string(migrations.join(&name)).expect("read migration");
+        sqlx::raw_sql(&sql)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("replay {name}: {e}"));
+    }
+    (dir, pool)
+}
+
 /// Wrap a `Db` in a `tauri::test::mock_app()` so tests can drive code
 /// paths that need an `AppHandle`: event emission, `tauri::State`
 /// lookup, plugin wiring, IPC dispatch.

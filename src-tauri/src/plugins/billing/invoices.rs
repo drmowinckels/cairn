@@ -12,7 +12,7 @@ use sqlx::{Row, SqlitePool};
 
 use super::business::BusinessDetails;
 use super::err;
-use super::rates::{amount_cents, list_rates, resolve_from, Rate};
+use super::rates::{amount_minor_units, list_rates, resolve_from, Rate};
 use crate::ipc::parse_ts;
 use crate::rounding::{effective_rounding, project_rounding_from_row, Rounding};
 
@@ -23,7 +23,7 @@ pub struct InvoiceLine {
     pub id: String,
     pub description: String,
     pub seconds: i64,
-    pub amount_cents: i64,
+    pub amount_minor_units: i64,
     pub sort: i64,
 }
 
@@ -45,9 +45,9 @@ pub struct Invoice {
     /// in-app tax line matches the exported document even after the business
     /// profile's label changes.
     pub tax_label: String,
-    pub subtotal_cents: i64,
-    pub tax_cents: i64,
-    pub total_cents: i64,
+    pub subtotal_minor_units: i64,
+    pub tax_minor_units: i64,
+    pub total_minor_units: i64,
     /// Billable time in range that had no rate — uninvoiced, flagged for the UI.
     pub unrated_seconds: i64,
     pub status: String,
@@ -65,7 +65,7 @@ pub struct InvoiceSummary {
     pub client_name: String,
     pub currency: String,
     pub issue_date: String,
-    pub total_cents: i64,
+    pub total_minor_units: i64,
     pub status: String,
 }
 
@@ -84,7 +84,7 @@ struct InvoiceRow {
 struct DraftLine {
     description: String,
     seconds: i64,
-    amount_cents: i64,
+    amount_minor_units: i64,
 }
 
 struct Built {
@@ -141,7 +141,7 @@ fn build_lines_from(
                 }
                 let entry = by_project.entry(r.project_name.clone()).or_insert((0, 0));
                 entry.0 += secs;
-                entry.1 += amount_cents(rate.amount_cents, secs);
+                entry.1 += amount_minor_units(rate.amount_minor_units, secs);
                 billed_entry_ids.push(r.entry_id.clone());
             }
             None => unrated_seconds += secs,
@@ -150,10 +150,10 @@ fn build_lines_from(
 
     let lines = by_project
         .into_iter()
-        .map(|(description, (seconds, amount_cents))| DraftLine {
+        .map(|(description, (seconds, amount_minor_units))| DraftLine {
             description,
             seconds,
-            amount_cents,
+            amount_minor_units,
         })
         .collect();
     Ok(Built {
@@ -164,8 +164,8 @@ fn build_lines_from(
     })
 }
 
-fn tax_cents(subtotal_cents: i64, tax_rate_bps: i64) -> i64 {
-    (subtotal_cents as f64 * tax_rate_bps as f64 / 10_000.0).round() as i64
+fn tax_minor_units(subtotal_minor_units: i64, tax_rate_bps: i64) -> i64 {
+    (subtotal_minor_units as f64 * tax_rate_bps as f64 / 10_000.0).round() as i64
 }
 
 /// The `FROM`/`WHERE` selecting a client's completed, billable entries in
@@ -331,9 +331,9 @@ pub async fn create_invoice(
         ));
     }
 
-    let subtotal_cents: i64 = built.lines.iter().map(|l| l.amount_cents).sum();
-    let tax = tax_cents(subtotal_cents, tax_rate_bps);
-    let total_cents = subtotal_cents + tax;
+    let subtotal_minor_units: i64 = built.lines.iter().map(|l| l.amount_minor_units).sum();
+    let tax = tax_minor_units(subtotal_minor_units, tax_rate_bps);
+    let total_minor_units = subtotal_minor_units + tax;
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = now.to_rfc3339();
     // The issuer's number format is applied when the number is minted below;
@@ -383,8 +383,8 @@ pub async fn create_invoice(
     sqlx::query(
         "INSERT INTO billing_invoices \
            (id, seq, number, client_id, client_name, currency, issue_date, \
-            from_date, to_date, tax_rate_bps, subtotal_cents, tax_cents, \
-            total_cents, unrated_seconds, notes, created_at, issuer_snapshot) \
+            from_date, to_date, tax_rate_bps, subtotal_minor_units, tax_minor_units, \
+            total_minor_units, unrated_seconds, notes, created_at, issuer_snapshot) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
     )
     .bind(&id)
@@ -397,9 +397,9 @@ pub async fn create_invoice(
     .bind(from_date)
     .bind(to_date)
     .bind(tax_rate_bps)
-    .bind(subtotal_cents)
+    .bind(subtotal_minor_units)
     .bind(tax)
-    .bind(total_cents)
+    .bind(total_minor_units)
     .bind(built.unrated_seconds)
     .bind(notes)
     .bind(&created_at)
@@ -416,14 +416,14 @@ pub async fn create_invoice(
         let line_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO billing_invoice_lines \
-               (id, invoice_id, description, seconds, amount_cents, sort) \
+               (id, invoice_id, description, seconds, amount_minor_units, sort) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .bind(&line_id)
         .bind(&id)
         .bind(&line.description)
         .bind(line.seconds)
-        .bind(line.amount_cents)
+        .bind(line.amount_minor_units)
         .bind(sort)
         .execute(&mut *tx)
         .await
@@ -432,7 +432,7 @@ pub async fn create_invoice(
             id: line_id,
             description: line.description.clone(),
             seconds: line.seconds,
-            amount_cents: line.amount_cents,
+            amount_minor_units: line.amount_minor_units,
             sort,
         });
     }
@@ -454,9 +454,9 @@ pub async fn create_invoice(
         to_date: to_date.to_string(),
         tax_rate_bps,
         tax_label: business.tax_label,
-        subtotal_cents,
-        tax_cents: tax,
-        total_cents,
+        subtotal_minor_units,
+        tax_minor_units: tax,
+        total_minor_units,
         unrated_seconds: built.unrated_seconds,
         status: "draft".to_string(),
         notes: notes.map(str::to_string),
@@ -467,7 +467,7 @@ pub async fn create_invoice(
 
 pub async fn list_invoices(pool: &SqlitePool) -> Result<Vec<InvoiceSummary>, String> {
     let rows = sqlx::query(
-        "SELECT id, number, client_name, currency, issue_date, total_cents, status \
+        "SELECT id, number, client_name, currency, issue_date, total_minor_units, status \
            FROM billing_invoices ORDER BY seq DESC",
     )
     .fetch_all(pool)
@@ -481,7 +481,7 @@ pub async fn list_invoices(pool: &SqlitePool) -> Result<Vec<InvoiceSummary>, Str
             client_name: r.get("client_name"),
             currency: r.get("currency"),
             issue_date: r.get("issue_date"),
-            total_cents: r.get("total_cents"),
+            total_minor_units: r.get("total_minor_units"),
             status: r.get("status"),
         })
         .collect())
@@ -490,8 +490,8 @@ pub async fn list_invoices(pool: &SqlitePool) -> Result<Vec<InvoiceSummary>, Str
 pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>, String> {
     let Some(head) = sqlx::query(
         "SELECT id, number, client_id, client_name, currency, issue_date, \
-                from_date, to_date, tax_rate_bps, subtotal_cents, tax_cents, \
-                total_cents, unrated_seconds, status, notes, created_at, issuer_snapshot \
+                from_date, to_date, tax_rate_bps, subtotal_minor_units, tax_minor_units, \
+                total_minor_units, unrated_seconds, status, notes, created_at, issuer_snapshot \
            FROM billing_invoices WHERE id = ?1",
     )
     .bind(id)
@@ -507,7 +507,7 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
     let tax_label = parse_issuer(&head.get::<String, _>("issuer_snapshot")).tax_label;
 
     let lines = sqlx::query(
-        "SELECT id, description, seconds, amount_cents, sort \
+        "SELECT id, description, seconds, amount_minor_units, sort \
            FROM billing_invoice_lines WHERE invoice_id = ?1 ORDER BY sort",
     )
     .bind(id)
@@ -519,7 +519,7 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
         id: r.get("id"),
         description: r.get("description"),
         seconds: r.get("seconds"),
-        amount_cents: r.get("amount_cents"),
+        amount_minor_units: r.get("amount_minor_units"),
         sort: r.get("sort"),
     })
     .collect();
@@ -535,9 +535,9 @@ pub async fn get_invoice(pool: &SqlitePool, id: &str) -> Result<Option<Invoice>,
         to_date: head.get("to_date"),
         tax_rate_bps: head.get("tax_rate_bps"),
         tax_label,
-        subtotal_cents: head.get("subtotal_cents"),
-        tax_cents: head.get("tax_cents"),
-        total_cents: head.get("total_cents"),
+        subtotal_minor_units: head.get("subtotal_minor_units"),
+        tax_minor_units: head.get("tax_minor_units"),
+        total_minor_units: head.get("total_minor_units"),
         unrated_seconds: head.get("unrated_seconds"),
         status: head.get("status"),
         notes: head.get("notes"),
@@ -668,12 +668,18 @@ mod tests {
         }
     }
 
-    fn rate(scope_type: &str, scope_id: &str, cents: i64, currency: &str, from: &str) -> Rate {
+    fn rate(
+        scope_type: &str,
+        scope_id: &str,
+        minor_units: i64,
+        currency: &str,
+        from: &str,
+    ) -> Rate {
         Rate {
             id: format!("{scope_type}-{scope_id}-{from}"),
             scope_type: scope_type.into(),
             scope_id: scope_id.into(),
-            amount_cents: cents,
+            amount_minor_units: minor_units,
             currency: currency.into(),
             effective_from: from.into(),
             created_at: "x".into(),
@@ -686,8 +692,8 @@ mod tests {
 
     #[test]
     fn tax_is_bps_of_subtotal() {
-        assert_eq!(tax_cents(10000, 2500), 2500); // 25% of $100 = $25
-        assert_eq!(tax_cents(10000, 0), 0);
+        assert_eq!(tax_minor_units(10000, 2500), 2500); // 25% of $100 = $25
+        assert_eq!(tax_minor_units(10000, 0), 0);
     }
 
     #[test]
@@ -707,10 +713,10 @@ mod tests {
         // Alphabetical: Audit then Website.
         assert_eq!(built.lines[0].description, "Audit");
         assert_eq!(built.lines[0].seconds, 7200);
-        assert_eq!(built.lines[0].amount_cents, 40000); // 2h @ $200
+        assert_eq!(built.lines[0].amount_minor_units, 40000); // 2h @ $200
         assert_eq!(built.lines[1].description, "Website");
         assert_eq!(built.lines[1].seconds, 5400); // 90 min
-        assert_eq!(built.lines[1].amount_cents, 15000); // 1.5h @ $100
+        assert_eq!(built.lines[1].amount_minor_units, 15000); // 1.5h @ $100
         assert_eq!(built.unrated_seconds, 0);
         // Every priced row is recorded as billed, so it can't be re-invoiced.
         assert_eq!(built.billed_entry_ids.len(), 3);
@@ -762,8 +768,8 @@ mod tests {
         let built = build_lines_from(&rows, "c1", &rates, nearest_15).unwrap();
         assert_eq!(built.lines.len(), 1);
         assert_eq!(built.lines[0].seconds, 900);
-        assert_eq!(built.lines[0].amount_cents, 3000); // 15 min @ $120
-                                                       // Only the row that survived rounding is billed; the zeroed one isn't.
+        assert_eq!(built.lines[0].amount_minor_units, 3000); // 15 min @ $120
+                                                             // Only the row that survived rounding is billed; the zeroed one isn't.
         assert_eq!(built.billed_entry_ids, vec!["p1-2026-07-02-8".to_string()]);
     }
 
@@ -860,7 +866,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO billing_invoices \
                (id, seq, number, client_id, client_name, currency, issue_date, from_date, \
-                to_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, unrated_seconds, \
+                to_date, tax_rate_bps, subtotal_minor_units, tax_minor_units, total_minor_units, unrated_seconds, \
                 created_at) \
              VALUES ('pre', 999, 'X12', 'c1', 'Acme', 'USD', '2026-07-15', '2026-07-01', \
                      '2026-08-01', 0, 0, 0, 0, 0, 'x')",
@@ -1001,7 +1007,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO billing_invoices \
                (id, seq, number, client_id, client_name, currency, issue_date, from_date, \
-                to_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, unrated_seconds, \
+                to_date, tax_rate_bps, subtotal_minor_units, tax_minor_units, total_minor_units, unrated_seconds, \
                 created_at) \
              VALUES ('old', 1, 'INV-0001', 'c1', 'Acme', 'USD', '2026-07-15', '2026-07-01', \
                      '2026-08-01', 0, 0, 0, 0, 0, 'x')",
@@ -1035,15 +1041,15 @@ mod tests {
         assert_eq!(inv.number, "INV-0001");
         assert_eq!(inv.client_name, "Acme");
         assert_eq!(inv.currency, "USD");
-        assert_eq!(inv.subtotal_cents, 15000);
-        assert_eq!(inv.tax_cents, 3750); // 25%
-        assert_eq!(inv.total_cents, 18750);
+        assert_eq!(inv.subtotal_minor_units, 15000);
+        assert_eq!(inv.tax_minor_units, 3750); // 25%
+        assert_eq!(inv.total_minor_units, 18750);
         assert_eq!(inv.status, "draft");
         assert_eq!(inv.notes.as_deref(), Some("thanks"));
         // Only the priced project is a line; the unpriced hour is recorded.
         assert_eq!(inv.lines.len(), 1);
         assert_eq!(inv.lines[0].description, "Website");
-        assert_eq!(inv.lines[0].amount_cents, 15000);
+        assert_eq!(inv.lines[0].amount_minor_units, 15000);
         assert_eq!(inv.unrated_seconds, 3600);
 
         // Numbers increment monotonically — a fresh hour, since the first is
@@ -1051,9 +1057,9 @@ mod tests {
         insert_billable_hour(&db.pool, "e3", "2026-07-20").await;
         let inv2 = create(&db.pool, 0).await;
         assert_eq!(inv2.number, "INV-0002");
-        assert_eq!(inv2.tax_cents, 0);
+        assert_eq!(inv2.tax_minor_units, 0);
         // Only the fresh hour — a regressed exclusion would re-bill e1 (30000).
-        assert_eq!(inv2.subtotal_cents, 15000);
+        assert_eq!(inv2.subtotal_minor_units, 15000);
     }
 
     #[tokio::test]
@@ -1132,7 +1138,7 @@ mod tests {
         // Only the completed hour is on the invoice.
         assert_eq!(inv.lines.len(), 1);
         assert_eq!(inv.lines[0].seconds, 3600);
-        assert_eq!(inv.subtotal_cents, 15000);
+        assert_eq!(inv.subtotal_minor_units, 15000);
     }
 
     #[tokio::test]
@@ -1161,7 +1167,7 @@ mod tests {
 
         let a = create(&db.pool, 0).await;
         assert_eq!(a.number, "INV-0001");
-        assert_eq!(a.subtotal_cents, 15000);
+        assert_eq!(a.subtotal_minor_units, 15000);
         // The billed entry is recorded against the invoice.
         assert_eq!(ledger_count(&db.pool).await, 1);
 
@@ -1190,7 +1196,7 @@ mod tests {
         assert_eq!(ledger_count(&db.pool).await, 0);
         let b = create(&db.pool, 0).await;
         assert_eq!(b.number, "INV-0002");
-        assert_eq!(b.subtotal_cents, 15000);
+        assert_eq!(b.subtotal_minor_units, 15000);
     }
 
     #[tokio::test]
@@ -1299,7 +1305,7 @@ mod tests {
         let b = create(&db.pool, 0).await;
         assert_eq!(b.lines.len(), 1);
         assert_eq!(b.lines[0].description, "Research");
-        assert_eq!(b.subtotal_cents, 9000); // 1h @ $90
+        assert_eq!(b.subtotal_minor_units, 9000); // 1h @ $90
         assert_eq!(b.unrated_seconds, 0);
     }
 
@@ -1313,7 +1319,7 @@ mod tests {
         let list = list_invoices(&db.pool).await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].number, "INV-0001");
-        assert_eq!(list[0].total_cents, 15000);
+        assert_eq!(list[0].total_minor_units, 15000);
 
         let got = get_invoice(&db.pool, &inv.id).await.unwrap().unwrap();
         assert_eq!(got.lines.len(), 1);

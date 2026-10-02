@@ -95,7 +95,7 @@ export function BillingRatesPanel() {
   const amountNum = Number(amount);
   // The stored integer is minor units of the chosen currency, and how many of
   // those make a major unit differs by currency (1 for JPY, 1000 for KWD), so
-  // the entry step and factor follow the currency rather than assuming cents.
+  // the entry step and factor follow the currency rather than assuming hundredths.
   const exponent = currencyExponent(currency);
   const amountStep = (10 ** -exponent).toFixed(exponent);
   // A finer amount than the currency can hold — ¥150.50, or $1.005 — would be
@@ -126,7 +126,7 @@ export function BillingRatesPanel() {
     void addRate({
       scopeType,
       scopeId: scopeType === "workspace" ? "" : scopeId,
-      amountCents: Math.round(amountNum * minorUnitsPerMajor(currency)),
+      amountMinorUnits: Math.round(amountNum * minorUnitsPerMajor(currency)),
       currency: currency.trim().toUpperCase(),
       effectiveFrom,
     }).then((ok) => {
@@ -160,7 +160,7 @@ export function BillingRatesPanel() {
                   {label.kind ? <em> · {label.kind}</em> : null}
                 </span>
                 <span className="rate-amount">
-                  {formatMoney(rate.amountCents, rate.currency)} / hr
+                  {formatMoney(rate.amountMinorUnits, rate.currency)} / hr
                 </span>
                 <span className="rate-from">from {rate.effectiveFrom}</span>
                 <button

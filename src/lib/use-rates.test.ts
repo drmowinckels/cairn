@@ -21,7 +21,7 @@ const rate = (over: Record<string, unknown> = {}) => ({
   id: "r1",
   scopeType: "workspace" as const,
   scopeId: "",
-  amountCents: 12000,
+  amountMinorUnits: 12000,
   currency: "USD",
   effectiveFrom: "2026-01-01",
   createdAt: "2026-01-01T00:00:00Z",
@@ -31,7 +31,7 @@ const rate = (over: Record<string, unknown> = {}) => ({
 const wsInput = {
   scopeType: "workspace" as const,
   scopeId: "",
-  amountCents: 12000,
+  amountMinorUnits: 12000,
   currency: "USD",
   effectiveFrom: "2026-01-01",
 };
@@ -82,7 +82,7 @@ describe("useRates", () => {
 
     let ok = true;
     await act(async () => {
-      ok = await result.current.addRate({ ...wsInput, amountCents: 1 });
+      ok = await result.current.addRate({ ...wsInput, amountMinorUnits: 1 });
     });
     expect(ok).toBe(false);
     expect(result.current.error).toContain("isn't active");

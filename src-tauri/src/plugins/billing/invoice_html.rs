@@ -56,7 +56,7 @@ fn issuer_lines(b: &BusinessDetails) -> String {
 
 /// `<currency> <amount>`, with the number of decimals the currency actually
 /// has — see [`super::currency::format_money`]. An invoice is a document
-/// someone sends a client, so "JPY 1500.00" (a yen amount with cents that
+/// someone sends a client, so "JPY 1500.00" (a yen amount with decimals that
 /// don't exist) is not a cosmetic problem.
 fn money(minor_units: i64, currency: &str) -> String {
     super::currency::format_money(minor_units, currency)
@@ -164,7 +164,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
                 "<tr><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
                 escape(&l.description),
                 hours(l.seconds),
-                money(l.amount_cents, &inv.currency),
+                money(l.amount_minor_units, &inv.currency),
             )
         })
         .collect();
@@ -263,11 +263,11 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         client = escape(&inv.client_name),
         from_block = from_block,
         rows = rows,
-        subtotal = money(inv.subtotal_cents, &inv.currency),
-        tax = money(inv.tax_cents, &inv.currency),
+        subtotal = money(inv.subtotal_minor_units, &inv.currency),
+        tax = money(inv.tax_minor_units, &inv.currency),
         tax_label = tax_label,
         tax_pct = inv.tax_rate_bps as f64 / 100.0,
-        total = money(inv.total_cents, &inv.currency),
+        total = money(inv.total_minor_units, &inv.currency),
         payment = payment,
         notes = notes,
         unrated = unrated,
@@ -308,9 +308,9 @@ mod tests {
             to_date: "2026-08-01".into(),
             tax_rate_bps: 2500,
             tax_label: String::new(),
-            subtotal_cents: 15000,
-            tax_cents: 3750,
-            total_cents: 18750,
+            subtotal_minor_units: 15000,
+            tax_minor_units: 3750,
+            total_minor_units: 18750,
             unrated_seconds: 1800,
             status: "draft".into(),
             notes: Some("Thanks <3".into()),
@@ -319,7 +319,7 @@ mod tests {
                 id: "l1".into(),
                 description: "Website <redesign>".into(),
                 seconds: 5400,
-                amount_cents: 15000,
+                amount_minor_units: 15000,
                 sort: 0,
             }],
         }

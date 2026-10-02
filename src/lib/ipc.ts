@@ -1100,14 +1100,14 @@ export async function deactivateBillingLicense(): Promise<BillingStatus> {
   return invoke<BillingStatus>("deactivate_billing_license");
 }
 
-/** A stored Pro hourly rate (#109). Mirrors the Rust `Rate`. `amountCents`
+/** A stored Pro hourly rate (#109). Mirrors the Rust `Rate`. `amountMinorUnits`
  *  is integer minor units of `currency`; `scopeId` is `""` for the
  *  workspace default, else the client/project/task id. */
 export interface Rate {
   id: string;
   scopeType: "workspace" | "client" | "project" | "task";
   scopeId: string;
-  amountCents: number;
+  amountMinorUnits: number;
   currency: string;
   /** ISO date (`YYYY-MM-DD`); the rate applies to work on or after it. */
   effectiveFrom: string;
@@ -1117,7 +1117,7 @@ export interface Rate {
 /** The rate that applies to a piece of work, plus which scope supplied it
  *  (mirrors the Rust `ResolvedRate`). */
 export interface ResolvedRate {
-  amountCents: number;
+  amountMinorUnits: number;
   currency: string;
   scopeType: string;
   effectiveFrom: string;
@@ -1198,7 +1198,7 @@ export async function billingLogoFromPath(path: string): Promise<string> {
 export async function billingSetRate(input: {
   scopeType: Rate["scopeType"];
   scopeId: string;
-  amountCents: number;
+  amountMinorUnits: number;
   currency: string;
   effectiveFrom: string;
 }): Promise<Rate[]> {
@@ -1230,7 +1230,7 @@ export async function billingEffectiveRate(input: {
  *  Mirrors the Rust `CurrencyAmount`. */
 export interface CurrencyAmount {
   currency: string;
-  amountCents: number;
+  amountMinorUnits: number;
   billableSeconds: number;
 }
 
@@ -1277,7 +1277,7 @@ export interface InvoiceLine {
   id: string;
   description: string;
   seconds: number;
-  amountCents: number;
+  amountMinorUnits: number;
   sort: number;
 }
 
@@ -1294,9 +1294,9 @@ export interface Invoice {
   taxRateBps: number;
   /** The issuer's tax-line label frozen at creation; "" renders as "Tax". */
   taxLabel: string;
-  subtotalCents: number;
-  taxCents: number;
-  totalCents: number;
+  subtotalMinorUnits: number;
+  taxMinorUnits: number;
+  totalMinorUnits: number;
   /** Billable time in range that had no rate — uninvoiced, flagged. */
   unratedSeconds: number;
   status: InvoiceStatus;
@@ -1312,7 +1312,7 @@ export interface InvoiceSummary {
   clientName: string;
   currency: string;
   issueDate: string;
-  totalCents: number;
+  totalMinorUnits: number;
   status: InvoiceStatus;
 }
 

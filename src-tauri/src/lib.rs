@@ -253,7 +253,7 @@ async fn billing_set_rate(
     state: tauri::State<'_, AppState>,
     scope_type: String,
     scope_id: String,
-    amount_cents: i64,
+    amount_minor_units: i64,
     currency: String,
     effective_from: String,
 ) -> Result<Vec<plugins::billing::rates::Rate>, String> {
@@ -261,7 +261,7 @@ async fn billing_set_rate(
         state,
         scope_type,
         scope_id,
-        amount_cents,
+        amount_minor_units,
         currency,
         effective_from,
     )
