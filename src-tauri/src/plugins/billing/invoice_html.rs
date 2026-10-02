@@ -498,30 +498,64 @@ mod tests {
         assert!(!html.contains("Acme & Co"));
     }
 
+    /// An invoice in `currency`, with every figure in it — `invoices.rs`
+    /// enforces one currency per invoice (`Money::checked_add` refuses a
+    /// mismatch, and `get_invoice` reads every amount with the single stored
+    /// code), so a test invoice has to be built the same way or it pins a
+    /// document the app cannot produce.
+    fn invoice_in(currency: &str, subtotal_minor: i64) -> Invoice {
+        let subtotal = Money::new(subtotal_minor, currency);
+        // The invoice's own 25% rate, applied with the same arithmetic
+        // `invoices.rs` uses, so the figures agree with each other.
+        let (tax, total) = subtotal
+            .with_tax_bps(2_500)
+            .expect("the test figures must fit");
+        let mut inv = invoice();
+        inv.lines[0].amount = subtotal.clone();
+        inv.subtotal = subtotal;
+        inv.tax = tax;
+        inv.total = total;
+        inv
+    }
+
     /// The amount the client reads, not the `USD 187.50` developer form — and
     /// the symbol, grouping and separators of the amount's own currency, not
     /// the machine's (#330).
     #[test]
     fn renders_amounts_in_the_currencys_own_locale() {
+        // The total is covered by the preset loop below; these are the two
+        // figures it doesn't reach.
         let html = render_html(&invoice(), &business());
         assert!(html.contains("$150.00"), "line amount: {html}");
         assert!(html.contains("$37.50"), "tax");
-        assert!(html.contains("$187.50"), "total");
-        assert!(!html.contains("USD 187.50"), "the bare code form is gone");
 
-        // The same invoice in EUR reads the way a eurozone client expects.
-        let mut inv = invoice();
-        inv.subtotal = Money::new(150_000, "EUR");
-        inv.tax = Money::new(37_500, "EUR");
-        inv.total = Money::new(187_500, "EUR");
-        inv.lines[0].amount = Money::new(150_000, "EUR");
-        let html = render_html(&inv, &business());
+        // The same invoice in EUR reads the way a eurozone client expects:
+        // dot grouping, comma decimal, symbol last.
+        let html = render_html(&invoice_in("EUR", 150_000), &business());
         assert!(html.contains("1.875,00\u{a0}\u{20ac}"), "{html}");
 
-        // A yen invoice keeps whole amounts, grouped.
-        let mut inv = invoice();
-        inv.total = Money::new(150_000, "JPY");
-        assert!(render_html(&inv, &business()).contains("\u{ffe5}150,000"));
+        // A yen invoice keeps whole amounts, grouped — no decimals that
+        // currency doesn't have.
+        let html = render_html(&invoice_in("JPY", 150_000), &business());
+        assert!(html.contains("\u{ffe5}187,500"), "{html}");
+        assert!(!html.contains("187,500.00"), "a yen amount has no decimals");
+
+        // And a three-decimal currency keeps all three.
+        let html = render_html(&invoice_in("BHD", 1_500_000), &business());
+        assert!(html.contains("BHD\u{a0}1,875.000"), "{html}");
+    }
+
+    /// The group separator is one of the five characters `escape` encodes, so a
+    /// Swiss amount round-trips through the escaper rather than being mangled
+    /// by it (#321's escaping still wraps every rendered amount).
+    #[test]
+    fn escapes_a_group_separator_that_is_html_significant() {
+        let html = render_html(&invoice_in("CHF", 150_000), &business());
+        assert!(html.contains("CHF\u{a0}1&#39;875.00"), "{html}");
+        assert!(
+            !html.contains("1'875.00"),
+            "a raw apostrophe reached the document"
+        );
     }
 
     /// All three presets share one `money()`, so the fix can't reach some looks
@@ -541,9 +575,7 @@ mod tests {
     /// so the document has to say which currency it is somewhere.
     #[test]
     fn states_the_currency_code_once_per_section() {
-        let mut inv = invoice();
-        inv.total = Money::new(187_500, "CAD");
-        let html = render_html(&inv, &business());
+        let html = render_html(&invoice_in("CAD", 150_000), &business());
         assert!(html.contains("Amount (CAD)"), "{html}");
         assert!(html.contains("Total (CAD)"), "{html}");
     }

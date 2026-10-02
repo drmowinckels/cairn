@@ -17,6 +17,10 @@
           "formatted": "$15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "$1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "$1,500.00"
         },
@@ -41,6 +45,10 @@
         {
           "minorUnits": 1500,
           "formatted": "15,00 €"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "1.000,00 €"
         },
         {
           "minorUnits": 150000,
@@ -69,6 +77,10 @@
           "formatted": "£15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "£1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "£1,500.00"
         },
@@ -93,6 +105,10 @@
         {
           "minorUnits": 1500,
           "formatted": "15,00 kr"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "1 000,00 kr"
         },
         {
           "minorUnits": 150000,
@@ -121,6 +137,10 @@
           "formatted": "15,00 kr"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "1 000,00 kr"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "1 500,00 kr"
         },
@@ -145,6 +165,10 @@
         {
           "minorUnits": 1500,
           "formatted": "15,00 kr."
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "1.000,00 kr."
         },
         {
           "minorUnits": 150000,
@@ -173,6 +197,10 @@
           "formatted": "CHF 15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "CHF 1'000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "CHF 1'500.00"
         },
@@ -193,6 +221,10 @@
         {
           "minorUnits": 1,
           "formatted": "1 kr."
+        },
+        {
+          "minorUnits": 1000,
+          "formatted": "1.000 kr."
         },
         {
           "minorUnits": 1500,
@@ -225,6 +257,10 @@
           "formatted": "15,00 zł"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "1000,00 zł"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "1500,00 zł"
         },
@@ -249,6 +285,10 @@
         {
           "minorUnits": 1500,
           "formatted": "15,00 Kč"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "1 000,00 Kč"
         },
         {
           "minorUnits": 150000,
@@ -277,6 +317,10 @@
           "formatted": "15,00 Ft"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "1000,00 Ft"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "1500,00 Ft"
         },
@@ -301,6 +345,10 @@
         {
           "minorUnits": 1500,
           "formatted": "15,00 RON"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "1.000,00 RON"
         },
         {
           "minorUnits": 150000,
@@ -329,6 +377,10 @@
           "formatted": "15,00 ₴"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "1 000,00 ₴"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "1 500,00 ₴"
         },
@@ -353,6 +405,10 @@
         {
           "minorUnits": 1500,
           "formatted": "₺15,00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "₺1.000,00"
         },
         {
           "minorUnits": 150000,
@@ -381,6 +437,10 @@
           "formatted": "15,00 ₽"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "1 000,00 ₽"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "1 500,00 ₽"
         },
@@ -407,6 +467,10 @@
           "formatted": "₪15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "₪1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "₪1,500.00"
         },
@@ -427,6 +491,10 @@
         {
           "minorUnits": 1,
           "formatted": "￥1"
+        },
+        {
+          "minorUnits": 1000,
+          "formatted": "￥1,000"
         },
         {
           "minorUnits": 1500,
@@ -459,6 +527,10 @@
           "formatted": "¥15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "¥1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "¥1,500.00"
         },
@@ -485,6 +557,10 @@
           "formatted": "$15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "$1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "$1,500.00"
         },
@@ -505,6 +581,10 @@
         {
           "minorUnits": 1,
           "formatted": "₩1"
+        },
+        {
+          "minorUnits": 1000,
+          "formatted": "₩1,000"
         },
         {
           "minorUnits": 1500,
@@ -537,6 +617,10 @@
           "formatted": "HK$15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "HK$1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "HK$1,500.00"
         },
@@ -561,6 +645,10 @@
         {
           "minorUnits": 1500,
           "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "$1,000.00"
         },
         {
           "minorUnits": 150000,
@@ -589,6 +677,10 @@
           "formatted": "฿15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "฿1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "฿1,500.00"
         },
@@ -609,6 +701,10 @@
         {
           "minorUnits": 1,
           "formatted": "1 ₫"
+        },
+        {
+          "minorUnits": 1000,
+          "formatted": "1.000 ₫"
         },
         {
           "minorUnits": 1500,
@@ -641,6 +737,10 @@
           "formatted": "Rp 15,00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "Rp 1.000,00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "Rp 1.500,00"
         },
@@ -665,6 +765,10 @@
         {
           "minorUnits": 1500,
           "formatted": "RM 15.00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "RM 1,000.00"
         },
         {
           "minorUnits": 150000,
@@ -693,6 +797,10 @@
           "formatted": "₱15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "₱1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "₱1,500.00"
         },
@@ -717,6 +825,10 @@
         {
           "minorUnits": 1500,
           "formatted": "₹15.00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "₹1,000.00"
         },
         {
           "minorUnits": 150000,
@@ -745,6 +857,10 @@
           "formatted": "$15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "$1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "$1,500.00"
         },
@@ -769,6 +885,10 @@
         {
           "minorUnits": 1500,
           "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "$1,000.00"
         },
         {
           "minorUnits": 150000,
@@ -797,6 +917,10 @@
           "formatted": "$15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "$1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "$1,500.00"
         },
@@ -821,6 +945,10 @@
         {
           "minorUnits": 1500,
           "formatted": "$15.00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "$1,000.00"
         },
         {
           "minorUnits": 150000,
@@ -849,6 +977,10 @@
           "formatted": "R$ 15,00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "R$ 1.000,00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "R$ 1.500,00"
         },
@@ -875,6 +1007,10 @@
           "formatted": "$ 15,00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "$ 1.000,00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "$ 1.500,00"
         },
@@ -895,6 +1031,10 @@
         {
           "minorUnits": 1,
           "formatted": "$1"
+        },
+        {
+          "minorUnits": 1000,
+          "formatted": "$1.000"
         },
         {
           "minorUnits": 1500,
@@ -927,6 +1067,10 @@
           "formatted": "$ 15,00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "$ 1.000,00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "$ 1.500,00"
         },
@@ -951,6 +1095,10 @@
         {
           "minorUnits": 1500,
           "formatted": "R 15,00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "R 1 000,00"
         },
         {
           "minorUnits": 150000,
@@ -979,6 +1127,10 @@
           "formatted": "₦15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "₦1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "₦1,500.00"
         },
@@ -1005,6 +1157,10 @@
           "formatted": "Ksh 15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "Ksh 1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "Ksh 1,500.00"
         },
@@ -1025,6 +1181,10 @@
         {
           "minorUnits": 1,
           "formatted": "1 F CFA"
+        },
+        {
+          "minorUnits": 1000,
+          "formatted": "1 000 F CFA"
         },
         {
           "minorUnits": 1500,
@@ -1051,6 +1211,10 @@
         {
           "minorUnits": 1,
           "formatted": "1 FCFA"
+        },
+        {
+          "minorUnits": 1000,
+          "formatted": "1 000 FCFA"
         },
         {
           "minorUnits": 1500,
@@ -1087,6 +1251,10 @@
           "formatted": "BHD 150.000"
         },
         {
+          "minorUnits": 1000000,
+          "formatted": "BHD 1,000.000"
+        },
+        {
           "minorUnits": 123456789,
           "formatted": "BHD 123,456.789"
         }
@@ -1113,6 +1281,10 @@
           "formatted": "KWD 150.000"
         },
         {
+          "minorUnits": 1000000,
+          "formatted": "KWD 1,000.000"
+        },
+        {
           "minorUnits": 123456789,
           "formatted": "KWD 123,456.789"
         }
@@ -1133,6 +1305,10 @@
         {
           "minorUnits": 1500,
           "formatted": "AED 15.00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "AED 1,000.00"
         },
         {
           "minorUnits": 150000,
@@ -1161,6 +1337,10 @@
           "formatted": "SAR 15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "SAR 1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "SAR 1,500.00"
         },
@@ -1187,6 +1367,10 @@
           "formatted": "PKR 15.00"
         },
         {
+          "minorUnits": 100000,
+          "formatted": "PKR 1,000.00"
+        },
+        {
           "minorUnits": 150000,
           "formatted": "PKR 1,500.00"
         },
@@ -1211,6 +1395,10 @@
         {
           "minorUnits": 1500,
           "formatted": "ZZZ 15.00"
+        },
+        {
+          "minorUnits": 100000,
+          "formatted": "ZZZ 1,000.00"
         },
         {
           "minorUnits": 150000,

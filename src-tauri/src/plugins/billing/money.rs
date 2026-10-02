@@ -48,6 +48,20 @@ impl From<MoneyWire> for Money {
     }
 }
 
+/// A [`Money`] split into the pieces a formatter decorates: the sign, the
+/// major unit's digits, and the minor unit's digits zero-padded to the
+/// currency's own exponent — empty for a currency with no minor unit, which is
+/// how a formatter knows to print no decimal separator at all.
+///
+/// The sign is kept apart from the digits deliberately: splitting a negative
+/// amount with `/` and `%` prints it twice (`-15.-50`), since both truncate
+/// toward zero.
+pub(super) struct MoneyParts {
+    pub negative: bool,
+    pub major: String,
+    pub minor: String,
+}
+
 /// Why two amounts couldn't be combined.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MoneyError {
@@ -121,6 +135,31 @@ impl Money {
         Ok((tax, total))
     }
 
+    /// The amount decomposed for rendering, so that every formatter splits it
+    /// the same way. Both the sign handling and the scale here were bugs once
+    /// (#320, #321); keeping the arithmetic in one place is what stops a second
+    /// renderer re-deriving it and getting it subtly wrong — the formatters
+    /// differ only in how they decorate these three pieces.
+    pub(super) fn parts(&self) -> MoneyParts {
+        let exponent = currency::exponent(&self.currency);
+        // Unsigned so `i64::MIN` can be split without overflowing on negation.
+        let absolute = self.minor_units.unsigned_abs();
+        let per_major = 10_u64.pow(exponent);
+        MoneyParts {
+            negative: self.minor_units < 0,
+            major: (absolute / per_major).to_string(),
+            minor: if exponent == 0 {
+                String::new()
+            } else {
+                format!(
+                    "{:0width$}",
+                    absolute % per_major,
+                    width = exponent as usize
+                )
+            },
+        }
+    }
+
     /// This amount × `factor` ÷ `denom`, rounded to a whole minor unit half
     /// away from zero — the shape both hourly billing and tax take.
     ///
@@ -154,22 +193,12 @@ impl Money {
 /// grouping and separators (#330).
 impl fmt::Display for Money {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let exp = currency::exponent(&self.currency);
-        if exp == 0 {
-            return write!(f, "{} {}", self.currency, self.minor_units);
+        let parts = self.parts();
+        let sign = if parts.negative { "-" } else { "" };
+        if parts.minor.is_empty() {
+            return write!(f, "{} {sign}{}", self.currency, parts.major);
         }
-        let per_major = 10_u64.pow(exp);
-        // Unsigned so `i64::MIN` can be split without overflowing on negation.
-        let abs = self.minor_units.unsigned_abs();
-        write!(
-            f,
-            "{} {}{}.{:0width$}",
-            self.currency,
-            if self.minor_units < 0 { "-" } else { "" },
-            abs / per_major,
-            abs % per_major,
-            width = exp as usize,
-        )
+        write!(f, "{} {sign}{}.{}", self.currency, parts.major, parts.minor)
     }
 }
 
