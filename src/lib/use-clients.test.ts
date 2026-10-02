@@ -47,6 +47,32 @@ describe("useClients (browser-dev)", () => {
     );
   });
 
+  it("carries address and tax id, trimming blanks to null (#331)", async () => {
+    const { useClients } = await import("./use-clients");
+    const { result } = renderHook(() => useClients());
+    await act(async () => {
+      await result.current.create({
+        name: "Buyer Co",
+        address: "  9 Buyer Rd  ",
+        taxId: "  DE 123  ",
+      });
+    });
+    const made = result.current.clients.find((c) => c.name === "Buyer Co");
+    expect(made?.address).toBe("9 Buyer Rd");
+    expect(made?.taxId).toBe("DE 123");
+
+    await act(async () => {
+      await result.current.update({
+        id: made!.id,
+        name: "Buyer Co",
+        address: "   ",
+      });
+    });
+    const after = result.current.clients.find((c) => c.id === made!.id);
+    expect(after?.address).toBeNull();
+    expect(after?.taxId).toBeNull();
+  });
+
   it("remove drops a client", async () => {
     const { useClients } = await import("./use-clients");
     const { result } = renderHook(() => useClients());

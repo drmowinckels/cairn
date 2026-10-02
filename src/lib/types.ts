@@ -9,6 +9,11 @@ export interface Client {
   name: string;
   color: string | null;
   archived: boolean;
+  /** Postal address for the invoice "Billed to" block (#331); `null` when
+   *  unset. Core data — an address is not money. */
+  address: string | null;
+  /** Tax / VAT id, required on an intra-EU B2B invoice (#331). */
+  taxId: string | null;
 }
 
 export interface Project {

@@ -16,6 +16,13 @@ pub struct Client {
     pub name: String,
     pub color: Option<String>,
     pub archived: bool,
+    /// Postal address, for the invoice "Billed to" block (#331). `None` when
+    /// unset. Core data: an address is not money, so it lives with the client
+    /// record while rates stay plugin-side.
+    pub address: Option<String>,
+    /// Tax / VAT id, required on an intra-EU B2B invoice (#331). `None` when
+    /// unset.
+    pub tax_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -28,6 +35,19 @@ pub struct ClientInput {
     pub color: Option<String>,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub tax_id: Option<String>,
+}
+
+/// Normalize an optional free-text client field: trim it, and treat a blank
+/// value as unset so "never filled in" and "cleared in the form" are one state
+/// rather than two that render differently.
+fn optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,7 +463,8 @@ fn os_hour_cycle_override() -> Option<&'static str> {
 #[tauri::command]
 pub async fn list_clients(state: State<'_, AppState>) -> Result<Vec<Client>, String> {
     let rows = sqlx::query(
-        "SELECT id, name, color, archived FROM clients ORDER BY archived ASC, name ASC",
+        "SELECT id, name, color, archived, address, tax_id \
+         FROM clients ORDER BY archived ASC, name ASC",
     )
     .fetch_all(&state.db.pool)
     .await
@@ -455,6 +476,8 @@ pub async fn list_clients(state: State<'_, AppState>) -> Result<Vec<Client>, Str
             name: r.get("name"),
             color: r.get("color"),
             archived: r.get::<i64, _>("archived") != 0,
+            address: r.get("address"),
+            tax_id: r.get("tax_id"),
         })
         .collect())
 }
@@ -468,14 +491,18 @@ pub async fn save_client(
         .id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let now = Utc::now().to_rfc3339();
+    let address = optional_text(client.address);
+    let tax_id = optional_text(client.tax_id);
     sqlx::query(
         r#"
-        INSERT INTO clients (id, name, color, archived, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+        INSERT INTO clients (id, name, color, archived, address, tax_id, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             color = excluded.color,
             archived = excluded.archived,
+            address = excluded.address,
+            tax_id = excluded.tax_id,
             updated_at = excluded.updated_at
         "#,
     )
@@ -483,6 +510,8 @@ pub async fn save_client(
     .bind(&client.name)
     .bind(&client.color)
     .bind(client.archived as i64)
+    .bind(&address)
+    .bind(&tax_id)
     .bind(&now)
     .execute(&state.db.pool)
     .await
@@ -492,6 +521,8 @@ pub async fn save_client(
         name: client.name,
         color: client.color,
         archived: client.archived,
+        address,
+        tax_id,
     })
 }
 
@@ -4425,7 +4456,64 @@ mod tests {
             name: name.into(),
             color: color.map(|s| s.into()),
             archived: false,
+            address: None,
+            tax_id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn save_client_round_trips_address_and_tax_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let saved = save_client(
+            state.clone(),
+            ClientInput {
+                address: Some("  1 Main St\nOslo  ".into()),
+                tax_id: Some("  NO 999  ".into()),
+                ..client_input(None, "Billed Co", None)
+            },
+        )
+        .await
+        .unwrap();
+        // Trimmed on the way in, and readable back out of the list.
+        assert_eq!(saved.address.as_deref(), Some("1 Main St\nOslo"));
+        assert_eq!(saved.tax_id.as_deref(), Some("NO 999"));
+
+        let after = list_clients(state.clone()).await.unwrap();
+        let same = after.iter().find(|c| c.id == saved.id).unwrap();
+        assert_eq!(same.address.as_deref(), Some("1 Main St\nOslo"));
+        assert_eq!(same.tax_id.as_deref(), Some("NO 999"));
+
+        // A blank value clears the field rather than storing whitespace.
+        let cleared = save_client(
+            state.clone(),
+            ClientInput {
+                address: Some("   ".into()),
+                tax_id: None,
+                ..client_input(Some(&saved.id), "Billed Co", None)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cleared.address, None);
+        assert_eq!(cleared.tax_id, None);
+    }
+
+    #[test]
+    fn optional_text_treats_blank_as_unset() {
+        assert_eq!(optional_text(None), None);
+        assert_eq!(optional_text(Some("  ".into())), None);
+        assert_eq!(optional_text(Some(" x ".into())), Some("x".to_string()));
+    }
+
+    #[tokio::test]
+    async fn seeded_clients_have_no_address_or_tax_id() {
+        let (_dir, app, _db) = mock_app_with_db().await;
+        let state = app.state::<crate::AppState>();
+        let clients = list_clients(state).await.unwrap();
+        assert!(clients
+            .iter()
+            .all(|c| c.address.is_none() && c.tax_id.is_none()));
     }
 
     #[tokio::test]

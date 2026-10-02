@@ -3,7 +3,7 @@
 //! browser/OS turns it into a PDF via Print. All user text is escaped.
 
 use super::business::BusinessDetails;
-use super::invoices::Invoice;
+use super::invoices::{ClientSnapshot, Invoice};
 use super::money::Money;
 
 /// Escape the five HTML-significant characters so user text (client name,
@@ -56,9 +56,33 @@ fn issuer_lines(b: &BusinessDetails) -> String {
     if !b.email.is_empty() {
         s += &format!("<p>{}</p>", escape(&b.email));
     }
-    if !b.tax_id.is_empty() {
-        s += &format!("<p>Tax ID: {}</p>", escape(&b.tax_id));
+    s += &tax_id_line(&b.tax_id);
+    s
+}
+
+/// The shared "Tax ID" line, so the label and its escaping are written once for
+/// both parties; empty when the id is unset.
+fn tax_id_line(tax_id: &str) -> String {
+    if tax_id.is_empty() {
+        String::new()
+    } else {
+        format!("<p>Tax ID: {}</p>", escape(tax_id))
     }
+}
+
+/// The buyer's lines for the "Billed to" block: the client name, then each
+/// detail frozen onto the invoice at creation (#331) that was actually set. An
+/// invoice issued before those fields existed — or to a client who had none —
+/// renders the name alone, exactly as it did before.
+///
+/// Values are trimmed on the way into the `clients` table (`ipc::save_client`),
+/// so an empty check is enough to keep a blank-looking line off the document.
+fn client_lines(name: &str, client: &ClientSnapshot) -> String {
+    let mut s = format!("<p class=\"pname\">{}</p>", escape(name));
+    if !client.address.is_empty() {
+        s += &format!("<p>{}</p>", escape_multiline(&client.address));
+    }
+    s += &tax_id_line(&client.tax_id);
     s
 }
 
@@ -245,7 +269,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 <header class=\"head\"><h1>Invoice {number}</h1>\
 <div class=\"meta\">Issued {issued}<br>{due_line}Period {from} – {to}</div></header>\
 <div class=\"parties\">{from_block}\
-<section class=\"to\"><h2>Billed to</h2><p class=\"pname\">{client}</p></section></div>\
+<section class=\"to\"><h2>Billed to</h2>{to_lines}</section></div>\
 <table><thead><tr><th>Description</th><th class=\"num\">Hours</th>\
 <th class=\"num\">Amount</th></tr></thead><tbody>{rows}</tbody></table>\
 <dl class=\"totals\"><div><dt>Subtotal</dt><dd>{subtotal}</dd></div>\
@@ -260,7 +284,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         due_line = due_line,
         from = escape(&inv.from_date),
         to = escape(&inv.to_date),
-        client = escape(&inv.client_name),
+        to_lines = client_lines(&inv.client_name, &inv.client),
         from_block = from_block,
         rows = rows,
         subtotal = money(&inv.subtotal),
@@ -277,7 +301,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 #[cfg(test)]
 mod tests {
     use super::super::business::BusinessDetails;
-    use super::super::invoices::{Invoice, InvoiceLine};
+    use super::super::invoices::{ClientSnapshot, Invoice, InvoiceLine};
     use super::*;
 
     fn business() -> BusinessDetails {
@@ -302,6 +326,10 @@ mod tests {
             number: "INV-0007".into(),
             client_id: "c1".into(),
             client_name: "Acme & Co".into(),
+            client: ClientSnapshot {
+                address: "9 <b>Buyer</b> Rd\nBerlin".into(),
+                tax_id: "DE 123".into(),
+            },
             issue_date: "2026-07-15".into(),
             from_date: "2026-07-01".into(),
             to_date: "2026-08-01".into(),
@@ -464,7 +492,11 @@ mod tests {
             name: "Solo".into(),
             ..Default::default()
         };
-        let html = render_html(&invoice(), &partial);
+        // Rendered without buyer details, so the only "Tax ID:" line this
+        // could find would be the issuer's.
+        let mut no_buyer = invoice();
+        no_buyer.client = ClientSnapshot::default();
+        let html = render_html(&no_buyer, &partial);
         assert!(html.contains("class=\"from\""));
         assert!(html.contains("Solo"));
         assert!(!html.contains("Tax ID:"));
@@ -491,6 +523,79 @@ mod tests {
         assert!(html.contains("Thanks &lt;3"));
         assert!(!html.contains("<redesign>"));
         assert!(!html.contains("Acme & Co"));
+    }
+
+    #[test]
+    fn renders_the_buyer_block_with_the_frozen_address_and_tax_id() {
+        let html = render_html(&invoice(), &business());
+        assert!(html.contains("<section class=\"to\"><h2>Billed to</h2>"));
+        assert!(html.contains("<p class=\"pname\">Acme &amp; Co</p>"));
+        // Address newlines become <br>, and its markup is escaped.
+        assert!(html.contains("9 &lt;b&gt;Buyer&lt;/b&gt; Rd<br>Berlin"));
+        assert!(html.contains("<p>Tax ID: DE 123</p>"));
+    }
+
+    #[test]
+    fn the_buyer_block_falls_back_to_the_name_alone() {
+        // A client with no address or tax id — and every pre-0037 invoice,
+        // whose empty snapshot deserializes to exactly this.
+        let mut inv = invoice();
+        inv.client = ClientSnapshot::default();
+        let html = render_html(&inv, &business());
+        assert!(html.contains(
+            "<section class=\"to\"><h2>Billed to</h2>\
+             <p class=\"pname\">Acme &amp; Co</p></section>"
+        ));
+        assert!(!html.contains("Berlin"));
+        // The issuer's own "Tax ID:" line is still there; the buyer's is not.
+        assert!(html.contains("<p>Tax ID: NO 999</p>"));
+        assert!(!html.contains("DE 123"));
+
+        // Each field renders independently of the other.
+        let mut address_only = invoice();
+        address_only.client.tax_id = String::new();
+        let html = render_html(&address_only, &business());
+        assert!(html.contains("Berlin"));
+        assert!(!html.contains("DE 123"));
+
+        let mut tax_only = invoice();
+        tax_only.client.address = String::new();
+        let html = render_html(&tax_only, &business());
+        assert!(!html.contains("Berlin"));
+        assert!(html.contains("Tax ID: DE 123"));
+    }
+
+    #[test]
+    fn every_template_preset_renders_the_buyer_details() {
+        for template in ["", "classic", "modern", "minimal"] {
+            let mut b = business();
+            b.template = template.into();
+            let html = render_html(&invoice(), &b);
+            assert!(
+                html.contains("9 &lt;b&gt;Buyer&lt;/b&gt; Rd<br>Berlin"),
+                "template {template:?} dropped the buyer address"
+            );
+            assert!(
+                html.contains("<p>Tax ID: DE 123</p>"),
+                "template {template:?} dropped the buyer tax id"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tampered_buyer_snapshot_cannot_inject_markup() {
+        let mut inv = invoice();
+        inv.client = ClientSnapshot {
+            address: "<script>alert(1)</script>".into(),
+            tax_id: "<img onerror=x>".into(),
+        };
+        let html = render_html(&inv, &business());
+        assert!(
+            !html.contains("<script>"),
+            "raw markup reached the document"
+        );
+        assert!(!html.contains("<img onerror"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
     }
 
     #[test]

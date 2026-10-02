@@ -4006,7 +4006,10 @@ select.rule-conf {
   gap: 6px;
 }
 
-.biz-form textarea.field-input {
+/* Vertical-only resize: a horizontal drag would widen the 500px popover and
+   force a side scroll. */
+.biz-form textarea.field-input,
+.data-form textarea.field-input {
   resize: vertical;
   font: inherit;
 }

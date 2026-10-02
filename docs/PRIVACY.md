@@ -133,6 +133,7 @@ Billing is an **opt-in feature plugin** (#109), off by default, and — unlike c
 - **What's stored:** the license key, the Lemon Squeezy instance id, the last-known status, and display metadata (customer email, product, expiry) in `cairn.sqlite`'s `billing_license` table, plus rates and invoice data in billing-owned tables. "Delete everything" wipes it with the rest.
 - **The license key is write-only across the IPC boundary** — status replies carry only the stored status and display metadata, never the key.
 - **Money never enters core.** Rates, currency, and amounts exist only inside the plugin's own tables; core entries carry a plain billable yes/no flag.
+- **Your clients' details stay local.** A client's optional address and tax/VAT id — needed for a legally valid invoice — live in core's `clients` table alongside the client name, and a copy is frozen onto each invoice when it is issued so a later edit can't rewrite an already-issued document. Neither is ever part of a licensing call or any other request: they leave the machine only in the invoice **you** export or print.
 
 ## Update checks
 

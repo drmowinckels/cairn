@@ -12,9 +12,9 @@ import type {
 import { minutesOf as m } from "../lib/time";
 
 export const CLIENTS: Client[] = [
-  { id: "c-acme",     name: "ACME Co.",    color: null, archived: false },
-  { id: "c-os",       name: "Open source", color: null, archived: false },
-  { id: "c-internal", name: "Internal",    color: null, archived: false },
+  { id: "c-acme",     name: "ACME Co.",    color: null, archived: false, address: "9 Buyer Rd\nBerlin", taxId: "DE 123456789" },
+  { id: "c-os",       name: "Open source", color: null, archived: false, address: null, taxId: null },
+  { id: "c-internal", name: "Internal",    color: null, archived: false, address: null, taxId: null },
 ];
 
 export const CLIENT_BY_ID = Object.fromEntries(
