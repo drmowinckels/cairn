@@ -652,8 +652,11 @@ mod tests {
         assert!(html.contains("Tax ID: DE 123"));
     }
 
+    /// One document, both halves: the buyer block (#331) and the localized
+    /// amounts with their currency code (#330) have to be present together in
+    /// every preset, not each on its own in a separate test.
     #[test]
-    fn every_template_preset_renders_the_buyer_details() {
+    fn every_template_preset_renders_the_buyer_details_and_the_localized_amounts() {
         for template in ["", "classic", "modern", "minimal"] {
             let mut b = business();
             b.template = template.into();
@@ -665,6 +668,14 @@ mod tests {
             assert!(
                 html.contains("<p>Tax ID: DE 123</p>"),
                 "template {template:?} dropped the buyer tax id"
+            );
+            assert!(
+                html.contains("$187.50") && !html.contains("USD 187.50"),
+                "template {template:?} lost the localized total"
+            );
+            assert!(
+                html.contains("Amount (USD)") && html.contains("Total (USD)"),
+                "template {template:?} lost the currency code"
             );
         }
     }
