@@ -52,8 +52,7 @@ describe("in-app vs document money rendering (#336)", () => {
     // Asserted against `Intl` at the machine locale rather than an expected
     // string: the point is *which* locale `formatMoney` defers to, and the
     // host's own is whatever the test happens to run on.
-    const amount = money(150_000, "EUR");
-    expect(formatMoney(amount)).toBe(
+    expect(formatMoney(money(150_000, "EUR"))).toBe(
       new Intl.NumberFormat(undefined, currencyFormatOptions("EUR")).format(
         1500,
       ),
@@ -61,12 +60,14 @@ describe("in-app vs document money rendering (#336)", () => {
   });
 
   it("formats the document in the currency's locale, not en-US", () => {
+    // EUR is the clearest case: `de-DE` writes 150000 minor units as
+    // `1.500,00 €`, where `en-US` writes `€1,500.00`. The exact string is
+    // pinned against live `Intl` by scripts/invoice-money-drift.test.mjs; what
+    // this asserts is that the document side is driven by the currency at all,
+    // so a change quietly making it follow the issuer's machine fails here.
     const eur = fixture.currencies.find((c) => c.currency === "EUR");
     expect(eur.locale).toBe("de-DE");
     const pinned = eur.amounts.find((a) => a.minorUnits === 150_000).formatted;
-    expect(pinned).toBe("1.500,00 €");
-    // The two conventions genuinely differ, so a change that quietly made the
-    // document follow the issuer's `en-US` machine would fail here.
     expect(pinned).not.toBe(
       new Intl.NumberFormat("en-US", currencyFormatOptions("EUR")).format(1500),
     );
