@@ -73,16 +73,56 @@ export function moneyFromMajor(major: number, currency: string): Money {
   return money(Math.round(major * minorUnitsPerMajor(currency)), currency);
 }
 
-/** Money for display. The scale comes from the amount's own currency rather
- *  than a hardcoded 100, so ¥150,000 is stored as 150000 and shown as
- *  ¥150,000 — not as ¥1,500.
+/** `Intl.NumberFormat` options for rendering an amount in `currency`, with the
+ *  fraction digits **forced** to the ISO 4217 exponent.
  *
- *  `Intl` accepts any well-formed 3-letter code (which the backend
+ *  Forcing them is the point of this helper. Left to its own devices `Intl`
+ *  uses CLDR's exponent, which disagrees with ISO 4217 for a handful of
+ *  currencies — it renders HUF with no decimals — while the stored integer is
+ *  always in ISO minor units. Unforced, the same stored `150000` HUF would read
+ *  `1500 Ft` in-app and `1.500,00 Ft` on the invoice: not two conventions but
+ *  two *scales*, which looks like money going missing (#336).
+ *
+ *  Locale is deliberately not a parameter: who picks it is the caller's
+ *  decision and differs by audience — [`formatMoney`] follows the operator's
+ *  machine, while the exported document follows the amount's own currency (see
+ *  `money_locale.rs`). This helper is only the part both must agree on, and is
+ *  shared with `scripts/money-locale-table.mjs` so the Rust table and fixture
+ *  are generated at the same forced scale.
+ *
+ *  `exponent` overrides the currency's own, which only the generator needs: it
+ *  reads a locale's decimal separator off a two-decimal rendering of a currency
+ *  that has no minor unit at all.
+ *
+ *  The code is canonicalized because `Intl` throws on one that is not
+ *  well-formed. It accepts any well-formed 3-letter code (which the backend
  *  guarantees), rendering the code itself when it doesn't name a known
  *  currency — so an unusual code shows through rather than throwing. */
-export function formatMoney(amount: Money): string {
-  return new Intl.NumberFormat(undefined, {
+export function currencyFormatOptions(
+  currency: string,
+  exponent: number = currencyExponent(currency),
+): Intl.NumberFormatOptions {
+  return {
     style: "currency",
-    currency: amount.currency,
-  }).format(amount.minorUnits / minorUnitsPerMajor(amount.currency));
+    currency: currency.trim().toUpperCase(),
+    minimumFractionDigits: exponent,
+    maximumFractionDigits: exponent,
+  };
+}
+
+/** Money as the **operator** sees it in-app: the machine's own conventions,
+ *  because the reader here is the person running Cairn. The exported invoice
+ *  renders the same amount in the currency's conventions instead, because its
+ *  reader is the client — a deliberate split, pinned by
+ *  `scripts/money-rendering-split.test.mjs`.
+ *
+ *  The scale comes from the amount's own currency rather than a hardcoded 100,
+ *  so ¥150,000 is stored as 150000 and shown as ¥150,000 — not as ¥1,500 — and
+ *  the fraction digits are ISO 4217's, so in-app and document never differ on
+ *  how much an amount is. */
+export function formatMoney(amount: Money): string {
+  return new Intl.NumberFormat(
+    undefined,
+    currencyFormatOptions(amount.currency),
+  ).format(amount.minorUnits / minorUnitsPerMajor(amount.currency));
 }

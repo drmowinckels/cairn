@@ -21,7 +21,11 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { currencyExponent, minorUnitsPerMajor } from "../src/lib/money.ts";
+import {
+  currencyExponent,
+  currencyFormatOptions,
+  minorUnitsPerMajor,
+} from "../src/lib/money.ts";
 
 /** Each currency Cairn renders with its own conventions, paired with the locale
  *  those conventions come from. A currency with no single home locale has its
@@ -107,28 +111,30 @@ export function amountsFor(currency) {
   return [...new Set([...AMOUNTS, boundary])].sort((a, b) => a - b);
 }
 
-/** `Intl` at the scale Cairn stores. The fraction digits are forced to the ISO
- *  4217 exponent because CLDR disagrees with ISO for a few currencies (it
- *  renders HUF with none), and the stored integer is in ISO minor units — so
- *  that is the scale to format, and to compare at. */
+/** `Intl` at the scale Cairn stores, in `locale`'s conventions. The forced ISO
+ *  4217 fraction digits come from `currencyFormatOptions`, shared with the
+ *  app's own `formatMoney` so the generated table and the in-app rendering
+ *  cannot drift apart on scale (#336). */
 function formatter(currency, locale, exponent = currencyExponent(currency)) {
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: exponent,
-    maximumFractionDigits: exponent,
-  });
+  return new Intl.NumberFormat(
+    locale,
+    currencyFormatOptions(currency, exponent),
+  );
 }
 
 /** Refuse a rendering the invoice can't carry: the document is `lang="en"` and
  *  LTR, so bidi controls and non-ASCII decimal digits must not reach it. */
 function assertRenderable(currency, locale, rendered) {
   if (/[‎‏؜⁦-⁩]/.test(rendered)) {
-    throw new Error(`${currency}/${locale}: bidi control in ${JSON.stringify(rendered)}`);
+    throw new Error(
+      `${currency}/${locale}: bidi control in ${JSON.stringify(rendered)}`,
+    );
   }
   for (const ch of rendered) {
     if (/\p{Nd}/u.test(ch) && !(ch >= "0" && ch <= "9")) {
-      throw new Error(`${currency}/${locale}: non-ASCII digit in ${JSON.stringify(rendered)}`);
+      throw new Error(
+        `${currency}/${locale}: non-ASCII digit in ${JSON.stringify(rendered)}`,
+      );
     }
   }
 }
@@ -173,7 +179,9 @@ export function pattern(currency, locale) {
     // two is what gives it away.
     grouping: sizes.length > 1 && sizes[0] === 2 ? "Indic" : "Western",
     // CLDR's `minimumGroupingDigits`: some locales leave four digits unbroken.
-    groupFrom: formatter(currency, locale).formatToParts(1000).some((p) => p.type === "group")
+    groupFrom: formatter(currency, locale)
+      .formatToParts(1000)
+      .some((p) => p.type === "group")
       ? 4
       : 5,
   };
@@ -191,7 +199,9 @@ function decimalSeparator(currency, locale) {
  *  generated table carries no invisible characters. */
 function escapeRust(s) {
   return [...s]
-    .map((ch) => (ch.codePointAt(0) > 126 ? `\\u{${ch.codePointAt(0).toString(16)}}` : ch))
+    .map((ch) =>
+      ch.codePointAt(0) > 126 ? `\\u{${ch.codePointAt(0).toString(16)}}` : ch,
+    )
     .join("");
 }
 
@@ -226,7 +236,9 @@ export function fixtureData() {
         // the division below is exact only while the amount stays inside the
         // double-safe range, so refuse rather than pin a rounded figure.
         if (!Number.isSafeInteger(minorUnits)) {
-          throw new Error(`${currency}: ${minorUnits} minor units is past the exact-float range`);
+          throw new Error(
+            `${currency}: ${minorUnits} minor units is past the exact-float range`,
+          );
         }
         const formatted = formatter(currency, locale).format(
           minorUnits / minorUnitsPerMajor(currency),

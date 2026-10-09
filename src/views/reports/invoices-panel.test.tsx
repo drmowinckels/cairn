@@ -177,6 +177,18 @@ describe("InvoicesPanel", () => {
     await waitFor(() => expect(screen.queryByText("Website")).toBeNull());
   });
 
+  it("warns that the saved document formats money in the invoice currency", async () => {
+    // The operator-vs-client split is a decision, not an accident (#336), so
+    // the note naming the invoice's own currency is pinned here the way the
+    // scale agreement is pinned in scripts/money-rendering-split.test.mjs.
+    useInvoices.mockReturnValue(state({ invoices: [summary] }));
+    render(<InvoicesPanel rounding={ROUNDING_OFF} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /INV-0001/ }));
+    const note = await screen.findByText(/saved HTML formats them/i);
+    expect(note.textContent).toContain("USD");
+  });
+
   it("labels the tax line with the invoice's frozen tax label", async () => {
     // The label rides on the invoice (snapshotted at creation), not the live
     // business profile — so an old invoice keeps the label it was issued with.
