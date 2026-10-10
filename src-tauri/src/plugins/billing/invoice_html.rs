@@ -5,7 +5,7 @@
 use super::business::BusinessDetails;
 use super::invoices::{ClientSnapshot, Invoice};
 use super::money::Money;
-use super::money_locale::Locale;
+use super::money_locale::{locale_of, Locale};
 
 /// Escape the five HTML-significant characters so user text (client name,
 /// notes, line descriptions) can never break out of the document. Single pass
@@ -207,7 +207,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
     // Dates stay `YYYY-MM-DD` on purpose and do not go through it: ISO 8601 is
     // the one date format no reader can misread, where a localized `07.15.2026`
     // and `15.07.2026` are indistinguishable to the wrong audience.
-    let locale = super::money_locale::locale_of(&inv.total.currency);
+    let locale = locale_of(&inv.total.currency);
 
     let rows: String = inv
         .lines
@@ -335,7 +335,6 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 mod tests {
     use super::super::business::BusinessDetails;
     use super::super::invoices::{ClientSnapshot, Invoice, InvoiceLine};
-    use super::super::money_locale;
     use super::*;
 
     fn business() -> BusinessDetails {
@@ -400,11 +399,11 @@ mod tests {
 
     #[test]
     fn hours_renders_one_decimal_in_the_document_locale() {
-        assert_eq!(hours(5400, &money_locale::locale_of("USD")), "1.5");
+        assert_eq!(hours(5400, &locale_of("USD")), "1.5");
         // The same hours beside `1.500,00 €` take the comma that money does.
-        assert_eq!(hours(5400, &money_locale::locale_of("EUR")), "1,5");
+        assert_eq!(hours(5400, &locale_of("EUR")), "1,5");
         // Grouping follows too, so a long period doesn't read `1234.5`.
-        assert_eq!(hours(4_444_200, &money_locale::locale_of("EUR")), "1.234,5");
+        assert_eq!(hours(4_444_200, &locale_of("EUR")), "1.234,5");
     }
 
     #[test]

@@ -220,6 +220,11 @@ impl Locale {
     /// nothing on an invoice is negative today (seconds and basis points are
     /// both non-negative), so this is consistency rather than a case anything
     /// reaches.
+    ///
+    /// The result is safe to drop into the document unescaped — ASCII digits
+    /// plus separators from [`PATTERNS`], never the currency code. That is the
+    /// difference from [`format`], whose unlisted-currency branch does emit the
+    /// code, which is why `invoice_html::money` escapes and `hours` need not.
     pub fn decimal(&self, value: f64, places: usize) -> String {
         let rendered = format!("{value:.places$}");
         let (sign, digits) = match rendered.strip_prefix('-') {
