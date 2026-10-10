@@ -186,6 +186,58 @@ fn group_digits(digits: &str, pattern: &Pattern) -> String {
     groups.join(pattern.group)
 }
 
+/// The conventions a **plain** number takes on one document — the hours on a
+/// line, the tax percentage — resolved once from the document's currency
+/// (#335).
+///
+/// Money deliberately does **not** go through this: [`format`] resolves the
+/// pattern from each amount's own currency, so an amount always carries its
+/// own currency's symbol and separators no matter what else is on the page.
+/// On a single-currency invoice the two coincide, which is the point — the
+/// separator in `1.500,00 €` and the one in `1,5` then agree, where before the
+/// hours were hard-coded `1.5` next to localized money.
+///
+/// Only the number conventions travel. The document's `lang` stays `en`,
+/// because every label on it ("Invoice", "Billed to", "Subtotal") is English
+/// prose and `lang` declares the language of text, not the formatting of
+/// numbers — tagging an English document `de-DE` would only mislead a screen
+/// reader. Localizing the labels is a separate, much larger change.
+pub struct Locale(&'static Pattern);
+
+/// The conventions `currency`'s own locale uses for a plain number. An
+/// unlisted currency takes [`FALLBACK`]'s `en-US` conventions, matching what
+/// its money rendering does.
+pub fn locale_of(currency: &str) -> Locale {
+    Locale(pattern_for(currency).unwrap_or(&FALLBACK))
+}
+
+impl Locale {
+    /// `value` to exactly `places` decimals, with this locale's decimal
+    /// separator and digit grouping — `1,5` where the money is `1.500,00 €`,
+    /// `1.5` where it is `$1,500.00`.
+    ///
+    /// A sign is carried once, in front, the same way [`format`] carries it:
+    /// nothing on an invoice is negative today (seconds and basis points are
+    /// both non-negative), so this is consistency rather than a case anything
+    /// reaches.
+    pub fn decimal(&self, value: f64, places: usize) -> String {
+        let rendered = format!("{value:.places$}");
+        let (sign, digits) = match rendered.strip_prefix('-') {
+            Some(rest) => ("-", rest),
+            None => ("", rendered.as_str()),
+        };
+        let (integer, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+
+        let mut out = String::from(sign);
+        out.push_str(&group_digits(integer, self.0));
+        if !fraction.is_empty() {
+            out.push_str(self.0.decimal);
+            out.push_str(fraction);
+        }
+        out
+    }
+}
+
 /// The amount as the client's invoice shows it: the currency's symbol and
 /// separators, grouped digits, and the currency's own number of decimals —
 /// `$1,500.00`, `1 500,00 kr`, `￥150,000`, `BHD 1,500.000`.
@@ -293,6 +345,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_plain_number_takes_the_currencys_separators() {
+        // What #335 is for: the hours and the tax rate beside `1.500,00 €`
+        // have to use the comma the money does.
+        assert_eq!(locale_of("EUR").decimal(1.5, 1), "1,5");
+        assert_eq!(locale_of("USD").decimal(1.5, 1), "1.5");
+        assert_eq!(locale_of("EUR").decimal(12.5, 1), "12,5");
+    }
+
+    #[test]
+    fn a_plain_number_groups_like_the_money_does() {
+        assert_eq!(locale_of("EUR").decimal(1234.5, 1), "1.234,5");
+        assert_eq!(locale_of("USD").decimal(1234.5, 1), "1,234.5");
+        // `pl-PL` leaves four digits unbroken (`minimumGroupingDigits=2`), and
+        // a plain number obeys that the same way an amount does.
+        assert_eq!(locale_of("PLN").decimal(1234.5, 1), "1234,5");
+        assert_eq!(locale_of("PLN").decimal(12345.5, 1), "12\u{a0}345,5");
+        // The Indian system too: three digits, then twos.
+        assert_eq!(locale_of("INR").decimal(1234567.5, 1), "12,34,567.5");
+    }
+
+    #[test]
+    fn a_plain_number_at_zero_places_has_no_separator() {
+        assert_eq!(locale_of("EUR").decimal(25.0, 0), "25");
+        assert_eq!(locale_of("EUR").decimal(25.4, 0), "25");
+        assert_eq!(locale_of("EUR").decimal(1234.0, 0), "1.234");
+    }
+
+    #[test]
+    fn a_plain_number_carries_a_sign_once_in_front() {
+        // Nothing on an invoice is negative, but the rule matches `format`'s.
+        assert_eq!(locale_of("EUR").decimal(-1234.5, 1), "-1.234,5");
+        assert_eq!(locale_of("USD").decimal(-7.0, 0), "-7");
+    }
+
+    #[test]
+    fn an_unlisted_currency_gives_a_plain_number_the_fallback_conventions() {
+        // BHD has no row, so its money renders `BHD 1,500.000` — `en-US`
+        // separators. A plain number on that document follows the same ones.
+        assert_eq!(locale_of("BHD").decimal(1234.5, 1), "1,234.5");
+        assert_eq!(locale_of("ZZZ").decimal(1234.5, 1), "1,234.5");
     }
 
     #[test]

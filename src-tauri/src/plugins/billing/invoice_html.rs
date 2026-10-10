@@ -5,6 +5,7 @@
 use super::business::BusinessDetails;
 use super::invoices::{ClientSnapshot, Invoice};
 use super::money::Money;
+use super::money_locale::Locale;
 
 /// Escape the five HTML-significant characters so user text (client name,
 /// notes, line descriptions) can never break out of the document. Single pass
@@ -90,8 +91,22 @@ fn client_lines(name: &str, client: &ClientSnapshot) -> String {
     s
 }
 
-fn hours(seconds: i64) -> String {
-    format!("{:.1}", seconds as f64 / 3600.0)
+/// Hours to one decimal, in the document's own conventions (#335) — `1,5` on a
+/// EUR invoice, `1.5` on a USD one, so the separator agrees with the one in the
+/// money beside it.
+fn hours(seconds: i64, locale: &Locale) -> String {
+    locale.decimal(seconds as f64 / 3600.0, 1)
+}
+
+/// Decimals the tax percentage needs: none for a whole percent, one for a
+/// tenth, two for a hundredth. A rate is stored in basis points, so this keeps
+/// 2500 reading as `25%` rather than `25.00%` while 1250 still reads `12.5%`.
+fn tax_places(bps: i64) -> usize {
+    match bps.rem_euclid(100) {
+        0 => 0,
+        r if r % 10 == 0 => 1,
+        _ => 2,
+    }
 }
 
 /// The invoice due date: `issue_date` plus the issuer's `payment_terms_days`,
@@ -184,6 +199,16 @@ fn template_style(template: &str) -> (&'static str, &'static str) {
 /// Build the printable HTML document for an invoice. `business` is the issuer
 /// shown in the "From" block; an empty profile omits that block.
 pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
+    // One locale for the whole document, from the currency it is billed in —
+    // the only reader-side signal an invoice carries (#330). Money resolves its
+    // own pattern per amount; this is what the plain numbers beside it follow,
+    // so the document stops mixing separators (#335).
+    //
+    // Dates stay `YYYY-MM-DD` on purpose and do not go through it: ISO 8601 is
+    // the one date format no reader can misread, where a localized `07.15.2026`
+    // and `15.07.2026` are indistinguishable to the wrong audience.
+    let locale = super::money_locale::locale_of(&inv.total.currency);
+
     let rows: String = inv
         .lines
         .iter()
@@ -191,7 +216,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
             format!(
                 "<tr><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
                 escape(&l.description),
-                hours(l.seconds),
+                hours(l.seconds, &locale),
                 money(&l.amount),
             )
         })
@@ -207,7 +232,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         format!(
             "<p class=\"muted\">{} h of billable time in this period had no rate \
              and isn't included on this invoice.</p>",
-            hours(inv.unrated_seconds)
+            hours(inv.unrated_seconds, &locale)
         )
     } else {
         String::new()
@@ -295,7 +320,10 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
         subtotal = money(&inv.subtotal),
         tax = money(&inv.tax),
         tax_label = tax_label,
-        tax_pct = inv.tax_rate_bps as f64 / 100.0,
+        tax_pct = locale.decimal(
+            inv.tax_rate_bps as f64 / 100.0,
+            tax_places(inv.tax_rate_bps),
+        ),
         total = money(&inv.total),
         payment = payment,
         notes = notes,
@@ -307,6 +335,7 @@ pub fn render_html(inv: &Invoice, business: &BusinessDetails) -> String {
 mod tests {
     use super::super::business::BusinessDetails;
     use super::super::invoices::{ClientSnapshot, Invoice, InvoiceLine};
+    use super::super::money_locale;
     use super::*;
 
     fn business() -> BusinessDetails {
@@ -370,8 +399,48 @@ mod tests {
     }
 
     #[test]
-    fn hours_renders_one_decimal() {
-        assert_eq!(hours(5400), "1.5");
+    fn hours_renders_one_decimal_in_the_document_locale() {
+        assert_eq!(hours(5400, &money_locale::locale_of("USD")), "1.5");
+        // The same hours beside `1.500,00 €` take the comma that money does.
+        assert_eq!(hours(5400, &money_locale::locale_of("EUR")), "1,5");
+        // Grouping follows too, so a long period doesn't read `1234.5`.
+        assert_eq!(hours(4_444_200, &money_locale::locale_of("EUR")), "1.234,5");
+    }
+
+    #[test]
+    fn tax_places_is_the_fewest_the_rate_needs() {
+        assert_eq!(tax_places(2500), 0); // 25%
+        assert_eq!(tax_places(1250), 1); // 12.5%
+        assert_eq!(tax_places(1234), 2); // 12.34%
+        assert_eq!(tax_places(0), 0); // 0%
+    }
+
+    #[test]
+    fn a_euro_invoice_agrees_with_itself_on_separators() {
+        // The defect #335 names: money localized, everything else hard-coded
+        // English, so one document showed `1.500,00 €` next to `1.5` hours.
+        let mut inv = invoice();
+        inv.subtotal = Money::new(150_000, "EUR");
+        inv.tax = Money::new(18_750, "EUR");
+        inv.total = Money::new(168_750, "EUR");
+        inv.lines[0].amount = Money::new(150_000, "EUR");
+        inv.tax_rate_bps = 1250;
+
+        let html = render_html(&inv, &business());
+        assert!(html.contains("1.500,00"), "money is localized: {html}");
+        assert!(html.contains(">1,5<"), "hours follow it: {html}");
+        assert!(html.contains("(12,5%)"), "and so does the tax rate: {html}");
+        assert!(!html.contains("1.5<"), "no hard-coded point left: {html}");
+        // The prose is still English, so the document still says so.
+        assert!(html.contains("<html lang=\"en\">"), "{html}");
+    }
+
+    #[test]
+    fn a_whole_percent_rate_keeps_no_decimals() {
+        // 2500 bps read `25%` before the locale was threaded through; forcing a
+        // fixed scale would have turned it into `25.00%`.
+        let html = render_html(&invoice(), &business());
+        assert!(html.contains("(25%)"), "{html}");
     }
 
     #[test]
