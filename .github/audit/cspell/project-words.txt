@@ -24,6 +24,7 @@ cargo-llvm-cov
 CGEventSourceSecondsSinceLastEventType
 chev
 chrono
+CLDR
 clippy
 codecov
 Codecov

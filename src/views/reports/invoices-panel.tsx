@@ -285,6 +285,16 @@ export function InvoicesPanel({ rounding }: { rounding: Rounding }) {
                       <p className="settings-sub">{detail.notes}</p>
                     ) : null}
 
+                    {/* The two renderings differ on purpose (#336): here the
+                        reader is the operator, on the document it is the
+                        client. Saying so beats letting the user discover it
+                        from a document already sent. */}
+                    <p className="settings-sub" data-inv="locale-note">
+                      Amounts above use this computer&rsquo;s formatting. The
+                      saved HTML formats them the way a {detail.total.currency}{" "}
+                      reader expects, for your client.
+                    </p>
+
                     <div className="data-form-actions">
                       <span
                         className="seg"
